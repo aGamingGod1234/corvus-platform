@@ -12,6 +12,7 @@ from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm import Session as DbSession
 
+from corvus.database import bootstrap_database
 from corvus.models import RunEvent, RunPhase
 from corvus.security import SecretRedactor, atomic_write, sha256_bytes
 
@@ -81,11 +82,11 @@ class TraceStore:
         self.db_path = db_path
         self.redactor = redactor or SecretRedactor()
         self._write_lock = threading.Lock()
+        bootstrap_database(db_path, Base.metadata)
         self.engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"timeout": 30},
         )
-        Base.metadata.create_all(self.engine)
         with self.engine.begin() as connection:
             connection.exec_driver_sql("PRAGMA journal_mode=WAL")
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
