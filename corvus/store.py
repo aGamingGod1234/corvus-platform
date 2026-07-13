@@ -7,12 +7,13 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm import Session as DbSession
 
+from corvus.context import ContextEnvelope, ContextOwner, ExternalContent
 from corvus.database import bootstrap_database
 from corvus.models import RunEvent, RunPhase
 from corvus.security import (
@@ -80,6 +81,35 @@ class DeliveryRow(Base):
     approval_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     checkpoint_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ExternalContentRow(Base):
+    __tablename__ = "external_contents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_kind: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str] = mapped_column(String(36), index=True)
+    origin: Mapped[str] = mapped_column(String(32))
+    source_locator_digest: Mapped[str] = mapped_column(String(64))
+    content_digest: Mapped[str] = mapped_column(String(64))
+    trust_class: Mapped[str] = mapped_column(String(16))
+    content_json: Mapped[str] = mapped_column(Text)
+    provenance_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ContextEnvelopeRow(Base):
+    __tablename__ = "context_envelopes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_kind: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str] = mapped_column(String(36), index=True)
+    system_instruction_digest: Mapped[str] = mapped_column(String(64))
+    trusted_content_ids_json: Mapped[str] = mapped_column(Text)
+    untrusted_content_ids_json: Mapped[str] = mapped_column(Text)
+    firewall_policy_digest: Mapped[str] = mapped_column(String(64))
+    output_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -154,6 +184,113 @@ class TraceStore:
                 event_hash=event_hash,
                 created_at=created_at,
             )
+
+    @staticmethod
+    def _external_row(owner: ContextOwner, content: ExternalContent) -> ExternalContentRow:
+        provenance = {
+            "content_digest": content.content_digest,
+            "origin": content.origin.value,
+            "source": content.source,
+            "source_locator_digest": content.source_locator_digest,
+            "trust_class": content.trust_class.value,
+        }
+        return ExternalContentRow(
+            id=str(content.id),
+            owner_kind=owner.kind.value,
+            owner_id=str(owner.id),
+            origin=content.origin.value,
+            source_locator_digest=content.source_locator_digest,
+            content_digest=content.content_digest,
+            trust_class=content.trust_class.value,
+            content_json=content.content_json,
+            provenance_json=json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+            created_at=datetime.now(UTC),
+        )
+
+    def append_context_envelope(self, envelope: ContextEnvelope) -> UUID:
+        envelope_id = uuid4()
+        with self._write_lock, DbSession(self.engine) as session:
+            for content in (*envelope.trusted, *envelope.external):
+                if session.get(ExternalContentRow, str(content.id)) is None:
+                    session.add(self._external_row(envelope.owner, content))
+            session.add(
+                ContextEnvelopeRow(
+                    id=str(envelope_id),
+                    owner_kind=envelope.owner.kind.value,
+                    owner_id=str(envelope.owner.id),
+                    system_instruction_digest=envelope.system_instruction_digest,
+                    trusted_content_ids_json=json.dumps(
+                        [str(item.id) for item in envelope.trusted], separators=(",", ":")
+                    ),
+                    untrusted_content_ids_json=json.dumps(
+                        [str(item.id) for item in envelope.external], separators=(",", ":")
+                    ),
+                    firewall_policy_digest=envelope.firewall_policy_digest,
+                    output_digest=None,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+        return envelope_id
+
+    def append_external_content(self, owner: ContextOwner, content: ExternalContent) -> None:
+        with self._write_lock, DbSession(self.engine) as session:
+            if session.get(ExternalContentRow, str(content.id)) is None:
+                session.add(self._external_row(owner, content))
+                session.commit()
+
+    def context_envelope_count(self) -> int:
+        with DbSession(self.engine) as session:
+            return len(session.scalars(select(ContextEnvelopeRow.id)).all())
+
+    def context_envelopes(self, owner: ContextOwner) -> list[dict[str, Any]]:
+        with DbSession(self.engine) as session:
+            rows = session.scalars(
+                select(ContextEnvelopeRow)
+                .where(
+                    ContextEnvelopeRow.owner_kind == owner.kind.value,
+                    ContextEnvelopeRow.owner_id == str(owner.id),
+                )
+                .order_by(ContextEnvelopeRow.created_at, ContextEnvelopeRow.id)
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "owner_kind": row.owner_kind,
+                    "owner_id": row.owner_id,
+                    "system_instruction_digest": row.system_instruction_digest,
+                    "trusted_content_ids": json.loads(row.trusted_content_ids_json),
+                    "untrusted_content_ids": json.loads(row.untrusted_content_ids_json),
+                    "firewall_policy_digest": row.firewall_policy_digest,
+                    "output_digest": row.output_digest,
+                }
+                for row in rows
+            ]
+
+    def external_contents(self, owner: ContextOwner) -> list[dict[str, Any]]:
+        with DbSession(self.engine) as session:
+            rows = session.scalars(
+                select(ExternalContentRow)
+                .where(
+                    ExternalContentRow.owner_kind == owner.kind.value,
+                    ExternalContentRow.owner_id == str(owner.id),
+                )
+                .order_by(ExternalContentRow.created_at, ExternalContentRow.id)
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "owner_kind": row.owner_kind,
+                    "owner_id": row.owner_id,
+                    "origin": row.origin,
+                    "source_locator_digest": row.source_locator_digest,
+                    "content_digest": row.content_digest,
+                    "trust_class": row.trust_class,
+                    "content": json.loads(row.content_json),
+                    "provenance": json.loads(row.provenance_json),
+                }
+                for row in rows
+            ]
 
     def events(self, run_id: UUID) -> Iterator[RunEvent]:
         with DbSession(self.engine) as session:

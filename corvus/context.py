@@ -4,7 +4,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
+from uuid import UUID, uuid4
 
 
 class ContentOrigin(StrEnum):
@@ -22,6 +23,10 @@ class TrustClass(StrEnum):
     TRUSTED = "trusted"
 
 
+class ContextOwnerKind(StrEnum):
+    LEGACY_RUN = "legacy_run"
+
+
 _EXTERNAL_ORIGINS = frozenset(
     {
         ContentOrigin.USER,
@@ -32,6 +37,7 @@ _EXTERNAL_ORIGINS = frozenset(
     }
 )
 _TRUSTED_ORIGINS = frozenset({ContentOrigin.SYSTEM, ContentOrigin.POLICY})
+_FIREWALL_POLICY = "corvus-context-firewall:m005-001:v1"
 
 
 def _canonical_json(value: Any) -> str:
@@ -42,6 +48,20 @@ def _canonical_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class ContextOwner:
+    kind: ContextOwnerKind
+    id: UUID
+
+    @classmethod
+    def legacy_run(cls, run_id: UUID) -> ContextOwner:
+        return cls(kind=ContextOwnerKind.LEGACY_RUN, id=run_id)
 
 
 @dataclass(frozen=True)
@@ -56,6 +76,7 @@ class ContextMessage:
 
 @dataclass(frozen=True, init=False)
 class ExternalContent:
+    id: UUID
     origin: ContentOrigin
     source: str
     trust_class: TrustClass
@@ -83,15 +104,12 @@ class ExternalContent:
             raise TypeError("trusted instructions must be strings")
         content_json = _canonical_json(content)
         instance = object.__new__(cls)
+        object.__setattr__(instance, "id", uuid4())
         object.__setattr__(instance, "origin", origin)
         object.__setattr__(instance, "source", source)
         object.__setattr__(instance, "trust_class", trust_class)
         object.__setattr__(instance, "_content_json", content_json)
-        object.__setattr__(
-            instance,
-            "content_digest",
-            hashlib.sha256(content_json.encode("utf-8")).hexdigest(),
-        )
+        object.__setattr__(instance, "content_digest", _sha256_text(content_json))
         return instance
 
     @classmethod
@@ -161,9 +179,18 @@ class ExternalContent:
     def data(self) -> Any:
         return json.loads(self._content_json)
 
+    @property
+    def content_json(self) -> str:
+        return self._content_json
+
+    @property
+    def source_locator_digest(self) -> str:
+        return _sha256_text(self.source)
+
 
 @dataclass(frozen=True)
 class ContextEnvelope:
+    owner: ContextOwner
     trusted: tuple[ExternalContent, ...] = ()
     external: tuple[ExternalContent, ...] = ()
 
@@ -183,10 +210,11 @@ class ContextEnvelope:
     def compose(
         cls,
         *,
+        owner: ContextOwner,
         trusted: tuple[ExternalContent, ...] = (),
         external: tuple[ExternalContent, ...] = (),
     ) -> ContextEnvelope:
-        return cls(trusted=tuple(trusted), external=tuple(external))
+        return cls(owner=owner, trusted=tuple(trusted), external=tuple(external))
 
     def messages(self) -> tuple[ContextMessage, ...]:
         messages: list[ContextMessage] = []
@@ -206,6 +234,26 @@ class ContextEnvelope:
         return tuple(messages)
 
     @property
+    def system_instruction_digest(self) -> str:
+        return _sha256_text(_canonical_json([item.content_digest for item in self.trusted]))
+
+    @property
+    def firewall_policy_digest(self) -> str:
+        return _sha256_text(_FIREWALL_POLICY)
+
+    @property
     def digest(self) -> str:
-        payload = _canonical_json([message.as_dict() for message in self.messages()])
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        payload = _canonical_json(
+            {
+                "owner": {"id": str(self.owner.id), "kind": self.owner.kind.value},
+                "messages": [message.as_dict() for message in self.messages()],
+                "firewall_policy_digest": self.firewall_policy_digest,
+            }
+        )
+        return _sha256_text(payload)
+
+
+class ContextProvenanceSink(Protocol):
+    def append_context_envelope(self, envelope: ContextEnvelope) -> UUID: ...
+
+    def append_external_content(self, owner: ContextOwner, content: ExternalContent) -> None: ...

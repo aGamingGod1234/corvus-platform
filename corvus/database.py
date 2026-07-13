@@ -20,7 +20,9 @@ from corvus.security import atomic_write, sha256_file
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
 
-CURRENT_SCHEMA_VERSION = 1
+LEGACY_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
+M005_001_MIGRATION = "M005-001"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -28,6 +30,15 @@ V1_REQUIRED_TABLES = frozenset(
         "memories",
         "run_events",
         "skill_versions",
+    }
+)
+M005_001_REQUIRED_TABLES = frozenset({"external_contents", "context_envelopes"})
+M005_001_APPEND_ONLY_TRIGGERS = frozenset(
+    {
+        "external_contents_no_delete",
+        "external_contents_no_update",
+        "context_envelopes_no_delete",
+        "context_envelopes_no_update",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -82,12 +93,43 @@ V1_REQUIRED_COLUMNS = {
         }
     ),
 }
+M005_001_REQUIRED_COLUMNS = {
+    "external_contents": frozenset(
+        {
+            "id",
+            "owner_kind",
+            "owner_id",
+            "origin",
+            "source_locator_digest",
+            "content_digest",
+            "trust_class",
+            "content_json",
+            "provenance_json",
+            "created_at",
+        }
+    ),
+    "context_envelopes": frozenset(
+        {
+            "id",
+            "owner_kind",
+            "owner_id",
+            "system_instruction_digest",
+            "trusted_content_ids_json",
+            "untrusted_content_ids_json",
+            "firewall_policy_digest",
+            "output_digest",
+            "created_at",
+        }
+    ),
+}
+CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 
 
 class DatabaseState(StrEnum):
     NEW = "new"
     UNSTAMPED_V1 = "complete_unstamped_v1"
     LEGACY_UNSTAMPED = "complete_unstamped_v1"
+    MIGRATION_REQUIRED = "m005_001_migration_required"
     CURRENT = "current"
     PARTIAL = "partial"
     INCOMPATIBLE = "incompatible"
@@ -130,12 +172,29 @@ def _file_identity(path: Path) -> tuple[int, int, bytes]:
     return stat.st_size, stat.st_mtime_ns, path.read_bytes()
 
 
-def _v1_columns_match(connection: sqlite3.Connection) -> bool:
-    for table, expected in V1_REQUIRED_COLUMNS.items():
+def _columns_match(
+    connection: sqlite3.Connection,
+    expected_columns: dict[str, frozenset[str]],
+) -> bool:
+    for table, expected in expected_columns.items():
         columns = frozenset(row[1] for row in connection.execute(f"PRAGMA table_info({table})"))
         if columns != expected:
             return False
     return True
+
+
+def _v1_columns_match(connection: sqlite3.Connection) -> bool:
+    return _columns_match(connection, V1_REQUIRED_COLUMNS)
+
+
+def _m005_001_triggers_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    return triggers == M005_001_APPEND_ONLY_TRIGGERS
 
 
 @contextmanager
@@ -193,13 +252,19 @@ def classify_database(path: Path) -> DatabaseStatus:
                         "stamp/upgrade this V1 database"
                     ),
                 )
-            expected_current = frozenset({*V1_REQUIRED_TABLES, SCHEMA_METADATA_TABLE})
-            if tables == expected_current:
-                if not _v1_columns_match(connection):
+            stamped_v1_tables = frozenset({*V1_REQUIRED_TABLES, SCHEMA_METADATA_TABLE})
+            current_tables = frozenset(
+                {*V1_REQUIRED_TABLES, *M005_001_REQUIRED_TABLES, SCHEMA_METADATA_TABLE}
+            )
+            if tables in {stamped_v1_tables, current_tables}:
+                expected_columns = (
+                    V1_REQUIRED_COLUMNS if tables == stamped_v1_tables else CURRENT_REQUIRED_COLUMNS
+                )
+                if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
                         tables,
-                        detail="current schema is missing required V1 columns",
+                        detail="database schema is missing required columns",
                         recovery="restore from a digest-verified backup; source was not modified",
                     )
                 columns = {
@@ -209,14 +274,32 @@ def classify_database(path: Path) -> DatabaseStatus:
                 rows = connection.execute("SELECT schema_version FROM corvus_schema").fetchall()
                 if columns == {"schema_version"} and len(rows) == 1:
                     schema_version = rows[0][0]
-                    if schema_version == CURRENT_SCHEMA_VERSION:
+                    if (
+                        tables == stamped_v1_tables
+                        and schema_version == LEGACY_SCHEMA_VERSION
+                    ):
+                        return DatabaseStatus(
+                            DatabaseState.MIGRATION_REQUIRED,
+                            tables,
+                            schema_version=LEGACY_SCHEMA_VERSION,
+                            detail=f"database requires {M005_001_MIGRATION}",
+                            recovery=(
+                                "create and verify the automatic pre-M005-001 backup, then "
+                                "apply the transactional provenance migration"
+                            ),
+                        )
+                    if (
+                        tables == current_tables
+                        and schema_version == CURRENT_SCHEMA_VERSION
+                        and _m005_001_triggers_match(connection)
+                    ):
                         return DatabaseStatus(
                             DatabaseState.CURRENT,
                             tables,
                             schema_version=CURRENT_SCHEMA_VERSION,
                             detail="database schema is current",
                         )
-                    if isinstance(schema_version, int):
+                    if isinstance(schema_version, int) and schema_version > CURRENT_SCHEMA_VERSION:
                         return DatabaseStatus(
                             DatabaseState.INCOMPATIBLE,
                             tables,
@@ -230,7 +313,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                 return DatabaseStatus(
                     DatabaseState.PARTIAL,
                     tables,
-                    detail="schema metadata is incomplete or malformed",
+                    detail="schema metadata, M005-001 tables, or append-only triggers are incomplete",
                     recovery="restore from a digest-verified backup; source was not modified",
                 )
             if not tables:
@@ -267,6 +350,108 @@ def _require_integrity(connection: sqlite3.Connection, *, label: str) -> None:
         )
 
 
+def m005_001_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.pre-m005-001.bak")
+
+
+def _create_verified_backup(source: Path, backup: Path) -> str:
+    sidecar = backup.with_suffix(f"{backup.suffix}.sha256")
+    if backup.exists() or sidecar.exists():
+        raise FileExistsError("database backup or digest sidecar already exists")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    temporary = backup.with_name(f".{backup.name}.backup-{uuid4().hex}.tmp")
+    try:
+        with closing(_connect_read_only(source)) as source_connection:
+            _require_integrity(source_connection, label="source database")
+            if not Path(f"{source}-wal").exists() and not Path(f"{source}-shm").exists():
+                shutil.copyfile(source, temporary)
+            else:
+                with closing(sqlite3.connect(temporary)) as destination_connection:
+                    source_connection.backup(destination_connection)
+                    _require_integrity(destination_connection, label="database backup")
+                    destination_connection.commit()
+        with temporary.open("rb+") as handle:
+            os.fsync(handle.fileno())
+        digest = sha256_file(temporary)
+        os.replace(temporary, backup)
+        atomic_write(sidecar, digest.encode("ascii"))
+    finally:
+        temporary.unlink(missing_ok=True)
+    if sha256_file(backup) != digest:
+        raise RuntimeError("database backup digest changed after publication")
+    return digest
+
+
+def _create_m005_001_triggers(connection: sqlite3.Connection) -> None:
+    for table_name in sorted(M005_001_REQUIRED_TABLES):
+        connection.execute(
+            f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
+            "BEGIN SELECT RAISE(ABORT, 'M005-001 provenance is append-only'); END"
+        )
+        connection.execute(
+            f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
+            "BEGIN SELECT RAISE(ABORT, 'M005-001 provenance is append-only'); END"
+        )
+
+
+def _create_m005_001_tables(connection: sqlite3.Connection, metadata: MetaData) -> None:
+    dialect = sqlite_dialect.dialect()
+    for table_name in sorted(M005_001_REQUIRED_TABLES):
+        table = metadata.tables[table_name]
+        connection.execute(str(CreateTable(table).compile(dialect=dialect)))
+    _create_m005_001_triggers(connection)
+
+
+def _migrate_m005_001(path: Path, metadata: MetaData) -> DatabaseStatus:
+    status = classify_database(path)
+    if status.state is not DatabaseState.MIGRATION_REQUIRED:
+        raise DatabaseBootstrapError(status)
+    _create_verified_backup(path, m005_001_backup_path(path))
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            tables = frozenset(
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                )
+            )
+            expected = frozenset({*V1_REQUIRED_TABLES, SCHEMA_METADATA_TABLE})
+            version_rows = connection.execute(
+                "SELECT schema_version FROM corvus_schema"
+            ).fetchall()
+            if (
+                tables != expected
+                or not _v1_columns_match(connection)
+                or version_rows != [(LEGACY_SCHEMA_VERSION,)]
+            ):
+                raise DatabaseBootstrapError(
+                    DatabaseStatus(
+                        DatabaseState.PARTIAL,
+                        tables,
+                        detail="schema changed before M005-001 migration",
+                        recovery="restore from the verified pre-M005-001 backup",
+                    )
+                )
+            _create_m005_001_tables(connection, metadata)
+            connection.execute(
+                "UPDATE corvus_schema SET schema_version = ?",
+                (CURRENT_SCHEMA_VERSION,),
+            )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+    with path.open("rb+") as handle:
+        os.fsync(handle.fileno())
+    migrated = classify_database(path)
+    if migrated.state is not DatabaseState.CURRENT:
+        raise RuntimeError(f"M005-001 migration failed classification: {migrated.detail}")
+    return migrated
+
+
 def backup_and_stamp_v1(source: Path, backup: Path) -> DatabaseBackupReceipt:
     """Back up and explicitly stamp a complete legacy V1 database.
 
@@ -276,58 +461,39 @@ def backup_and_stamp_v1(source: Path, backup: Path) -> DatabaseBackupReceipt:
     status = classify_database(source)
     if status.state is not DatabaseState.UNSTAMPED_V1:
         raise DatabaseBootstrapError(status)
-    if backup.exists() or backup.with_suffix(f"{backup.suffix}.sha256").exists():
-        raise FileExistsError("database backup or digest sidecar already exists")
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    temporary = backup.with_name(f".{backup.name}.backup-{uuid4().hex}.tmp")
-    try:
-        with (
-            closing(_connect_read_only(source)) as source_connection,
-            closing(sqlite3.connect(temporary)) as destination_connection,
-        ):
-            _require_integrity(source_connection, label="source database")
-            source_connection.backup(destination_connection)
-            _require_integrity(destination_connection, label="database backup")
-            destination_connection.commit()
-        with temporary.open("rb+") as handle:
-            os.fsync(handle.fileno())
-        digest = sha256_file(temporary)
-        os.replace(temporary, backup)
-        atomic_write(backup.with_suffix(f"{backup.suffix}.sha256"), digest.encode("ascii"))
-
-        with closing(sqlite3.connect(source)) as connection:
-            connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                tables = frozenset(
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT name FROM sqlite_master "
-                        "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    digest = _create_verified_backup(source, backup)
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            tables = frozenset(
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                )
+            )
+            if tables != V1_REQUIRED_TABLES or not _v1_columns_match(connection):
+                raise DatabaseBootstrapError(
+                    DatabaseStatus(
+                        DatabaseState.PARTIAL,
+                        tables,
+                        detail="legacy schema changed before stamp",
+                        recovery="restore from the verified backup; source was not stamped",
                     )
                 )
-                if tables != V1_REQUIRED_TABLES or not _v1_columns_match(connection):
-                    raise DatabaseBootstrapError(
-                        DatabaseStatus(
-                            DatabaseState.PARTIAL,
-                            tables,
-                            detail="legacy schema changed before stamp",
-                            recovery="restore from the verified backup; source was not stamped",
-                        )
-                    )
-                connection.execute("CREATE TABLE corvus_schema (schema_version INTEGER NOT NULL)")
-                connection.execute(
-                    "INSERT INTO corvus_schema (schema_version) VALUES (?)",
-                    (CURRENT_SCHEMA_VERSION,),
-                )
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
-        with source.open("rb+") as handle:
-            os.fsync(handle.fileno())
-    finally:
-        temporary.unlink(missing_ok=True)
+            connection.execute("CREATE TABLE corvus_schema (schema_version INTEGER NOT NULL)")
+            connection.execute(
+                "INSERT INTO corvus_schema (schema_version) VALUES (?)",
+                (CURRENT_SCHEMA_VERSION,),
+            )
+            _create_m005_001_tables(connection, _resolved_metadata(None))
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+    with source.open("rb+") as handle:
+        os.fsync(handle.fileno())
 
     stamped = classify_database(source)
     if stamped.state is not DatabaseState.CURRENT:
@@ -376,7 +542,11 @@ def restore_database_backup(backup: Path, destination: Path) -> DatabaseStatus:
             )
         )
     backup_status = classify_database(backup)
-    if backup_status.state not in {DatabaseState.UNSTAMPED_V1, DatabaseState.CURRENT}:
+    if backup_status.state not in {
+        DatabaseState.UNSTAMPED_V1,
+        DatabaseState.MIGRATION_REQUIRED,
+        DatabaseState.CURRENT,
+    }:
         raise DatabaseBootstrapError(backup_status)
     with closing(_connect_read_only(backup)) as connection:
         _require_integrity(connection, label="database backup")
@@ -420,6 +590,7 @@ def _create_schema(path: Path, metadata: MetaData) -> None:
             )
             for index in indexes:
                 connection.execute(str(CreateIndex(index).compile(dialect=dialect)))
+            _create_m005_001_triggers(connection)
             connection.execute(
                 f"CREATE TABLE {SCHEMA_METADATA_TABLE} (schema_version INTEGER NOT NULL)"
             )
@@ -462,6 +633,8 @@ def bootstrap_database(path: Path, metadata: MetaData | None = None) -> Database
     status = classify_database(path)
     if status.state is DatabaseState.NEW:
         return initialize_database(path, metadata)
+    if status.state is DatabaseState.MIGRATION_REQUIRED:
+        return _migrate_m005_001(path, _resolved_metadata(metadata))
     if status.state is DatabaseState.CURRENT:
         return status
     raise DatabaseBootstrapError(status)

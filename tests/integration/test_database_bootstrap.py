@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import MetaData, create_engine
 
 import corvus.database as database_module
 from corvus.database import (
@@ -14,6 +14,7 @@ from corvus.database import (
     DatabaseBootstrapError,
     DatabaseState,
     classify_database,
+    m005_001_backup_path,
 )
 from corvus.security import sha256_file
 from corvus.store import Base, TraceStore
@@ -34,6 +35,18 @@ def _source_snapshot(path: Path) -> dict[str, tuple[str, int, int]]:
             stat = candidate.stat()
             snapshot[candidate.name] = (sha256_file(candidate), stat.st_size, stat.st_mtime_ns)
     return snapshot
+
+
+def _create_stamped_schema_v1(path: Path) -> None:
+    metadata = MetaData()
+    for table_name in sorted(V1_REQUIRED_TABLES):
+        Base.metadata.tables[table_name].to_metadata(metadata)
+    engine = create_engine(f"sqlite:///{path}")
+    metadata.create_all(engine)
+    engine.dispose()
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE corvus_schema (schema_version INTEGER NOT NULL)")
+        connection.execute("INSERT INTO corvus_schema (schema_version) VALUES (1)")
 
 
 def test_new_database_initializes_and_stamps_once(tmp_path: Path) -> None:
@@ -58,6 +71,66 @@ def test_new_database_initializes_and_stamps_once(tmp_path: Path) -> None:
         assert connection.execute("SELECT schema_version FROM corvus_schema").fetchall() == [
             (CURRENT_SCHEMA_VERSION,)
         ]
+
+
+def test_stamped_schema_v1_migrates_to_m005_001_after_verified_backup(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _create_stamped_schema_v1(database)
+    original_sha256 = sha256_file(database)
+
+    assert classify_database(database).state is DatabaseState.MIGRATION_REQUIRED
+
+    store = TraceStore(database)
+    store.engine.dispose()
+
+    backup = m005_001_backup_path(database)
+    assert backup.is_file()
+    assert backup.with_suffix(f"{backup.suffix}.sha256").read_text(encoding="ascii") == (
+        sha256_file(backup)
+    )
+    assert sha256_file(backup) == original_sha256
+    assert classify_database(backup).state is DatabaseState.MIGRATION_REQUIRED
+    status = classify_database(database)
+    assert status.state is DatabaseState.CURRENT
+    assert status.schema_version == CURRENT_SCHEMA_VERSION
+    assert {"external_contents", "context_envelopes"}.issubset(status.tables)
+
+
+def test_m005_001_provenance_tables_reject_update_and_delete(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    store = TraceStore(database)
+    store.engine.dispose()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO external_contents "
+            "(id, owner_kind, owner_id, origin, source_locator_digest, content_digest, "
+            "trust_class, content_json, provenance_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "00000000-0000-0000-0000-000000000001",
+                "legacy_run",
+                "00000000-0000-0000-0000-000000000002",
+                "user",
+                "a" * 64,
+                "b" * 64,
+                "untrusted",
+                '\"hello\"',
+                "{}",
+                "2026-07-13T00:00:00+00:00",
+            ),
+        )
+        connection.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE external_contents SET trust_class = 'trusted' WHERE id = ?",
+                ("00000000-0000-0000-0000-000000000001",),
+            )
+        connection.rollback()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "DELETE FROM external_contents WHERE id = ?",
+                ("00000000-0000-0000-0000-000000000001",),
+            )
 
 
 def test_complete_unstamped_v1_refuses_ordinary_open_without_mutation(tmp_path: Path) -> None:

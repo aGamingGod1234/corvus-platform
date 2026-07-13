@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from corvus.context import ContextEnvelope, ContextOwner, ExternalContent
 from corvus.models import (
     AcceptanceCriterion,
     ExecutionPlan,
