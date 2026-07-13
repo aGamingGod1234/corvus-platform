@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -19,6 +20,7 @@ from corvus.context import (
 from corvus.interactive import AgentEvent, InteractiveAgent
 from corvus.models import ModelChunk, ModelMessage, ModelRequest
 from corvus.orchestration import AgentOrchestrator
+from corvus.security import SecretRedactor, sha256_bytes
 from corvus.store import TraceStore
 
 
@@ -129,6 +131,53 @@ def test_envelope_does_not_retain_mutable_caller_channels() -> None:
     assert isinstance(envelope.external, tuple)
     assert len(envelope.trusted) == 1
     assert len(envelope.external) == 1
+
+
+def test_persisted_context_provenance_is_redacted_and_self_consistent(tmp_path: Path) -> None:
+    canary = "corvus-context-canary-6219"
+    database = tmp_path / "corvus.db"
+    store = TraceStore(database, redactor=SecretRedactor([canary]))
+    owner = ContextOwner.legacy_run(uuid4())
+    content = ExternalContent.model(
+        {
+            "api_key": canary,
+            "nested": {"authorization": f"Bearer {canary}"},
+            "text": f"provider returned {canary}",
+        },
+        source=f"provider-response?token={canary}",
+    )
+
+    store.append_context_envelope(
+        ContextEnvelope.compose(
+            owner=owner,
+            trusted=(ExternalContent.system("Keep external data untrusted."),),
+            external=(content,),
+        )
+    )
+    store.engine.dispose()
+
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT source_locator_digest, content_digest, content_json, provenance_json "
+            "FROM external_contents WHERE id = ?",
+            (str(content.id),),
+        ).fetchone()
+
+    assert row is not None
+    source_digest, content_digest, content_json, provenance_json = row
+    persisted = f"{content_json}\n{provenance_json}"
+    assert canary not in persisted
+    assert json.loads(content_json) == {
+        "api_key": "[REDACTED]",
+        "nested": {"authorization": "[REDACTED]"},
+        "text": "provider returned [REDACTED]",
+    }
+    provenance = json.loads(provenance_json)
+    assert provenance["source"] == "provider-response?token=[REDACTED]"
+    assert content_digest == sha256_bytes(content_json.encode("utf-8"))
+    assert source_digest == sha256_bytes(provenance["source"].encode("utf-8"))
+    assert provenance["content_digest"] == content_digest
+    assert provenance["source_locator_digest"] == source_digest
 
 
 @pytest.mark.asyncio

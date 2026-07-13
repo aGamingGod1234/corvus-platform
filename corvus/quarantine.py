@@ -17,7 +17,7 @@ import yaml
 from corvus.database import DatabaseBootstrapError, DatabaseState, classify_database
 from corvus.security import SecretRedactor, atomic_write, sha256_bytes, sha256_file
 
-_CAPTURE_SCHEMA_VERSION = 1
+_CAPTURE_SCHEMA_VERSION = 2
 _CONFIG_FILES = ("onboarding.json", "onboarding.yaml", "policy.yaml", "providers.yaml")
 _SECRET_KEYS = {"api_key", "apikey", "password", "secret", "token"}
 _MAX_CONFIG_BYTES = 1_048_576
@@ -91,6 +91,7 @@ class QuarantineReceipt:
     capture_id: str
     path: Path
     records_sha256: str
+    source_snapshot_sha256: str
     seal: str
 
 
@@ -207,12 +208,41 @@ def _file_inventory(root: Path) -> list[dict[str, object]]:
     return inventory
 
 
-def _capture_id(records_sha256: str, source_database_sha256: str) -> str:
+def _source_components(
+    *,
+    source_database_sha256: str,
+    config: list[dict[str, object]],
+    artifacts: list[dict[str, object]],
+    bundles: list[dict[str, object]],
+    backups: list[dict[str, object]],
+) -> dict[str, str]:
+    return {
+        "artifacts": sha256_bytes(_canonical_json(artifacts)),
+        "backups": sha256_bytes(_canonical_json(backups)),
+        "bundles": sha256_bytes(_canonical_json(bundles)),
+        "config": sha256_bytes(_canonical_json(config)),
+        "database": source_database_sha256,
+    }
+
+
+def _source_snapshot_sha256(components: dict[str, str]) -> str:
+    return sha256_bytes(_canonical_json(components))
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _capture_id(records_sha256: str, source_snapshot_sha256: str) -> str:
     return sha256_bytes(
         _canonical_json(
             {
                 "records_sha256": records_sha256,
-                "source_database_sha256": source_database_sha256,
+                "source_snapshot_sha256": source_snapshot_sha256,
             }
         )
     )
@@ -222,13 +252,17 @@ def _manifest(
     capture_id: str,
     records_sha256: str,
     source_database_sha256: str,
+    source_components: dict[str, str],
+    source_snapshot_sha256: str,
 ) -> dict[str, object]:
     body: dict[str, object] = {
         "capture_id": capture_id,
         "records_sha256": records_sha256,
         "schema_version": _CAPTURE_SCHEMA_VERSION,
         "seal_algorithm": "sha256",
+        "source_components": source_components,
         "source_database_sha256": source_database_sha256,
+        "source_snapshot_sha256": source_snapshot_sha256,
     }
     body["seal"] = sha256_bytes(_canonical_json(body))
     return body
@@ -239,15 +273,40 @@ def verify_v1_quarantine(path: Path) -> bool:
         records_bytes = (path / "records.json").read_bytes()
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
         seal = manifest.pop("seal")
+        expected_keys = {
+            "capture_id",
+            "records_sha256",
+            "schema_version",
+            "seal_algorithm",
+            "source_components",
+            "source_database_sha256",
+            "source_snapshot_sha256",
+        }
+        if set(manifest) != expected_keys:
+            return False
         records_sha256 = sha256_bytes(records_bytes)
         source_database_sha256 = manifest.get("source_database_sha256")
+        source_snapshot_sha256 = manifest.get("source_snapshot_sha256")
+        source_components = manifest.get("source_components")
         capture_id = manifest.get("capture_id")
+        if not isinstance(source_components, dict) or set(source_components) != {
+            "artifacts",
+            "backups",
+            "bundles",
+            "config",
+            "database",
+        }:
+            return False
+        if not all(_is_sha256(value) for value in source_components.values()):
+            return False
         return bool(
-            isinstance(source_database_sha256, str)
-            and len(source_database_sha256) == 64
-            and isinstance(capture_id, str)
+            _is_sha256(source_database_sha256)
+            and _is_sha256(source_snapshot_sha256)
+            and source_components["database"] == source_database_sha256
+            and source_snapshot_sha256 == _source_snapshot_sha256(source_components)
+            and _is_sha256(capture_id)
             and path.name == capture_id
-            and capture_id == _capture_id(records_sha256, source_database_sha256)
+            and capture_id == _capture_id(records_sha256, source_snapshot_sha256)
             and manifest.get("records_sha256") == records_sha256
             and manifest.get("schema_version") == _CAPTURE_SCHEMA_VERSION
             and manifest.get("seal_algorithm") == "sha256"
@@ -276,11 +335,18 @@ def capture_v1_quarantine(
     with tempfile.TemporaryDirectory(prefix="corvus-v1-quarantine-db-") as temporary:
         snapshot = Path(temporary) / "corvus.db"
         _snapshot_database(database, snapshot)
+        artifact_inventory = _file_inventory(artifact_root)
+        backup_inventory = _file_inventory(backup_root)
+        bundle_inventory = _file_inventory(bundle_root)
+        config_inventory = _file_inventory(config_root)
+        config_records = _config_records(config_root, redactor)
+        if _file_inventory(config_root) != config_inventory:
+            raise ValueError("quarantine config source changed during capture")
         records = {
-            "artifacts": _file_inventory(artifact_root),
-            "backups": _file_inventory(backup_root),
-            "bundles": _file_inventory(bundle_root),
-            "config": _config_records(config_root, redactor),
+            "artifacts": artifact_inventory,
+            "backups": backup_inventory,
+            "bundles": bundle_inventory,
+            "config": config_records,
             "database": _database_records(snapshot, redactor),
             "schema_version": _CAPTURE_SCHEMA_VERSION,
             "source_database": {
@@ -291,8 +357,22 @@ def capture_v1_quarantine(
         records_bytes = _canonical_json(records)
         records_sha256 = sha256_bytes(records_bytes)
         source_database_sha256 = sha256_file(snapshot)
-        capture_id = _capture_id(records_sha256, source_database_sha256)
-        manifest = _manifest(capture_id, records_sha256, source_database_sha256)
+        components = _source_components(
+            source_database_sha256=source_database_sha256,
+            config=config_inventory,
+            artifacts=artifact_inventory,
+            bundles=bundle_inventory,
+            backups=backup_inventory,
+        )
+        source_snapshot_sha256 = _source_snapshot_sha256(components)
+        capture_id = _capture_id(records_sha256, source_snapshot_sha256)
+        manifest = _manifest(
+            capture_id,
+            records_sha256,
+            source_database_sha256,
+            components,
+            source_snapshot_sha256,
+        )
 
     destination = quarantine_root / capture_id
     if destination.exists():
@@ -315,5 +395,6 @@ def capture_v1_quarantine(
         capture_id=capture_id,
         path=destination,
         records_sha256=records_sha256,
+        source_snapshot_sha256=source_snapshot_sha256,
         seal=str(manifest["seal"]),
     )

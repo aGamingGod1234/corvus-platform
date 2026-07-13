@@ -185,13 +185,16 @@ class TraceStore:
                 created_at=created_at,
             )
 
-    @staticmethod
-    def _external_row(owner: ContextOwner, content: ExternalContent) -> ExternalContentRow:
+    def _external_row(self, owner: ContextOwner, content: ExternalContent) -> ExternalContentRow:
+        content_json = self.redactor.redact_json(content.data)
+        content_digest = sha256_bytes(content_json.encode("utf-8"))
+        source = self.redactor.redact(content.source)
+        source_locator_digest = sha256_bytes(source.encode("utf-8"))
         provenance = {
-            "content_digest": content.content_digest,
+            "content_digest": content_digest,
             "origin": content.origin.value,
-            "source": content.source,
-            "source_locator_digest": content.source_locator_digest,
+            "source": source,
+            "source_locator_digest": source_locator_digest,
             "trust_class": content.trust_class.value,
         }
         return ExternalContentRow(
@@ -199,10 +202,10 @@ class TraceStore:
             owner_kind=owner.kind.value,
             owner_id=str(owner.id),
             origin=content.origin.value,
-            source_locator_digest=content.source_locator_digest,
-            content_digest=content.content_digest,
+            source_locator_digest=source_locator_digest,
+            content_digest=content_digest,
             trust_class=content.trust_class.value,
-            content_json=content.content_json,
+            content_json=content_json,
             provenance_json=json.dumps(provenance, ensure_ascii=False, sort_keys=True),
             created_at=datetime.now(UTC),
         )

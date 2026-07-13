@@ -93,6 +93,8 @@ def test_v1_quarantine_capture_is_sealed_redacted_and_idempotent(tmp_path: Path)
     assert manifest["records_sha256"] == first.records_sha256
     assert manifest["seal_algorithm"] == "sha256"
     assert len(manifest["source_database_sha256"]) == 64
+    assert len(manifest["source_snapshot_sha256"]) == 64
+    assert first.source_snapshot_sha256 == manifest["source_snapshot_sha256"]
     assert len(manifest["seal"]) == 64
 
     (first.path / "records.json").write_text("{}", encoding="utf-8")
@@ -135,3 +137,34 @@ def test_source_distinct_captures_cannot_alias_after_redaction(tmp_path: Path) -
     second_records = (second.path / "records.json").read_bytes()
     assert first_records == second_records
     assert SECOND_CANARY.encode() not in second_records
+
+
+@pytest.mark.parametrize("relative_path", ("config/.env", "config/providers.yaml"))
+def test_complete_raw_config_snapshot_prevents_redaction_equal_aliases(
+    tmp_path: Path, relative_path: str
+) -> None:
+    source_a = _copy_verified_fixture(tmp_path, "source-a")
+    source_b = _copy_verified_fixture(tmp_path, "source-b")
+    changed = source_b / relative_path
+    changed.write_text(
+        changed.read_text(encoding="utf-8").replace(CANARY, SECOND_CANARY),
+        encoding="utf-8",
+    )
+
+    captures = tmp_path / "quarantine"
+    first = _capture(source_a, captures)
+    second = _capture(source_b, captures)
+
+    assert (first.path / "records.json").read_bytes() == (second.path / "records.json").read_bytes()
+    assert first.records_sha256 == second.records_sha256
+    assert first.capture_id != second.capture_id
+    assert first.source_snapshot_sha256 != second.source_snapshot_sha256
+
+    first_manifest = json.loads((first.path / "manifest.json").read_text(encoding="utf-8"))
+    second_manifest = json.loads((second.path / "manifest.json").read_text(encoding="utf-8"))
+    assert first_manifest["source_database_sha256"] == second_manifest["source_database_sha256"]
+    assert first_manifest["source_snapshot_sha256"] != second_manifest["source_snapshot_sha256"]
+    assert CANARY not in json.dumps(first_manifest, sort_keys=True)
+    assert SECOND_CANARY not in json.dumps(second_manifest, sort_keys=True)
+    assert quarantine.verify_v1_quarantine(first.path) is True
+    assert quarantine.verify_v1_quarantine(second.path) is True

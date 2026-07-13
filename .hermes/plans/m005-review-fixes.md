@@ -41,8 +41,9 @@ Do not add Milestone 1 authority/domain schemas, FastAPI, React, Tauri, channels
   - bundle, artifact, and backup files.
 - `tests/fixtures/v1/manifest.json` hashes every committed fixture file. Tests verify this manifest before use and copy source bytes to temporary paths; they never call current `Base.metadata.create_all()` to synthesize legacy evidence.
 - Quarantine capture remains redacted, bounded, source-readable, sealed, and idempotent for identical bytes.
-- `capture_id` is derived from both canonical redacted-record digest and the exact database-snapshot SHA-256. Verification recomputes that identity and validates the manifest source hash.
-- Two byte-distinct databases whose sanitized records are identical produce different capture IDs. A returned receipt seal always equals the on-disk manifest seal.
+- `capture_id` is derived from both the canonical redacted-record digest and a complete raw-source snapshot digest. The raw-source digest covers the SQLite backup plus path/size/byte hashes for every file under the config, artifact, bundle, and backup roots, including files such as `.env` that are intentionally excluded from persisted redacted records.
+- Verification recomputes the aggregate source digest from sealed per-domain component digests, recomputes capture identity, and validates the manifest source hash without persisting raw secrets.
+- Any two byte-distinct source snapshots whose sanitized records are identical produce different capture IDs. A returned receipt seal always equals the on-disk manifest seal.
 
 ### D. Supported pinned sandbox default
 
