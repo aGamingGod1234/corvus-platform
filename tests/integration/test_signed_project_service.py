@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from corvus.application.ports import (
     ProjectAuthorizationDecision,
     ProjectAuthorizationRequest,
+    ProjectCreateLifecycleError,
 )
 from corvus.application.projects import (
     CreateProjectCommand,
@@ -124,6 +125,23 @@ class Ed25519TestSigner:
         return self.private_key.sign(data)
 
 
+class AuditThenStoreLifecycle:
+    def __init__(
+        self,
+        audit: SignedProjectAuditAdapter,
+        projects: ProjectRepository,
+    ) -> None:
+        self.audit = audit
+        self.projects = projects
+
+    def create(self, project: Project, event) -> None:
+        try:
+            self.audit.record(event)
+        except Exception as exc:
+            raise ProjectCreateLifecycleError("audit_persistence_failed") from exc
+        self.projects.add(project)
+
+
 def _service_fixture(tmp_path: Path):
     database = _database(tmp_path)
     project_repository = ProjectRepository(database)
@@ -167,6 +185,7 @@ def _service_fixture(tmp_path: Path):
         store=ProjectRepositoryAdapter(project_repository),
         authorization=FixedAuthorization(snapshot),
         audit=audit,
+        create_lifecycle=AuditThenStoreLifecycle(audit, project_repository),
     )
     command = CreateProjectCommand(
         request_id=request_id,

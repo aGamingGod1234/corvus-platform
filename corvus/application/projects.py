@@ -153,12 +153,18 @@ class ProjectService:
                 reason_code=decision.reason_code,
             )
         result: Project | None
-        if action == "project.create" and self.create_lifecycle is not None:
+        if action == "project.create":
             if project is None:
                 return ProjectResponse(
                     request_id=request_id,
                     ok=False,
                     reason_code="project_missing",
+                )
+            if self.create_lifecycle is None:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="project_authority_lifecycle_unavailable",
                 )
             try:
                 self.create_lifecycle.create(project, audit_event)
@@ -185,13 +191,7 @@ class ProjectService:
                     reason_code="audit_persistence_failed",
                 )
             try:
-                if action == "project.create":
-                    if project is None:
-                        raise ValueError("project_missing")
-                    self.store.create(project)
-                    result = project
-                else:
-                    result = self.store.get(workspace_id, project_id)
+                result = self.store.get(workspace_id, project_id)
             except Exception:
                 return ProjectResponse(
                     request_id=request_id,

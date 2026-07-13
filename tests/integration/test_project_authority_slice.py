@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from corvus.application.ports import ProjectAuthorizationDecision
+from corvus.application.ports import (
+    ProjectAuthorizationDecision,
+    ProjectCreateLifecycleError,
+)
 from corvus.application.projects import (
     CreateProjectCommand,
     GetProjectQuery,
@@ -48,6 +51,19 @@ class FakeAudit:
         self.events.append(event)
 
 
+class FakeCreateLifecycle:
+    def __init__(self, store: FakeStore, audit: FakeAudit) -> None:
+        self.store = store
+        self.audit = audit
+
+    def create(self, project: Project, event) -> None:
+        try:
+            self.audit.record(event)
+        except Exception as exc:
+            raise ProjectCreateLifecycleError("audit_persistence_failed") from exc
+        self.store.create(project)
+
+
 def _command(project: Project) -> CreateProjectCommand:
     return CreateProjectCommand(
         request_id=uuid4(),
@@ -62,7 +78,12 @@ def test_create_and_read_share_one_authorized_audited_path() -> None:
     store = FakeStore()
     audit = FakeAudit()
     client = InProcessProjectClient(
-        ProjectService(store=store, authorization=FakeAuthorization(), audit=audit)
+        ProjectService(
+            store=store,
+            authorization=FakeAuthorization(),
+            audit=audit,
+            create_lifecycle=FakeCreateLifecycle(store, audit),
+        )
     )
     project = Project(
         workspace_id=uuid4(),
@@ -113,11 +134,13 @@ def test_denial_is_audited_and_does_not_mutate() -> None:
 
 def test_audit_failure_fails_closed_before_mutation() -> None:
     store = FakeStore()
+    audit = FakeAudit(fail=True)
     client = InProcessProjectClient(
         ProjectService(
             store=store,
             authorization=FakeAuthorization(),
-            audit=FakeAudit(fail=True),
+            audit=audit,
+            create_lifecycle=FakeCreateLifecycle(store, audit),
         )
     )
     project = Project(
@@ -132,3 +155,24 @@ def test_audit_failure_fails_closed_before_mutation() -> None:
     assert response.ok is False
     assert response.reason_code == "audit_persistence_failed"
     assert store.create_calls == 0
+
+
+def test_allowed_create_without_authority_lifecycle_fails_closed() -> None:
+    store = FakeStore()
+    audit = FakeAudit()
+    client = InProcessProjectClient(
+        ProjectService(store=store, authorization=FakeAuthorization(), audit=audit)
+    )
+    project = Project(
+        workspace_id=uuid4(),
+        name="No authority lifecycle",
+        root_locator="workspace://no-authority-lifecycle",
+        privacy="private",
+    )
+
+    response = client.create_project(_command(project))
+
+    assert response.ok is False
+    assert response.reason_code == "project_authority_lifecycle_unavailable"
+    assert store.create_calls == 0
+    assert audit.events == []
