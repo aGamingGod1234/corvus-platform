@@ -9,6 +9,7 @@ from corvus.application.authorization import (
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
+    RegistryVerificationProof,
     evaluate_capability_intersection,
 )
 from corvus.domain.access import (
@@ -21,8 +22,17 @@ from corvus.domain.access import (
 from corvus.domain.deployment import (
     AuthorityEpochCredential,
     AuthorityEpochCredentialStatus,
+    AuthorityRegistryFreshnessProof,
+    AuthorityRegistryTrustState,
+    AuthorityRegistryVerifierKeyVersion,
+    AuthorityStateRootLeafFamily,
+    AuthorityStateRootManifestVersion,
+    AuthorityTrustAnchor,
+    AuthorityTrustAnchorKind,
+    CoverageKind,
     DeploymentInstance,
     DeploymentInstanceLease,
+    RegistryVerifierKeyStatus,
     WorkspaceAuthority,
     WorkspaceAuthorityState,
     fixed_workspace_lock_name,
@@ -93,6 +103,13 @@ def _exact_allow_case() -> tuple[
         authority_epoch_credential_id=uuid4(),
         authority_commit_receipt_id=uuid4(),
         authority_proof_digest="3" * 64,
+        trust_anchor_id=uuid4(),
+        registry_trust_metadata_version=4,
+        registry_history_head_digest="6" * 64,
+        registry_freshness_proof_id=uuid4(),
+        registry_freshness_sequence=10,
+        authority_manifest_version_id=uuid4(),
+        authority_manifest_digest="7" * 64,
         requester_id=requester_id,
         acting_agent_id=agent_id,
         scope_kind="project",
@@ -149,7 +166,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         authority_generation=request.workspace_authority_generation,
         authority_state_root=request.authority_state_root,
         authority_epoch_credential_id=epoch_credential.id,
-        trust_anchor_id=uuid4(),
+        trust_anchor_id=request.trust_anchor_id,
         active_lease_id=lease.id,
         state=WorkspaceAuthorityState.ACTIVE,
         activated_at=request.evaluated_at - timedelta(minutes=2),
@@ -165,12 +182,112 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         authority_proof_digest=request.authority_proof_digest,
         finalized=True,
     )
+    registry_id = uuid4()
+    assert request.registry_trust_metadata_version is not None
+    assert request.registry_history_head_digest is not None
+    assert request.registry_freshness_proof_id is not None
+    assert request.registry_freshness_sequence is not None
+    previous_registry_trust_state = AuthorityRegistryTrustState(
+        registry_id=registry_id,
+        metadata_version=3,
+        latest_verifier_key_version=2,
+        complete_history_head_digest="4" * 64,
+        issued_at=request.evaluated_at - timedelta(minutes=10),
+        expires_at=request.evaluated_at + timedelta(hours=1),
+        offline_root_version=1,
+        threshold_signature_set_digest="5" * 64,
+    )
+    registry_trust_state = AuthorityRegistryTrustState(
+        registry_id=registry_id,
+        metadata_version=request.registry_trust_metadata_version,
+        latest_verifier_key_version=3,
+        complete_history_head_digest=request.registry_history_head_digest,
+        issued_at=request.evaluated_at - timedelta(minutes=5),
+        expires_at=request.evaluated_at + timedelta(hours=1),
+        offline_root_version=1,
+        threshold_signature_set_digest="8" * 64,
+        previous_metadata_digest=previous_registry_trust_state.canonical_digest,
+    )
+    registry_verifier_key = AuthorityRegistryVerifierKeyVersion(
+        registry_id=registry_id,
+        key_version=registry_trust_state.latest_verifier_key_version,
+        public_key="registry-public-key",
+        status=RegistryVerifierKeyStatus.ACTIVE,
+        valid_from=request.evaluated_at - timedelta(days=1),
+        threshold_attestation_digest="9" * 64,
+    )
+    registry_freshness_proof = AuthorityRegistryFreshnessProof(
+        id=request.registry_freshness_proof_id,
+        registry_id=registry_id,
+        trust_state_metadata_version=registry_trust_state.metadata_version,
+        complete_history_head_digest=registry_trust_state.complete_history_head_digest,
+        registry_sequence=request.registry_freshness_sequence,
+        challenge_nonce_digest="a" * 64,
+        response_digest="b" * 64,
+        issued_at=request.evaluated_at - timedelta(seconds=5),
+        expires_at=request.evaluated_at + timedelta(minutes=5),
+        verifier_key_version_id=registry_verifier_key.id,
+        registry_signature="verified-registry-signature",
+    )
+    registry_verification_proof = RegistryVerificationProof(
+        registry_id=registry_id,
+        trust_state_digest=registry_trust_state.canonical_digest,
+        freshness_proof_id=registry_freshness_proof.id,
+        freshness_response_digest=registry_freshness_proof.response_digest,
+        verifier_key_version_id=registry_verifier_key.id,
+        trust_state_threshold_signatures_verified=True,
+        freshness_signature_verified=True,
+        finalized=True,
+    )
+    trust_anchor = AuthorityTrustAnchor(
+        id=request.trust_anchor_id,
+        workspace_id=request.workspace_id,
+        kind=AuthorityTrustAnchorKind.REGISTRY_GENERATION,
+        anchor_registry_id=registry_id,
+        pinned_registry_root_digest="c" * 64,
+        policy_digest="d" * 64,
+        created_at=request.evaluated_at - timedelta(days=1),
+    )
+    authority_manifest = AuthorityStateRootManifestVersion(
+        id=request.authority_manifest_version_id,
+        schema_version=1,
+        canonicalization_version=1,
+        manifest_digest=request.authority_manifest_digest,
+        created_at=request.evaluated_at - timedelta(days=1),
+    )
+    authority_manifest_families = (
+        AuthorityStateRootLeafFamily(
+            manifest_version_id=authority_manifest.id,
+            ordinal=1,
+            family_name="workspace_memberships",
+            coverage_kind=CoverageKind.IN_ROOT,
+            canonicalization_version=1,
+        ),
+        AuthorityStateRootLeafFamily(
+            manifest_version_id=authority_manifest.id,
+            ordinal=2,
+            family_name="access_bundles",
+            coverage_kind=CoverageKind.IN_ROOT,
+            canonicalization_version=1,
+        ),
+    )
     return AuthorityEvaluationContext(
         deployment_instance=deployment_instance,
         workspace_authority=authority,
         epoch_credential=epoch_credential,
         active_lease=lease,
         commit_proof=commit_proof,
+        trust_anchor=trust_anchor,
+        previous_registry_trust_state=previous_registry_trust_state,
+        registry_trust_state=registry_trust_state,
+        registry_freshness_proof=registry_freshness_proof,
+        registry_verifier_key=registry_verifier_key,
+        registry_verification_proof=registry_verification_proof,
+        minimum_registry_sequence=9,
+        expected_registry_nonce_digest="a" * 64,
+        authority_manifest=authority_manifest,
+        authority_manifest_families=authority_manifest_families,
+        mutable_authority_families=frozenset({"workspace_memberships", "access_bundles"}),
         deployment_instance_key_available=True,
         os_lock_held=True,
     )
@@ -968,3 +1085,218 @@ def test_authority_proof_digest_substitution_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "authority_proof_digest_mismatch"
+
+
+def test_missing_trust_anchor_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"trust_anchor": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_trust_anchor_missing"
+
+
+def test_stale_registry_trust_state_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_trust_state is not None
+    stale = context.registry_trust_state.model_copy(update={"metadata_version": 3})
+    context = context.model_copy(update={"registry_trust_state": stale})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "stale_registry_trust_state"
+
+
+def test_expired_registry_trust_state_has_zero_grace() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_trust_state is not None
+    expired = context.registry_trust_state.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"registry_trust_state": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_trust_state_expired"
+
+
+def test_registry_trust_state_prefix_replay_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_trust_state is not None
+    replayed = context.registry_trust_state.model_copy(
+        update={"previous_metadata_digest": "f" * 64}
+    )
+    context = context.model_copy(update={"registry_trust_state": replayed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_metadata_prefix_mismatch"
+
+
+def test_stale_registry_freshness_proof_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_freshness_proof is not None
+    stale = context.registry_freshness_proof.model_copy(update={"trust_state_metadata_version": 3})
+    context = context.model_copy(update={"registry_freshness_proof": stale})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "stale_registry_freshness_proof"
+
+
+def test_expired_registry_freshness_proof_has_zero_grace() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_freshness_proof is not None
+    expired = context.registry_freshness_proof.model_copy(
+        update={"expires_at": case[0].evaluated_at}
+    )
+    context = context.model_copy(update={"registry_freshness_proof": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_freshness_proof_expired"
+
+
+def test_registry_freshness_sequence_replay_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"minimum_registry_sequence": 10})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_sequence_replay"
+
+
+def test_registry_verifier_rollback_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verifier_key is not None
+    rolled_back = context.registry_verifier_key.model_copy(update={"key_version": 2})
+    context = context.model_copy(update={"registry_verifier_key": rolled_back})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_verifier_version_rollback"
+
+
+def test_revoked_registry_verifier_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verifier_key is not None
+    revoked = context.registry_verifier_key.model_copy(
+        update={
+            "status": RegistryVerifierKeyStatus.REVOKED,
+            "revoked_at": case[0].evaluated_at,
+        }
+    )
+    context = context.model_copy(update={"registry_verifier_key": revoked})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_verifier_revoked_at_verification_time"
+
+
+def test_compromised_registry_verifier_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verifier_key is not None
+    compromised = context.registry_verifier_key.model_copy(
+        update={
+            "status": RegistryVerifierKeyStatus.COMPROMISED,
+            "compromise_effective_at": case[0].evaluated_at,
+        }
+    )
+    context = context.model_copy(update={"registry_verifier_key": compromised})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_verifier_compromised_at_verification_time"
+
+
+def test_missing_registry_signature_verification_proof_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"registry_verification_proof": None}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_verification_proof_missing"
+
+
+def test_unverified_registry_trust_state_signatures_fail_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verification_proof is not None
+    proof = context.registry_verification_proof.model_copy(
+        update={"trust_state_threshold_signatures_verified": False}
+    )
+    context = context.model_copy(update={"registry_verification_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_trust_signatures_unverified"
+
+
+def test_unverified_registry_freshness_signature_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verification_proof is not None
+    proof = context.registry_verification_proof.model_copy(
+        update={"freshness_signature_verified": False}
+    )
+    context = context.model_copy(update={"registry_verification_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_freshness_signature_unverified"
+
+
+def test_missing_authority_manifest_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"authority_manifest": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_manifest_missing"
+
+
+def test_authority_manifest_digest_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.authority_manifest is not None
+    substituted = context.authority_manifest.model_copy(update={"manifest_digest": "f" * 64})
+    context = context.model_copy(update={"authority_manifest": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_manifest_mismatch"
+
+
+def test_unlisted_mutable_authority_family_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"authority_manifest_families": ()}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "unlisted_authority_family"

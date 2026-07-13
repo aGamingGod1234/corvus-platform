@@ -15,13 +15,27 @@ from corvus.domain.access import (
     DelegationGrant,
 )
 from corvus.domain.deployment import (
+    AuthorityContractError,
     AuthorityEpochCredential,
     AuthorityEpochCredentialStatus,
+    AuthorityRegistryFreshnessProof,
+    AuthorityRegistryTrustState,
+    AuthorityRegistryVerifierKeyVersion,
+    AuthorityStateRootLeafFamily,
+    AuthorityStateRootManifestVersion,
+    AuthorityTrustAnchor,
+    AuthorityTrustAnchorKind,
+    AuthorityTrustAnchorStatus,
     DeploymentInstance,
     DeploymentInstanceLease,
     DeploymentInstanceStatus,
+    ManifestStatus,
     WorkspaceAuthority,
     WorkspaceAuthorityState,
+    validate_authority_root_manifest,
+    validate_registry_freshness_proof,
+    validate_registry_trust_transition,
+    validate_registry_verifier_time,
 )
 
 
@@ -41,6 +55,13 @@ class AuthorizationRequest(BaseModel):
     authority_epoch_credential_id: UUID
     authority_commit_receipt_id: UUID
     authority_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    trust_anchor_id: UUID
+    registry_trust_metadata_version: int | None = Field(default=None, ge=1)
+    registry_history_head_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    registry_freshness_proof_id: UUID | None = None
+    registry_freshness_sequence: int | None = Field(default=None, ge=1)
+    authority_manifest_version_id: UUID
+    authority_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -73,6 +94,19 @@ class AuthorityCommitProof(BaseModel):
     finalized: bool
 
 
+class RegistryVerificationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    registry_id: UUID
+    trust_state_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    freshness_proof_id: UUID
+    freshness_response_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verifier_key_version_id: UUID
+    trust_state_threshold_signatures_verified: bool
+    freshness_signature_verified: bool
+    finalized: bool
+
+
 class AuthorityEvaluationContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -81,9 +115,174 @@ class AuthorityEvaluationContext(BaseModel):
     epoch_credential: AuthorityEpochCredential | None
     active_lease: DeploymentInstanceLease | None
     commit_proof: AuthorityCommitProof | None
+    trust_anchor: AuthorityTrustAnchor | None
+    previous_registry_trust_state: AuthorityRegistryTrustState | None = None
+    registry_trust_state: AuthorityRegistryTrustState | None = None
+    registry_freshness_proof: AuthorityRegistryFreshnessProof | None = None
+    registry_verifier_key: AuthorityRegistryVerifierKeyVersion | None = None
+    registry_verification_proof: RegistryVerificationProof | None = None
+    minimum_registry_sequence: int = Field(default=0, ge=0)
+    expected_registry_nonce_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    authority_manifest: AuthorityStateRootManifestVersion | None
+    authority_manifest_families: tuple[AuthorityStateRootLeafFamily, ...] = ()
+    mutable_authority_families: frozenset[str] = frozenset()
     deployment_instance_key_available: bool
     epoch_credential_key_available: bool = True
     os_lock_held: bool
+
+
+def _registry_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext,
+    anchor: AuthorityTrustAnchor,
+) -> str | None:
+    if anchor.kind is not AuthorityTrustAnchorKind.REGISTRY_GENERATION:
+        return None
+    if anchor.anchor_registry_id is None or anchor.pinned_registry_root_digest is None:
+        return "registry_trust_anchor_incomplete"
+    if (
+        request.registry_trust_metadata_version is None
+        or request.registry_history_head_digest is None
+        or request.registry_freshness_proof_id is None
+        or request.registry_freshness_sequence is None
+    ):
+        return "registry_authority_claims_missing"
+
+    trust_state = context.registry_trust_state
+    if trust_state is None:
+        return "registry_trust_state_missing"
+    if trust_state.registry_id != anchor.anchor_registry_id:
+        return "registry_identity_mismatch"
+    if trust_state.metadata_version < request.registry_trust_metadata_version:
+        return "stale_registry_trust_state"
+    if (
+        trust_state.metadata_version != request.registry_trust_metadata_version
+        or trust_state.complete_history_head_digest != request.registry_history_head_digest
+    ):
+        return "registry_trust_state_mismatch"
+    if trust_state.issued_at > request.evaluated_at:
+        return "registry_trust_state_not_yet_valid"
+    if trust_state.expires_at <= request.evaluated_at:
+        return "registry_trust_state_expired"
+
+    previous = context.previous_registry_trust_state
+    if trust_state.metadata_version > 1:
+        if previous is None:
+            return "registry_trust_state_predecessor_missing"
+        try:
+            validate_registry_trust_transition(
+                previous,
+                trust_state,
+                now=request.evaluated_at,
+            )
+        except AuthorityContractError as exc:
+            return exc.reason_code
+    elif trust_state.previous_metadata_digest is not None:
+        return "registry_metadata_prefix_mismatch"
+
+    verifier = context.registry_verifier_key
+    if verifier is None:
+        return "registry_verifier_missing"
+    if verifier.registry_id != trust_state.registry_id:
+        return "registry_verifier_registry_mismatch"
+    if verifier.key_version < trust_state.latest_verifier_key_version:
+        return "registry_verifier_version_rollback"
+    if verifier.key_version != trust_state.latest_verifier_key_version:
+        return "registry_verifier_version_mismatch"
+    try:
+        validate_registry_verifier_time(verifier, now=request.evaluated_at)
+    except AuthorityContractError as exc:
+        return exc.reason_code
+
+    freshness = context.registry_freshness_proof
+    if freshness is None:
+        return "registry_freshness_proof_missing"
+    if freshness.id != request.registry_freshness_proof_id:
+        return "registry_freshness_proof_mismatch"
+    if freshness.registry_id != trust_state.registry_id:
+        return "registry_freshness_registry_mismatch"
+    if freshness.trust_state_metadata_version < trust_state.metadata_version:
+        return "stale_registry_freshness_proof"
+    if freshness.trust_state_metadata_version != trust_state.metadata_version:
+        return "registry_freshness_trust_state_mismatch"
+    if freshness.complete_history_head_digest != trust_state.complete_history_head_digest:
+        return "registry_freshness_history_prefix_mismatch"
+    if freshness.verifier_key_version_id != verifier.id:
+        return "registry_freshness_verifier_mismatch"
+    if freshness.registry_sequence != request.registry_freshness_sequence:
+        return "registry_freshness_sequence_mismatch"
+    if freshness.issued_at > request.evaluated_at:
+        return "registry_freshness_proof_not_yet_valid"
+    if freshness.expires_at <= request.evaluated_at:
+        return "registry_freshness_proof_expired"
+    if context.expected_registry_nonce_digest is None:
+        return "registry_freshness_nonce_missing"
+    verification = context.registry_verification_proof
+    if verification is None:
+        return "registry_verification_proof_missing"
+    if not verification.finalized:
+        return "registry_verification_not_finalized"
+    if (
+        verification.registry_id != trust_state.registry_id
+        or verification.trust_state_digest != trust_state.canonical_digest
+        or verification.freshness_proof_id != freshness.id
+        or verification.freshness_response_digest != freshness.response_digest
+        or verification.verifier_key_version_id != verifier.id
+    ):
+        return "registry_verification_proof_mismatch"
+    if not verification.trust_state_threshold_signatures_verified:
+        return "registry_trust_signatures_unverified"
+    if not verification.freshness_signature_verified:
+        return "registry_freshness_signature_unverified"
+    try:
+        validate_registry_freshness_proof(
+            freshness,
+            trust_state,
+            now=request.evaluated_at,
+            minimum_sequence=context.minimum_registry_sequence,
+            expected_nonce_digest=context.expected_registry_nonce_digest,
+        )
+    except AuthorityContractError as exc:
+        return exc.reason_code
+    return None
+
+
+def _manifest_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext,
+) -> str | None:
+    manifest = context.authority_manifest
+    if manifest is None:
+        return "authority_manifest_missing"
+    if (
+        manifest.id != request.authority_manifest_version_id
+        or manifest.manifest_digest != request.authority_manifest_digest
+    ):
+        return "authority_manifest_mismatch"
+    if manifest.status is not ManifestStatus.ACTIVE:
+        return "authority_manifest_inactive"
+    if manifest.created_at > request.evaluated_at:
+        return "authority_manifest_not_yet_active"
+    families = list(context.authority_manifest_families)
+    if any(
+        family.manifest_version_id != manifest.id
+        or family.canonicalization_version != manifest.canonicalization_version
+        for family in families
+    ):
+        return "authority_manifest_family_binding_mismatch"
+    if len({family.family_name for family in families}) != len(families) or len(
+        {family.ordinal for family in families}
+    ) != len(families):
+        return "authority_manifest_family_set_ambiguous"
+    try:
+        validate_authority_root_manifest(
+            manifest,
+            families,
+            mutable_authority_families=set(context.mutable_authority_families),
+        )
+    except AuthorityContractError as exc:
+        return exc.reason_code
+    return None
 
 
 def _authority_denial_reason(
@@ -167,6 +366,29 @@ def _authority_denial_reason(
         return "authority_commit_receipt_mismatch"
     if proof.authority_proof_digest != request.authority_proof_digest:
         return "authority_proof_digest_mismatch"
+    anchor = context.trust_anchor
+    if anchor is None:
+        return "authority_trust_anchor_missing"
+    if authority.trust_anchor_id != request.trust_anchor_id or anchor.id != request.trust_anchor_id:
+        return "authority_trust_anchor_mismatch"
+    if anchor.workspace_id != request.workspace_id:
+        return "cross_workspace_trust_anchor"
+    if anchor.status is not AuthorityTrustAnchorStatus.ACTIVE:
+        return "authority_trust_anchor_inactive"
+    if anchor.created_at > request.evaluated_at:
+        return "authority_trust_anchor_not_yet_active"
+    if anchor.kind is AuthorityTrustAnchorKind.SEALED_LOCAL_GENERATION and (
+        anchor.local_lock_name is None
+        or anchor.sealed_generation_ref is None
+        or anchor.device_binding_digest is None
+    ):
+        return "sealed_local_trust_anchor_incomplete"
+    registry_denial = _registry_denial_reason(request, context, anchor)
+    if registry_denial is not None:
+        return registry_denial
+    manifest_denial = _manifest_denial_reason(request, context)
+    if manifest_denial is not None:
+        return manifest_denial
     if not context.os_lock_held:
         return "workspace_os_lock_not_held"
     lease = context.active_lease
