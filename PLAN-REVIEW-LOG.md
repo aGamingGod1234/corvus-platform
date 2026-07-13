@@ -1,5 +1,5 @@
 # Plan Review Log: Corvus CLI V2 and Shared Web/Desktop Platform
-Started 2026-07-13 12:58:48 +0800. Reviewer: Gemini CLI gemini-3.1-pro-preview. MAX_ROUNDS=3.
+Started 2026-07-13 12:58:48 +0800. Initial reviewer: Gemini CLI gemini-3.1-pro-preview. The external three-round target was followed by recorded Hermes refresh rounds because external reviewers were unavailable.
 
 ## Planner availability
 Claude Code planning was attempted first and returned HTTP 401 before reading or changing the repository. No Claude-generated plan content was used.
@@ -36,3 +36,17 @@ Two read-only GPT-5.6-sol reviewers inspected all 27 V1 source files. Both concl
 Accepted all release-blocking findings. `PLAN.md` now adds Milestone 0.5 for snapshot/redaction/verification/delivery/provider/audit hardening; signed audit checkpoints; golden command/protocol tests; an idempotent V1 importer; and a runtime-profile capability projection. Web, desktop, and channel adapters remain blocked until these gates and the refreshed post-configuration audits pass.
 
 The reviewers began before the local baseline Git repository was initialized; their statement that the archive was not a Git repository was accurate at audit start. The current repository now has immutable baseline commit `1410d7f`.
+
+## Round 4 - Refreshed post-configuration Hermes review
+The paired security/schema reviewer timed out after 15 calls and produced no summary or verdict. This is blocked evidence, not approval.
+
+The completed product-topology reviewer inspected committed plan `a59babe` and returned `VERDICT: REVISE`. Material findings required: split overloaded `RuntimeProfile`; event-level private scope/audience; acting-agent grants and authority intersection; implementable connector and provider/credential lifecycles; one authoritative control plane per workspace; concrete production auth and SSE semantics; transport-neutral Python ports; a smaller real project vertical slice; distribution/desktop lifecycle; team/provider/channel work before desktop; channel step-up approval; supported SQLite/cross-platform envelope; and persisted idempotency semantics.
+
+## Lucas feature brief - locked requirements
+Lucas added outcome contracts; evaluated/canary/rollback skills; context firewall; scoped temporary secret broker; six autonomy levels; shadow mode; durable workflow graphs and bounded recovery; artifact lineage; governed memory; kill switches and limits; and offline local-model/cache/memory/queue operation. Security and the project create/read flow must precede CLI V2, FastAPI expansion, or React UI work. Existing modules should be reused, compatibility preserved where practical, changes remain migration-backed and TDD-driven, secrets never enter prompts/events/traces/snapshots/errors, and incomplete work must remain explicit.
+
+### Codex/Hermes response
+`PLAN.md` now separates deployment, workspace, client, execution, model-route, and credential contracts; adds an allowed-combination table and effective-capability projection; models scope/audience events, acting-agent/delegation authority, provider/credential grants, outcome/workflow/lineage/kill-switch records, context firewall, governed memory/skills, autonomy/shadow promotion, connector/offline behavior, concrete auth/SSE/idempotency, distribution, and the locked implementation sequence. The immediate authority milestone is now one migration-backed transport-neutral project create/read vertical slice, not a broad synthetic foundation or early CLI/API/UI expansion.
+
+### Remaining gate
+Commit and hash this revised plan, then run a fresh independent review against that exact revision. Do not begin Task 1.1 schema/domain implementation while that verdict is pending or requires revision.

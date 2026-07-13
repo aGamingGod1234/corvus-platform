@@ -2,34 +2,52 @@
 _Drafted by Codex/Hermes for Gemini review._
 
 ## Goal
-Evolve the supplied Corvus CLI V1 into one tested, installable, configuration-driven Corvus V2 platform with a single authoritative Python core. Users may interact through CLI, browser web, Tauri desktop, or approved third-party channels; run Corvus for an individual or a team; and host it locally or on Corvus Cloud. The platform must add team-safe identity, scope, authorization, durable work, audit, memory, delegation, routines, budgets, and capability contracts without weakening V1's sandbox, verification, delivery, or rollback guarantees.
+Evolve the supplied Corvus CLI V1 into one tested, installable, configuration-driven Corvus V2 platform with a single authoritative Python core. Users may interact through CLI, browser web, Tauri desktop, or approved third-party channels; run Corvus for an individual or a team; and place authorized work locally, through a secure connector, or on Corvus Cloud. The platform must add team-safe identity, scope, authorization, outcome contracts, durable workflow graphs, artifact lineage, governed memory and skills, context isolation, secret brokering, earned autonomy, shadow mode, budgets, kill switches, offline operation, and proof-carrying completion without weakening V1's sandbox, verification, delivery, or rollback guarantees.
 
-The immediate implementation slice will establish the package/test baseline and the first fail-closed team authority boundary. Later slices will expose that same boundary through CLI V2, FastAPI/SSE, a React web workspace, and a Tauri shell that reuses the web UI.
+Milestones 0 and the security-characterization portion of 0.5 have started. The next implementation work completes the release-blocking V1 trust fixes, then proves one vertical project create/read path through the corrected deployment/workspace/client/execution contracts, authorization, migration-backed persistence, and audit. CLI V2, FastAPI expansion, React UI, channels, and desktop remain later consumers of that boundary.
 
 ## Product Configuration Matrix
 
-Corvus is one product whose adapters and infrastructure change from an explicit `RuntimeProfile`; it is not four separate products.
+Corvus is one product with one authoritative core. Configuration is separated by owner, lifetime, and cardinality rather than collapsed into product editions or one overloaded runtime profile.
 
-### Interaction surface
-- `cli`: local in-process mode or remote API client.
-- `desktop`: cross-platform Windows/macOS/Linux Tauri client; may supervise an explicit local Corvus service or connect to Corvus Cloud.
-- `web`: browser client served by Corvus Cloud or a self-hosted local/team service.
-- `channel`: approved Discord, Slack, webhook, or future adapters that submit attributed requests to the same API.
+### Configuration ownership
 
-### Agent/infrastructure behavior
-- `individual`: one owner, private default workspace, personal memory by default, optional specialist agents, simple local onboarding.
-- `team`: memberships, roles, channel/project scopes, reviewer separation, shared memory promotion, hierarchical budgets, comments/approvals, and durable multi-worker infrastructure.
+| Contract | Owner/cardinality | Lifetime | Values/responsibility |
+|---|---|---|---|
+| `DeploymentProfile` | one per installed/server deployment | deploy/restart | authority mode, auth, network, storage, enabled adapters |
+| `WorkspaceConfig` | one per workspace | mutable through authorized migration | `individual` or `team`, memberships, reviewer rules, shared scopes, budgets |
+| `ClientContext` | one per request/session | request/session | `cli`, `desktop`, `web`, or `channel`; transport identity and origin only |
+| `ExecutionPlacement` | one per task/run | task/run | `local_runner`, `cloud_worker`, or `connector`; sandbox and data locality |
+| `ModelRouteSet` | principal/workspace scoped | independently mutable | local/API/OAuth routes, health, cost, capabilities, failover |
+| `CredentialRef` | principal/workspace scoped | independently rotatable | OS keyring, cloud vault, provider OAuth, or connector reference |
 
-### Hosting location
-- `local`: user-controlled machine/server, SQLite for individual development and PostgreSQL for team/self-hosted multi-worker use; local filesystem/object storage adapters; local sandbox runtime.
-- `cloud`: Corvus-hosted control plane, PostgreSQL/Redis/object storage, isolated workers/previews, organization/workspace tenancy, managed observability and signed delivery.
+Client surface never grants authority. Individual/team behavior belongs to the workspace. Different tasks may execute in different approved locations. Credentials rotate independently from deployment, workspace, client, and execution state.
 
-### Bring-your-own models
-- Corvus does not silently bundle a model entitlement. Users select local models, API providers, or provider-owned OAuth such as Codex/ChatGPT.
-- Configuration stores provider metadata and a `CredentialRef`, never plaintext API keys or OAuth tokens.
-- Local secrets use the OS credential store; Corvus Cloud secrets use an encrypted workspace vault and scoped broker.
-- A cloud run cannot directly use a model reachable only on a user's laptop. That requires an explicit outbound local connector with short-lived mutually authenticated sessions, or the run stays local.
-- Model routes, costs, health, capabilities, and failover are runtime configuration; safety policy and evidence requirements remain invariant.
+### Behaviorally distinct combinations
+
+| Deployment authority | Workspace mode | Clients | Execution | Status and controls |
+|---|---|---|---|---|
+| `embedded_local` | individual | CLI | local runner | Supported first; implicit private workspace, SQLite, OS keyring, fail-closed sandbox |
+| `local_daemon` | individual | CLI/web/desktop | local runner | Supported after API slice; loopback auth, strict origins, visible lifecycle |
+| `self_hosted` | individual/team | CLI/web/desktop/channel | server/local runners | Deferred; TLS, explicit auth, PostgreSQL for multi-worker operation |
+| `vendor_cloud` | individual/team | CLI/web/desktop/channel | cloud workers | Deferred; tenant isolation, cloud vault, managed workers, signed audit checkpoints |
+| `vendor_cloud` | individual/team | any | connector | Deferred; outbound-only mutually authenticated connector and explicit user consent |
+| any | any | any | host process without sandbox | Invalid for build/apply work; fail closed |
+
+One workspace has exactly one authoritative control plane. Local and cloud copies are never implicit dual-primary replicas. Moving authority requires an explicit, audited export/import or connector-backed migration.
+
+### Effective capabilities
+
+The authoritative backend resolves deployment, workspace, client, execution, model, credential, policy, budget, and kill-switch state into `EffectiveCapabilities`. Clients render returned capabilities and reason codes; feature flags may hide features but cannot create authority or disable authorization, audit, verification, evidence, limits, or rollback controls.
+
+### Bring-your-own models and credentials
+
+- Corvus does not silently bundle model entitlement. Users select local models, API providers, or provider-owned OAuth such as Codex/ChatGPT.
+- `ProviderConnection` binds a route, credential reference, execution placement, ownership, and lifecycle without exposing the secret.
+- Local credentials use the OS credential store or provider-owned local session. Cloud credentials use an encrypted workspace vault plus the scoped secret broker.
+- Codex CLI OAuth remains local unless the provider offers a supported server OAuth flow.
+- Corvus Cloud cannot reach a laptop-only model without an explicit outbound connector. The connector uses short-lived mutual authentication, model-only RPC, consent, health registration, revocation, egress limits, and complete audit attribution.
+- Offline mode uses approved local models, cached resources, governed memory, and durable queued work; cloud-only actions remain unavailable with explicit reason codes.
 
 ## Context
 
@@ -40,6 +58,13 @@ Corvus is one product whose adapters and infrastructure change from an explicit 
 - Prior architecture memo: `C:/Users/lucas/AppData/Local/hermes/.ai/HERMES_HANDOFFS/2026-07-13-corvus-web-team-agent-integration.md`
 - V1 contains 27 Python files and approximately 9,322 lines.
 - V1 version is `0.1.0`; it has no package metadata, lockfile, tests, migrations, README, API, web client, or desktop client.
+
+### Current implementation status
+- Branch: `feat/corvus-v2-foundation`.
+- Corvus V2 package baseline is `0.2.0a1` with `pyproject.toml`, `uv.lock`, README, Python 3.12 selection, and retained CLI behavior.
+- Security characterization and the empty-trace verification fix are committed.
+- Latest full gate: 14 tests passed; one Windows symlink test skipped because this host cannot create symlinks; Ruff lint/format and Git diff validation passed.
+- No Task 1.1 schema/domain, FastAPI, React, channel, connector, or desktop code exists yet.
 
 ### Verified V1 evidence
 - Intended runtime: Python 3.12.
@@ -88,7 +113,7 @@ Corvus is one product whose adapters and infrastructure change from an explicit 
 ### Platform invariants
 1. Corvus core is authoritative for identity, scope, policy, work state, events, budgets, approvals, verification, artifacts, and audit.
 2. CLI, browser, desktop, Discord, Slack, webhooks, and routines are untrusted clients of the same application services.
-3. Every command/run carries an immutable request context: workspace, project when applicable, requester, channel/thread when applicable, acting agent, access-bundle ID, policy digest, correlation ID, and idempotency key.
+3. Every command/run carries an immutable request context: deployment, workspace, immutable scope/audience, requester, client/transport identity, acting agent and agent grant, requester access bundle, execution placement when applicable, policy digest, correlation ID, and idempotency key.
 4. Missing or mismatched identity/scope/capability information fails closed.
 5. Cross-scope memory reads and promotions require explicit policy and provenance; private memory never silently becomes team memory.
 6. Workers acquire durable leases with expiry and heartbeat; stale work is recoverable without duplicate side effects.
@@ -98,13 +123,33 @@ Corvus is one product whose adapters and infrastructure change from an explicit 
 10. Sandboxes receive approved snapshots and scoped broker responses only; they never receive host credentials or direct host filesystem access.
 11. Web previews use a distinct hostile-content origin and never receive Corvus auth tokens.
 12. Completion is proof-carrying: every required acceptance criterion must pass or the run uses an honest partial/failed/blocked status.
+13. Corvus earns autonomy through verified performance and provides proof for every completed action.
+
+### Locked capability brief
+
+| Capability | Authoritative owner | Required proof before enforcement/promotion |
+|---|---|---|
+| Outcome contracts | domain + verification service | acceptance criteria, evidence schema, permissions, budget and runtime-limit tests |
+| Versioned skills | workspace skill registry | evaluation suite, independent approval, canary metrics, regression detection and rollback |
+| Context firewall | ingestion/context service | untrusted-source labels, instruction/data separation, provenance and prompt-injection fixtures |
+| Secret broker | credential service | short-lived scoped grant, host/method/path limits, revocation and zero-secret trace tests |
+| Autonomy levels | workspace policy | `advise`, `observe`, `sandbox`, `propose`, `apply`, `bounded_delegation` transition tests |
+| Shadow mode | evaluation service | proposed-versus-approved comparison, reliability threshold, holdout canaries and rollback |
+| Durable workflow graphs | work service | dependencies, specialists, checkpoints, stuck detection and retry -> replan -> decompose recovery |
+| Artifact lineage | artifact/audit service | request, source, model, tool, test, approval and receipt linkage with digest verification |
+| Memory governance | memory service | scope, source, confidence, expiry, encryption, export, deletion and promotion authorization |
+| Kill switches and limits | policy/budget service | atomic workspace/agent/workflow/run stop plus cost/runtime reservation tests |
+| Offline mode | deployment + execution services | local model/cache/memory/queue behavior with explicit unavailable cloud capability reasons |
+
+Autonomy starts in shadow/proposal mode. Promotion to a more powerful level requires versioned evaluation evidence, independent approval where risk requires it, canary operation, reliability thresholds, and reversible rollback. A client or feature flag cannot self-promote an agent, skill, workflow, or credential grant.
 
 ### V2 client contract
-- CLI V2 calls application services in-process for an explicit local profile or over HTTP for local-server/Corvus-Cloud profiles.
-- Web uses authenticated FastAPI endpoints plus replayable SSE using durable event IDs; the same build can target Corvus Cloud or a self-hosted endpoint.
-- Desktop uses Tauri and the same React client package. It may connect to Corvus Cloud or explicitly supervise a least-privilege loopback local service; it never gains authority merely because it is native.
-- Third-party channels authenticate as channel/service principals and preserve the human requester, workspace, project, guild/channel/thread, and access-bundle attribution.
-- Shared OpenAPI-generated TypeScript contracts prevent client-defined authority or duplicated state machines.
+- Define transport-neutral command/query/event ports, one application composition root, and matching in-process and HTTP Python clients before any UI expansion.
+- CLI V2 uses the in-process client for `embedded_local` or the HTTP client for daemon/self-hosted/cloud deployments; both call the same application services.
+- Web uses authenticated FastAPI endpoints plus replayable SSE with opaque workspace-scoped cursors; the same build targets Corvus Cloud or a self-hosted endpoint.
+- Desktop uses Tauri and the same React client package only after CLI/web team and provider flows stabilize. It may connect to cloud or supervise a least-privilege loopback service; it never gains authority because it is native.
+- Third-party channels authenticate as channel/service principals and preserve the human requester, immutable scope/audience, workspace, project, guild/channel/thread, acting agent grant, and access-bundle attribution.
+- Shared OpenAPI-generated TypeScript contracts and transport-parity tests prevent client-defined authority or duplicated state machines.
 
 ## Explicit Non-Goals for the Immediate Slice
 - No production cloud deployment.
@@ -118,26 +163,51 @@ Corvus is one product whose adapters and infrastructure change from an explicit 
 - No complete UI workspace in the first slice.
 - No recursive agents, autonomous skill self-promotion, or self-modifying safety policy.
 
+## Locked implementation discipline
+1. Inspect repository, architecture, tests, and live build status before each milestone; current evidence is recorded above.
+2. Reuse the V1 map below and avoid parallel implementations of policy, sandbox, delivery, provider, memory, or runtime behavior.
+3. Preserve backward compatibility where practical; expose V2 paths additively until compatibility tests pass.
+4. Build the smallest secure vertical slice per capability, with TDD red -> green -> refactor and one reviewable commit per task.
+5. Add explicit schema migrations, authorization checks, negative isolation tests, and rollback fixtures before changing durable state.
+6. Never expose secrets in prompts, context, events, traces, snapshots, artifacts, errors, exports, or test fixtures.
+7. Do not claim completion until the outcome contract's required tests and evidence pass; document partial, blocked, skipped, and unsupported states honestly.
+8. Prioritize the remaining security fixes and project create/read authority path before CLI V2, FastAPI expansion, React, channels, connector, or desktop work.
+
 ## Recommended Repository Layout
 
 ```text
 corvus-platform/
   corvus/                     # Authoritative Python core and local CLI adapter
     application/              # Use cases; no Typer/FastAPI/Textual imports
+      ports.py
       authorization.py
       audit.py
       projects.py
+      outcomes.py
       work_items.py
+      context_firewall.py
+      credentials.py
+      memory.py
+      skills.py
     domain/                   # Pure typed contracts and invariants
+      deployment.py
+      workspace.py
+      client.py
+      execution.py
       identity.py
       scope.py
       access.py
+      outcomes.py
       work.py
       events.py
       memory.py
+      skills.py
+      providers.py
     infrastructure/
       db.py
       repositories/
+      secret_broker/
+      connector/
       sandbox/                # Gradually absorbs existing sandbox.py
       providers/              # Gradually absorbs existing providers modules
     api/                      # Thin FastAPI adapter, auth dependencies, SSE
@@ -174,17 +244,17 @@ Do not move the 9k-line V1 package wholesale. Add clean seams and migrate one ad
 | V1 path | Decision | V2 treatment |
 |---|---|---|
 | `corvus/models.py` | Refactor gradually | Keep existing public models; move new team contracts into focused domain modules to avoid one larger model file. Export compatibility aliases where useful. |
-| `corvus/security.py` | Reuse and harden | Retain path/link protections, atomic writes, hashing, and redaction; add bounded/typed redaction tests and broker-safe structures. |
+| `corvus/security.py` | Reuse and harden | Retain path/link protections, atomic writes, hashing, and redaction; add structured zero-secret redaction plus context-firewall provenance/instruction separation. |
 | `corvus/store.py` | Refactor | Keep event hashing and artifact addressing; split DB bootstrap/repositories; add migrations and mandatory scoped audit records. |
 | `corvus/conversations.py` | Replace runtime state, reuse bounds | Preserve limit/delegation semantics, but back chats/messages/queues/events with durable work and event repositories. |
 | `corvus/policy.py` | Extend | Keep path/domain/autonomy checks; add resource/action/scope access evaluation and deny precedence. |
 | `corvus/sandbox.py` | Reuse behind protocol | Keep fail-closed Docker/Podman implementations; test options and lifecycle through fakes. No host-process fallback for builds. |
-| `corvus/workflow.py` | Refactor into use case | Preserve snapshot/generate/verify/package loop; require authenticated request context, durable work state, test evidence, and policy receipts. |
+| `corvus/workflow.py` | Refactor into use case | Preserve snapshot/generate/verify/package loop; require context firewall, outcome contract, authenticated authority, workflow graph, independent evidence, lineage, limits, and receipts. |
 | `corvus/delivery.py` | Reuse and harden | Keep manifest binding/conflict detection/rollback. Add scanner inputs, replay-resistant approvals, archive export, and ownership checks later. |
 | `corvus/verification.py` | Extend | Generalize sandbox protocol, persist evidence metadata, and enforce required/optional criteria honestly. |
-| `corvus/memory.py` | Replace schema/API | Add scope kind, owner, visibility, provenance, promotion workflow, and authorization on every read/write. |
-| `corvus/skills.py` | Extend | Bind versions to workspace, capability manifest, signer/digest, evaluator identity, and promotion audit. |
-| `corvus/providers.py`, `provider_control.py`, `model_catalog.py`, `codex_cli.py` | Reuse behind routing service | Preserve transports; add provider health, capability declarations, budget-aware routing, and failover receipts later. |
+| `corvus/memory.py` | Replace schema/API | Add encrypted scoped records, source/confidence/expiry, promotion review, authorization, export, deletion, retention, and receipts. |
+| `corvus/skills.py` | Extend | Bind versions to workspace/capabilities and add evaluation suites, shadow/canary promotion, independent approval, regression detection, and rollback. |
+| `corvus/providers.py`, `provider_control.py`, `model_catalog.py`, `codex_cli.py` | Reuse behind routing/broker ports | Preserve transports; add provider connection/credential grant ownership, placement, health, rotation/revocation, budgets, failover, and zero-secret receipts. |
 | `corvus/cli.py` | Decompose | Keep command compatibility; introduce `v2` project/access/work/run commands backed by application services. |
 | `corvus/tui.py` | Retain as CLI client | Stop it constructing authority directly; make it consume application services/events. |
 | `corvus/onboarding*.py` | Retain, adapt later | Add local/remote mode and workspace selection after application boundary exists. |
@@ -193,11 +263,17 @@ Do not move the 9k-line V1 package wholesale. Add clean seams and migrate one ad
 
 All identifiers are opaque UUIDs. Every persistent row includes `created_at`, and mutable rows include `updated_at` plus optimistic `version`.
 
-### Runtime configuration
-- `RuntimeProfile(id, owner_principal_id, interaction_surface[cli|desktop|web|channel], collaboration_mode[individual|team], hosting_mode[local|cloud], api_endpoint?, storage_profile, queue_profile, sandbox_profile, model_route_set_id, feature_flags, version)`
-- `ModelRouteSet(id, workspace_id?, routes, budget_policy_id, failover_policy)`
-- `CredentialRef(id, workspace_id?, owner_principal_id, provider, kind[os_keyring|cloud_vault|provider_oauth|local_connector], locator, scopes, status, expires_at?)`
-- Runtime profiles choose adapters and defaults; they cannot disable immutable safety, audit, authorization, verification, or evidence requirements.
+### Configuration and provider lifecycle
+- `DeploymentProfile(id, authority_mode[embedded_local|local_daemon|self_hosted|vendor_cloud], auth_profile, network_profile, storage_profile, enabled_adapters, protocol_version, version)`
+- `WorkspaceConfig(workspace_id, collaboration_mode[individual|team], autonomy_ceiling, shadow_policy_id, budget_policy_id, memory_policy_id, kill_switch_state, version)`
+- `ClientContext(id, surface[cli|desktop|web|channel], transport_principal_id?, session_id, origin, issued_at, expires_at?)`
+- `ExecutionPlacement(id, kind[local_runner|cloud_worker|connector], runner_id?, connector_id?, sandbox_profile, data_policy_digest, status)`
+- `ModelRouteSet(id, owner_scope, routes, budget_policy_id, failover_policy, version)`
+- `ProviderConnection(id, owner_scope, provider, route_id, credential_ref_id, allowed_placements, status, last_health_at?, version)`
+- `CredentialRef(id, owner_scope, provider, kind[os_keyring|cloud_vault|provider_oauth|local_connector], opaque_locator, scopes, status, expires_at?, version)`
+- `CredentialGrant(id, credential_ref_id, grantee_id, operations, host_method_path_constraints, issued_at, expires_at, revoked_at?, nonce_digest)`
+- `EffectiveCapabilities(request_context_id, actions, unavailable_reason_codes, policy_digest, budget_snapshot_digest, kill_switch_snapshot_digest)`
+- Configuration cannot contain plaintext credentials or disable immutable safety, authorization, audit, verification, evidence, limits, or rollback.
 
 ### Tenancy and identity
 - `Workspace(id, name, status)`
@@ -207,43 +283,63 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 - `AgentIdentity(id, workspace_id, name, role, model_route, skill_set_digest, status)`
 - `ScopeRef(workspace_id, project_id?, channel_id?, thread_id?, conversation_id?)`
 
-### Access
+### Access and acting-agent authority
 - `AccessBundle(id, workspace_id, principal_id, scope, issued_by, policy_digest, expires_at, revoked_at?)`
 - `CapabilityGrant(bundle_id, resource, action, effect[allow|deny], constraints_json)`
+- `AgentGrant(id, workspace_id, agent_id, capability_bundle_id, autonomy_level, issued_by, expires_at?, revoked_at?)`
+- `DelegationGrant(id, parent_agent_grant_id, child_agent_id, capabilities, budget_json, depth_limit, issued_at, expires_at, revoked_at?)`
 - Deny wins. No grant means deny. Scope matching must never broaden a grant.
-- Short-lived signed transport tokens may reference an access bundle but cannot replace the server-side bundle/revocation check.
+- Effective authority is the minimum intersection of requester, acting-agent/delegation, channel/routine, workspace policy, budget, autonomy ceiling, execution placement, credential grant, and kill-switch state at claim, model/tool call, approval, and external effect time.
+- Short-lived signed transport tokens may reference an access bundle but cannot replace server-side bundle/revocation checks.
 
 ### Requests, audit, and approvals
-- `RequestContext(id, runtime_profile_id, workspace_id, project_id?, requester_id, channel_id?, thread_id?, agent_id, access_bundle_id, policy_digest, idempotency_key, correlation_id)`
+- `RequestContext(id, deployment_profile_id, workspace_id, scope_ref, requester_id, client_context_id, transport_principal_id?, agent_id, agent_grant_id, access_bundle_id, execution_placement_id?, policy_digest, idempotency_key, correlation_id)`
 - `AuditReceipt(id, request_context_id, action, resource, decision, reason_code, policy_digest, sanitized_input_digest, output_digest?, external_effects_json, cost_json, evidence_ids, previous_hash, receipt_hash)`
 - `AuditCheckpoint(id, workspace_id, through_sequence, receipt_hash, signer_key_id, signature, anchored_at)`; the signing key lives in OS keyring/cloud KMS, not the ledger database.
 - `ApprovalRequest(id, request_context_id, action, manifest_digest, required_reviewer_role, status, expires_at, nonce_digest)`
 - `ApprovalDecision(id, approval_request_id, reviewer_id, decision, rationale, decided_at)`
 - Implementer/reviewer separation is validated server-side.
 
-### Durable work
-- `WorkItem(id, workspace_id, project_id?, parent_id?, kind, state, priority, payload_json, required_capabilities, budget_json, max_attempts, attempt_count, available_at, version)`
+### Outcomes, durable workflow graphs, limits, and lineage
+- `OutcomeContract(id, workspace_id, name, acceptance_criteria, evidence_schema, required_permissions, budget_json, runtime_limits_json, verifier_policy_digest, version)`
+- `WorkflowGraph(id, workspace_id, project_id?, outcome_contract_id, state, recovery_policy, budget_json, version)`
+- `WorkItem(id, workflow_graph_id, workspace_id, project_id?, parent_id?, kind, state, priority, payload_json, required_capabilities, budget_json, runtime_limit_json, max_attempts, attempt_count, available_at, version)`
 - `WorkDependency(work_item_id, dependency_id, condition)`
 - `WorkLease(work_item_id, worker_id, lease_token_digest, acquired_at, heartbeat_at, expires_at)`
 - `WorkAttempt(id, work_item_id, agent_id, started_at, finished_at?, outcome?, error_code?, cost_json, evidence_ids)`
+- `WorkflowCheckpoint(id, workflow_graph_id, work_item_id?, state_digest, artifact_ids, created_by, created_at)`
+- `RecoveryDecision(id, work_item_id, trigger[retry_exhausted|stuck|verification_failed|dependency_failed], action[retry|replan|decompose|pause|fail], rationale, approved_by?, created_at)`
+- `ArtifactLineage(id, artifact_id, request_context_id, source_ids, model_call_ids, tool_call_ids, test_evidence_ids, approval_ids, receipt_ids, parent_artifact_ids, lineage_digest)`
+- `KillSwitch(id, scope_kind[workspace|agent|workflow|run], scope_id, state[armed|stopping|stopped], reason, activated_by, activated_at, cleared_by?, cleared_at?)`
 - State machine: `queued -> leased -> running -> waiting_approval|waiting_dependency|paused -> verifying -> packaging -> completed|failed|cancelled|expired`.
-- Compare-and-swap version and lease token prevent duplicate completion.
+- Compare-and-swap version and lease token prevent duplicate completion. Heartbeats and persisted progress trigger stuck detection. Recovery is bounded `retry -> replan -> decompose`; exhaustion pauses or fails honestly.
+- Outcome completion requires the contract's evidence, permissions, budget, and runtime limits plus digest-linked lineage. Kill switches are checked before claim, model/tool call, external effect, approval, and completion.
 
 ### Routines and triggers
 - `Routine(id, workspace_id, project_id?, name, trigger_type, trigger_config, command_template, access_bundle_id, budget_json, enabled)`
 - `TriggerReceipt(id, routine_id, external_event_id, payload_digest, received_at)` with unique dedupe key.
 - Every trigger creates a normal `RequestContext` and `WorkItem`.
 
-### Memory
-- `MemoryRecord(id, workspace_id, scope_kind[personal|thread|project|channel|workspace], scope_id, owner_principal_id?, visibility, kind, content, provenance_json, confidence, status, expires_at?)`
+### Context firewall and memory governance
+- `ExternalContent(id, workspace_id, source_kind, source_locator_digest, content_digest, trust_class[untrusted|reviewed|trusted], provenance_json, sanitized_at?, expires_at?)`
+- `ContextEnvelope(id, request_context_id, system_instruction_digest, trusted_context_ids, untrusted_content_ids, firewall_policy_digest, output_digest?)`
+- External content is data, never instruction. The firewall preserves provenance, separates instruction/context channels, labels untrusted spans, bounds content, and prevents retrieved content from granting tools, secrets, permissions, or autonomy.
+- `MemoryRecord(id, workspace_id, scope_kind[personal|thread|project|channel|workspace], scope_id, owner_principal_id?, visibility, kind, encrypted_content_ref, content_digest, provenance_json, confidence, status, expires_at?, deleted_at?)`
 - `MemoryPromotion(id, source_memory_id, target_scope_kind, target_scope_id, requested_by, reviewed_by?, status, rationale)`
-- Reads require both scope membership and explicit capability.
+- `MemoryExport(id, workspace_id, requested_by, scope_filter, format, artifact_id, completed_at?)`
+- `MemoryDeletion(id, workspace_id, requested_by, scope_filter, reason, receipt_id, completed_at?)`
+- Reads require scope membership and explicit capability. Promotion preserves source and review. Export/deletion are authorized, auditable, and tested across active stores, indexes, caches, and backups according to retention policy.
 
-### Skills and capabilities
+### Versioned skills, autonomy, and shadow promotion
 - `Skill(id, workspace_id, name)`
-- `SkillVersion(id, skill_id, version, content_digest, source, permissions, capability_manifest_id, evaluation, status, created_by, reviewed_by?)`
+- `SkillVersion(id, skill_id, version, content_digest, source, permissions, capability_manifest_id, status[draft|shadow|canary|active|rolled_back|failed], created_by, reviewed_by?)`
+- `SkillEvaluation(id, skill_version_id, suite_version, fixture_digest, hidden_holdout_digest?, results_json, evaluator_id, evaluated_at)`
+- `SkillPromotion(id, skill_version_id, from_stage, to_stage, evidence_ids, requested_by, approved_by?, canary_policy, rollback_version_id, status)`
+- `SkillRegression(id, skill_version_id, baseline_version_id, metric, threshold, observed, detected_at, rollback_receipt_id?)`
+- `AutonomyPolicy(id, workspace_id, level[advise|observe|sandbox|propose|apply|bounded_delegation], allowed_actions, evidence_thresholds, reliability_thresholds, budget_limits, runtime_limits, version)`
+- `ShadowEvaluation(id, subject_kind[agent|skill|workflow], subject_id, proposal_digest, approved_action_digest?, outcome, metric_json, evaluated_at)`
 - `CapabilityManifest(id, provider, name, version, operations, risk_class, input_schema_digest, network_constraints, secret_requirements)`
-- Promotion requires passing evaluation and reviewer separation for privileged capabilities.
+- Promotion requires versioned evaluation, independent review for privileged capability, canary limits, regression monitoring, and automatic/manual rollback. Shadow results cannot create authority by themselves.
 
 ### Budgets
 - Budget layers: workspace -> project -> routine/channel -> run -> agent/subagent.
@@ -256,19 +352,19 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 Every durable event includes:
 - `schema_version`
 - `event_id`
-- `sequence`
+- workspace-global monotonic `sequence`
 - `workspace_id`
-- `project_id` when applicable
-- `run_id`
+- immutable `scope_ref` with project/channel/thread/conversation when applicable
+- `audience_policy_digest` and visibility level
+- `run_id`/`workflow_graph_id` when applicable
 - `work_item_id` when applicable
 - `request_context_id`
 - `requester_id`
-- `agent_id`
+- `agent_id` and acting `agent_grant_id`
 - `event_type`
 - `phase/state`
 - timestamp
 - redaction status
-- visibility level
 - structured payload
 - previous hash
 - event hash
@@ -276,34 +372,38 @@ Every durable event includes:
 ### Rules
 1. Event append and state transition occur in one database transaction.
 2. Invalid state transitions are rejected before event creation.
-3. SSE replay uses durable event IDs/sequence and workspace authorization on every connection and replay query.
-4. Redaction happens before hashing/persistence.
+3. Every live and replayed event is authorized against its immutable scope/audience; workspace membership alone cannot reveal private personal/thread/conversation events.
+4. Redaction and context-firewall labeling happen before hashing/persistence.
 5. Clients derive display state from snapshots plus events but never write state directly.
-6. `run.completed` can only follow passed required criteria and a valid package/evidence record.
+6. `run.completed` can only follow passed required criteria, valid lineage, and a valid package/evidence record.
+7. SSE uses an opaque workspace-scoped cursor and `Last-Event-ID`; the protocol defines snapshot-plus-replay, retention-gap reset, heartbeats, backpressure/slow-client limits, terminal disconnect behavior, and version compatibility.
+8. Cross-thread, cross-conversation, cross-project, cross-workspace, cursor-tampering, gap, duplicate, and reconnect tests are mandatory.
 
 ## API and Client Architecture
 
-### Runtime topology resolution
-- Startup loads and validates one `RuntimeProfile`, resolves only the adapters required by that profile, and records the profile digest on every request/run.
-- `individual + local` can use an implicit private workspace and SQLite while still passing through the same authorization and audit services.
-- `team + local` is a self-hosted server profile and must use explicit authentication, TLS when network-exposed, PostgreSQL before multi-worker operation, and the same tenant-isolation tests as cloud.
-- `individual + cloud` is a private Corvus Cloud workspace with user-provided model credentials stored in the cloud vault.
-- `team + cloud` adds memberships, organization policy, shared budgets, reviewer separation, queues, and isolated workers.
-- Client surface does not determine authority: CLI, desktop, web, and channel adapters all construct the same server-validated request context.
+### Authority and placement resolution
+- Startup validates one `DeploymentProfile` and opens only its approved adapters. A deployment may serve several client surfaces simultaneously.
+- Every request resolves `WorkspaceConfig`, `ClientContext`, requester/access bundle, acting-agent/delegation grant, policy, budget, kill switches, model route, credential grant, and requested `ExecutionPlacement` into `EffectiveCapabilities`.
+- Workspace collaboration mode changes only through an authorized migration; it does not redefine deployment identity.
+- Concurrent tasks may select different permitted execution placements without changing client authority.
+- `embedded_local` may bootstrap one private individual workspace with SQLite and OS keyring while still using authorization and audit.
+- Self-hosted/team/cloud operation requires explicit authentication, TLS when network-exposed, PostgreSQL before multi-worker operation, and the same isolation tests.
+- One composition root provides transport-neutral command/query/event ports plus in-process and HTTP Python clients; import-boundary tests prevent CLI/TUI/API/UI adapters from owning policy or persistence.
 
 ### FastAPI
-- Authentication adapter maps a session/API token to a `Principal`.
-- Authorization dependency resolves the exact `RequestContext` and server-side `AccessBundle`.
+- Cloud uses OIDC Authorization Code + PKCE, secure rotating session cookies, CSRF protection, and revocable API/service tokens. Self-hosting defines first-admin bootstrap, trusted OIDC configuration, recovery, TLS trust, rotation, and revocation before network exposure.
+- Authentication maps each session/token/channel/connector to a `Principal`; workspace creation is authorized explicitly rather than inferred from login.
+- Authorization resolves the exact `RequestContext`, `AccessBundle`, `AgentGrant`, and `EffectiveCapabilities` server-side.
+- Mutating commands require a persisted idempotency envelope keyed by actor/workspace/operation/key. Matching retries replay the original result; payload-digest mismatches fail; concurrent duplicates commit once.
 - Initial endpoints:
   - `GET /api/v2/meta`
-  - `POST /api/v2/workspaces`
   - `POST /api/v2/projects`
   - `GET /api/v2/projects/{id}`
   - `POST /api/v2/work-items`
   - `GET /api/v2/work-items/{id}`
-  - `GET /api/v2/events?after=<sequence>` (SSE)
+  - `GET /api/v2/events?cursor=<opaque>` (SSE)
   - `POST /api/v2/access/explain` (safe decision explanation, no secret policy dump)
-- OpenAPI is the source for TypeScript contracts.
+- OpenAPI is the source for TypeScript contracts; Python in-process/HTTP parity tests use the same command fixtures.
 
 ### Web
 - Vite + React + TypeScript, TanStack Router and Query.
@@ -311,16 +411,17 @@ Every durable event includes:
 - The first web slice authenticates, lists/creates a project, submits a work item, reconnects to SSE, and renders only persisted events.
 
 ### Desktop
-- Tauri wraps the same React client/UI package.
-- Desktop can switch between an explicit local profile and a Corvus Cloud profile. It stores only credential references/session material in the OS credential store.
-- Native commands are allowlisted; no generic shell command bridge.
-- Local mode may supervise a loopback FastAPI process with an ephemeral token, strict origin checks, bounded lifecycle, and visible status; this is configuration-driven rather than a hidden privileged daemon.
+- Tauri wraps the stabilized React client/UI package only after CLI/web team collaboration and provider-connection contracts pass.
+- Desktop connects to one explicit authoritative workspace endpoint; switching endpoints does not synchronize or create a second authority.
+- Session material stays in the OS credential store. Native commands are allowlisted; there is no generic shell/filesystem bridge.
+- Local mode may supervise a signed loopback sidecar with an ephemeral token, strict origins, bounded lifecycle, visible status, protocol compatibility checks, and rollback-capable updates.
 
 ### Third-party channels
-- Channel adapters are thin authenticated ingress/egress clients.
-- A channel binding maps provider/guild/channel/thread to a Corvus workspace/project and allowed agent identity.
-- Channel messages never carry reusable model credentials and cannot broaden the bound access bundle.
-- Replies, approvals, files, and external effects are attributed to both the channel principal and initiating human where the provider supplies that identity.
+- Channel adapters are thin authenticated ingress/egress clients added after team/provider contracts stabilize.
+- Signed ingress/webhook verification, durable provider-event deduplication, rate limits, bounded egress, reply correlation, and explicit human identity mapping are mandatory.
+- A channel binding maps provider/guild/channel/thread to immutable Corvus scope, workspace/project, allowed agent grant, budget, and access bundle.
+- Messages never carry reusable model credentials and cannot broaden scope, autonomy, credential, or access grants.
+- High-risk approvals require browser/desktop step-up authentication by default; channel reactions/messages alone do not authorize apply or privileged external effects.
 
 ## Implementation Approach and Checkpoints
 
@@ -337,72 +438,91 @@ Checkpoint: existing CLI help and doctor behavior pass from `uv run corvus`; the
 
 ### Milestone 0.5 — Release-blocking V1 safety hardening
 1. Enforce a snapshot/export policy before any model call: default secret/cache/dependency exclusions, approved include overrides, file/count/byte limits, link/reparse rejection, and guaranteed cleanup.
-2. Redact structured mappings/lists recursively before serialization; register brokered secrets with the redactor; bound persisted/model-returned command output.
-3. Separate candidate generation from verification policy. Run server/repository-selected required checks plus any model suggestions; execute smoke checks; rebuild a fresh staging tree for each repair attempt; package exactly the tree that passed.
-4. Verify every staged bundle artifact digest immediately before apply; persist/flush rollback intent before mutation; use destination/bundle locks; consume durable actor-bound approvals once.
-5. Make an empty/nonexistent audit chain invalid, strictly validate artifact digests, fix optional token-budget narrowing, validate provider URLs/host classes, and use a minimal child-process environment allowlist.
-6. Pin sandbox images by digest for production profiles and enforce complete snapshot/candidate/command/output/workflow resource bounds.
+2. Add the context firewall for all external/snapshot/model-returned content: immutable provenance, untrusted labels, instruction/data separation, content bounds, and denial of content-created tools, secrets, permissions, or autonomy.
+3. Redact structured mappings/lists recursively before serialization; register brokered secrets with the redactor; bound persisted/model-returned command output.
+4. Separate candidate generation from verification policy. Run server/repository-selected required checks plus any model suggestions; execute smoke checks; rebuild a fresh staging tree for each repair attempt; package exactly the tree that passed.
+5. Verify every staged bundle artifact digest immediately before apply; persist/flush rollback intent before mutation; use destination/bundle locks; consume durable actor-bound approvals once.
+6. Make an empty/nonexistent audit chain invalid, strictly validate artifact digests, fix optional token-budget narrowing, validate provider URLs/host classes, and use a minimal child-process environment allowlist.
+7. Pin sandbox images by digest for production profiles and enforce complete snapshot/candidate/command/output/workflow resource bounds.
 
 Checkpoint: adversarial secret-exfiltration, forged-verification, stale-staging, altered-bundle, crash-point, SSRF, environment-leak, and audit-tamper tests pass before V2 is marked installable.
 
-### Milestone 1 — Team authority foundation (immediate feature slice)
-1. Add pure domain types for runtime profiles, credential references, principals, agents, scopes, request contexts, capabilities, access bundles, decisions, effective capabilities, and audit receipts.
-2. Add fail-closed `AccessEvaluator` with deny precedence, exact workspace ownership, non-broadening scope matching, expiry/revocation, and resource/action constraints.
-3. Add canonical hashing for policy/access bundles and audit receipts plus a signer port for HMAC/KMS-backed periodic audit checkpoints stored outside the mutable ledger database.
-4. Add new scoped audit tables/repository without mutating V1 event rows yet.
-5. Add application service `authorize_and_record()` that writes an immutable allow/deny receipt.
-6. Add runtime-profile resolution that returns an `EffectiveCapabilities` projection for CLI/web/desktop/channel clients without allowing feature flags to disable immutable safety.
-7. Add CLI V2 commands:
-   - `corvus v2 access check --context <json> --resource <name> --action <name>`
-   - `corvus v2 audit verify --workspace <uuid>`
-   - `corvus v2 profile explain --profile <path>`
-   These are local administrative/developer commands, not a production auth interface.
-8. Keep existing commands unchanged.
+### Milestone 1 — Project authority vertical slice
+1. Add `DeploymentProfile`, `WorkspaceConfig`, `ClientContext`, `ExecutionPlacement`, identity/scope, requester/agent grants, `EffectiveCapabilities`, and audit contracts with an explicit combination table.
+2. Add an idempotent migration-backed local project repository without mutating legacy V1 rows.
+3. Implement fail-closed authorization with deny precedence, exact scope containment, expiry/revocation, acting-agent intersection, budget/kill-switch checks, and immutable allow/deny receipts.
+4. Implement one transport-neutral `create_project`/`get_project` application path through identity -> authorization -> repository -> audit.
+5. Test in-process command/query ports, cross-workspace/project denial, receipt persistence failure, idempotency mismatch/concurrency, and client-surface parity.
 
-Checkpoint: two different workspaces cannot read or authorize each other's bundle or receipts; every decision has a verifiable hash chain and signed checkpoint; profile capability projections are deterministic across client surfaces.
+Checkpoint: the same principal can create/read an authorized project through the in-process port; a different workspace, agent, client surface, or mismatched replay cannot read or mutate it; every decision has a verifiable signed receipt.
 
-### Milestone 2 — Durable work and scoped events
-1. Add work item, dependency, lease, attempt, and state-transition tables.
-2. Implement transactional claim/heartbeat/release/complete using optimistic versions and lease token digests.
-3. Add V2 event envelope and state/event transaction service.
-4. Add deterministic crash/reclaim, cancellation, retry, dependency, and idempotency tests.
-5. Adapt `ConversationRuntime` to enqueue durable work instead of owning ephemeral truth.
+### Milestone 2 — Outcome contracts and durable workflow graphs
+1. Add outcome contract, workflow graph, node/dependency, lease, attempt, checkpoint, recovery decision, lineage, budget reservation, runtime limit, and kill-switch tables.
+2. Implement transactional claim/heartbeat/release/complete with optimistic versions and lease-token digests.
+3. Add scoped V2 events and state/event/outbox transaction service.
+4. Implement stuck detection and bounded `retry -> replan -> decompose` recovery with honest exhaustion.
+5. Adapt `ConversationRuntime` to enqueue durable work rather than own ephemeral truth.
 
-Checkpoint: restart simulation preserves queue, event replay, and cancellation; stale leases can be recovered exactly once.
+Checkpoint: restart preserves queues/events/checkpoints; dependencies and limits gate execution; stale leases recover once; kill switches stop before the next effect; completion requires outcome evidence and artifact lineage.
 
 ### Milestone 3 — CLI V2 project/run vertical slice
-1. Add workspace/project commands and local identity bootstrap.
-2. Adapt one build workflow through request context -> authorization -> work item -> sandbox protocol -> verification -> package -> approval.
-3. Use a fake sandbox/provider in tests and require Docker/Podman only for marked integration tests.
-4. Add pause/resume/cancel/retry and event-tail commands.
+1. Add local identity bootstrap and additive `corvus v2 project create|get` commands over the application ports.
+2. Adapt one build workflow through context firewall -> outcome contract -> authorization -> work graph -> sandbox -> independent verification -> package -> approval.
+3. Use fake provider/sandbox tests; Docker/Podman remain marked integration tests with no host fallback.
+4. Add pause/resume/cancel/retry, kill-switch, evidence, lineage, and event-tail commands.
 
-Checkpoint: a fake-provider website build executes the real state machine and produces a verifiable bundle without host writes; live build remains blocked without a sandbox.
+Checkpoint: a fake-provider build executes the real state machine and produces a verifiable lineage-bound bundle without host writes.
 
-### Milestone 4 — FastAPI and SSE
-1. Add FastAPI adapter, local test auth, production auth interface, OpenAPI, and replayable SSE.
-2. Enforce workspace/project authorization on every route and SSE query.
-3. Add API contract and cross-tenant security tests.
-4. Generate TypeScript contracts.
+### Milestone 4 — FastAPI, authentication, and replayable events
+1. Add the concrete cloud/self-hosted auth adapters, command/query API, OpenAPI, and scoped SSE protocol.
+2. Enforce request, agent, scope, audience, credential, placement, budget, and kill-switch authorization on every route and replayed event.
+3. Add idempotency, CSRF/session/token, 403/404 non-enumeration, cursor/gap/backpressure, and cross-tenant/thread tests.
+4. Generate TypeScript contracts and prove Python in-process/HTTP parity.
 
-Checkpoint: unauthorized workspace/project/event access returns 404/403 as designed without existence leakage; SSE reconnect replays exactly once.
+Checkpoint: unauthorized access leaks no existence or private events; reconnect uses snapshot plus cursor replay without gaps or duplicates.
 
-### Milestone 5 — Web fork
-1. Scaffold pnpm workspace, `apps/web`, `packages/client-ui`, and `packages/contracts`.
-2. Implement login/session shell, project creation, work submission, event timeline, criteria, files/evidence placeholders backed only by real API data.
-3. Add Vitest/component tests, Playwright API-backed e2e, accessibility checks, and responsive visual QA.
+### Milestone 5 — Web workspace
+1. Scaffold pnpm workspace, `apps/web`, `packages/client-ui`, and generated `packages/contracts`.
+2. Implement authentication, project create/read, work submission, persisted event timeline, outcome criteria, evidence, lineage, approvals, limits, and kill-switch controls.
+3. Add Vitest, API-backed Playwright, accessibility, responsive, hostile-preview-origin, and reconnect tests.
 
-Checkpoint: browser creates project, submits fake-provider run, refreshes, reconnects, and sees persisted evidence; no timer-generated progress.
+Checkpoint: browser completes the fake-provider project/work/evidence flow using only backend-reported state and capabilities.
 
-### Milestone 6 — Desktop fork
-1. Scaffold Tauri in `apps/desktop` reusing web assets/client UI.
-2. Add API endpoint configuration and OS credential-store session handling.
-3. Lock Tauri capabilities to network/session configuration only; no shell/filesystem wildcard.
-4. Add Rust tests/config validation and desktop smoke test if Rust/WebView2 are available.
+### Milestone 6 — Team, provider, secret-broker, and earned-autonomy slice
+1. Prove owner/member collaboration, reviewer separation, comments, approval, and shared budgets in one workspace.
+2. Add `ProviderConnection -> CredentialRef -> CredentialGrant` lifecycle, health, rotation/revocation, and placement checks.
+3. Implement scoped short-lived secret grants with zero secret material in prompts/events/traces/snapshots/errors.
+4. Add autonomy levels and shadow-mode comparison; promotion requires evaluation, reliability threshold, approval, canary limits, and rollback.
 
-Checkpoint: desktop runs the same project/work/event flow against the test API; capability audit contains no generic shell or unrestricted filesystem access.
+Checkpoint: one team run uses a brokered provider connection and shadow proposal; unauthorized members/agents cannot retrieve secrets, raise autonomy, approve themselves, or exceed limits.
 
-### Milestone 7 — Team collaboration, memory, routines, skills, provider routing
-Incrementally add scoped memory promotion, comments/approvals, channel bindings, routines/webhooks, budget hierarchy, skill evaluation/promotion, MCP capability manifests, model routing/failover, checkpoints/branching, and capability metrics. Every addition uses the same request context, policy, work, event, and audit services.
+### Milestone 7 — Governed memory, skills, routines, and context firewall
+1. Add scoped encrypted memory with provenance, confidence, expiration, promotion, export, and deletion receipts.
+2. Add versioned skills with evaluation suites, hidden holdouts, approval, shadow/canary stages, regression detection, and rollback.
+3. Route external/retrieved content through the context firewall before any model or memory use.
+4. Add routines/webhooks through normal outcome, authority, budget, kill-switch, evidence, and audit paths.
+
+Checkpoint: prompt-injection fixtures cannot grant authority; memory deletion/export is auditable; a regressing skill rolls back; routines cannot bypass interactive controls.
+
+### Milestone 8 — Secure connector and offline operation
+1. Define outbound-only mTLS pairing, ownership, model-only RPC, health/capability registration, consent, revocation, updates, egress bounds, and audit.
+2. Schedule connector work only while an authorized runner/model is online; preserve waiting state without exposing localhost.
+3. Prove offline local models, cached resources, governed memory, and queued tasks while cloud-only capabilities fail with reason codes.
+
+Checkpoint: cloud work can use an explicitly paired local model without receiving permanent credentials; disconnect/revoke fails closed and resumes safely when reauthorized.
+
+### Milestone 9 — Channel gateways
+1. Add signed ingress, provider-event dedupe, identity mapping, immutable bindings, rate limits, bounded replies/files, and correlation.
+2. Require browser/desktop step-up for privileged approvals and apply operations.
+
+Checkpoint: replayed/forged/cross-thread messages cannot create duplicate work, broaden authority, or approve high-risk effects.
+
+### Milestone 10 — Desktop and distribution
+1. Package the stabilized web client in Tauri with a signed sidecar lifecycle and narrow capabilities.
+2. Add the distribution matrix: Python wheel/standalone CLI, OCI self-host image, static web assets, signed Windows/macOS/Linux desktop installers, SBOMs, updater, protocol compatibility, and rollback.
+3. Run OS/architecture CI for keyring, path casing, UNC/long paths, junctions/symlinks, service lifecycle, installer/update, and optional sandbox routing.
+
+Checkpoint: desktop runs the proven team/provider flow without duplicate authority code or generic shell/filesystem access; every artifact installs, updates, and rolls back through a tested path.
 
 ## Immediate TDD Task List
 
@@ -425,10 +545,10 @@ Incrementally add scoped memory promotion, comments/approvals, channel bindings,
 - Cover path traversal, symlink/reparse rejection where supported, network-disabled sandbox options, approval expiry/mismatch/conflict, event redaction and chain tampering.
 - Do not alter behavior unless a test exposes a real defect.
 
-### Task 0.3 — Secret-safe snapshots and repair isolation
-- Create tests: `tests/security/test_snapshot_policy.py`, `tests/security/test_secret_flow.py`, `tests/security/test_workflow_repair_isolation.py`.
-- Modify: `corvus/workflow.py`, `corvus/security.py`; introduce a focused snapshot policy module only if needed.
-- First failing assertions: `.env`/credential/cache/dependency paths are excluded by default; limits block oversized trees; plaintext staging is removed; model repair context is redacted/bounded; each attempt starts from a clean approved snapshot.
+### Task 0.3 — Secret-safe snapshots, context firewall, and repair isolation
+- Create tests: `tests/security/test_snapshot_policy.py`, `tests/security/test_context_firewall.py`, `tests/security/test_secret_flow.py`, `tests/security/test_workflow_repair_isolation.py`.
+- Modify: `corvus/workflow.py`, `corvus/security.py`; add a focused context/snapshot policy module only if the tests require it.
+- First failing assertions: `.env`/credential/cache/dependency paths are excluded by default; limits block oversized trees; plaintext staging is removed; external/model-returned instructions remain attributed untrusted data and cannot request tools/secrets/authority; repair context is redacted/bounded; each attempt starts from a clean approved snapshot.
 
 ### Task 0.4 — Trustworthy verification
 - Create tests: `tests/security/test_verification_trust.py` and extend `tests/security/test_workflow_repair_isolation.py`.
@@ -441,36 +561,35 @@ Incrementally add scoped memory promotion, comments/approvals, channel bindings,
 - First failing assertions: altered staged files, replayed/expired/mismatched approval, concurrent apply, and injected failure after each filesystem step never produce an unjournaled or unauthorized delivery.
 
 ### Task 0.6 — Server-boundary hardening
-- Create tests: `tests/security/test_structured_redaction.py`, `test_provider_url_policy.py`, `test_codex_environment.py`, `test_artifact_digest.py`, `tests/unit/test_config_narrowing.py`.
+- Create tests: `tests/security/test_structured_redaction.py`, `tests/security/test_provider_url_policy.py`, `tests/security/test_codex_environment.py`, `tests/security/test_artifact_digest.py`, `tests/unit/test_config_narrowing.py`.
 - Modify: `corvus/security.py`, `providers.py`, `codex_cli.py`, `store.py`, `config.py`.
 - First failing assertions: nested secrets redact; internal/credential-bearing provider URLs are rejected for cloud profiles; child environment is allowlisted; invalid digests fail; optional token limits always narrow.
 
-### Task 1.1 — Identity and scope contracts
-- Create: `corvus/domain/__init__.py`, `identity.py`, `scope.py`, `access.py`, `audit.py`.
-- Create tests: `tests/unit/domain/test_identity.py`, `test_scope.py`, `test_access_models.py`, `test_audit_models.py`.
-- Add: `corvus/domain/runtime.py` and `tests/unit/domain/test_runtime_profile.py` for interaction/collaboration/hosting combinations and credential references.
-- First failing assertions: invalid/missing workspace, cross-workspace nested scope, duplicate/empty capability, naive expiry, unstable canonical digest, plaintext credential values, and unsafe local-model/cloud combinations are rejected.
+### Task 1.1 — Configuration, identity, scope, and audit contracts
+- Create: `corvus/domain/deployment.py`, `workspace.py`, `client.py`, `execution.py`, `identity.py`, `scope.py`, `access.py`, `audit.py`.
+- Create tests: `tests/unit/domain/test_configuration_matrix.py`, `test_identity.py`, `test_scope.py`, `test_access_models.py`, `test_audit_models.py`.
+- First failing assertions: overloaded profile fields are impossible; unsupported combinations fail with reason codes; client surface cannot grant authority; missing workspace/requester/agent grant, cross-workspace scope, plaintext credential values, naive expiry, and unstable digests are rejected.
 
-### Task 1.2 — Fail-closed access evaluation
+### Task 1.2 — Fail-closed requester and acting-agent evaluation
 - Create: `corvus/application/authorization.py`.
 - Create test: `tests/unit/application/test_authorization.py`.
-- Matrix: exact allow, no grant deny, explicit deny wins, wrong principal, wrong workspace, wrong project/channel/thread, expired/revoked bundle, constraint mismatch.
+- Matrix: exact allow, no-grant deny, explicit deny wins, wrong principal/workspace/project/thread, expired/revoked requester or agent grant, delegation overreach, placement/credential mismatch, budget/runtime exhaustion, kill switch, and client-surface parity.
 
-### Task 1.3 — Scoped audit persistence
-- Create: `corvus/infrastructure/db.py`, `corvus/infrastructure/repositories/audit.py`.
-- Create test: `tests/integration/test_scoped_audit_repository.py`.
-- Persist access-bundle snapshot digest and immutable receipt chain by workspace.
-- Verify tampering and cross-workspace reads fail.
+### Task 1.3 — Migration-backed project and audit repositories
+- Create: `corvus/infrastructure/db.py`, `corvus/infrastructure/repositories/projects.py`, `audit.py`, and initial Alembic migration/fixture paths.
+- Create tests: `tests/integration/test_project_repository.py`, `test_scoped_audit_repository.py`, `test_v1_migration.py`.
+- Persist project ownership, access-bundle/agent-grant snapshot digests, immutable receipts, signed checkpoints, and idempotency envelopes without changing legacy rows.
+- Verify migration twice, tampering, cross-workspace reads, rollback fixture readability, and concurrent duplicate commands.
 
-### Task 1.4 — Authorization application service
-- Create: `corvus/application/audit.py`.
-- Create test: `tests/integration/test_authorize_and_record.py`.
-- One call evaluates and persists allow or deny; repository failure causes the operation to fail closed.
+### Task 1.4 — Transport-neutral project create/read service
+- Create: `corvus/application/projects.py`, `corvus/application/ports.py`, and an in-process client adapter.
+- Create tests: `tests/integration/test_project_authority_slice.py`.
+- One command/query path resolves effective capabilities, records allow/deny, creates or reads the project transactionally, and fails closed if authorization/audit persistence fails.
 
-### Task 1.5 — CLI V2 access/audit commands
-- Create: `corvus/cli_v2.py` initially; register under existing Typer app.
-- Create tests: `tests/cli/test_v2_access.py`, `tests/cli/test_v2_audit.py`.
-- JSON output is stable and contains no policy secret fields.
+### Task 1.5 — Vertical contract and compatibility tests
+- Create tests: `tests/contract/test_inprocess_project_client.py`, `tests/cli/test_v1_compatibility.py`.
+- Prove stable command/query/error envelopes, idempotent response replay, payload mismatch rejection, client-surface neutrality, no secret fields, and unchanged retained V1 command availability.
+- Do not add CLI V2, FastAPI, or UI adapters in this milestone.
 
 ### Task 1.6 — Quality gate
 - `uv run pytest -q`
@@ -483,67 +602,76 @@ Incrementally add scoped memory promotion, comments/approvals, channel bindings,
 - `git diff --check`
 
 ## Worker Assignments
-- Worker A — packaging/baseline tests only: `pyproject.toml`, lockfile, README, `tests/unit`, `tests/cli/test_cli_smoke.py`, baseline security tests. Must not edit team domain/application code.
-- Worker B — domain/access/audit only: `corvus/domain`, `corvus/application/authorization.py`, domain/application tests. Must not edit packaging, CLI, or DB.
-- Worker C — persistence/application integration: `corvus/infrastructure`, integration tests. Starts after Worker B contracts are fixed.
-- Worker D — CLI V2 adapter: `corvus/cli_v2.py`, minimal `corvus/cli.py` registration, CLI V2 tests. Starts after Workers B/C.
-- Reviewer — read-only diff, test, security, and acceptance review. Must not be the implementing worker.
-- Limit concurrent local workers to two because RAM availability is constrained.
+- Worker A — remaining Milestone 0.5 security tasks only: snapshots/context firewall, verification, delivery atomicity, provider/redaction/environment hardening and their tests. Must not edit new authority schemas.
+- Worker B — configuration/identity/scope/access/audit domain contracts and tests only. Starts after the revised plan review passes.
+- Worker C — project/audit persistence, migrations, fixtures, and repository tests. Starts after Worker B contracts are fixed.
+- Worker D — transport-neutral project application service and contract/compatibility tests. Starts after Workers B/C.
+- Reviewer — read-only spec, security, migration, diff, test, and acceptance review. Must not be the implementing worker.
+- Limit concurrent local workers to two because RAM is constrained; never combine heavy Node/Rust/container builds.
 
 ## Acceptance Criteria
 
 ### Plan-level
-- The plan explicitly separates authoritative core from all clients.
-- Every team feature maps to a typed model, application service, persistent record, and test strategy.
-- Web and desktop reuse contracts and UI rather than duplicate the agent runtime.
-- V1 compatibility and rollback points are identified.
+- The plan separates deployment, workspace collaboration, client context, execution placement, model routing, and credential ownership by lifetime/cardinality.
+- Every locked capability maps to an authoritative service, persistent record, enforcement point, migration path, and test strategy.
+- Web, desktop, and channels reuse contracts and clients rather than duplicate authority or run state.
+- V1 compatibility, migration, checkpoints, review freshness, and rollback points are identified.
 
 ### Immediate implementation slice
 1. Repository installs reproducibly with `uv sync --locked` under Python 3.12.
 2. Existing CLI help and doctor JSON pass from the installed project.
-3. At least one regression test covers each retained security primitive: path, sandbox options, event chain, delivery approval.
-4. Team request context cannot exist without runtime profile, workspace, requester, acting agent, access bundle, policy digest, correlation ID, and idempotency key.
-5. Access evaluation is default deny; explicit deny overrides allow; scopes never broaden.
-6. Cross-workspace and cross-project access fail in tests.
-7. Allow and deny decisions both create immutable, verifiable, requester-attributed audit receipts.
-8. Failure to persist the receipt prevents the protected action.
-9. Existing V1 CLI commands remain available.
-10. No live provider call, sandbox execution, external message, deployment, purchase, or credential change occurs.
-11. Default build snapshots exclude secret/cache/dependency material, enforce size/count limits, and are cleaned up after success, failure, or cancellation.
-12. Required verification is selected by Corvus/repository policy rather than trusted solely from generating-model commands; smoke checks execute and each repair uses a clean staging tree.
-13. Delivery rejects any staged file whose current digest differs from the approved manifest and remains recoverable at every injected crash point.
-14. Nested JSON/YAML-like secret values are redacted before persistence or model repair context.
+3. Regression tests cover retained path, sandbox, event-chain, and delivery-approval primitives.
+4. Default build snapshots exclude secret/cache/dependency material, enforce size/count limits, and clean up after success, failure, or cancellation.
+5. Required verification is selected by Corvus/repository policy rather than trusted solely from generating-model commands; smoke checks execute and each repair uses a clean staging tree.
+6. Delivery rehashes every staged file, rejects approval mismatch/replay/expiry, locks concurrent apply, and remains recoverable at every injected crash point.
+7. Structured secrets are redacted before prompts, persistence, repair context, events, traces, snapshots, or errors; child environments and provider destinations are allowlisted.
+8. Deployment/workspace/client/execution/model/credential contracts cannot express an overloaded profile or plaintext secret; invalid combinations fail closed with reason codes.
+9. A request cannot exist without deployment, workspace, scope/audience, requester, client context, acting agent grant, requester access bundle, policy digest, correlation ID, and idempotency key.
+10. Effective authority is the minimum requester/agent/delegation/channel/workspace/budget/placement/credential/kill-switch intersection; deny wins and scope never broadens.
+11. An authorized principal creates and reads one project through the transport-neutral in-process port; cross-workspace/project/thread/client substitutions fail.
+12. Allow and deny decisions create immutable requester/agent-attributed receipts; persistence failure prevents the protected action.
+13. Project/audit migrations run twice without duplication, preserve legacy fixture readability, and support tested rollback/checkpoint recovery.
+14. Idempotent command retries replay the original result; payload mismatch and concurrent duplicates do not create a second project.
 15. Empty audit chains are invalid; artifact lookups accept only canonical SHA-256 digests.
-16. Cloud/server profiles reject unsafe provider destinations and never inherit arbitrary host environment variables into model subprocesses.
-17. V1 data migration fixtures and importers are idempotent before any existing table is changed.
-18. Sandbox unavailability still produces no host-execution fallback.
+16. Existing V1 CLI commands remain available; no CLI V2, FastAPI, web, desktop, channel, deployment, purchase, or live provider call occurs in this slice.
+17. Sandbox unavailability still produces no host-execution fallback.
+18. The exact final plan revision receives a fresh independent review before Task 1.1 schema/domain implementation.
 
 ### Later client milestones
-- API endpoints authorize every resource and replay event.
-- Web and desktop show persisted events only.
-- Desktop capability configuration has no generic shell or unrestricted filesystem grant.
-- A single fake-provider vertical slice works in CLI, web, and desktop against the same core and evidence.
+- API routes authorize every resource and each live/replayed event against immutable scope/audience.
+- Web, desktop, CLI, and channels render only persisted state plus backend-returned effective capabilities.
+- Team collaboration and provider/secret-broker flows stabilize through CLI/web before channel or desktop packaging.
+- Connector and offline behavior have explicit scheduling, revocation, unavailable-reason, and recovery tests.
+- Desktop has no generic shell/filesystem grant and contains no duplicate policy, persistence, or run-state implementation.
+- One fake-provider lineage-bound vertical slice works across in-process CLI, HTTP/web, and desktop clients before release.
 
 ## Verification Matrix
 
 | Layer | Tests |
 |---|---|
-| Domain | Pydantic validation, canonical digest stability, scope containment, state transitions |
-| Authorization | grant/deny matrix, expiry/revocation, constraints, principal/workspace/project isolation |
-| Persistence | migrations, uniqueness, transactions, receipt/event hash chains, tamper detection, cross-tenant queries |
-| Work queue | claim races, leases, heartbeats, stale recovery, dependency cycles, cancellation, idempotency |
+| Configuration/domain | allowed/invalid combinations, capability projection, canonical digests, scope containment, state transitions |
+| Authorization | requester/agent/delegation intersection, deny precedence, expiry/revocation, limits, kill switches, client neutrality |
+| Persistence/migration | idempotent upgrades, rollback fixtures, uniqueness, transactions, receipt/event chains, tamper and isolation |
+| Outcomes/workflows | criteria/evidence, lineage, claim races, leases, stuck recovery, dependencies, limits, cancellation, idempotency |
+| Context firewall | provenance, instruction/data separation, bounded ingestion, prompt-injection and retrieved-content canaries |
+| Secret broker/providers | zero-secret traces, scoped issuance, host/method/path limits, rotation, revocation, OAuth/placement matrix |
+| Skills/autonomy | evaluation versions, hidden holdouts, shadow comparison, approval, canary limits, regression and rollback |
+| Memory governance | scope/read isolation, confidence/expiry, encryption, promotion, export and deletion receipts |
 | Sandbox | option contract unit tests; marked Docker/Podman integration tests only where available |
-| Delivery | manifest binding, hash verification, conflict detection, backup/undo, malicious paths |
-| CLI | Typer runner tests, stable JSON, V1 command presence, V2 authorization/audit commands |
-| API | auth dependencies, 403/404 behavior, OpenAPI, SSE replay/reconnect/isolation |
-| Web | Vitest components, API mocks only for unit tests, API-backed Playwright flow, axe/accessibility |
-| Desktop | Tauri capability audit, Rust config/tests, same API-backed flow |
-| Security | Ruff, Bandit under Python 3.12, dependency audit, secret scan, archive/path tests, tenant-isolation suite |
+| Delivery | manifest/artifact rehash, approval binding, locking, crash atomicity, backup/undo, malicious paths |
+| CLI | Typer tests, stable envelopes, V1 compatibility, later project/work/evidence commands |
+| API/events | OIDC/session/CSRF/token tests, 403/404 behavior, idempotency, OpenAPI, scoped cursor replay/reconnect |
+| Web/channels | API-backed Playwright, accessibility, hostile preview, signed ingress, dedupe, step-up approval |
+| Connector/offline | mTLS pairing, consent, health, egress, disconnect/revoke/reconnect, offline queue/capability reasons |
+| Desktop/distribution | Tauri capability audit, sidecar protocol, signed installers, update/rollback, OS/architecture CI |
+| Security/quality | Pytest, Ruff, Bandit under Python 3.12, dependency audit, SBOM, secret scan, tenant/scope isolation |
 
 ## Key Decisions and Tradeoffs
 - **One Python core, thin clients:** avoids three diverging agent/security implementations.
 - **Fix V1 trust boundaries before exposing V2:** authorization models do not make an unsafe snapshot/verification/delivery pipeline safe; critical build and delivery defects are gated ahead of web/team enablement.
-- **One configurable product, not separate editions:** interaction surface, individual/team behavior, and local/cloud hosting are explicit runtime axes resolved to adapters; immutable safety stays common.
+- **Separated configuration contracts, not editions or one profile:** deployment, workspace collaboration, client context, execution placement, model route, and credential ownership resolve independently into effective capabilities.
+- **One authoritative control plane per workspace:** local/cloud switching is explicit export/import, migration, or connector-backed execution; never implicit dual-primary sync.
+- **Earned autonomy:** agents and skills begin in shadow/proposal stages and advance only through versioned evidence, approval, canaries, monitoring, and rollback.
 - **Bring-your-own models:** users supply local endpoints, API credentials, or provider OAuth. Corvus stores credential references and brokers access; it does not conflate a Corvus subscription with model entitlement.
 - **Local model with cloud control plane requires a connector:** Corvus Cloud never assumes it can reach localhost and never asks users to expose an unauthenticated model port.
 - **Vite React rather than Next.js for the workspace client:** the product is an authenticated application, not an SEO surface; static client assets are reusable by Tauri. FastAPI remains authoritative.
@@ -551,7 +679,8 @@ Incrementally add scoped memory promotion, comments/approvals, channel bindings,
 - **Incremental migration rather than wholesale directory move:** preserves V1 behavior and makes regressions attributable.
 - **New scoped audit repository before rewriting legacy events:** provides a safe team boundary without an all-at-once event-store migration. Legacy events remain local-only until adapted.
 - **Fake provider/sandbox for deterministic tests, no host fallback:** allows verification on this machine without pretending unsandboxed builds are secure.
-- **OpenAPI-generated TS client:** prevents manual contract drift.
+- **Transport-neutral ports plus generated clients:** one composition root and in-process/HTTP Python parity prevent CLI drift; OpenAPI-generated TypeScript prevents web/desktop contract drift.
+- **Context firewall before model or memory use:** external/retrieved content remains attributed untrusted data and cannot grant instruction, tools, secrets, permissions, or autonomy.
 - **Server-side access bundle resolution:** transport tokens are references, not authority.
 - **No OpenClaw shared gateway as tenant boundary:** borrow queue/session/capability patterns only; Corvus owns authorization or isolates gateways per tenant.
 - **No Claude Tag embedding:** implement first-party `@Corvus`; Claude models may be providers through supported APIs.
@@ -563,25 +692,31 @@ Incrementally add scoped memory promotion, comments/approvals, channel bindings,
 - **Bundle TOCTOU/crash windows:** rehash at apply, durable one-time approvals, locks, and crash-point testing are mandatory.
 - **Large CLI/TUI modules:** keep adapter registration changes minimal; extract use cases before UI rewrites.
 - **Hash-chain concurrency:** use transaction/locking plus unique workspace sequence; test concurrent appends.
-- **SQLite concurrency limits:** SQLite is local-development mode. PostgreSQL is required before multi-worker production.
+- **SQLite limits:** supported only for one authoritative single-process individual local workspace with file locking, integrity checks, backups, and documented recovery; PostgreSQL is required before networked or multi-worker operation.
 - **Scope-comparison bugs:** centralize containment logic and use exhaustive table/property tests.
 - **Approval replay:** store nonce digest and single-use status in a transaction; bind to requester/reviewer/action/manifest/expiry.
-- **Credential leakage:** credentials remain outside sandbox; add broker later with host/method/path allowlists and redacted audit.
-- **SSE data leakage:** authorize connection and every replay query; never accept workspace/project solely from client token claims.
+- **Credential leakage or confused ownership:** provider connections bind owner, route, placement, and credential grant; the broker issues short-lived host/method/path-scoped access and zero-secret traces.
+- **Acting-agent authority drift:** recompute the requester/agent/delegation/channel/workspace/budget/placement/credential/kill-switch intersection at every effect.
+- **Context injection:** all external/retrieved content remains provenance-labelled untrusted data behind instruction/context separation and adversarial fixtures.
+- **Premature autonomy promotion:** shadow/canary stages, hidden holdouts, independent approval, regression thresholds, kill switches, and rollback gate every increase.
+- **Memory deletion gaps:** export/deletion receipts cover primary rows, indexes, caches, artifacts, and documented backup-retention exceptions.
+- **Connector compromise or offline ambiguity:** outbound-only mTLS, model-only RPC, consent, egress limits, health scheduling, revocation, and explicit unavailable states fail closed.
+- **SSE data leakage:** authorize every event against immutable scope/audience and test opaque cursor replay, retention gaps, backpressure, and cross-thread denial.
 - **Desktop privilege creep:** Tauri capabilities are reviewed as code and tested against an allowlist.
 - **Dependency supply chain:** lock Python/Node/Rust dependencies; add audit/SBOM gates before releases.
 - **Resource pressure:** serialize Node/Rust builds and avoid local container builds while RAM is constrained.
-- **Review-tool outage:** Claude returned HTTP 401, Gemini required Antigravity migration, and the approved read-only Codex fallback timed out without a verdict. Independent Hermes audits are the recorded review evidence; no external-model approval is claimed.
+- **Review availability:** Claude returned HTTP 401, Gemini required Antigravity migration, and Codex timed out without a verdict. The first two Hermes audits found V1 trust issues; the refreshed product-topology review returned `VERDICT: REVISE` and drove this revision, while its paired security reviewer timed out. The exact revised plan still requires a fresh completed independent review; no timeout is approval.
 
 ## Rollback and Checkpoints
-1. `1410d7f` remains the immutable V1 baseline.
-2. Commit reviewed planning artifacts separately before code.
-3. One commit per TDD task or tightly coupled slice.
-4. Never rewrite the V1 baseline after planning begins.
-5. Before schema work, create and hash a V1 database fixture and test upgrade/downgrade.
-6. CLI V2 commands are additive until their replacements pass compatibility tests.
-7. API/web/desktop live on separate feature commits and can be reverted without changing core data.
-8. No deployment or public release in this plan.
+1. `1410d7f` remains the immutable imported V1 baseline.
+2. Commit this revised plan and review log separately; record the exact plan digest reviewed.
+3. Refresh independent reviewers against that exact revision. Do not begin Task 1.1 schemas/contracts until a completed review no longer requires revision.
+4. One commit per TDD task or tightly coupled security fix; never rewrite baseline or hide incomplete gates.
+5. Before schema work, create and hash a V1 database fixture and test upgrade, repeated upgrade, checkpoint, and rollback readability.
+6. CLI V2 commands are additive until replacements pass compatibility tests.
+7. API, web, team/provider, connector, channel, and desktop work live on separate reversible feature commits.
+8. Autonomy/skill promotions always retain the previous active version and rollback receipt.
+9. No deployment, public release, live provider call, external message, credential migration, or purchase occurs in this plan.
 
 ## First Implementation Slice to Build Immediately
-Build Milestone 0, Milestone 0.5, and Milestone 1 only: reproducible packaging and golden tests; release-blocking snapshot/redaction/verification/delivery/provider/audit hardening; runtime-profile, credential-reference, identity/scope/access/audit contracts; fail-closed authorization; immutable scoped audit persistence; and additive CLI V2 access/audit inspection commands. Do not begin durable work, FastAPI, web, desktop, or channel-adapter code until this slice passes the complete quality gate and independent review.
+Finish the remaining Milestone 0.5 trust fixes as separately reviewed TDD commits, then build only Milestone 1's transport-neutral project create/read authority slice after the exact revised plan passes fresh review. Do not add CLI V2, FastAPI, React, channel, connector, desktop, live providers, or broad workflow/autonomy features until that project slice and complete quality/security gate pass.
