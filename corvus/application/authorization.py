@@ -100,6 +100,15 @@ def evaluate_capability_intersection(
             decision=AuthorizationDecision.DENY,
             reason_code="cross_workspace_grant",
         )
+    requested_scope = (request.scope_kind, request.scope_id)
+    if any(
+        (bundle.scope_kind, bundle.scope_id) != requested_scope
+        for bundle in (requester_bundle, agent_bundle)
+    ):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="scope_mismatch",
+        )
     if (
         requester_bundle.expires_at is not None
         and request.evaluated_at >= requester_bundle.expires_at

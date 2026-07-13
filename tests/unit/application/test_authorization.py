@@ -220,3 +220,26 @@ def test_requester_bundle_expiry_has_zero_grace() -> None:
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "requester_grant_expired"
     assert result.actions == frozenset()
+
+
+def test_project_scoped_bundle_cannot_broaden_to_another_project() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    other_project_id = uuid4()
+    requester_bundle = requester_bundle.model_copy(update={"scope_id": other_project_id})
+    agent_bundle = agent_bundle.model_copy(update={"scope_id": other_project_id})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "scope_mismatch"
+    assert result.actions == frozenset()
