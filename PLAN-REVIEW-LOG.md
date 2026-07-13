@@ -99,3 +99,20 @@ Accepted all six findings. `PLAN.md` now makes authority non-rollback through no
 
 ### Remaining gate
 Validate, commit and hash this plan-only revision, then rerun both independent scopes against that exact commit. Continue the review/revise cycle until both return `VERDICT: PASS`; implementation remains blocked.
+
+## Round 7 - Exact-commit paired Hermes review of `134475e`
+Two fresh read-only GPT-5.6-sol reviewers verified exact commit `134475ea8a1c5fe0c94f815f2575647240499d35`, `PLAN.md` SHA-256 `23bdee0833328ed472e93e03b572dff07da2655a63b042d9c54dbcef0c3ed1c8`, and a clean unchanged tree at both boundaries. Both returned `VERDICT: REVISE`; no production files changed and implementation remained blocked.
+
+### Security/schema/authorization findings
+- High: the non-exportable-key branch did not prevent a same-host clone or in-place rollback from reusing one OS-held key; restore could `resume_same_epoch`, and no externally pinned/versioned registry-verifier history protected lease/close certificates.
+- High: external effects bound only a mutable ciphertext locator plus sanitized digest rather than immutable ciphertext identity, encryption/commitment key versions and a keyed commitment to exact canonical plaintext across permit/outbox/attempt/audit/lineage.
+- High: tuple uniqueness did not prevent overlapping budget periods; parent rows lacked enforceable same-workspace/single-parent/legal-order/acyclic constraints; list-valued permit reservations did not prove complete ancestor coverage.
+
+### Product topology/client finding
+- High: the matrix enabled local-daemon web support after Milestone 4 even though the actual generated web client and API-backed Playwright pairing/reconnect tests were not scaffolded until Milestone 5.
+
+### Codex/Hermes response
+Accepted all four findings. `PLAN.md` now requires every authority-bearing commit to advance an externally registered or device-sealed monotonic generation/state root under one deployment-instance lease or fixed workspace OS lock; same-epoch clones and in-place rollback quarantine, registry verifier keys are pinned/versioned with compromise recovery, and restore mutation requires former-instance revocation plus exclusive new-epoch takeover. Effects now use immutable content-addressed `EffectPayloadVersion` records with ciphertext SHA-256, encryption/commitment key versions and canonical-plaintext HMAC bound through intent, permit, outbox, attempt, audit and lineage and reverified immediately before dispatch. Budgets now use non-overlapping canonical periods, same-workspace legal single-parent/closure rows, cycle checks and normalized permit-reservation bindings that must equal the complete ancestor closure. Local-daemon support is staged: retained CLI only after Milestone 4; real web support only after Milestone 5's generated-client pairing/session/rotation/restart/reconnect Playwright gate.
+
+### Remaining gate
+Validate, commit and hash this exact plan-only revision, then rerun both independent scopes. Continue until both return `VERDICT: PASS` on one commit; implementation remains blocked.
