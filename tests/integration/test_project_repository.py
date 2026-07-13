@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from corvus.domain.identity import Project
-from corvus.infrastructure.db import M1_PROJECT_REVISION, current_revision, upgrade_database
+from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision, upgrade_database
 from corvus.infrastructure.repositories.projects import ProjectRepository, ProjectRepositoryError
 from corvus.store import TraceStore
 
@@ -34,9 +34,9 @@ def test_project_migration_is_repeatable_and_preserves_legacy_schema(tmp_path: P
     first_schema = _schema_rows(database)
     second_revision = upgrade_database(database)
 
-    assert first_revision == M1_PROJECT_REVISION
-    assert second_revision == M1_PROJECT_REVISION
-    assert current_revision(database) == M1_PROJECT_REVISION
+    assert first_revision == M1_CURRENT_REVISION
+    assert second_revision == M1_CURRENT_REVISION
+    assert current_revision(database) == M1_CURRENT_REVISION
     assert _schema_rows(database) == first_schema
     after = {name: sql for kind, name, sql in first_schema if kind == "table" and name in before}
     assert after == before

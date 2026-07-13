@@ -24,6 +24,7 @@ LEGACY_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = 2
 M005_001_MIGRATION = "M005-001"
 M1_PROJECT_REVISION = "m1_001_projects"
+M1_AUDIT_REVISION = "m1_002_scoped_audit"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -35,12 +36,31 @@ V1_REQUIRED_TABLES = frozenset(
 )
 M005_001_REQUIRED_TABLES = frozenset({"external_contents", "context_envelopes"})
 M1_ADDITIVE_REQUIRED_TABLES = frozenset({"alembic_version", "projects"})
+M1_AUDIT_REQUIRED_TABLES = frozenset(
+    {
+        "authorization_decision_snapshots",
+        "audit_receipts",
+        "audit_result_bindings",
+        "audit_anchor_recovery_checkpoints",
+    }
+)
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
         "external_contents_no_update",
         "context_envelopes_no_delete",
         "context_envelopes_no_update",
+    }
+)
+M1_AUDIT_TRIGGERS = frozenset(
+    {
+        "authorization_decision_snapshots_no_delete",
+        "authorization_decision_snapshots_no_update",
+        "audit_receipts_no_delete",
+        "audit_receipts_no_update",
+        "audit_result_bindings_no_delete",
+        "audit_result_bindings_no_update",
+        "audit_anchor_recovery_checkpoints_no_delete",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -140,8 +160,63 @@ M1_ADDITIVE_REQUIRED_COLUMNS = {
         }
     ),
 }
+M1_AUDIT_REQUIRED_COLUMNS = {
+    "authorization_decision_snapshots": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "request_context_id",
+            "signing_key_version_id",
+            "canonical_digest",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "audit_receipts": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "workspace_sequence",
+            "authorization_snapshot_id",
+            "authority_commit_intent_id",
+            "previous_hash",
+            "receipt_hash",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "audit_result_bindings": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "audit_receipt_id",
+            "audit_receipt_hash",
+            "authority_commit_intent_id",
+            "binding_hash",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "audit_anchor_recovery_checkpoints": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "audit_receipt_id",
+            "authority_commit_intent_id",
+            "prepared_result_digest",
+            "state",
+            "result_binding_id",
+            "updated_at",
+            "payload_json",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
+M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
+    **M1_CURRENT_REQUIRED_COLUMNS,
+    **M1_AUDIT_REQUIRED_COLUMNS,
+}
 
 
 class DatabaseState(StrEnum):
@@ -213,7 +288,17 @@ def _m005_001_triggers_match(connection: sqlite3.Connection) -> bool:
             "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
         )
     )
-    return triggers == M005_001_APPEND_ONLY_TRIGGERS
+    return M005_001_APPEND_ONLY_TRIGGERS.issubset(triggers)
+
+
+def _m1_audit_triggers_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    return M1_AUDIT_TRIGGERS.issubset(triggers)
 
 
 @contextmanager
@@ -276,13 +361,22 @@ def classify_database(path: Path) -> DatabaseStatus:
                 {*V1_REQUIRED_TABLES, *M005_001_REQUIRED_TABLES, SCHEMA_METADATA_TABLE}
             )
             m1_current_tables = frozenset({*current_tables, *M1_ADDITIVE_REQUIRED_TABLES})
-            if tables in {stamped_v1_tables, current_tables, m1_current_tables}:
+            m1_audit_current_tables = frozenset({*m1_current_tables, *M1_AUDIT_REQUIRED_TABLES})
+            supported_table_sets = {
+                stamped_v1_tables,
+                current_tables,
+                m1_current_tables,
+                m1_audit_current_tables,
+            }
+            if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
                     expected_columns = V1_REQUIRED_COLUMNS
                 elif tables == current_tables:
                     expected_columns = CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m1_current_tables:
                     expected_columns = M1_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M1_AUDIT_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -308,24 +402,36 @@ def classify_database(path: Path) -> DatabaseStatus:
                                 "apply the transactional provenance migration"
                             ),
                         )
-                    m1_revision_matches = tables != m1_current_tables or connection.execute(
+                    expected_revision = (
+                        M1_PROJECT_REVISION if tables == m1_current_tables else M1_AUDIT_REVISION
+                    )
+                    m1_revision_matches = tables in {
+                        stamped_v1_tables,
+                        current_tables,
+                    } or connection.execute(
                         "SELECT version_num FROM alembic_version"
-                    ).fetchall() == [(M1_PROJECT_REVISION,)]
+                    ).fetchall() == [(expected_revision,)]
+                    audit_triggers_match = (
+                        tables != m1_audit_current_tables or _m1_audit_triggers_match(connection)
+                    )
                     if (
-                        tables in {current_tables, m1_current_tables}
+                        tables in {current_tables, m1_current_tables, m1_audit_current_tables}
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
                         and m1_revision_matches
+                        and audit_triggers_match
                     ):
+                        if tables == m1_audit_current_tables:
+                            detail = "database schema is current with M1 scoped audit persistence"
+                        elif tables == m1_current_tables:
+                            detail = "database schema is current with M1 project persistence"
+                        else:
+                            detail = "database schema is current"
                         return DatabaseStatus(
                             DatabaseState.CURRENT,
                             tables,
                             schema_version=CURRENT_SCHEMA_VERSION,
-                            detail=(
-                                "database schema is current with M1 project persistence"
-                                if tables == m1_current_tables
-                                else "database schema is current"
-                            ),
+                            detail=detail,
                         )
                     if isinstance(schema_version, int) and schema_version > CURRENT_SCHEMA_VERSION:
                         return DatabaseStatus(

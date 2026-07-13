@@ -8,8 +8,9 @@ from sqlalchemy import Integer, String, create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from corvus.database import DatabaseState, classify_database
 from corvus.domain.identity import Project, RecordStatus
-from corvus.infrastructure.db import M1_PROJECT_REVISION, current_revision
+from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
 
 class _RepositoryBase(DeclarativeBase):
@@ -37,8 +38,11 @@ class ProjectRepositoryError(RuntimeError):
 class ProjectRepository:
     def __init__(self, database: Path) -> None:
         revision = current_revision(database)
-        if revision != M1_PROJECT_REVISION:
+        if revision != M1_CURRENT_REVISION:
             raise ProjectRepositoryError(f"database_revision_mismatch:{revision or 'unstamped'}")
+        status = classify_database(database)
+        if status.state is not DatabaseState.CURRENT:
+            raise ProjectRepositoryError(f"database_state_mismatch:{status.state.value}")
         self.engine = create_engine(f"sqlite:///{database}")
 
     @staticmethod
