@@ -41,6 +41,16 @@ class ProjectAuditEvent(BaseModel):
     reason_code: str = Field(min_length=1, max_length=200)
 
 
+class ProjectCreateLifecycleError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+class ProjectCreateLifecyclePort(Protocol):
+    def create(self, project: Project, event: ProjectAuditEvent) -> None: ...
+
+
 class ProjectStorePort(Protocol):
     def create(self, project: Project) -> None: ...
 

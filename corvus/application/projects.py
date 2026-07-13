@@ -10,6 +10,8 @@ from corvus.application.ports import (
     ProjectAuditPort,
     ProjectAuthorizationPort,
     ProjectAuthorizationRequest,
+    ProjectCreateLifecycleError,
+    ProjectCreateLifecyclePort,
     ProjectStorePort,
 )
 from corvus.domain.identity import Project
@@ -63,10 +65,12 @@ class ProjectService:
         store: ProjectStorePort,
         authorization: ProjectAuthorizationPort,
         audit: ProjectAuditPort,
+        create_lifecycle: ProjectCreateLifecyclePort | None = None,
     ) -> None:
         self.store = store
         self.authorization = authorization
         self.audit = audit
+        self.create_lifecycle = create_lifecycle
 
     def create(self, command: CreateProjectCommand) -> ProjectResponse:
         if command.project.workspace_id != command.workspace_id:
@@ -134,35 +138,66 @@ class ProjectService:
             decision="allow" if decision.allowed else "deny",
             reason_code=decision.reason_code,
         )
-        try:
-            self.audit.record(audit_event)
-        except Exception:
-            return ProjectResponse(
-                request_id=request_id,
-                ok=False,
-                reason_code="audit_persistence_failed",
-            )
         if not decision.allowed:
+            try:
+                self.audit.record(audit_event)
+            except Exception:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="audit_persistence_failed",
+                )
             return ProjectResponse(
                 request_id=request_id,
                 ok=False,
                 reason_code=decision.reason_code,
             )
-        try:
-            result: Project | None
-            if action == "project.create":
-                if project is None:
-                    raise ValueError("project_missing")
-                self.store.create(project)
-                result = project
-            else:
-                result = self.store.get(workspace_id, project_id)
-        except Exception:
-            return ProjectResponse(
-                request_id=request_id,
-                ok=False,
-                reason_code="project_persistence_failed",
-            )
+        result: Project | None
+        if action == "project.create" and self.create_lifecycle is not None:
+            if project is None:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="project_missing",
+                )
+            try:
+                self.create_lifecycle.create(project, audit_event)
+            except ProjectCreateLifecycleError as exc:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code=exc.reason_code,
+                )
+            except Exception:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="project_persistence_failed",
+                )
+            result = project
+        else:
+            try:
+                self.audit.record(audit_event)
+            except Exception:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="audit_persistence_failed",
+                )
+            try:
+                if action == "project.create":
+                    if project is None:
+                        raise ValueError("project_missing")
+                    self.store.create(project)
+                    result = project
+                else:
+                    result = self.store.get(workspace_id, project_id)
+            except Exception:
+                return ProjectResponse(
+                    request_id=request_id,
+                    ok=False,
+                    reason_code="project_persistence_failed",
+                )
         if result is None:
             return ProjectResponse(
                 request_id=request_id,

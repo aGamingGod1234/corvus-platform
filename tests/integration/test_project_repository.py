@@ -66,6 +66,26 @@ def test_project_repository_round_trips_and_isolates_workspaces(tmp_path: Path) 
     assert repository.list_for_workspace(other_workspace_id) == []
 
 
+def test_project_repository_replay_requires_exact_record(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    TraceStore(database).engine.dispose()
+    upgrade_database(database)
+    repository = ProjectRepository(database)
+    project = Project(
+        workspace_id=uuid4(),
+        name="Replay-safe Corvus",
+        root_locator="workspace://replay-safe-corvus",
+        privacy="private",
+    )
+
+    repository.add_idempotent(project)
+    repository.add_idempotent(project)
+
+    with pytest.raises(ProjectRepositoryError, match="project_replay_mismatch"):
+        repository.add_idempotent(project.model_copy(update={"name": "Substituted"}))
+    assert repository.list_for_workspace(project.workspace_id) == [project]
+
+
 def test_project_repository_refuses_unmigrated_database(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     TraceStore(database).engine.dispose()

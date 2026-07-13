@@ -66,7 +66,7 @@ class SignedProjectAuditAdapter:
         self,
         *,
         repository: AuditRepository,
-        context_provider: ProjectAuditContextProvider,
+        context_provider: ProjectAuditContextProvider | None,
         signer: ProjectAuditSigner,
         clock: Callable[[], datetime],
     ) -> None:
@@ -76,6 +76,15 @@ class SignedProjectAuditAdapter:
         self.clock = clock
 
     def record(self, event: ProjectAuditEvent) -> None:
+        if self.context_provider is None:
+            raise ProjectAuditAdapterError("audit_context_provider_missing")
+        self.record_with_context(event, self.context_provider.resolve(event.request_id))
+
+    def record_with_context(
+        self,
+        event: ProjectAuditEvent,
+        context: ProjectAuditReceiptContext,
+    ) -> AuditReceipt:
         snapshot = self.repository.get_snapshot(
             workspace_id=event.workspace_id,
             snapshot_id=event.authorization_snapshot_id,
@@ -96,7 +105,6 @@ class SignedProjectAuditAdapter:
         ):
             raise ProjectAuditAdapterError("authorization_snapshot_event_mismatch")
 
-        context = self.context_provider.resolve(event.request_id)
         if context.request_context_id != event.request_id:
             raise ProjectAuditAdapterError("audit_context_request_mismatch")
         if (
@@ -148,3 +156,4 @@ class SignedProjectAuditAdapter:
             }
         )
         self.repository.append_receipt(receipt)
+        return receipt

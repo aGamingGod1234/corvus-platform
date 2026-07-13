@@ -78,6 +78,19 @@ class ProjectRepository:
         except IntegrityError as exc:
             raise ProjectRepositoryError("project_identity_conflict") from exc
 
+    def add_idempotent(self, project: Project) -> None:
+        existing = self.get(workspace_id=project.workspace_id, project_id=project.id)
+        if existing is not None:
+            if existing != project:
+                raise ProjectRepositoryError("project_replay_mismatch")
+            return
+        try:
+            self.add(project)
+        except ProjectRepositoryError:
+            existing = self.get(workspace_id=project.workspace_id, project_id=project.id)
+            if existing != project:
+                raise
+
     def get(self, *, workspace_id: UUID, project_id: UUID) -> Project | None:
         with Session(self.engine) as session:
             row = session.scalar(
