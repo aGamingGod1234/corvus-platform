@@ -14,17 +14,21 @@ from corvus.domain.audit import (
     validate_signing_time,
 )
 from corvus.domain.deployment import (
+    AuthorityCloseCertificate,
     AuthorityCommitIntent,
     AuthorityCommitState,
     AuthorityContractError,
+    AuthorityHandoffActivation,
     AuthorityRegistryFreshnessProof,
     AuthorityRegistryTrustState,
     AuthorityStateRootLeafFamily,
     AuthorityStateRootManifestVersion,
     CoverageKind,
+    EpochKeyDisposition,
     RestoreDecision,
     RestoreValidationReceipt,
     validate_authority_root_manifest,
+    validate_handoff_activation,
     validate_registry_freshness_proof,
     validate_registry_trust_transition,
 )
@@ -327,3 +331,50 @@ def test_revoked_signing_key_rejects_post_revocation_signature() -> None:
 
     with pytest.raises(ValueError, match="signing_key_revoked_at_signing_time"):
         validate_signing_time(key, now + timedelta(seconds=1))
+
+
+@pytest.mark.parametrize(
+    ("close_anchor_digest", "key_disposition", "key_evidence_digest", "reason_code"),
+    [
+        (None, EpochKeyDisposition.DESTROYED, "a" * 64, "handoff_close_not_anchored"),
+        (
+            "b" * 64,
+            EpochKeyDisposition.PENDING,
+            None,
+            "handoff_old_epoch_key_still_active",
+        ),
+    ],
+)
+def test_handoff_activation_requires_anchored_close_and_old_key_disposition(
+    close_anchor_digest: str | None,
+    key_disposition: EpochKeyDisposition,
+    key_evidence_digest: str | None,
+    reason_code: str,
+) -> None:
+    workspace_id = uuid4()
+    close = AuthorityCloseCertificate(
+        workspace_id=workspace_id,
+        source_deployment_instance_id=uuid4(),
+        authority_epoch=4,
+        final_generation=19,
+        final_state_root="c" * 64,
+        anchored_close_receipt_digest=close_anchor_digest,
+        epoch_key_disposition=key_disposition,
+        epoch_key_disposition_evidence_digest=key_evidence_digest,
+        closed_at=datetime(2026, 7, 14, 12, 0, tzinfo=UTC),
+    )
+    activation = AuthorityHandoffActivation(
+        workspace_id=workspace_id,
+        target_deployment_instance_id=uuid4(),
+        authority_epoch=5,
+        source_close_certificate_id=close.id,
+        source_close_certificate_digest="d" * 64,
+        authority_epoch_credential_id=uuid4(),
+        exclusive_lease_or_local_anchor_receipt_digest="e" * 64,
+        activated_at=datetime(2026, 7, 14, 12, 1, tzinfo=UTC),
+    )
+
+    with pytest.raises(AuthorityContractError) as exc_info:
+        validate_handoff_activation(close, activation)
+
+    assert exc_info.value.reason_code == reason_code

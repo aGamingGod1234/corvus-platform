@@ -143,6 +143,67 @@ class AuthorityContractError(ValueError):
         self.reason_code = reason_code
 
 
+def fixed_workspace_lock_name(workspace_id: UUID, authority_epoch: int) -> str:
+    if authority_epoch < 1:
+        raise AuthorityContractError(
+            "invalid_authority_epoch",
+            "the authority epoch must be positive",
+        )
+    material = f"corvus-workspace-lock-v1:{workspace_id}:{authority_epoch}".encode()
+    return f"corvus-workspace-{hashlib.sha256(material).hexdigest()}"
+
+
+class DeploymentInstanceLease(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    authority_epoch: int = Field(ge=1)
+    deployment_instance_id: UUID
+    lock_name: str = Field(min_length=1, max_length=200)
+    fencing_token: int = Field(ge=1)
+    acquired_at: datetime
+    released_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_fixed_lock_name(self) -> DeploymentInstanceLease:
+        expected = fixed_workspace_lock_name(self.workspace_id, self.authority_epoch)
+        if self.lock_name != expected:
+            raise PydanticCustomError(
+                "workspace_lock_name_mismatch",
+                "reason_code={reason_code}",
+                {"reason_code": "workspace_lock_name_mismatch"},
+            )
+        return self
+
+
+def validate_exclusive_instance_lease(
+    current: DeploymentInstanceLease,
+    *,
+    workspace_id: UUID,
+    authority_epoch: int,
+    claimant_instance_id: UUID,
+    lock_name: str,
+) -> None:
+    expected = fixed_workspace_lock_name(workspace_id, authority_epoch)
+    if lock_name != expected:
+        raise AuthorityContractError(
+            "workspace_lock_name_mismatch",
+            "the claimant did not use the fixed workspace lock",
+        )
+    if (
+        current.released_at is None
+        and current.workspace_id == workspace_id
+        and current.authority_epoch == authority_epoch
+        and current.lock_name == lock_name
+        and current.deployment_instance_id != claimant_instance_id
+    ):
+        raise AuthorityContractError(
+            "same_epoch_instance_lease_conflict",
+            "another deployment instance holds the workspace epoch lease",
+        )
+
+
 class AuthorityRegistryTrustState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -270,6 +331,83 @@ def validate_registry_trust_transition(
         raise AuthorityContractError(
             "registry_trust_state_expired",
             "registry trust metadata is expired",
+        )
+
+
+class EpochKeyDisposition(StrEnum):
+    PENDING = "pending"
+    DESTROYED = "destroyed"
+    REVOKED = "revoked"
+
+
+class AuthorityCloseCertificate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    source_deployment_instance_id: UUID
+    authority_epoch: int = Field(ge=1)
+    final_generation: int = Field(ge=0)
+    final_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    anchored_close_receipt_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    epoch_key_disposition: EpochKeyDisposition = EpochKeyDisposition.PENDING
+    epoch_key_disposition_evidence_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    closed_at: datetime
+
+
+class AuthorityHandoffActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    target_deployment_instance_id: UUID
+    authority_epoch: int = Field(ge=2)
+    source_close_certificate_id: UUID
+    source_close_certificate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_epoch_credential_id: UUID
+    exclusive_lease_or_local_anchor_receipt_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    activated_at: datetime
+
+
+def validate_handoff_activation(
+    close: AuthorityCloseCertificate,
+    activation: AuthorityHandoffActivation,
+) -> None:
+    if activation.workspace_id != close.workspace_id:
+        raise AuthorityContractError(
+            "handoff_workspace_mismatch",
+            "the close certificate belongs to another workspace",
+        )
+    if activation.source_close_certificate_id != close.id:
+        raise AuthorityContractError(
+            "handoff_close_certificate_mismatch",
+            "the activation does not bind the exact close certificate",
+        )
+    if activation.authority_epoch != close.authority_epoch + 1:
+        raise AuthorityContractError(
+            "handoff_epoch_not_advanced",
+            "handoff activation must advance exactly one authority epoch",
+        )
+    if close.anchored_close_receipt_digest is None:
+        raise AuthorityContractError(
+            "handoff_close_not_anchored",
+            "the source authority close has not been externally anchored",
+        )
+    if (
+        close.epoch_key_disposition
+        not in {EpochKeyDisposition.DESTROYED, EpochKeyDisposition.REVOKED}
+        or close.epoch_key_disposition_evidence_digest is None
+    ):
+        raise AuthorityContractError(
+            "handoff_old_epoch_key_still_active",
+            "the source epoch key lacks destruction or revocation evidence",
+        )
+    if activation.activated_at <= close.closed_at:
+        raise AuthorityContractError(
+            "handoff_activation_precedes_close",
+            "the target cannot activate before the source authority closes",
         )
 
 

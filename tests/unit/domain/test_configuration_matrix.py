@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -7,13 +8,17 @@ from pydantic import ValidationError
 
 from corvus.domain.client import ClientContext, ClientSurface
 from corvus.domain.deployment import (
+    AuthorityContractError,
     AuthorityMode,
     AuthProfile,
     ConfigurationContractError,
+    DeploymentInstanceLease,
     DeploymentProfile,
     NetworkProfile,
     StorageProfile,
+    fixed_workspace_lock_name,
     validate_configuration_combination,
+    validate_exclusive_instance_lease,
 )
 from corvus.domain.execution import ExecutionKind, ExecutionPlacement
 from corvus.domain.workspace import CollaborationMode, WorkspaceConfig
@@ -129,3 +134,30 @@ def test_embedded_local_rejects_cloud_worker_with_reason_code() -> None:
         validate_configuration_combination(profile, workspace, placement)
 
     assert exc_info.value.reason_code == "embedded_local_requires_local_runner"
+
+
+def test_same_epoch_clone_cannot_hold_fixed_workspace_lock() -> None:
+    workspace_id = uuid4()
+    epoch = 7
+    active_instance_id = uuid4()
+    clone_instance_id = uuid4()
+    lock_name = fixed_workspace_lock_name(workspace_id, epoch)
+    active_lease = DeploymentInstanceLease(
+        workspace_id=workspace_id,
+        authority_epoch=epoch,
+        deployment_instance_id=active_instance_id,
+        lock_name=lock_name,
+        fencing_token=11,
+        acquired_at=datetime(2026, 7, 14, 12, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(AuthorityContractError) as exc_info:
+        validate_exclusive_instance_lease(
+            active_lease,
+            workspace_id=workspace_id,
+            authority_epoch=epoch,
+            claimant_instance_id=clone_instance_id,
+            lock_name=lock_name,
+        )
+
+    assert exc_info.value.reason_code == "same_epoch_instance_lease_conflict"
