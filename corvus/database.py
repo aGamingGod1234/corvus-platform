@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import sqlite3
@@ -26,6 +28,7 @@ M005_001_MIGRATION = "M005-001"
 M1_PROJECT_REVISION = "m1_001_projects"
 M1_AUDIT_REVISION = "m1_002_scoped_audit"
 M1_AUTHORITY_REVISION = "m1_003_authority_core"
+M1_REGISTRY_REVISION = "m1_004_registry_manifest"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -54,6 +57,37 @@ M1_AUTHORITY_REQUIRED_TABLES = frozenset(
         "deployment_instance_leases",
         "workspace_authorities",
         "authority_commit_intents",
+    }
+)
+M1_REGISTRY_REQUIRED_TABLES = frozenset(
+    {
+        "authority_registries",
+        "authority_registry_verifier_keys",
+        "authority_registry_trust_states",
+        "authority_registry_freshness_proofs",
+        "authority_state_root_manifests",
+        "authority_state_root_leaf_families",
+        "authority_state_root_leaf_commitments",
+    }
+)
+M1_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        "audit_anchor_recovery_checkpoints",
+        "audit_receipts",
+        "audit_result_bindings",
+        "authority_commit_intents",
+        "authority_epoch_credentials",
+        "authority_registries",
+        "authority_registry_freshness_proofs",
+        "authority_registry_trust_states",
+        "authority_registry_verifier_keys",
+        "authority_state_root_manifests",
+        "authority_trust_anchors",
+        "authorization_decision_snapshots",
+        "deployment_instance_leases",
+        "deployment_instances",
+        "projects",
+        "workspace_authorities",
     }
 )
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
@@ -91,6 +125,13 @@ M1_AUTHORITY_REQUIRED_INDEXES = frozenset(
     {
         "uq_deployment_instance_leases_active_workspace_epoch",
         "uq_authority_commit_intents_inflight_workspace",
+    }
+)
+M1_REGISTRY_TRIGGERS = frozenset(
+    {
+        f"{table_name}_{operation}"
+        for table_name in M1_REGISTRY_REQUIRED_TABLES
+        for operation in ("no_delete", "no_update")
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -315,6 +356,97 @@ M1_AUTHORITY_REQUIRED_COLUMNS = {
         }
     ),
 }
+M1_REGISTRY_REQUIRED_COLUMNS = {
+    "authority_registries": frozenset(
+        {
+            "id",
+            "endpoint_digest",
+            "offline_root_public_key_digest",
+            "policy_digest",
+            "status",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "authority_registry_verifier_keys": frozenset(
+        {
+            "id",
+            "registry_id",
+            "key_version",
+            "algorithm",
+            "status",
+            "valid_from",
+            "valid_until",
+            "predecessor_digest",
+            "predecessor_signature",
+            "offline_root_recovery_signature",
+            "revoked_at",
+            "compromise_effective_at",
+            "canonical_digest",
+            "payload_json",
+        }
+    ),
+    "authority_registry_trust_states": frozenset(
+        {
+            "registry_id",
+            "metadata_version",
+            "latest_verifier_key_version",
+            "complete_history_head_digest",
+            "issued_at",
+            "expires_at",
+            "canonical_digest",
+            "payload_json",
+        }
+    ),
+    "authority_registry_freshness_proofs": frozenset(
+        {
+            "id",
+            "registry_id",
+            "trust_state_metadata_version",
+            "registry_sequence",
+            "challenge_nonce_digest",
+            "verifier_key_version_id",
+            "issued_at",
+            "expires_at",
+            "payload_json",
+        }
+    ),
+    "authority_state_root_manifests": frozenset(
+        {
+            "id",
+            "schema_version",
+            "canonicalization_version",
+            "manifest_digest",
+            "status",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "authority_state_root_leaf_families": frozenset(
+        {
+            "manifest_version_id",
+            "ordinal",
+            "family_name",
+            "coverage_kind",
+            "external_proof_kind",
+            "canonicalization_version",
+            "payload_json",
+        }
+    ),
+    "authority_state_root_leaf_commitments": frozenset(
+        {
+            "workspace_id",
+            "manifest_version_id",
+            "authority_generation",
+            "ordinal",
+            "family_name",
+            "record_version",
+            "leaf_digest",
+            "external_proof_digest",
+            "payload_json",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
@@ -324,6 +456,10 @@ M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
 M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS = {
     **M1_AUDIT_CURRENT_REQUIRED_COLUMNS,
     **M1_AUTHORITY_REQUIRED_COLUMNS,
+}
+M1_REGISTRY_CURRENT_REQUIRED_COLUMNS = {
+    **M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS,
+    **M1_REGISTRY_REQUIRED_COLUMNS,
 }
 
 
@@ -448,6 +584,61 @@ def _m1_authority_schema_controls_match(connection: sqlite3.Connection) -> bool:
     )
 
 
+def _m1_registry_schema_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    if not M1_REGISTRY_TRIGGERS.issubset(triggers):
+        return False
+    manifests = connection.execute(
+        "SELECT id, schema_version, canonicalization_version, manifest_digest "
+        "FROM authority_state_root_manifests ORDER BY schema_version, id"
+    ).fetchall()
+    if not manifests:
+        return False
+    for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
+        rows = connection.execute(
+            "SELECT ordinal, family_name, coverage_kind, external_proof_kind, "
+            "canonicalization_version FROM authority_state_root_leaf_families "
+            "WHERE manifest_version_id = ? ORDER BY ordinal",
+            (manifest_id,),
+        ).fetchall()
+        if (
+            {row[1] for row in rows} != M1_AUTHORITY_FAMILY_NAMES
+            or [row[0] for row in rows] != list(range(1, len(rows) + 1))
+            or any(row[4] != canonicalization_version for row in rows)
+            or any((row[2] == "external_proof") != (row[3] is not None) for row in rows)
+        ):
+            return False
+        payload = {
+            "schema_version": schema_version,
+            "canonicalization_version": canonicalization_version,
+            "families": [
+                {
+                    "ordinal": row[0],
+                    "family_name": row[1],
+                    "coverage_kind": row[2],
+                    "external_proof_kind": row[3],
+                    "canonicalization_version": row[4],
+                }
+                for row in rows
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        if hashlib.sha256(encoded).hexdigest() != manifest_digest:
+            return False
+    return True
+
+
 @contextmanager
 def _classification_path(path: Path) -> Iterator[Path]:
     """Avoid touching live WAL shared-memory bytes while classifying a database."""
@@ -512,12 +703,16 @@ def classify_database(path: Path) -> DatabaseStatus:
             m1_authority_current_tables = frozenset(
                 {*m1_audit_current_tables, *M1_AUTHORITY_REQUIRED_TABLES}
             )
+            m1_registry_current_tables = frozenset(
+                {*m1_authority_current_tables, *M1_REGISTRY_REQUIRED_TABLES}
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
                 m1_current_tables,
                 m1_audit_current_tables,
                 m1_authority_current_tables,
+                m1_registry_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -528,8 +723,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = M1_CURRENT_REQUIRED_COLUMNS
                 elif tables == m1_audit_current_tables:
                     expected_columns = M1_AUDIT_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m1_authority_current_tables:
                     expected_columns = M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M1_REGISTRY_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -559,8 +756,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         expected_revision = M1_PROJECT_REVISION
                     elif tables == m1_audit_current_tables:
                         expected_revision = M1_AUDIT_REVISION
-                    else:
+                    elif tables == m1_authority_current_tables:
                         expected_revision = M1_AUTHORITY_REVISION
+                    else:
+                        expected_revision = M1_REGISTRY_REVISION
                     m1_revision_matches = tables in {
                         stamped_v1_tables,
                         current_tables,
@@ -570,10 +769,15 @@ def classify_database(path: Path) -> DatabaseStatus:
                     audit_triggers_match = tables not in {
                         m1_audit_current_tables,
                         m1_authority_current_tables,
+                        m1_registry_current_tables,
                     } or _m1_audit_triggers_match(connection)
-                    authority_controls_match = (
-                        tables != m1_authority_current_tables
-                        or _m1_authority_schema_controls_match(connection)
+                    authority_controls_match = tables not in {
+                        m1_authority_current_tables,
+                        m1_registry_current_tables,
+                    } or _m1_authority_schema_controls_match(connection)
+                    registry_controls_match = (
+                        tables != m1_registry_current_tables
+                        or _m1_registry_schema_controls_match(connection)
                     )
                     if (
                         tables
@@ -582,14 +786,18 @@ def classify_database(path: Path) -> DatabaseStatus:
                             m1_current_tables,
                             m1_audit_current_tables,
                             m1_authority_current_tables,
+                            m1_registry_current_tables,
                         }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
                         and m1_revision_matches
                         and audit_triggers_match
                         and authority_controls_match
+                        and registry_controls_match
                     ):
-                        if tables == m1_authority_current_tables:
+                        if tables == m1_registry_current_tables:
+                            detail = "database schema is current with M1 registry persistence"
+                        elif tables == m1_authority_current_tables:
                             detail = "database schema is current with M1 authority persistence"
                         elif tables == m1_audit_current_tables:
                             detail = "database schema is current with M1 scoped audit persistence"

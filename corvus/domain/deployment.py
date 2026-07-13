@@ -324,12 +324,30 @@ class RegistryVerifierKeyStatus(StrEnum):
     COMPROMISED = "compromised"
 
 
+class AuthorityRegistryStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    RETIRED = "retired"
+
+
+class AuthorityRegistry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    endpoint_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    offline_root_public_key_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: AuthorityRegistryStatus = AuthorityRegistryStatus.ACTIVE
+    created_at: datetime = Field(default_factory=_now_utc)
+
+
 class AuthorityRegistryVerifierKeyVersion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
     id: UUID = Field(default_factory=uuid4)
     registry_id: UUID
     key_version: int = Field(ge=1)
+    algorithm: str = Field(default="ed25519", min_length=1)
     public_key: str = Field(min_length=1)
     status: RegistryVerifierKeyStatus
     valid_from: datetime
@@ -337,6 +355,8 @@ class AuthorityRegistryVerifierKeyVersion(BaseModel):
     revoked_at: datetime | None = None
     compromise_effective_at: datetime | None = None
     predecessor_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    predecessor_signature: str | None = Field(default=None, min_length=1)
+    offline_root_recovery_signature: str | None = Field(default=None, min_length=1)
     threshold_attestation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -430,6 +450,36 @@ class AuthorityStateRootLeafFamily(BaseModel):
     coverage_kind: CoverageKind
     external_proof_kind: str | None = Field(default=None, max_length=200)
     canonicalization_version: int = Field(ge=1)
+
+
+def canonical_authority_manifest_digest(
+    *,
+    schema_version: int,
+    canonicalization_version: int,
+    families: list[AuthorityStateRootLeafFamily],
+) -> str:
+    payload = {
+        "schema_version": schema_version,
+        "canonicalization_version": canonicalization_version,
+        "families": [
+            {
+                "ordinal": family.ordinal,
+                "family_name": family.family_name,
+                "coverage_kind": family.coverage_kind.value,
+                "external_proof_kind": family.external_proof_kind,
+                "canonicalization_version": family.canonicalization_version,
+            }
+            for family in sorted(families, key=lambda item: item.ordinal)
+        ],
+    }
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class AuthorityStateRootLeafCommitment(BaseModel):
