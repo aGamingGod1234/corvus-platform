@@ -109,7 +109,7 @@ class TraceStore:
             )
             sequence = 1 if previous is None else previous.sequence + 1
             previous_hash = "0" * 64 if previous is None else previous.event_hash
-            clean_payload = json.loads(self.redactor.redact(json.dumps(payload, default=str)))
+            clean_payload = self.redactor.redact_value(payload)
             created_at = datetime.now(UTC)
             canonical = json.dumps(
                 {

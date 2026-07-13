@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from corvus.context import ContextEnvelope, ExternalContent
 from corvus.delivery import DeliveryError, DeliveryManager
 from corvus.models import (
     AcceptanceCriterion,
@@ -22,13 +23,19 @@ from corvus.models import (
 from corvus.providers import ModelProviderClient, ProviderError
 from corvus.sandbox import CommandResult, DockerSandbox, SandboxError
 from corvus.security import SecurityError, atomic_write, resolve_under
+from corvus.snapshot import (
+    SnapshotPolicy,
+    create_snapshot,
+    is_snapshot_path_permanently_excluded,
+)
 from corvus.store import TraceStore
+from corvus.verification import VerificationCommand, VerificationPolicy
 
 
 class CandidatePackage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     files: dict[str, str]
-    test_commands: list[list[str]] = Field(min_length=1)
+    test_commands: list[list[str]] = Field(default_factory=list)
     smoke_command: list[str] | None = None
 
 
@@ -47,7 +54,8 @@ class CodingWorkflow:
 Return only JSON matching this object: {"files":{"relative/path":"complete contents"},
 "test_commands":[["executable","arg"]],"smoke_command":["executable","arg"]}.
 Paths must be relative. Do not include secrets. Commands run only in an isolated, offline sandbox.
-Return complete replacement contents for every candidate file. Never claim tests were run."""
+Return the complete desired candidate file set on every repair because each attempt starts fresh.
+Never claim tests were run. Trusted required and smoke checks are selected outside the model."""
 
     def __init__(
         self,
@@ -58,7 +66,18 @@ Return complete replacement contents for every candidate file. Never claim tests
         budget: Budget | None = None,
         sandbox_factory: Callable[[], SandboxBackend] | None = None,
         sandbox_name: str = "docker",
+        verification_policy: VerificationPolicy | None = None,
+        snapshot_policy: SnapshotPolicy | None = None,
+        max_output_characters: int = 32_000,
+        max_context_characters: int = 64_000,
+        max_model_response_characters: int = 1_000_000,
     ) -> None:
+        if max_output_characters <= 0:
+            raise ValueError("max_output_characters must be positive")
+        if max_context_characters <= 0:
+            raise ValueError("max_context_characters must be positive")
+        if max_model_response_characters <= 0:
+            raise ValueError("max_model_response_characters must be positive")
         self.store = store
         self.provider = provider
         self.delivery = delivery
@@ -66,19 +85,28 @@ Return complete replacement contents for every candidate file. Never claim tests
         self.budget = budget or Budget()
         self.sandbox_factory = sandbox_factory or DockerSandbox
         self.sandbox_name = sandbox_name
+        self.verification_policy = verification_policy or VerificationPolicy()
+        self.snapshot_policy = snapshot_policy or SnapshotPolicy()
+        self.max_output_characters = max_output_characters
+        self.max_context_characters = max_context_characters
+        self.max_model_response_characters = max_model_response_characters
+        self.redactor = store.redactor
 
     async def execute(self, prompt: str, project: Path) -> tuple[UUID, DeliveryBundle | None]:
         run_id = uuid4()
+        safe_prompt = self.redactor.bound_text(
+            prompt, max_characters=self.max_context_characters
+        ).text
         criterion = AcceptanceCriterion(
             id="AC-USER-1",
-            description=prompt,
-            verification_method="all model-declared commands pass in the constrained OCI sandbox",
+            description=safe_prompt,
+            verification_method="trusted required and smoke commands pass in the constrained OCI sandbox",
         )
         self.store.append(
             run_id,
             "run.created",
             RunPhase.UNDERSTAND,
-            {"prompt": prompt, "project": str(project), "autonomy": 3},
+            {"prompt": safe_prompt, "project": str(project), "autonomy": 3},
         )
         self.store.append(
             run_id,
@@ -95,52 +123,64 @@ Return complete replacement contents for every candidate file. Never claim tests
                 "max_repairs": self.budget.max_repair_attempts,
                 "sandbox_backend": self.sandbox_name,
                 "host_writes": "bundle only; project remains unchanged",
+                "trusted_required_commands": [
+                    list(command) for command in self.verification_policy.required_commands
+                ],
+                "trusted_smoke_commands": [
+                    list(command) for command in self.verification_policy.smoke_commands
+                ],
             },
         )
-        staging = self.staging_root / str(run_id)
-        try:
-            self._snapshot(project, staging)
-            candidate = await self._candidate(prompt)
-            self._apply_candidate(staging, candidate)
-        except (OSError, SecurityError, ProviderError, ValidationError, ValueError) as exc:
-            self.store.append(run_id, "run.blocked", RunPhase.BLOCKED, {"reason": str(exc)})
-            return run_id, None
-        sandbox = self.sandbox_factory()
+        run_root = self.staging_root / str(run_id)
+        source_snapshot = run_root / "source"
         attempts = 0
+        run_root_created = False
         try:
-            await sandbox.start()
+            self.staging_root.mkdir(parents=True, exist_ok=True)
+            run_root.mkdir(exist_ok=False)
+            run_root_created = True
+            create_snapshot(project, source_snapshot, self.snapshot_policy)
+            candidate = await self._candidate(safe_prompt)
+            passing_attempt: Path | None = None
+            passing_results: list[dict[str, object]] = []
+            passing_plan: tuple[VerificationCommand, ...] = ()
+
             while True:
-                self.store.append(
-                    run_id,
-                    "sandbox.staging",
-                    RunPhase.BUILD,
-                    {
-                        "backend": self.sandbox_name,
-                        "file_count": len(candidate.files),
-                        "repair": attempts,
-                    },
+                attempt_root = run_root / f"attempt-{attempts}"
+                create_snapshot(source_snapshot, attempt_root, self.snapshot_policy)
+                self._apply_candidate(attempt_root, candidate)
+                plan = self.verification_policy.plan(
+                    model_commands=candidate.test_commands,
+                    model_smoke=candidate.smoke_command,
                 )
-                await sandbox.stage(staging)
-                results: list[dict[str, object]] = []
-                for command in candidate.test_commands:
-                    result = await sandbox.run(command, timeout_seconds=300)
-                    results.append(
-                        {
-                            "command": command,
-                            "exit_code": result.exit_code,
-                            "stdout": result.stdout,
-                            "stderr": result.stderr,
-                            "timed_out": result.timed_out,
-                        }
-                    )
-                passed = all(item["exit_code"] == 0 for item in results)
+                results = await self._verify_attempt(
+                    run_id,
+                    attempt_root,
+                    plan,
+                    repair=attempts,
+                    candidate_file_count=len(candidate.files),
+                )
+                required_passed = all(
+                    result["exit_code"] == 0
+                    for item, result in zip(plan, results, strict=True)
+                    if item.required
+                )
+                passed = required_passed and all(result["exit_code"] == 0 for result in results)
                 self.store.append(
                     run_id,
                     "verification.completed",
                     RunPhase.VERIFY,
-                    {"passed": passed, "results": results, "repair": attempts},
+                    {
+                        "passed": passed,
+                        "required_passed": required_passed,
+                        "results": results,
+                        "repair": attempts,
+                    },
                 )
                 if passed:
+                    passing_attempt = attempt_root
+                    passing_results = results
+                    passing_plan = plan
                     break
                 if attempts >= self.budget.max_repair_attempts:
                     self.store.append(
@@ -151,18 +191,31 @@ Return complete replacement contents for every candidate file. Never claim tests
                     )
                     return run_id, None
                 attempts += 1
-                candidate = await self._candidate(
-                    prompt,
-                    repair_context=json.dumps(results, default=str),
+                repair_json = json.dumps(
+                    results,
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
                 )
-                self._apply_candidate(staging, candidate)
+                repair_context = self.redactor.bound_text(
+                    repair_json,
+                    max_characters=self.max_context_characters,
+                ).text
+                candidate = await self._candidate(
+                    safe_prompt,
+                    repair_context=repair_context,
+                )
                 self.store.append(
                     run_id,
                     "repair.created",
                     RunPhase.BUILD,
                     {"attempt": attempts, "files": sorted(candidate.files)},
                 )
-            candidate_bytes = {path: data.encode() for path, data in candidate.files.items()}
+
+            if passing_attempt is None:
+                raise SecurityError("passing attempt was not established")
+            candidate_bytes = self._read_verified_candidate(passing_attempt, candidate)
             bundle = self.delivery.package(
                 run_id,
                 project,
@@ -171,7 +224,20 @@ Return complete replacement contents for every candidate file. Never claim tests
                     "passed": True,
                     "criteria": [{"id": criterion.id, "status": "passed"}],
                 },
-                {"passed": True, "commands": candidate.test_commands, "repairs": attempts},
+                {
+                    "passed": True,
+                    "commands": [
+                        {
+                            "criterion_id": item.criterion_id,
+                            "command": self.redactor.redact_value(list(item.command)),
+                            "required": item.required,
+                            "source": item.source,
+                        }
+                        for item in passing_plan
+                    ],
+                    "results": passing_results,
+                    "repairs": attempts,
+                },
             )
             self.store.append(
                 run_id,
@@ -197,50 +263,115 @@ Return complete replacement contents for every candidate file. Never claim tests
             self.store.append(run_id, "run.blocked", RunPhase.BLOCKED, {"reason": str(exc)})
             return run_id, None
         finally:
+            if run_root_created and run_root.exists():
+                shutil.rmtree(run_root)
+
+    async def _verify_attempt(
+        self,
+        run_id: UUID,
+        attempt_root: Path,
+        plan: tuple[VerificationCommand, ...],
+        *,
+        repair: int,
+        candidate_file_count: int,
+    ) -> list[dict[str, object]]:
+        sandbox = self.sandbox_factory()
+        try:
+            await sandbox.start()
+            self.store.append(
+                run_id,
+                "sandbox.staging",
+                RunPhase.BUILD,
+                {
+                    "backend": self.sandbox_name,
+                    "file_count": candidate_file_count,
+                    "repair": repair,
+                },
+            )
+            await sandbox.stage(attempt_root)
+            results: list[dict[str, object]] = []
+            for item in plan:
+                command = list(item.command)
+                if any(self.redactor.redact(argument) != argument for argument in command):
+                    raise SecurityError("verification command contains secret material")
+                result = await sandbox.run(
+                    command,
+                    timeout_seconds=self.verification_policy.timeout_seconds,
+                )
+                stdout = self.redactor.bound_text(
+                    result.stdout,
+                    max_characters=self.max_output_characters,
+                )
+                stderr = self.redactor.bound_text(
+                    result.stderr,
+                    max_characters=self.max_output_characters,
+                )
+                results.append(
+                    {
+                        "criterion_id": item.criterion_id,
+                        "command": self.redactor.redact_value(command),
+                        "exit_code": result.exit_code,
+                        "required": item.required,
+                        "source": item.source,
+                        "stderr": stderr.text,
+                        "stderr_metadata": {
+                            "captured_bytes": stderr.captured_bytes,
+                            "captured_chars": stderr.captured_chars,
+                            "captured_sha256": stderr.captured_sha256,
+                            "original_bytes": stderr.original_bytes,
+                            "original_chars": stderr.original_chars,
+                            "original_sha256": stderr.original_sha256,
+                            "truncated": stderr.truncated,
+                        },
+                        "stdout": stdout.text,
+                        "stdout_metadata": {
+                            "captured_bytes": stdout.captured_bytes,
+                            "captured_chars": stdout.captured_chars,
+                            "captured_sha256": stdout.captured_sha256,
+                            "original_bytes": stdout.original_bytes,
+                            "original_chars": stdout.original_chars,
+                            "original_sha256": stdout.original_sha256,
+                            "truncated": stdout.truncated,
+                        },
+                        "timed_out": result.timed_out,
+                    }
+                )
+            return results
+        finally:
             await sandbox.close()
 
     async def _candidate(self, prompt: str, repair_context: str | None = None) -> CandidatePackage:
-        content = f"<untrusted_user_request>{prompt}</untrusted_user_request>"
-        if repair_context:
-            content += f"\n<untrusted_test_failure>{repair_context}</untrusted_test_failure>"
+        external = [ExternalContent.user(prompt, source="coding-request")]
+        if repair_context is not None:
+            external.append(
+                ExternalContent.tool(
+                    repair_context,
+                    source="sandbox-verification-results",
+                )
+            )
+        envelope = ContextEnvelope.compose(
+            trusted=(ExternalContent.system(self.SYSTEM),),
+            external=tuple(external),
+        )
         request = ModelRequest(
             messages=[
-                ModelMessage(role="system", content=self.SYSTEM),
-                ModelMessage(role="user", content=content),
+                ModelMessage(role=message.role, content=message.content)
+                for message in envelope.messages()
             ],
             temperature=0,
         )
         chunks: list[str] = []
+        response_characters = 0
         async for chunk in self.provider.stream(request):
             if chunk.type == "text":
+                response_characters += len(chunk.text)
+                if response_characters > self.max_model_response_characters:
+                    raise ValueError("model candidate response exceeds character limit")
                 chunks.append(chunk.text)
-        raw = "".join(chunks).strip()
+        raw = self.redactor.redact_registered("".join(chunks).strip())
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         return CandidatePackage.model_validate_json(raw)
-
-    @staticmethod
-    def _snapshot(source: Path, destination: Path) -> None:
-        destination.mkdir(parents=True, exist_ok=False)
-        for path in source.rglob("*"):
-            relative = path.relative_to(source)
-            if relative.parts and relative.parts[0] in {
-                ".git",
-                ".corvus",
-                ".venv",
-                "work",
-                "outputs",
-                "__pycache__",
-            }:
-                continue
-            if path.is_symlink():
-                raise SecurityError(f"snapshot symlink rejected: {relative}")
-            target = destination / relative
-            if path.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-            elif path.is_file():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, target, follow_symlinks=False)
 
     @staticmethod
     def _apply_candidate(staging: Path, candidate: CandidatePackage) -> None:
@@ -248,6 +379,8 @@ Return complete replacement contents for every candidate file. Never claim tests
             parts = Path(relative).parts
             if not parts or Path(relative).is_absolute() or ".." in parts:
                 raise SecurityError(f"unsafe candidate path: {relative}")
+            if is_snapshot_path_permanently_excluded(relative):
+                raise SecurityError(f"candidate path is permanently excluded: {relative}")
             parent = staging
             for part in parts[:-1]:
                 next_parent = resolve_under(parent, part)
@@ -255,6 +388,22 @@ Return complete replacement contents for every candidate file. Never claim tests
                 parent = next_parent
             target = resolve_under(parent, parts[-1])
             atomic_write(target, content.encode())
+
+    @staticmethod
+    def _read_verified_candidate(
+        passing_attempt: Path, candidate: CandidatePackage
+    ) -> dict[str, bytes]:
+        files: dict[str, bytes] = {}
+        for relative in sorted(candidate.files):
+            target = resolve_under(passing_attempt, relative, allow_missing_leaf=False)
+            if not target.is_file():
+                raise SecurityError(f"verified candidate file is not regular: {relative}")
+            files[relative] = target.read_bytes()
+        return files
+
+    @staticmethod
+    def _snapshot(source: Path, destination: Path) -> None:
+        create_snapshot(source, destination)
 
     def events(self, run_id: UUID) -> list[RunEvent]:
         return list(self.store.events(run_id))

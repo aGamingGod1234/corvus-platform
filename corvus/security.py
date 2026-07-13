@@ -56,10 +56,14 @@ class SecretRedactor:
         self._secrets.add(base64.b64encode(secret.encode()).decode())
         self._secrets.add(secret.encode().hex())
 
-    def redact(self, text: str) -> str:
+    def redact_registered(self, text: str) -> str:
         result = text
         for secret in sorted(self._secrets, key=len, reverse=True):
             result = result.replace(secret, "[REDACTED]")
+        return result
+
+    def redact(self, text: str) -> str:
+        result = self.redact_registered(text)
         for pattern in self._TOKEN_PATTERNS:
             if pattern.groups >= 2:
                 result = pattern.sub(lambda m: f"{m.group(1)}=[REDACTED]", result)

@@ -129,6 +129,10 @@ def _is_permanently_excluded(relative: Path, *, is_directory: bool) -> bool:
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in _PERMANENT_FILE_PATTERNS)
 
 
+def is_snapshot_path_permanently_excluded(relative: str | Path) -> bool:
+    return _is_permanently_excluded(Path(relative), is_directory=False)
+
+
 def _matches_rule(relative: Path, patterns: tuple[str, ...]) -> bool:
     path = relative.as_posix()
     return any(

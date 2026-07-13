@@ -58,3 +58,15 @@ def test_structured_redaction_rejects_cycles_fail_closed() -> None:
 
     with pytest.raises(SecurityError, match="cyclic"):
         redactor.redact_value(cycle)
+
+
+def test_registered_only_redaction_preserves_ordinary_source_patterns() -> None:
+    canary = "corvus-canary-value-7753"
+    redactor = SecretRedactor([canary])
+    source = "token = os.environ['TOKEN']\nvalue = '" + canary + "'"
+
+    redacted = redactor.redact_registered(source)
+
+    assert "token = os.environ['TOKEN']" in redacted
+    assert canary not in redacted
+    assert "[REDACTED]" in redacted
