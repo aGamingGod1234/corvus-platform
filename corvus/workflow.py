@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from corvus.context import ContextEnvelope, ExternalContent
+from corvus.context import ContextEnvelope, ContextOwner, ExternalContent
 from corvus.delivery import DeliveryError, DeliveryManager
 from corvus.models import (
     AcceptanceCriterion,
@@ -140,7 +140,8 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
             run_root.mkdir(exist_ok=False)
             run_root_created = True
             create_snapshot(project, source_snapshot, self.snapshot_policy)
-            candidate = await self._candidate(safe_prompt)
+            owner = ContextOwner.legacy_run(run_id)
+            candidate = await self._candidate(safe_prompt, owner=owner)
             passing_attempt: Path | None = None
             passing_results: list[dict[str, object]] = []
             passing_plan: tuple[VerificationCommand, ...] = ()
@@ -204,6 +205,7 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
                 ).text
                 candidate = await self._candidate(
                     safe_prompt,
+                    owner=owner,
                     repair_context=repair_context,
                 )
                 self.store.append(
@@ -340,7 +342,13 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
         finally:
             await sandbox.close()
 
-    async def _candidate(self, prompt: str, repair_context: str | None = None) -> CandidatePackage:
+    async def _candidate(
+        self,
+        prompt: str,
+        *,
+        owner: ContextOwner,
+        repair_context: str | None = None,
+    ) -> CandidatePackage:
         external = [ExternalContent.user(prompt, source="coding-request")]
         if repair_context is not None:
             external.append(
@@ -350,9 +358,11 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
                 )
             )
         envelope = ContextEnvelope.compose(
+            owner=owner,
             trusted=(ExternalContent.system(self.SYSTEM),),
             external=tuple(external),
         )
+        self.store.append_context_envelope(envelope)
         request = ModelRequest(
             messages=[
                 ModelMessage(role=message.role, content=message.content)
@@ -369,6 +379,10 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
                     raise ValueError("model candidate response exceeds character limit")
                 chunks.append(chunk.text)
         raw = self.redactor.redact_registered("".join(chunks).strip())
+        self.store.append_external_content(
+            owner,
+            ExternalContent.model(raw, source="coding-candidate-output"),
+        )
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
         return CandidatePackage.model_validate_json(raw)

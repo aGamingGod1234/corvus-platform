@@ -9,6 +9,7 @@ from sqlalchemy import MetaData, create_engine
 import corvus.database as database_module
 from corvus.database import (
     CURRENT_SCHEMA_VERSION,
+    M005_001_REQUIRED_TABLES,
     SCHEMA_METADATA_TABLE,
     V1_REQUIRED_TABLES,
     DatabaseBootstrapError,
@@ -37,6 +38,15 @@ def _source_snapshot(path: Path) -> dict[str, tuple[str, int, int]]:
     return snapshot
 
 
+def _create_legacy_schema(path: Path) -> None:
+    metadata = MetaData()
+    for table_name in sorted(V1_REQUIRED_TABLES):
+        Base.metadata.tables[table_name].to_metadata(metadata)
+    engine = create_engine(f"sqlite:///{path}")
+    metadata.create_all(engine)
+    engine.dispose()
+
+
 def _create_stamped_schema_v1(path: Path) -> None:
     metadata = MetaData()
     for table_name in sorted(V1_REQUIRED_TABLES):
@@ -61,7 +71,13 @@ def test_new_database_initializes_and_stamps_once(tmp_path: Path) -> None:
     status = classify_database(database)
     assert status.state is DatabaseState.CURRENT
     assert status.schema_version == CURRENT_SCHEMA_VERSION
-    assert status.tables == frozenset({*V1_REQUIRED_TABLES, SCHEMA_METADATA_TABLE})
+    assert status.tables == frozenset(
+        {
+            *V1_REQUIRED_TABLES,
+            *M005_001_REQUIRED_TABLES,
+            SCHEMA_METADATA_TABLE,
+        }
+    )
 
     second = TraceStore(database)
     second.engine.dispose()
@@ -114,7 +130,7 @@ def test_m005_001_provenance_tables_reject_update_and_delete(tmp_path: Path) -> 
                 "a" * 64,
                 "b" * 64,
                 "untrusted",
-                '\"hello\"',
+                '"hello"',
                 "{}",
                 "2026-07-13T00:00:00+00:00",
             ),
@@ -135,9 +151,7 @@ def test_m005_001_provenance_tables_reject_update_and_delete(tmp_path: Path) -> 
 
 def test_complete_unstamped_v1_refuses_ordinary_open_without_mutation(tmp_path: Path) -> None:
     database = tmp_path / "legacy.db"
-    engine = create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    _create_legacy_schema(database)
 
     with sqlite3.connect(database) as writer:
         assert writer.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
@@ -161,9 +175,7 @@ def test_complete_unstamped_v1_refuses_ordinary_open_without_mutation(tmp_path: 
 
 def test_partial_v1_schema_fails_closed_without_mutation(tmp_path: Path) -> None:
     database = tmp_path / "partial.db"
-    engine = create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    _create_legacy_schema(database)
     with sqlite3.connect(database) as connection:
         connection.execute("ALTER TABLE run_events DROP COLUMN event_type")
     before = _source_snapshot(database)
@@ -203,9 +215,7 @@ def test_future_schema_version_is_incompatible_and_not_mutated(tmp_path: Path) -
 def test_explicit_backup_precedes_legacy_stamp(tmp_path: Path) -> None:
     database = tmp_path / "legacy.db"
     backup = tmp_path / "backups" / "legacy.db"
-    engine = create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    _create_legacy_schema(database)
     before_schema = _schema_rows(database)
 
     receipt = database_module.backup_and_stamp_v1(database, backup)
@@ -223,9 +233,7 @@ def test_restore_verifies_backup_digest_before_publish(tmp_path: Path) -> None:
     database = tmp_path / "legacy.db"
     backup = tmp_path / "backups" / "legacy.db"
     restored = tmp_path / "restored" / "corvus.db"
-    engine = create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    _create_legacy_schema(database)
     receipt = database_module.backup_and_stamp_v1(database, backup)
 
     status = database_module.restore_database_backup(backup, restored)
@@ -239,9 +247,7 @@ def test_restore_rejects_tampered_backup_without_publishing(tmp_path: Path) -> N
     database = tmp_path / "legacy.db"
     backup = tmp_path / "backups" / "legacy.db"
     restored = tmp_path / "restored" / "corvus.db"
-    engine = create_engine(f"sqlite:///{database}")
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    _create_legacy_schema(database)
     database_module.backup_and_stamp_v1(database, backup)
     with backup.open("ab") as handle:
         handle.write(b"tampered")

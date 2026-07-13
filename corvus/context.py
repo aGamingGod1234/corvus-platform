@@ -24,6 +24,9 @@ class TrustClass(StrEnum):
 
 
 class ContextOwnerKind(StrEnum):
+    ROOT = "root"
+    SUBAGENT = "subagent"
+    CONVERSATION = "conversation"
     LEGACY_RUN = "legacy_run"
 
 
@@ -58,6 +61,18 @@ def _sha256_text(value: str) -> str:
 class ContextOwner:
     kind: ContextOwnerKind
     id: UUID
+
+    @classmethod
+    def root(cls, run_id: UUID) -> ContextOwner:
+        return cls(kind=ContextOwnerKind.ROOT, id=run_id)
+
+    @classmethod
+    def subagent(cls, run_id: UUID) -> ContextOwner:
+        return cls(kind=ContextOwnerKind.SUBAGENT, id=run_id)
+
+    @classmethod
+    def conversation(cls, conversation_id: UUID) -> ContextOwner:
+        return cls(kind=ContextOwnerKind.CONVERSATION, id=conversation_id)
 
     @classmethod
     def legacy_run(cls, run_id: UUID) -> ContextOwner:

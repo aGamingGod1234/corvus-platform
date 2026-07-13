@@ -29,6 +29,7 @@ Do not request host writes; delivery requires a separate manifest-bound approval
 
     async def begin(self, prompt: str, project: Path) -> AsyncIterator[RunEvent]:
         run_id = uuid4()
+        owner = ContextOwner.legacy_run(run_id)
         yield self.store.append(
             run_id,
             "run.created",
@@ -80,22 +81,40 @@ Do not request host writes; delivery requires a separate manifest-bound approval
                 {"reason": "No model provider is configured; no project files were changed."},
             )
             return
+
+        envelope = ContextEnvelope.compose(
+            owner=owner,
+            trusted=(ExternalContent.system(self.SYSTEM_PROMPT),),
+            external=(
+                ExternalContent.user(
+                    {"project": str(project), "request": prompt},
+                    source="orchestrator-request",
+                ),
+            ),
+        )
+        self.store.append_context_envelope(envelope)
         request = ModelRequest(
             messages=[
-                ModelMessage(role="system", content=self.SYSTEM_PROMPT),
-                ModelMessage(
-                    role="user",
-                    content=f"<untrusted_user_request>{prompt}</untrusted_user_request>",
-                ),
+                ModelMessage(role=message.role, content=message.content)
+                for message in envelope.messages()
             ]
         )
+        chunks: list[str] = []
         try:
             async for chunk in self.provider.stream(request):
+                if chunk.type == "text":
+                    chunks.append(chunk.text or "")
                 yield self.store.append(
                     run_id,
                     "model.chunk",
                     RunPhase.PLAN,
                     chunk.model_dump(mode="json"),
+                )
+            response = "".join(chunks)
+            if response:
+                self.store.append_external_content(
+                    owner,
+                    ExternalContent.model(response, source="orchestrator-model-output"),
                 )
         except ProviderError as exc:
             yield self.store.append(

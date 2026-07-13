@@ -1,1 +1,7 @@
-{"algorithm":"sha256","files":{"public_contract.json":"0d7630134a715ff1c661fb3e0edba140df378a40337095095c0e7cb6da8602a8"},"schema_version":1}
+{
+  "algorithm": "sha256",
+  "files": {
+    "public_contract.json": "451237410ca08476bb237bb1f301a99f43dc6375951ea60ee359ba5c0ec0165a"
+  },
+  "schema_version": 1
+}

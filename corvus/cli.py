@@ -32,7 +32,14 @@ from corvus.onboarding_tui import FirstRunApp
 from corvus.orchestration import AgentOrchestrator
 from corvus.provider_control import ConfiguredLiveModelController
 from corvus.providers import HttpProvider, ModelProviderClient
-from corvus.sandbox import DockerSandbox, PodmanSandbox, SandboxError, validate_sandbox_image
+from corvus.sandbox import (
+    DEVELOPMENT_SANDBOX_IMAGE,
+    PRODUCTION_SANDBOX_IMAGE,
+    DockerSandbox,
+    PodmanSandbox,
+    SandboxError,
+    validate_sandbox_image,
+)
 from corvus.skills import SkillRegistry
 from corvus.store import TraceStore
 from corvus.tui import CorvusApp
@@ -93,7 +100,9 @@ def resolve_sandbox_runtime(
                 "disabled."
             ),
         )
-    selected_image = image or "python:3.12-slim"
+    selected_image = image or (
+        PRODUCTION_SANDBOX_IMAGE if production else DEVELOPMENT_SANDBOX_IMAGE
+    )
     try:
         validate_sandbox_image(selected_image, production=production)
     except SandboxError as exc:
@@ -475,6 +484,7 @@ def launch_tui(
     workflow = workflow_for(provider) if provider is not None else None
     runner = ChatAgent(
         provider,
+        provenance=store,
         workflow=workflow,
         project=selected_project,
         allow_subagents=selected_subagents,

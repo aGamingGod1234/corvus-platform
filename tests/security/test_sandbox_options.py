@@ -9,6 +9,8 @@ import corvus.sandbox as sandbox_module
 from corvus.cli import SandboxOption, resolve_sandbox_runtime
 from corvus.models import SandboxPolicy
 from corvus.sandbox import (
+    DEVELOPMENT_SANDBOX_IMAGE,
+    PRODUCTION_SANDBOX_IMAGE,
     CommandResult,
     DockerSandbox,
     PodmanSandbox,
@@ -62,27 +64,39 @@ def test_unavailable_explicit_sandbox_never_falls_back_to_host() -> None:
     assert runtime.available is False
 
 
-def test_production_sandbox_requires_digest_pinned_image() -> None:
+def test_production_sandbox_uses_digest_pinned_default_and_rejects_tags() -> None:
+    assert DockerSandbox().image == PRODUCTION_SANDBOX_IMAGE
+    assert PodmanSandbox().image == PRODUCTION_SANDBOX_IMAGE
     with pytest.raises(SandboxError, match="digest-pinned"):
-        DockerSandbox()
+        DockerSandbox(image=DEVELOPMENT_SANDBOX_IMAGE)
     with pytest.raises(SandboxError, match="digest-pinned"):
-        PodmanSandbox()
+        PodmanSandbox(image=DEVELOPMENT_SANDBOX_IMAGE)
 
     image = f"python@sha256:{'a' * 64}"
     assert DockerSandbox(image=image).container_options()["image"] == image
     assert image not in PodmanSandbox(image=image).container_options()
 
 
-def test_runtime_factory_fails_closed_without_production_image() -> None:
+def test_runtime_uses_pinned_production_default_and_rejects_unpinned_override() -> None:
     runtime = resolve_sandbox_runtime(
         SandboxOption.DOCKER,
         docker_status=(True, "available"),
         podman_status=(False, "unavailable"),
     )
 
-    assert runtime.backend == "none"
-    assert runtime.factory is None
-    assert "digest-pinned" in runtime.detail
+    assert runtime.backend == "docker"
+    assert runtime.factory is not None
+    assert runtime.factory().image == PRODUCTION_SANDBOX_IMAGE
+
+    rejected = resolve_sandbox_runtime(
+        SandboxOption.DOCKER,
+        image=DEVELOPMENT_SANDBOX_IMAGE,
+        docker_status=(True, "available"),
+        podman_status=(False, "unavailable"),
+    )
+    assert rejected.backend == "none"
+    assert rejected.factory is None
+    assert "digest-pinned" in rejected.detail
 
     image = f"python@sha256:{'b' * 64}"
     pinned = resolve_sandbox_runtime(
@@ -102,7 +116,7 @@ def test_runtime_factory_fails_closed_without_production_image() -> None:
         podman_status=(True, "available"),
     )
     assert development.factory is not None
-    assert development.factory().image == "python:3.12-slim"
+    assert development.factory().image == DEVELOPMENT_SANDBOX_IMAGE
 
 
 def test_archive_limits_fail_before_container_transfer(tmp_path: Path) -> None:

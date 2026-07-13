@@ -207,9 +207,24 @@ def _file_inventory(root: Path) -> list[dict[str, object]]:
     return inventory
 
 
-def _manifest(records_sha256: str, source_database_sha256: str) -> dict[str, object]:
+def _capture_id(records_sha256: str, source_database_sha256: str) -> str:
+    return sha256_bytes(
+        _canonical_json(
+            {
+                "records_sha256": records_sha256,
+                "source_database_sha256": source_database_sha256,
+            }
+        )
+    )
+
+
+def _manifest(
+    capture_id: str,
+    records_sha256: str,
+    source_database_sha256: str,
+) -> dict[str, object]:
     body: dict[str, object] = {
-        "capture_id": records_sha256,
+        "capture_id": capture_id,
         "records_sha256": records_sha256,
         "schema_version": _CAPTURE_SCHEMA_VERSION,
         "seal_algorithm": "sha256",
@@ -225,9 +240,14 @@ def verify_v1_quarantine(path: Path) -> bool:
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
         seal = manifest.pop("seal")
         records_sha256 = sha256_bytes(records_bytes)
+        source_database_sha256 = manifest.get("source_database_sha256")
+        capture_id = manifest.get("capture_id")
         return bool(
-            path.name == records_sha256
-            and manifest.get("capture_id") == records_sha256
+            isinstance(source_database_sha256, str)
+            and len(source_database_sha256) == 64
+            and isinstance(capture_id, str)
+            and path.name == capture_id
+            and capture_id == _capture_id(records_sha256, source_database_sha256)
             and manifest.get("records_sha256") == records_sha256
             and manifest.get("schema_version") == _CAPTURE_SCHEMA_VERSION
             and manifest.get("seal_algorithm") == "sha256"
@@ -270,14 +290,16 @@ def capture_v1_quarantine(
         }
         records_bytes = _canonical_json(records)
         records_sha256 = sha256_bytes(records_bytes)
-        manifest = _manifest(records_sha256, sha256_file(snapshot))
+        source_database_sha256 = sha256_file(snapshot)
+        capture_id = _capture_id(records_sha256, source_database_sha256)
+        manifest = _manifest(capture_id, records_sha256, source_database_sha256)
 
-    destination = quarantine_root / records_sha256
+    destination = quarantine_root / capture_id
     if destination.exists():
         if not verify_v1_quarantine(destination):
             raise ValueError("existing quarantine capture failed verification")
     else:
-        temporary_capture = quarantine_root / f".{records_sha256}-{uuid4().hex}.tmp"
+        temporary_capture = quarantine_root / f".{capture_id}-{uuid4().hex}.tmp"
         try:
             temporary_capture.mkdir()
             atomic_write(temporary_capture / "records.json", records_bytes)
@@ -290,7 +312,7 @@ def capture_v1_quarantine(
         finally:
             shutil.rmtree(temporary_capture, ignore_errors=True)
     return QuarantineReceipt(
-        capture_id=records_sha256,
+        capture_id=capture_id,
         path=destination,
         records_sha256=records_sha256,
         seal=str(manifest["seal"]),

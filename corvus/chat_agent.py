@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 from uuid import UUID
 
+from corvus.context import ContextOwner, ContextProvenanceSink
 from corvus.conversations import AgentRunContext, ConversationError
 from corvus.interactive import AgentEvent, InteractiveAgent
 from corvus.models import DeliveryBundle, ModelMessage, RunEvent
@@ -34,6 +35,7 @@ class ChatAgent:
         self,
         provider: ModelProviderClient | None,
         *,
+        provenance: ContextProvenanceSink,
         workflow: CodingWorkflowLike | None = None,
         project: Path | None = None,
         allow_subagents: bool = False,
@@ -41,13 +43,18 @@ class ChatAgent:
         build_unavailable_reason: str | None = None,
     ) -> None:
         self.provider = provider
+        self.provenance = provenance
         self.workflow = workflow
         self.project = project.resolve() if project is not None else None
         self.allow_subagents = allow_subagents
         self.max_subagents = max_subagents
         self.build_unavailable_reason = build_unavailable_reason
         self._interactive = (
-            InteractiveAgent(provider, max_subagents=max_subagents)
+            InteractiveAgent(
+                provider,
+                provenance=self.provenance,
+                max_subagents=max_subagents,
+            )
             if provider is not None
             else None
         )
@@ -60,7 +67,11 @@ class ChatAgent:
     ) -> None:
         """Replace the provider used by future turns after the runtime becomes idle."""
 
-        interactive = InteractiveAgent(provider, max_subagents=self.max_subagents)
+        interactive = InteractiveAgent(
+            provider,
+            provenance=self.provenance,
+            max_subagents=self.max_subagents,
+        )
         self.provider = provider
         self.workflow = workflow
         self._interactive = interactive
@@ -102,10 +113,16 @@ class ChatAgent:
                 return result.output
             return f"Subagent failed: {result.error or 'no result'}"
 
+        owner = (
+            ContextOwner.subagent(context.run_id)
+            if context.is_subagent
+            else ContextOwner.root(context.run_id)
+        )
         response = await interactive.respond(
             context.prompt,
             history,
             emit,
+            owner=owner,
             allow_subagents=self.allow_subagents and not context.is_subagent,
             spawn_subagent=spawn if not context.is_subagent else None,
         )

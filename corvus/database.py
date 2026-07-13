@@ -274,10 +274,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                 rows = connection.execute("SELECT schema_version FROM corvus_schema").fetchall()
                 if columns == {"schema_version"} and len(rows) == 1:
                     schema_version = rows[0][0]
-                    if (
-                        tables == stamped_v1_tables
-                        and schema_version == LEGACY_SCHEMA_VERSION
-                    ):
+                    if tables == stamped_v1_tables and schema_version == LEGACY_SCHEMA_VERSION:
                         return DatabaseStatus(
                             DatabaseState.MIGRATION_REQUIRED,
                             tables,
@@ -419,9 +416,7 @@ def _migrate_m005_001(path: Path, metadata: MetaData) -> DatabaseStatus:
                 )
             )
             expected = frozenset({*V1_REQUIRED_TABLES, SCHEMA_METADATA_TABLE})
-            version_rows = connection.execute(
-                "SELECT schema_version FROM corvus_schema"
-            ).fetchall()
+            version_rows = connection.execute("SELECT schema_version FROM corvus_schema").fetchall()
             if (
                 tables != expected
                 or not _v1_columns_match(connection)

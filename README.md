@@ -17,6 +17,23 @@ This repository is an early V2 migration from Corvus CLI V1. The CLI remains ava
 
 Corvus build execution is fail-closed. If Docker or Podman is unavailable, ordinary chat may remain available but isolated builds do not fall back to host execution.
 
+## Sandbox image
+
+Production builds default to the supported digest-pinned image:
+
+```text
+python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
+```
+
+Existing installations that set `CORVUS_SANDBOX_IMAGE=python:3.12-slim` must either unset the variable to adopt this default or replace it with a verified `name@sha256:<digest>` reference. Tag-only production overrides are rejected before a container starts. Podman uses `--pull=never`, so pre-pull the exact reference during deployment; Docker deployments may also pre-pull it to make startup deterministic.
+
+```bash
+export CORVUS_SANDBOX_IMAGE='python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf'
+docker pull "$CORVUS_SANDBOX_IMAGE"   # or: podman pull "$CORVUS_SANDBOX_IMAGE"
+```
+
+Unpinned `python:3.12-slim` remains available only when code explicitly selects non-production mode for local development or tests.
+
 ## Development
 
 Requirements:

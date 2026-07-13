@@ -94,6 +94,10 @@ class _BoundedBytesIO(io.BytesIO):
 
 
 _IMAGE_DIGEST = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+DEVELOPMENT_SANDBOX_IMAGE = "python:3.12-slim"
+PRODUCTION_SANDBOX_IMAGE = (
+    "python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
+)
 
 
 def validate_sandbox_image(image: str, *, production: bool) -> None:
@@ -323,15 +327,18 @@ def _archive_source(source: Path, limits: SandboxLimits) -> bytes:
 class DockerSandbox:
     def __init__(
         self,
-        image: str = "python:3.12-slim",
+        image: str | None = None,
         policy: SandboxPolicy | None = None,
         client: Any | None = None,
         *,
         limits: SandboxLimits | None = None,
         production: bool = True,
     ) -> None:
-        validate_sandbox_image(image, production=production)
-        self.image = image
+        selected_image = image or (
+            PRODUCTION_SANDBOX_IMAGE if production else DEVELOPMENT_SANDBOX_IMAGE
+        )
+        validate_sandbox_image(selected_image, production=production)
+        self.image = selected_image
         self.policy = policy or SandboxPolicy()
         self.client = client
         self.limits = limits or SandboxLimits()
@@ -537,15 +544,18 @@ class PodmanSandbox:
 
     def __init__(
         self,
-        image: str = "python:3.12-slim",
+        image: str | None = None,
         policy: SandboxPolicy | None = None,
         executable: str | Path | None = None,
         *,
         limits: SandboxLimits | None = None,
         production: bool = True,
     ) -> None:
-        validate_sandbox_image(image, production=production)
-        self.image = image
+        selected_image = image or (
+            PRODUCTION_SANDBOX_IMAGE if production else DEVELOPMENT_SANDBOX_IMAGE
+        )
+        validate_sandbox_image(selected_image, production=production)
+        self.image = selected_image
         self.policy = policy or SandboxPolicy()
         self.executable = str(executable) if executable is not None else None
         self.limits = limits or SandboxLimits()

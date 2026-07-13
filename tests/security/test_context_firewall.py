@@ -12,6 +12,7 @@ from corvus.context import (
     ContentOrigin,
     ContextEnvelope,
     ContextOwner,
+    ContextOwnerKind,
     ExternalContent,
     TrustClass,
 )
@@ -32,6 +33,15 @@ class _CapturingProvider:
         assert self.store.context_envelope_count() == len(self.requests)
         yield ModelChunk(type="text", text=self.responses.pop(0))
         yield ModelChunk(type="done")
+
+
+def test_context_owner_kinds_are_explicit_and_typed() -> None:
+    identifier = uuid4()
+
+    assert ContextOwner.root(identifier).kind is ContextOwnerKind.ROOT
+    assert ContextOwner.subagent(identifier).kind is ContextOwnerKind.SUBAGENT
+    assert ContextOwner.conversation(identifier).kind is ContextOwnerKind.CONVERSATION
+    assert ContextOwner.legacy_run(identifier).kind is ContextOwnerKind.LEGACY_RUN
 
 
 def test_external_content_is_immutable_untrusted_canonical_data() -> None:
@@ -164,8 +174,7 @@ async def test_interactive_context_is_persisted_before_calls_and_never_elevates_
         if message.role == "user"
     ]
     assert any(
-        item["origin"] == "subagent" and item["data"]["result"] == hostile
-        for item in main_external
+        item["origin"] == "subagent" and item["data"]["result"] == hostile for item in main_external
     )
 
     store.engine.dispose()
@@ -175,8 +184,7 @@ async def test_interactive_context_is_persisted_before_calls_and_never_elevates_
     assert len(envelopes) == 2
     assert all(item["owner_kind"] == "legacy_run" for item in envelopes)
     assert any(
-        item["origin"] == "subagent" and item["trust_class"] == "untrusted"
-        for item in contents
+        item["origin"] == "subagent" and item["trust_class"] == "untrusted" for item in contents
     )
     assert any(
         item["origin"] == "model" and item["trust_class"] == "untrusted" for item in contents
