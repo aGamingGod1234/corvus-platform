@@ -592,16 +592,36 @@ class AuthorityCloseCertificate(BaseModel):
 
     id: UUID = Field(default_factory=uuid4)
     workspace_id: UUID
+    closed_epoch: int = Field(ge=1)
+    source_deployment_id: UUID
     source_deployment_instance_id: UUID
-    authority_epoch: int = Field(ge=1)
-    final_generation: int = Field(ge=0)
-    final_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
-    anchored_close_receipt_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    epoch_key_disposition: EpochKeyDisposition = EpochKeyDisposition.PENDING
-    epoch_key_disposition_evidence_digest: str | None = Field(
+    target_deployment_id: UUID
+    epoch_credential_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destruction_or_revocation_attestation_digest: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
-    closed_at: datetime
+    final_authority_generation: int = Field(ge=0)
+    final_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    workspace_signing_key_version_id: UUID
+    workspace_signature: str = Field(min_length=1)
+    anchor_registry_id: UUID | None = None
+    registry_sequence: int | None = Field(default=None, ge=1)
+    registry_signing_key_version_id: UUID | None = None
+    registry_signature: str | None = Field(default=None, min_length=1)
+    local_anchor_receipt_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    anchor_receipt_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    epoch_key_disposition: EpochKeyDisposition = EpochKeyDisposition.PENDING
+    externally_anchored_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_anchor_pair(self) -> AuthorityCloseCertificate:
+        if (self.anchor_receipt_digest is None) != (self.externally_anchored_at is None):
+            raise PydanticCustomError(
+                "incomplete_close_anchor",
+                "reason_code={reason_code}",
+                {"reason_code": "close_anchor_digest_and_time_must_coexist"},
+            )
+        return self
 
 
 class AuthorityHandoffActivation(BaseModel):
@@ -632,12 +652,12 @@ def validate_handoff_activation(
             "handoff_close_certificate_mismatch",
             "the activation does not bind the exact close certificate",
         )
-    if activation.authority_epoch != close.authority_epoch + 1:
+    if activation.authority_epoch != close.closed_epoch + 1:
         raise AuthorityContractError(
             "handoff_epoch_not_advanced",
             "handoff activation must advance exactly one authority epoch",
         )
-    if close.anchored_close_receipt_digest is None:
+    if close.anchor_receipt_digest is None or close.externally_anchored_at is None:
         raise AuthorityContractError(
             "handoff_close_not_anchored",
             "the source authority close has not been externally anchored",
@@ -645,17 +665,79 @@ def validate_handoff_activation(
     if (
         close.epoch_key_disposition
         not in {EpochKeyDisposition.DESTROYED, EpochKeyDisposition.REVOKED}
-        or close.epoch_key_disposition_evidence_digest is None
+        or close.destruction_or_revocation_attestation_digest is None
     ):
         raise AuthorityContractError(
             "handoff_old_epoch_key_still_active",
             "the source epoch key lacks destruction or revocation evidence",
         )
-    if activation.activated_at <= close.closed_at:
+    if activation.activated_at <= close.externally_anchored_at:
         raise AuthorityContractError(
             "handoff_activation_precedes_close",
             "the target cannot activate before the source authority closes",
         )
+
+
+class AuthorityHandoffState(StrEnum):
+    PREPARED = "prepared"
+    SOURCE_CLOSED_ANCHORED = "source_closed_anchored"
+    TARGET_ACTIVE = "target_active"
+    ABORTED = "aborted"
+
+
+class AuthorityHandoff(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    from_deployment_id: UUID
+    from_deployment_instance_id: UUID
+    to_deployment_id: UUID
+    to_deployment_instance_id: UUID
+    from_epoch: int = Field(ge=1)
+    to_epoch: int = Field(ge=2)
+    export_artifact_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_checkpoint_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authorization_snapshot_id: UUID
+    authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_signing_key_version_id: UUID
+    close_certificate_id: UUID
+    target_epoch_credential_id: UUID
+    state: AuthorityHandoffState
+    prepared_at: datetime = Field(default_factory=_now_utc)
+    completed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_transition_binding(self) -> AuthorityHandoff:
+        if self.to_epoch != self.from_epoch + 1:
+            raise PydanticCustomError(
+                "invalid_handoff_epoch",
+                "reason_code={reason_code}",
+                {"reason_code": "handoff_epoch_must_advance_once"},
+            )
+        if self.from_deployment_instance_id == self.to_deployment_instance_id:
+            raise PydanticCustomError(
+                "invalid_handoff_target",
+                "reason_code={reason_code}",
+                {"reason_code": "handoff_requires_distinct_target_instance"},
+            )
+        terminal = self.state in {
+            AuthorityHandoffState.TARGET_ACTIVE,
+            AuthorityHandoffState.ABORTED,
+        }
+        if terminal != (self.completed_at is not None):
+            raise PydanticCustomError(
+                "invalid_handoff_completion",
+                "reason_code={reason_code}",
+                {"reason_code": "handoff_terminal_state_completion_mismatch"},
+            )
+        if self.completed_at is not None and self.completed_at < self.prepared_at:
+            raise PydanticCustomError(
+                "invalid_handoff_chronology",
+                "reason_code={reason_code}",
+                {"reason_code": "handoff_completion_precedes_preparation"},
+            )
+        return self
 
 
 class RestoreDecision(StrEnum):

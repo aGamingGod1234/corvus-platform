@@ -97,6 +97,65 @@ class AgentGrant(BaseModel):
     created_at: datetime = Field(default_factory=_now_utc)
 
 
+class DelegationGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    parent_agent_grant_id: UUID
+    child_agent_id: UUID
+    capabilities: frozenset[str] = Field(min_length=1)
+    budget_json: dict[str, Any]
+    depth_limit: int = Field(ge=0)
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_lifetime(self) -> DelegationGrant:
+        for value, reason_code in (
+            (self.issued_at, "delegation_issued_at_must_be_timezone_aware"),
+            (self.expires_at, "delegation_expiry_must_be_timezone_aware"),
+        ):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise PydanticCustomError(
+                    "naive_delegation_timestamp",
+                    "reason_code={reason_code}",
+                    {"reason_code": reason_code},
+                )
+        if self.expires_at <= self.issued_at:
+            raise PydanticCustomError(
+                "invalid_delegation_lifetime",
+                "reason_code={reason_code}",
+                {"reason_code": "delegation_expiry_must_follow_issue_time"},
+            )
+        return self
+
+
+class EffectiveCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_context_id: UUID
+    workspace_authority_epoch: int = Field(ge=1)
+    workspace_authority_generation: int = Field(ge=0)
+    authority_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_commit_receipt_id: UUID
+    actions: frozenset[str]
+    unavailable_reason_codes: dict[str, str]
+    policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    budget_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kill_switch_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_disjoint_actions(self) -> EffectiveCapabilities:
+        if self.actions & self.unavailable_reason_codes.keys():
+            raise PydanticCustomError(
+                "contradictory_effective_capability",
+                "reason_code={reason_code}",
+                {"reason_code": "action_cannot_be_available_and_unavailable"},
+            )
+        return self
+
+
 class CredentialKind(StrEnum):
     OS_KEYRING = "os_keyring"
     CLOUD_VAULT = "cloud_vault"

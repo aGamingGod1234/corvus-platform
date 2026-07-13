@@ -23,7 +23,9 @@ from corvus.domain.deployment import (
     AuthorityCommitIntent,
     AuthorityCommitState,
     AuthorityContractError,
+    AuthorityHandoff,
     AuthorityHandoffActivation,
+    AuthorityHandoffState,
     AuthorityRegistryFreshnessProof,
     AuthorityRegistryTrustState,
     AuthorityRegistryVerifierKeyVersion,
@@ -444,14 +446,21 @@ def test_handoff_activation_requires_anchored_close_and_old_key_disposition(
     workspace_id = uuid4()
     close = AuthorityCloseCertificate(
         workspace_id=workspace_id,
+        closed_epoch=4,
+        source_deployment_id=uuid4(),
         source_deployment_instance_id=uuid4(),
-        authority_epoch=4,
-        final_generation=19,
+        target_deployment_id=uuid4(),
+        epoch_credential_digest="a" * 64,
+        destruction_or_revocation_attestation_digest=key_evidence_digest,
+        final_authority_generation=19,
         final_state_root="c" * 64,
-        anchored_close_receipt_digest=close_anchor_digest,
+        workspace_signing_key_version_id=uuid4(),
+        workspace_signature="signed-close",
+        anchor_receipt_digest=close_anchor_digest,
         epoch_key_disposition=key_disposition,
-        epoch_key_disposition_evidence_digest=key_evidence_digest,
-        closed_at=datetime(2026, 7, 14, 12, 0, tzinfo=UTC),
+        externally_anchored_at=(
+            datetime(2026, 7, 14, 12, 0, tzinfo=UTC) if close_anchor_digest is not None else None
+        ),
     )
     activation = AuthorityHandoffActivation(
         workspace_id=workspace_id,
@@ -739,3 +748,57 @@ def test_registry_verifier_rejects_post_revocation_or_compromise(
         validate_registry_verifier_time(verifier, now=now)
 
     assert exc_info.value.reason_code == reason_code
+
+
+def test_authority_handoff_requires_next_epoch_and_forbids_private_capability() -> None:
+    payload = {
+        "workspace_id": str(uuid4()),
+        "from_deployment_id": str(uuid4()),
+        "from_deployment_instance_id": str(uuid4()),
+        "to_deployment_id": str(uuid4()),
+        "to_deployment_instance_id": str(uuid4()),
+        "from_epoch": 5,
+        "to_epoch": 5,
+        "export_artifact_digest": "a" * 64,
+        "source_checkpoint_digest": "b" * 64,
+        "authorization_snapshot_id": str(uuid4()),
+        "authorization_snapshot_digest": "c" * 64,
+        "source_signing_key_version_id": str(uuid4()),
+        "close_certificate_id": str(uuid4()),
+        "target_epoch_credential_id": str(uuid4()),
+        "state": AuthorityHandoffState.PREPARED,
+    }
+
+    with pytest.raises(ValidationError) as epoch_exc:
+        AuthorityHandoff.model_validate(payload)
+    assert epoch_exc.value.errors()[0]["ctx"]["reason_code"] == ("handoff_epoch_must_advance_once")
+
+    payload["to_epoch"] = 6
+    payload["exported_private_capability"] = "must-never-cross-handoff"
+    with pytest.raises(ValidationError) as capability_exc:
+        AuthorityHandoff.model_validate(payload)
+    assert tuple(capability_exc.value.errors()[0]["loc"]) == ("exported_private_capability",)
+    assert capability_exc.value.errors()[0]["type"] == "extra_forbidden"
+
+
+def test_authority_close_certificate_carries_complete_anchored_handoff_evidence() -> None:
+    anchored_at = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+    certificate = AuthorityCloseCertificate(
+        workspace_id=uuid4(),
+        closed_epoch=5,
+        source_deployment_id=uuid4(),
+        source_deployment_instance_id=uuid4(),
+        target_deployment_id=uuid4(),
+        epoch_credential_digest="a" * 64,
+        destruction_or_revocation_attestation_digest="b" * 64,
+        final_authority_generation=22,
+        final_state_root="c" * 64,
+        workspace_signing_key_version_id=uuid4(),
+        workspace_signature="signed-close",
+        local_anchor_receipt_digest="d" * 64,
+        anchor_receipt_digest="e" * 64,
+        externally_anchored_at=anchored_at,
+    )
+
+    assert certificate.closed_epoch == 5
+    assert certificate.externally_anchored_at == anchored_at
