@@ -1,0 +1,38 @@
+# Plan Review Log: Corvus CLI V2 and Shared Web/Desktop Platform
+Started 2026-07-13 12:58:48 +0800. Reviewer: Gemini CLI gemini-3.1-pro-preview. MAX_ROUNDS=3.
+
+## Planner availability
+Claude Code planning was attempted first and returned HTTP 401 before reading or changing the repository. No Claude-generated plan content was used.
+
+## Round 1 - Gemini (blocked)
+Gemini CLI exited before reading the plan with `IneligibleTierError`: the installed Gemini Code Assist for individuals client is no longer supported and requires migration to Antigravity. No Gemini critique or verdict was produced.
+
+### Codex/Hermes response
+- No reviewer feedback was incorporated because none was produced.
+- The plan remains unapproved by Gemini.
+- Lucas explicitly approved a fallback consisting of read-only Codex CLI review plus two independent Hermes audits.
+
+## Round 2 - Codex CLI fallback (blocked)
+Codex CLI ran in an ephemeral read-only sandbox and inspected the plan and V1 source, including a security-plugin preflight. It did not return a final message or verdict within the bounded ten-minute review window and was terminated. The configured output file was not created. No Codex critique was incorporated and no approval is claimed.
+
+### Remaining approved review gate
+Use the two independent Hermes audits already dispatched before implementation. Record their concrete findings and the Codex/Gemini limitations without representing either external reviewer as approved.
+
+## Round 3 - Initial independent Hermes audits
+Two read-only GPT-5.6-sol reviewers inspected all 27 V1 source files. Both concluded that V1 is a strong single-user prototype but must not be wrapped directly in a web API or split into independent clients.
+
+### Material findings
+- Critical: no multi-user authorization/tenant boundary; policy is largely disconnected from execution.
+- Critical: snapshots can include secrets and retained plaintext; command output can be sent back to the model.
+- Critical: the generating model selects its own checks, smoke checks are unused, and repair attempts can reuse stale files.
+- Critical: approved bundle files are not rehashed before apply; approval is same-command/in-memory; journal and locking leave crash/TOCTOU windows.
+- High: structured secret redaction fails for ordinary nested JSON; provider URLs create server-side SSRF risk; Codex children inherit a broad host environment.
+- High: empty audit chains verify successfully, the chain is recomputable by a database modifier, artifact digests are not strictly validated, resource limits are incomplete, and optional token-budget narrowing can widen limits.
+- Product: preserve fail-closed sandboxing, explicit chat/build boundary, delivery/undo ergonomics, transparent model routing, bounded delegation, doctor/trace JSON, and local-first behavior.
+- Product: extract one headless control plane and versioned protocol; ship CLI and web against it before wrapping the proven web client in Tauri.
+- Migration: add golden tests for all public commands and JSON shapes plus an idempotent V1 importer before schema evolution.
+
+### Codex/Hermes response
+Accepted all release-blocking findings. `PLAN.md` now adds Milestone 0.5 for snapshot/redaction/verification/delivery/provider/audit hardening; signed audit checkpoints; golden command/protocol tests; an idempotent V1 importer; and a runtime-profile capability projection. Web, desktop, and channel adapters remain blocked until these gates and the refreshed post-configuration audits pass.
+
+The reviewers began before the local baseline Git repository was initialized; their statement that the archive was not a Git repository was accurate at audit start. The current repository now has immutable baseline commit `1410d7f`.
