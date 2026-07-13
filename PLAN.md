@@ -28,13 +28,13 @@ Client surface never grants authority. Individual/team behavior belongs to the w
 | Deployment authority | Workspace mode | Clients | Execution | Status and controls |
 |---|---|---|---|---|
 | `embedded_local` | individual | CLI | local runner | Supported first; implicit private workspace, SQLite, OS keyring, fail-closed sandbox |
-| `local_daemon` | individual | CLI/web/desktop | local runner | Supported after API slice; loopback auth, strict origins, visible lifecycle |
+| `local_daemon` | individual | CLI/web; desktop after Milestone 11 | local runner | CLI/web topology supported only after the Milestone 4 local-daemon gate: paired loopback auth, rotation, strict origins/CSRF, lifecycle/recovery and connection tests |
 | `self_hosted` | individual/team | CLI/web/desktop/channel | server/local runners | Deferred; TLS, explicit auth, PostgreSQL for multi-worker operation |
 | `vendor_cloud` | individual/team | CLI/web/desktop/channel | cloud workers | Deferred; tenant isolation, cloud vault, managed workers, signed audit checkpoints |
 | `vendor_cloud` | individual/team | any | connector | Deferred; outbound-only mutually authenticated connector and explicit user consent |
 | any | any | any | host process without sandbox | Invalid for build/apply work; fail closed |
 
-One workspace has exactly one authoritative control plane represented by a persisted `WorkspaceAuthority` epoch and fencing token. Local and cloud copies are never implicit dual-primary replicas. Authority moves only through a signed, atomic export/import handoff that closes the old epoch before activating the next one. Connectors are execution placements and never acquire control-plane authority. A remote-authority client that is offline may only queue signed intents; reconnect performs fresh authentication, authorization, revocation, budget, and kill-switch checks before any intent becomes executable work.
+One workspace has exactly one authoritative control plane represented by a persisted `WorkspaceAuthority` epoch plus a non-exportable epoch-key binding or short-lived registry lease. Database state alone never proves authority. Local and cloud copies are never implicit dual-primary replicas. Authority handoff requires an externally anchored close/revocation certificate and attested destruction/revocation of the old epoch key before target activation. A restored or cloned database enters `restore_quarantine` and remains read/queue-only until it validates current authority against the configured trust anchor. Offline-capable workspaces without a reachable anchor or non-exportable-key destruction proof cannot hand off authority at all. Connectors are execution placements and never acquire control-plane authority. A remote-authority client that is offline may only queue signed intents; reconnect performs fresh authentication, authorization, revocation, budget, and kill-switch checks before any intent becomes executable work.
 
 ### Effective capabilities
 
@@ -114,7 +114,7 @@ The authoritative backend resolves deployment, workspace, client, execution, mod
 ### Platform invariants
 1. Corvus core is authoritative for identity, scope, policy, work state, events, budgets, approvals, verification, artifacts, and audit.
 2. CLI, browser, desktop, Discord, Slack, webhooks, and routines are untrusted clients of the same application services.
-3. Every command/run carries an immutable request context: deployment, workspace authority epoch, discriminated scope, immutable audience-policy snapshot, requester, client/transport identity, acting agent and agent grant, requester access bundle, execution placement when applicable, policy digest, correlation ID, and idempotency key.
+3. Every command/run carries an immutable request context: deployment, workspace authority epoch/trust-anchor proof, discriminated scope, immutable audience-policy snapshot, requester, client/transport identity, acting agent and agent grant, requester access bundle, execution placement when applicable, policy digest, immutable authorization-decision snapshot, correlation ID, and idempotency key.
 4. Missing or mismatched identity/scope/capability information fails closed.
 5. Cross-scope memory reads and promotions require explicit policy and provenance; private memory never silently becomes team memory.
 6. Workers acquire monotonically fenced durable leases with expiry and heartbeat. All external effects flow through one effect gateway backed by semantic idempotency keys and a transactional outbox, so stale workers cannot duplicate effects after recovery.
@@ -161,6 +161,24 @@ Migration identifiers are plan-stable labels; implementation may map them to Ale
 | Memory governance | 7 | scoped memory/promotion/export/deletion / `M7-001` | V1 memories imported after schema into explicit owner/workspace scopes | stop writes; retain encrypted export and deletion receipts | `test_memory_scope_lifecycle.py` |
 | Kill switches and limits | 2 | kill switches, budget reservations, effect intents / `M2-004` | V1 budgets imported as conservative ceilings after schema | fail closed and preserve stop/usage receipts | `test_effect_gateway_atomic_limits.py` |
 | Offline mode | 1 authority, 8 queue/cache | authority/handoff plus offline intent/cache metadata / `M1-001`, `M8-001` | no legacy copy gains authority; cache import is non-authoritative | discard/requeue unaccepted intents; restore from last signed authority handoff | `test_offline_authority_reconciliation.py` |
+
+### Capability application and client ownership ledger
+
+No capability is complete when only its repository/service fixture passes. Each row names the transport-neutral port and retained-CLI/API/web cutover that must exercise the authoritative implementation.
+
+| Capability | Application ports | Retained CLI cutover | API and web ownership | End-to-end client proof |
+|---|---|---|---|---|
+| Outcome contracts | `OutcomeCommandPort`, `OutcomeQueryPort` | additive outcome/evidence commands in Milestone 3 | outcome/evidence routes and workspace views in Milestones 4–5 | create/version/pin/verify through CLI and web |
+| Versioned skills | `SkillCommandPort`, `SkillQueryPort` | route retained skill commands through ports in Milestone 7 | skill evaluate/promote/rollback routes and governance UI in Milestone 7 | import -> evaluate -> shadow -> canary -> rollback without direct registry calls |
+| Context firewall | `ContextIngestionPort`, `ContextProvenanceQueryPort` | route retained build/memory ingestion through the firewall in 0.5/7 | sanitized provenance/explain query; no raw untrusted authority path | hostile content remains data across CLI/API/web workflows |
+| Secret broker | `ProviderConnectionCommandPort`, `OAuthFlowCommandPort`, `CredentialGrantPort` | route retained provider connect/revoke/status commands through ports in Milestone 6 | provider/OAuth start/callback/device/status/revoke routes and settings UI in Milestone 6 | client-driven PKCE and device flows, reconnect, revoke and recovery |
+| Autonomy levels | `AutonomyPolicyCommandPort`, `AutonomyQueryPort` | additive inspect/lower/request-promotion commands in Milestone 6 | autonomy policy routes and guarded settings UI in Milestone 6 | denied self-promotion and independently approved bounded promotion |
+| Shadow mode | `ShadowEvaluationCommandPort`, `ShadowQueryPort` | additive shadow evidence/status commands in Milestone 6 | shadow comparison/canary/rollback routes and UI in Milestone 6 | proposal -> comparison -> canary -> rollback through clients |
+| Durable workflow graphs | `WorkCommandPort`, `WorkQueryPort`, `WorkEventPort` | work/run commands use ports in Milestone 3 | work routes, SSE and workspace views in Milestones 4–5 | submit/pause/resume/recover through CLI and web |
+| Artifact lineage | `ArtifactQueryPort`, `LineageVerificationPort` | evidence/lineage commands in Milestone 3 | artifact/lineage routes and proof UI in Milestones 4–5 | verify the same digest closure through CLI and web |
+| Memory governance | `MemoryCommandPort`, `MemoryQueryPort` | replace direct `MemoryManager` CLI use with ports in Milestone 7 | scoped read/promote/export/delete routes and governance UI in Milestone 7 | import/read/promote/export/delete with cross-scope denial |
+| Kill switches and limits | `LimitCommandPort`, `KillSwitchCommandPort`, status queries | kill/limit commands in Milestone 3 | limit/kill routes and controls in Milestones 4–5 | stop/reserve/settle/reject races through CLI and web |
+| Offline mode | `OfflineIntentCommandPort`, `OfflineStatusQueryPort`, `ConnectorCommandPort` | queue/status/reconcile commands in Milestone 8 | offline/connector status, conflict and reconnect UI in Milestone 8 | disconnect -> queue -> restore/reconnect -> reauthorize/reject without dual authority |
 
 ### V2 client contract
 - Define transport-neutral command/query/event ports, one application composition root, and matching in-process and HTTP Python clients before any UI expansion.
@@ -285,8 +303,13 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 ### Configuration and provider lifecycle
 - `DeploymentProfile(id, authority_mode[embedded_local|local_daemon|self_hosted|vendor_cloud], auth_profile, network_profile, storage_profile, enabled_adapters, protocol_version, version)`
 - `WorkspaceConfig(workspace_id, collaboration_mode[individual|team], autonomy_ceiling, shadow_policy_id, budget_policy_id, memory_policy_id, kill_switch_state, version)`
-- `WorkspaceAuthority(workspace_id, deployment_profile_id, epoch, fencing_token_digest, state[active|handoff_pending|closed], previous_epoch_digest?, activated_at, closed_at?, version)`; `(workspace_id, epoch)` is unique and epochs increase monotonically.
-- `AuthorityHandoff(id, workspace_id, from_deployment_id, to_deployment_id, from_epoch, to_epoch, export_artifact_digest, source_checkpoint_digest, signer_set, threshold_signatures, state[prepared|source_closed|target_active|aborted], prepared_at, completed_at?)`; target activation and source closure follow a recoverable atomic protocol that never leaves two active epochs.
+- `WorkspaceAuthority(workspace_id, deployment_profile_id, epoch, authority_epoch_credential_id, trust_anchor_id, state[active|handoff_pending|closed|restore_quarantine], previous_epoch_digest?, activated_at, closed_at?, version)`; `(workspace_id, epoch)` is unique and epochs increase monotonically, but database state is insufficient without the live epoch credential/lease.
+- `AuthorityTrustAnchor(id, workspace_id, kind[non_exportable_epoch_key|lease_registry], anchor_verifier_key_id, registry_endpoint_digest?, policy_digest, status)`
+- `AuthorityEpochCredential(id, workspace_id, epoch, deployment_profile_id, trust_anchor_id, public_key, non_exportable_private_key_ref?, non_exportable_attestation_digest?, lease_certificate_id?, status[active|destroyed|revoked|expired], activated_at, destroyed_or_revoked_at?)`; snapshots/backups exclude the private-key capability.
+- `AuthorityLeaseCertificate(id, workspace_id, epoch, deployment_profile_id, anchor_registry_id, registry_sequence, not_before, not_after, registry_signing_key_id, certificate_digest, registry_signature, revoked_at?)`
+- `AuthorityCloseCertificate(id, workspace_id, closed_epoch, source_deployment_id, target_deployment_id, epoch_credential_digest, destruction_or_revocation_attestation_digest, workspace_signing_key_version_id, workspace_signature, anchor_registry_id, registry_sequence, registry_signing_key_id, registry_signature, anchor_receipt_digest, externally_anchored_at)`
+- `AuthorityHandoff(id, workspace_id, from_deployment_id, to_deployment_id, from_epoch, to_epoch, export_artifact_digest, source_checkpoint_digest, authorization_snapshot_id, authorization_snapshot_digest, source_signing_key_version_id, close_certificate_id, target_epoch_credential_id, state[prepared|source_closed_anchored|target_active|aborted], prepared_at, completed_at?)`; target activation requires the externally anchored close certificate and cannot reuse an exported private authority capability.
+- `RestoreValidationReceipt(id, workspace_id, restored_database_digest, observed_epoch, trust_anchor_id, current_epoch_proof_digest?, decision[read_queue_only|resume_same_epoch], reason_code, validated_at)`; every restore/clone defaults to `restore_quarantine`, and unavailable validation means read/queue-only.
 - `OfflineIntent(id, workspace_id, observed_authority_epoch, client_context_id, requester_id, agent_id, command_digest, encrypted_payload_ref, intent_signature, queued_at, expires_at, status[queued|accepted|rejected|expired], accepted_request_context_id?, rejection_reason_code?)`; it conveys no authority and is executable only after reconnect creates a freshly authenticated/authorized request under the current epoch.
 - `ClientContext(id, surface[cli|desktop|web|channel], transport_principal_id?, session_id, origin, issued_at, expires_at?)`
 - `ExecutionPlacement(id, kind[local_runner|cloud_worker|connector], runner_id?, connector_id?, sandbox_profile, data_policy_digest, status)`
@@ -324,10 +347,14 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 - Short-lived signed transport tokens may reference an access bundle but cannot replace server-side bundle/revocation checks.
 
 ### Requests, audit, and approvals
-- `RequestContext(id, deployment_profile_id, workspace_id, workspace_authority_epoch, scope_kind, scope_id, audience_policy_snapshot_id, audience_policy_digest, requester_id, client_context_id, transport_principal_id?, agent_id, agent_grant_id, access_bundle_id, execution_placement_id?, policy_digest, idempotency_key, correlation_id)`
+- `WorkspaceSigningKeyVersion(id, workspace_id, key_epoch, algorithm, public_key, non_exportable_private_key_ref, status[active|rotated|revoked|compromised], valid_from, valid_until?, revoked_at?, compromise_effective_at?, predecessor_digest?, attestation_digest)`; `(workspace_id, key_epoch)` is unique.
+- `AuthorizationDecisionSnapshot(id, workspace_id, request_context_id, authority_epoch_credential_id, authority_proof_digest, membership_version_ids, membership_digest, scope_kind, scope_id, scope_digest, audience_policy_snapshot_id, audience_digest, requester_id, transport_principal_id, access_bundle_id, access_bundle_version_digest, agent_grant_id, delegation_grant_ids, agent_delegation_digest, execution_placement_id?, provider_connection_id?, credential_grant_id?, credential_version_id?, policy_digest, autonomy_policy_digest, budget_snapshot_ids, budget_snapshot_digest, kill_switch_snapshot_ids, kill_switch_snapshot_digest, decision, reason_code, canonical_inputs_json, source_record_version_map, canonical_digest, signing_key_version_id, snapshot_signature)` is immutable, signed, referentially resolvable, and self-contained: evaluated roles/capabilities/constraints/statuses are copied canonically rather than recoverable only from mutable source rows.
+- `RequestContext(id, deployment_profile_id, workspace_id, workspace_authority_epoch, authority_epoch_credential_id, authority_proof_digest, scope_kind, scope_id, audience_policy_snapshot_id, audience_policy_digest, requester_id, client_context_id, transport_principal_id?, agent_id, agent_grant_id, access_bundle_id, execution_placement_id?, policy_digest, authorization_snapshot_id, authorization_snapshot_digest, authorization_signing_key_version_id, idempotency_key, correlation_id)`
+- Request context and authorization snapshot are allocated, canonicalized, signed, and linked in one transaction using deferrable references; allow and deny decisions both preserve the evaluated inputs. Later revocation checks create new receipts/snapshots and never rewrite history.
 - `IdempotencyEnvelope(id, workspace_id, requester_id, transport_principal_id, agent_id, agent_grant_id, operation, idempotency_key, request_context_digest, payload_digest, status[in_progress|succeeded|failed], result_digest?, result_ref?, created_at, completed_at?)`; the composite identity is unique, creation/result commit is atomic with the command, payload mismatch fails, and cached results are returned only after current read authorization.
-- `AuditReceipt(id, workspace_id, workspace_sequence, schema_version, authority_epoch, request_context_id, action, resource, decision, reason_code, policy_digest, sanitized_input_digest, output_digest?, effect_attempt_ids, cost_json, evidence_ids, signer_key_id, key_epoch, previous_hash, receipt_hash)`; `(workspace_id, workspace_sequence)` is unique and monotonic.
-- `AuditCheckpoint(id, workspace_id, authority_epoch, through_sequence, receipt_hash, schema_version, signer_key_id, key_epoch, signature, previous_checkpoint_digest?, anchored_at)`; receipt append, sequence allocation, and chain-head update are one transaction, while signing keys live in OS keyring/cloud KMS and support rotation/revocation metadata.
+- `AuditReceipt(id, workspace_id, workspace_sequence, schema_version, authority_epoch, request_context_id, authorization_snapshot_id, authorization_snapshot_digest, action, resource, decision, reason_code, policy_digest, sanitized_input_digest, output_digest?, effect_attempt_ids, cost_json, evidence_ids, signing_key_version_id, previous_hash, receipt_hash, receipt_signature)`; `(workspace_id, workspace_sequence)` is unique and monotonic.
+- `AuditCheckpoint(id, workspace_id, authority_epoch, through_sequence, receipt_hash, schema_version, checkpoint_authorization_snapshot_id, checkpoint_authorization_snapshot_digest, covered_authorization_snapshot_set_digest, signing_key_version_id, signature, previous_checkpoint_digest?, anchored_at)`; receipt append, sequence allocation, and chain-head update are one transaction, while private signing keys live in OS keyring/cloud KMS and never in the ledger database.
+- Signing verification resolves the durable public-key version and signing time. Rotated keys cannot sign new records but retain historical validity inside their interval. Revoked keys cannot sign at/after `revoked_at`; compromise invalidates signatures at/after `compromise_effective_at`, and the latest uncompromised key must re-anchor the preceding chain. New signatures from revoked/expired/compromised keys fail closed.
 - `ApprovalRequest(id, request_context_id, action, manifest_digest, required_reviewer_role, status, expires_at, nonce_digest)`
 - `ApprovalDecision(id, approval_request_id, reviewer_id, decision, rationale, decided_at)`
 - Implementer/reviewer separation is validated server-side.
@@ -342,17 +369,22 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 - `WorkAttempt(id, work_item_id, agent_id, started_at, finished_at?, outcome?, error_code?, cost_json, evidence_ids)`
 - `WorkflowCheckpoint(id, workflow_graph_id, work_item_id?, state_digest, artifact_ids, created_by, created_at)`
 - `RecoveryDecision(id, work_item_id, trigger[retry_exhausted|stuck|verification_failed|dependency_failed], action[retry|replan|decompose|pause|fail], rationale, approved_by?, created_at)`
-- `ExternalEffectIntent(id, workspace_id, workflow_graph_id, work_item_id, work_attempt_id, authority_epoch, lease_fence, semantic_idempotency_key, effect_kind, target_digest, sanitized_payload_digest, required_capabilities_digest, budget_reservation_id, kill_switch_snapshot_digest, state[pending|dispatching|succeeded|failed|cancelled|compensating|compensated], created_at)` with a unique semantic key per workspace/effect.
-- `EffectPermit(id, effect_intent_id, workspace_id, authority_epoch, lease_fence, budget_reservation_version, kill_switch_version, state[available|claimed|cancelled|consumed], claimed_by?, claimed_at?, consumed_at?)`; permit claim serializes under the affected budget/kill-switch scopes.
-- `ExternalEffectAttempt(id, effect_intent_id, attempt_number, gateway_id, authority_epoch, lease_fence, authorization_receipt_id, provider_idempotency_key?, started_at, finished_at?, result_digest?, error_code?, compensation_attempt_id?)`
-- `EffectOutbox(id, effect_intent_id, dispatch_after, state[pending|claimed|delivered|cancelled], fence, claimed_by?, delivered_at?)`; effect-intent creation, current budget/kill-switch reservation, authorization receipt, and outbox append are one transaction.
-- `LineageNode(id, workspace_id, kind[source|model_call|tool_call|test_evidence|approval|audit_receipt|artifact], immutable_record_id, canonical_digest)`
+- `ExternalEffectIntent(id, workspace_id, workflow_graph_id, work_item_id, work_attempt_id, request_context_id, authorization_snapshot_id, authorization_snapshot_digest, authorization_signing_key_version_id, requester_id, access_bundle_id, agent_grant_id, delegation_grant_ids, execution_placement_id, provider_connection_id, credential_grant_id, credential_version_id, authority_epoch, lease_fence, semantic_idempotency_key, effect_kind, target_digest, encrypted_payload_ref, sanitized_payload_digest, required_capabilities_digest, budget_reservation_ids, kill_switch_snapshot_ids, state[pending|dispatching|succeeded|failed|outcome_unknown|cancelled|compensating|compensated], created_at)` with unique `(workspace_id, semantic_idempotency_key)`; the semantic key canonically binds workspace, effect kind, target, payload digest, and authorization-snapshot digest, and reuse with any mismatch is rejected.
+- `BudgetAccount(id, workspace_id, scope_kind[workspace|project|routine_channel|run|agent], scope_id, unit, period_start, period_end, limit_amount, reserved_amount, settled_amount, status[active|frozen|closed], version)` with unique `(workspace_id, scope_kind, scope_id, unit, period_start, period_end)`.
+- `BudgetAccountParent(child_account_id, parent_account_id, workspace_id)` defines the acyclic workspace -> project -> routine/channel -> run -> agent hierarchy.
+- `BudgetReservation(id, workspace_id, account_id, request_context_id, authorization_snapshot_id, amount, state[held|settled|released|expired], expires_at, version)`
+- `BudgetUsageSettlement(id, workspace_id, reservation_id, effect_attempt_id?, reserved_amount, actual_amount, released_amount, state[settled|reversed], settled_at)`; account counters and reservation/settlement append update in one transaction.
+- `KillSwitch(id, workspace_id, scope_kind[workspace|agent|workflow|run], scope_id, state[armed|stopping|stopped|clear], reason, activated_by, activated_at?, cleared_by?, cleared_at?, version)` with unique `(workspace_id, scope_kind, scope_id)`; this materialized row is the lock/version authority for the scope.
+- `EffectPermit(id, effect_intent_id, workspace_id, authority_epoch, lease_fence, authorization_snapshot_id, budget_reservation_versions, kill_switch_versions, state[available|claimed|cancelled|consumed], claimed_by?, claimed_at?, consumed_at?)`; `effect_intent_id` is unique, so one intent has at most one permit.
+- `ExternalEffectAttempt(id, effect_intent_id, attempt_number, gateway_id, request_context_id, authorization_snapshot_id, authorization_signing_key_version_id, provider_connection_id, credential_grant_id, credential_version_id, authority_epoch, lease_fence, authorization_receipt_id, provider_idempotency_key?, state[started|succeeded|failed|outcome_unknown|cancelled|compensated], started_at, finished_at?, result_digest?, error_code?, compensation_attempt_id?)` with unique `(effect_intent_id, attempt_number)`.
+- `EffectOutbox(id, effect_intent_id, dispatch_after, state[pending|claimed|delivered|outcome_unknown|cancelled], fence, claimed_by?, delivered_at?)`; `effect_intent_id` is unique, so one intent has at most one outbox row.
+- `LineageNode(id, workspace_id, kind[source|model_call|tool_call|test_evidence|approval|audit_receipt|authorization_snapshot|effect_attempt|artifact], immutable_record_id, canonical_digest)`
 - `ArtifactLineageEdge(id, workspace_id, artifact_id, from_node_id, to_node_id, relation, edge_digest)`; completion verifies a referentially constrained digest closure over immutable nodes and parent artifacts.
-- `KillSwitch(id, scope_kind[workspace|agent|workflow|run], scope_id, state[armed|stopping|stopped], reason, activated_by, activated_at, cleared_by?, cleared_at?)`
 - State machine: `queued -> leased -> running -> waiting_approval|waiting_dependency|paused -> verifying -> packaging -> completed|failed|cancelled|expired`.
 - Compare-and-swap version and lease fence prevent stale state mutation. Heartbeats and persisted progress trigger stuck detection. Recovery is bounded `retry -> replan -> decompose`; exhaustion pauses or fails honestly.
-- Only the centralized effect gateway may dispatch external effects. It revalidates the current authority epoch, fenced lease, requester/agent grants, budget reservation, kill switches, and semantic idempotency, then atomically claims an `EffectPermit` under the affected scope locks immediately before dispatch. Kill-switch activation atomically prevents new permit claims, cancels available permits, and marks already-claimed attempts for provider cancellation or compensation; no design claims that a remote provider can undo an effect it already accepted. Provider idempotency is used when available; otherwise only effects with defined cancellation/compensation semantics are eligible for retry.
-- Outcome completion requires the pinned contract version's evidence, permissions, budget, and runtime limits plus a verified immutable lineage closure. Kill switches and budget state are enforced transactionally at effect-intent creation and rechecked at dispatch, approval, and completion.
+- Only the centralized effect gateway may dispatch external effects. Permit claim locks records in canonical order: workspace authority, sorted kill-switch rows, sorted budget accounts/reservations, effect intent, permit, then outbox. In one serializable transaction it revalidates the current authority credential/lease, request and immutable authorization snapshot, requester/access/agent/delegation grants, placement, provider/credential grant/version, budget, kill switches, lease fence, payload digest, and semantic key before claiming the permit. Kill-switch activation atomically prevents new permit claims, cancels available permits, and marks already-claimed attempts for provider cancellation or compensation; no design claims that a remote provider can undo an effect it already accepted.
+- Provider idempotency is mandatory for automatic retry after dispatch. If dispatch may have reached a provider but no authoritative result exists, the attempt and outbox become `outcome_unknown`; automatic retry is forbidden and reconciliation or an explicitly approved at-most-once failure path is required. Compensation is remediation, never treated as duplicate prevention.
+- Outcome completion requires the pinned contract version's evidence, permissions, budget, and runtime limits plus a verified immutable lineage closure. Kill switches and budget state are enforced transactionally at effect-intent creation and rechecked at permit claim, approval, and completion.
 
 ### Routines and triggers
 - `Routine(id, workspace_id, project_id?, name, trigger_type, trigger_config, command_template, access_bundle_id, budget_json, enabled)`
@@ -393,9 +425,10 @@ All identifiers are opaque UUIDs. Every persistent row includes `created_at`, an
 - Shadow runs never receive production credential grants and use recorded/fake/read-only effects. Only separately identified, explicitly budgeted canaries may perform narrowly scoped reversible production effects through the effect gateway with independent approval and compensation. Promotion requires versioned evaluation, independent review for privileged capability, canary limits, regression monitoring, and automatic/manual rollback.
 
 ### Budgets
-- Budget layers: workspace -> project -> routine/channel -> run -> agent/subagent.
-- Effective budget is the minimum remaining allowance at every layer.
-- Reservations and actual usage are persisted; cancellation releases only unused reservations.
+- Budget layers are materialized `BudgetAccount` rows linked workspace -> project -> routine/channel -> run -> agent/subagent; no JSON-only budget is authoritative.
+- Effective availability is the minimum remaining allowance across every linked active account, computed while the sorted account rows are locked.
+- Reservation creation atomically increments each affected account or fails all; settlement records actual use and releases only the unused amount; cancellation never erases consumed usage.
+- Check constraints prevent negative/reserved-over-limit counters, unique active-period constraints prevent parallel accounts for one scope/unit, and serializable race tests cover reserve/settle/release/kill interactions.
 
 ## Authoritative Events and State Machine
 
@@ -503,23 +536,23 @@ Checkpoint: existing CLI help and doctor behavior pass from `uv run corvus`; all
 Checkpoint: adversarial secret-exfiltration, forged-verification, stale-staging, altered-bundle, crash-point, SSRF, environment-leak, context-provenance, and audit-tamper tests pass; an independent read-only security review accepts this checkpoint before Task 1.1 begins.
 
 ### Milestone 1 — Project authority vertical slice
-1. Add `DeploymentProfile`, `WorkspaceConfig`, fenced `WorkspaceAuthority`/handoff, `ClientContext`, `ExecutionPlacement`, identity, discriminated scope, audience snapshots, requester/agent grants, `EffectiveCapabilities`, idempotency, and audit contracts with an explicit combination table.
-2. Add `M1-001` and an idempotent migration-backed local project/authority/audience/audit repository without mutating legacy V1 rows; add only the project/config portions of the per-domain importer from sealed quarantine. V1 policy/autonomy waits for `M6-002`.
+1. Add `DeploymentProfile`, `WorkspaceConfig`, non-rollback `WorkspaceAuthority` trust-anchor/epoch-credential/lease/close/handoff/restore contracts, `ClientContext`, `ExecutionPlacement`, identity, discriminated scope, audience snapshots, requester/agent grants, immutable authorization-decision snapshots, versioned signing keys, `EffectiveCapabilities`, idempotency, and audit contracts with an explicit combination table.
+2. Add `M1-001` and an idempotent migration-backed local project/authority/audience/authorization-snapshot/signing-key/audit repository without mutating legacy V1 rows; add only the project/config portions of the per-domain importer from sealed quarantine. V1 policy/autonomy waits for `M6-002`.
 3. Implement fail-closed authorization with deny precedence, exact scope containment, expiry/revocation, acting-agent intersection, budget/kill-switch checks, and immutable allow/deny receipts.
 4. Implement one transport-neutral `create_project`/`get_project` application path through identity -> authorization -> repository -> audit.
-5. Test in-process command/query ports, authority fencing/handoff recovery, cross-workspace/project/audience denial, receipt persistence failure, idempotency revocation/mismatch/concurrency, per-domain import repetition/rollback, and client-surface parity.
+5. Test in-process command/query ports, non-exportable key or lease expiry, externally anchored close-before-activation, restored pre-handoff source quarantine, authority handoff recovery, authorization-snapshot tampering, signing-key rotation/revocation/compromise-effective verification, revoked-key signing denial, cross-workspace/project/audience denial, receipt persistence failure, idempotency revocation/mismatch/concurrency, per-domain import repetition/rollback, and client-surface parity.
 
-Checkpoint: equivalent authenticated requester, transport, and acting-agent authority produces the same project create/read decision across every enabled client surface. A disabled adapter, mismatched transport principal, tampered client context, stale authority epoch, different workspace/agent/audience, revoked retry, or mismatched replay is denied; every decision has a verifiable signed receipt/checkpoint.
+Checkpoint: equivalent authenticated requester, transport, and acting-agent authority produces the same project create/read decision across every enabled client surface. A restored/cloned database without current trust-anchor proof, destroyed/revoked epoch key, expired lease, disabled adapter, mismatched transport principal, tampered client or authorization snapshot, stale authority epoch, different workspace/agent/audience, revoked retry, obsolete signing key, or mismatched replay is denied; every decision has a historically verifiable signed receipt/checkpoint.
 
 ### Milestone 2 — Outcome contracts and durable workflow graphs
-1. Add immutable outcome-contract versions, pinned workflow graphs, nodes/dependencies, fenced leases, attempts, checkpoints, recovery decisions, typed lineage nodes/edges, budget reservations, runtime limits, kill switches, external-effect intents/attempts, and effect-outbox tables through `M2-001`–`M2-004`.
+1. Add immutable outcome-contract versions, pinned workflow graphs, nodes/dependencies, fenced leases, attempts, checkpoints, recovery decisions, typed lineage nodes/edges, workspace-scoped budget accounts/parents/reservations/settlements, versioned unique kill-switch rows, fully authorization-bound external-effect intents/permits/attempts, and one-per-intent effect-outbox tables through `M2-001`–`M2-004`.
 2. Implement transactional claim/heartbeat/release/complete with optimistic versions, authority epochs, and monotonic lease fences.
 3. Add scoped V2 events plus a state/event/effect-outbox transaction service and the workspace-sequenced audit chain.
 4. Implement stuck detection and bounded `retry -> replan -> decompose` recovery with honest exhaustion.
 5. Adapt `ConversationRuntime` to enqueue durable work rather than own ephemeral truth.
-6. Add the centralized effect gateway: semantic idempotency, current authorization/budget/kill-switch/lease validation at dispatch, provider idempotency, and explicit cancellation/compensation. Add per-domain importers for V1 outcomes, run history, artifacts, and conservative budget ceilings.
+6. Add the centralized effect gateway: resolvable immutable authorization snapshots plus current revocation checks, canonical lock ordering, semantic-key mismatch rejection, provider idempotency, `outcome_unknown` reconciliation/at-most-once handling, and explicit cancellation/compensation. Add per-domain importers for V1 outcomes, run history, artifacts, and conservative budget ceilings.
 
-Checkpoint: restart preserves queues/events/checkpoints; dependencies and limits gate execution; stale authority/lease fences cannot mutate state or duplicate an external effect; kill-switch and budget races fail closed at intent and dispatch; completion requires the pinned outcome version and a verified immutable lineage closure.
+Checkpoint: restart preserves queues/events/checkpoints; dependencies and limits gate execution; stale authority/lease fences cannot mutate state or duplicate an external effect; one-per-intent and attempt-number constraints reject duplicates; kill-switch and hierarchical budget races serialize/fail closed; unknown provider outcomes never auto-retry without idempotency; completion requires the pinned outcome version and a verified immutable authorization/effect/lineage closure.
 
 ### Milestone 3 — CLI V2 project/run vertical slice
 1. Add local identity bootstrap and additive `corvus v2 project create|get` commands over the application ports.
@@ -530,12 +563,13 @@ Checkpoint: restart preserves queues/events/checkpoints; dependencies and limits
 Checkpoint: a fake-provider build executes the real state machine and produces a verifiable lineage-bound bundle without host writes.
 
 ### Milestone 4 — FastAPI, authentication, and replayable events
-1. Add the concrete cloud/self-hosted auth adapters, command/query API, OpenAPI, and scoped SSE protocol.
+1. Add the concrete local-daemon, cloud, and self-hosted auth adapters, command/query API, OpenAPI, and scoped SSE protocol.
 2. Enforce request, agent, scope, audience, credential, placement, budget, and kill-switch authorization on every route and replayed event.
 3. Add idempotency, CSRF/session/token, 403/404 non-enumeration, cursor/gap/backpressure, and cross-tenant/thread tests.
 4. Generate TypeScript contracts and prove Python in-process/HTTP parity.
+5. Prove the `local_daemon` topology: same-user CLI bootstrap, loopback-only bind plus Host/origin allowlists, short-lived one-time browser pairing, HttpOnly/SameSite session and CSRF binding, credential/token rotation and revocation, PID/service lock, visible health/shutdown, crash recovery, stale-token rejection, and CLI/web connect/reconnect tests. Milestone 11 later packages this proven daemon as a signed sidecar; it does not defer the Milestone 4 security gate.
 
-Checkpoint: unauthorized access leaks no existence or private events; reconnect uses snapshot plus cursor replay without gaps or duplicates.
+Checkpoint: unauthorized access leaks no existence or private events; reconnect uses snapshot plus cursor replay without gaps or duplicates; local-daemon tests reject LAN binding, wrong Host/origin, CSRF, stale pairing/session tokens, duplicate daemon ownership, and unsafe crash recovery while valid CLI/web pairing survives rotation and restart.
 
 ### Milestone 5 — Web workspace
 1. Scaffold pnpm workspace, `apps/web`, `packages/client-ui`, and generated `packages/contracts`.
@@ -550,24 +584,30 @@ Checkpoint: browser completes the fake-provider project/work/evidence flow using
 3. Add persisted OAuth authorization-code + PKCE and device-flow transactions, callback ownership, expiry/consumption, refresh-family rotation, revocation, and recovery. Prove one local provider-owned OAuth fixture and one deterministic server OAuth lifecycle fixture; API-key-only coverage cannot pass this milestone.
 4. Implement scoped short-lived secret grants with zero secret material in prompts/events/traces/snapshots/errors.
 5. Add the normative autonomy action/effect matrix and shadow-mode comparison through `M6-002`/`M6-003`; import V1 policy/autonomy YAML capped at `propose`, and require evaluation, reliability threshold, approval, canary limits, compensation, and rollback for promotion.
+6. Implement `ProviderConnectionCommandPort`, `OAuthFlowCommandPort`, `CredentialGrantPort`, `AutonomyPolicyCommandPort`/queries, and `ShadowEvaluationCommandPort`/queries. Route retained provider commands through them; add API routes and web settings for provider create/status, PKCE start/callback, device start/poll, reconnect, rotate/revoke/recover, autonomy inspection/promotion, shadow comparison, canary and rollback.
+7. Add API-backed end-to-end tests that drive both OAuth flows through a real CLI or browser client, including state/PKCE mismatch, callback ownership, device expiry, refresh rotation, reconnect, revoke and recovery; direct repository/service fixtures alone cannot satisfy the checkpoint.
 
-Checkpoint: one team run uses a brokered provider connection and shadow proposal; both OAuth lifecycle fixtures pass; shadow runs have no production credential/effect path; unauthorized members/agents cannot retrieve secrets, raise autonomy, approve themselves, or exceed limits.
+Checkpoint: one team run uses a brokered provider connection and shadow proposal through application ports and a real CLI/web client; both complete OAuth lifecycles pass; shadow runs have no production credential/effect path; unauthorized members/agents cannot retrieve secrets, raise autonomy, approve themselves, or exceed limits.
 
 ### Milestone 7 — Governed memory, skills, routines, and context firewall
 1. Add `M7-001` scoped encrypted memory with typed owner/audience, source digest, key version, confidence, expiration, cross-workspace promotion checks, export, and deletion/retention receipts; then run the V1 memory importer twice.
 2. Add `M7-002` versioned skills with evaluation suites, hidden holdouts, approval, shadow/canary stages, regression detection, and rollback; then run the V1 skill importer twice.
 3. Route external/retrieved content through the context firewall before any model or memory use.
 4. Add routines/webhooks through normal outcome, authority, budget, kill-switch, evidence, and audit paths.
+5. Implement memory, skill, context-provenance and routine command/query ports. Replace direct retained-CLI `MemoryManager`/`SkillRegistry` use, then add scoped API routes and web governance views for memory read/promote/export/delete and skill import/evaluate/promote/rollback.
+6. Add API-backed CLI/web end-to-end tests for imported memory and skills, cross-scope denial, deletion/export receipts, hostile retrieved content, independent promotion, canary regression and rollback; direct repository/service fixtures alone cannot satisfy the checkpoint.
 
-Checkpoint: prompt-injection fixtures cannot grant authority; memory deletion/export is auditable; a regressing skill rolls back; routines cannot bypass interactive controls.
+Checkpoint: prompt-injection fixtures cannot grant authority across retained CLI, API or web paths; memory deletion/export is auditable; a regressing skill rolls back through the same application ports; routines and legacy adapters cannot bypass interactive controls.
 
 ### Milestone 8 — Secure connector and offline operation
 1. Define outbound-only mTLS pairing, ownership, model-only RPC, health/capability registration, consent, revocation, updates, egress bounds, and audit.
 2. Connectors never acquire workspace authority. Schedule connector work only while an authorized runner/model is online under the current authority epoch; preserve waiting state without exposing localhost.
-3. Add `M8-001` signed offline intent, non-authoritative cache, reconnect, dedupe, conflict, revocation, and replay metadata. A local-authority workspace may execute approved offline work; a remote-authority client may only queue intents for fresh authorization after reconnect.
+3. Add `M8-001` signed offline intent, non-authoritative cache, reconnect, dedupe, conflict, revocation, replay, restore-quarantine and trust-anchor validation metadata. A local-authority workspace may execute approved offline work only while it retains its non-exportable epoch capability; a remote-authority or restored client may only queue intents for fresh authorization after reconnect.
 4. Prove offline local models, cached resources, governed memory, and queued tasks in local-authority mode while cloud-only capabilities fail with reason codes.
+5. Implement offline-intent/status and connector command/query ports, retained CLI queue/status/reconcile commands, and API/web offline/connector status, pairing, conflict and reconnect workflows. No client may write cache/queue/authority rows directly.
+6. Add end-to-end restore/clone tests: restore a pre-handoff source snapshot, destroy/revoke its old epoch key, disconnect it, and prove CLI/web mutation and effects remain blocked while read/queue-only intents survive for fresh reconnect authorization.
 
-Checkpoint: cloud work can use an explicitly paired local model without receiving permanent credentials; stale grants/epochs cannot execute queued work; reconnect/revoke/conflict/replay fail closed; no test can produce dual-primary authority.
+Checkpoint: cloud work can use an explicitly paired local model without receiving permanent credentials; stale grants/epochs and restored/cloned databases cannot execute queued work; reconnect/revoke/conflict/replay fail closed through real clients; no test can produce dual-primary authority.
 
 ### Milestone 9 — Channel gateways
 1. Add signed ingress, provider-event dedupe, identity mapping, immutable bindings, rate limits, bounded replies/files, and correlation.
@@ -644,18 +684,18 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 ### Task 1.1 — Configuration, identity, scope, and audit contracts
 - Create: `corvus/domain/deployment.py`, `workspace.py`, `client.py`, `execution.py`, `identity.py`, `scope.py`, `access.py`, `audit.py`.
 - Create tests: `tests/unit/domain/test_configuration_matrix.py`, `test_identity.py`, `test_scope.py`, `test_access_models.py`, `test_audit_models.py`.
-- First failing assertions: overloaded profile fields are impossible; unsupported combinations fail with reason codes; client surface cannot grant authority; authority epochs cannot fork or regress; handoff cannot activate two owners; discriminated scope parentage and audience snapshots are workspace-bound; missing workspace/requester/agent grant, cross-workspace scope, plaintext credential values, naive expiry, and unstable digests are rejected.
+- First failing assertions: overloaded profile fields are impossible; unsupported combinations fail with reason codes; client surface cannot grant authority; database restore cannot recreate authority; epoch credentials are non-exportable or lease-bound; handoff requires anchored close and old-key destruction/revocation before activation; restore defaults to read/queue-only; discriminated scope parentage and audience snapshots are workspace-bound; authorization snapshots are immutable/signed/resolvable; signing-key rotation/revocation/compromise semantics verify historically; missing workspace/requester/agent grant, cross-workspace scope, plaintext credential values, naive expiry, and unstable digests are rejected.
 
 ### Task 1.2 — Fail-closed requester and acting-agent evaluation
 - Create: `corvus/application/authorization.py`.
 - Create test: `tests/unit/application/test_authorization.py`.
-- Matrix: exact allow, no-grant deny, explicit deny wins, wrong principal/workspace/project/thread/audience, stale authority epoch, expired/revoked requester or agent grant, delegation overreach, placement/credential mismatch, budget/runtime exhaustion, kill switch, and enabled-client-surface parity.
+- Matrix: exact allow, no-grant deny, explicit deny wins, wrong principal/workspace/project/thread/audience, restore-quarantine or missing/expired/revoked authority proof, expired/revoked requester or agent grant, authorization-snapshot tamper, delegation overreach, placement/credential mismatch, budget/runtime exhaustion, kill switch, and enabled-client-surface parity.
 
 ### Task 1.3 — Migration-backed project and audit repositories
 - Create: `corvus/infrastructure/db.py`, `corvus/infrastructure/repositories/projects.py`, `audit.py`, and initial Alembic migration/fixture paths.
 - Create tests: `tests/integration/test_project_repository.py`, `test_scoped_audit_repository.py`, `test_v1_migration.py`.
-- Persist project ownership, authority epochs/handoffs, discriminated scope, audience snapshots, access-bundle/agent-grant snapshot digests, workspace-sequenced immutable receipts, signed checkpoints/key epochs, and fully bound idempotency envelopes without changing legacy rows.
-- Add the project/config importer after `M1-001`; verify migration/import twice, tampering, audit append concurrency, cross-workspace/audience reads, rollback fixture readability, stale-authority rejection, revoked cached-result denial, and concurrent duplicate commands. V1 policy/autonomy is not converted until `M6-002`.
+- Persist project ownership, authority trust anchors/epoch credentials/leases/close certificates/handoffs/restore receipts, discriminated scope, audience snapshots, immutable signed authorization-decision snapshots, access/agent/delegation input versions, signing-key versions, workspace-sequenced signed receipts/checkpoints, and fully bound idempotency envelopes without changing legacy rows.
+- Add the project/config importer after `M1-001`; verify migration/import twice, pre-handoff restore quarantine, old-key destruction/revocation, lease expiry, authorization-snapshot tampering, signing-key rotation/revoked signing/post-rotation verification/compromise re-anchoring, audit append concurrency, cross-workspace/audience reads, rollback fixture readability, revoked cached-result denial, and concurrent duplicate commands. V1 policy/autonomy is not converted until `M6-002`.
 
 ### Task 1.4 — Transport-neutral project create/read service
 - Create: `corvus/application/projects.py`, `corvus/application/ports.py`, and an in-process client adapter.
@@ -702,24 +742,26 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 5. Required verification is selected by Corvus/repository policy rather than trusted solely from generating-model commands; smoke checks execute and each repair uses a clean staging tree.
 6. Delivery rehashes every staged file, rejects approval mismatch/replay/expiry, locks concurrent apply, and remains recoverable at every injected crash point.
 7. Structured secrets are redacted before prompts, persistence, repair context, events, traces, snapshots, or errors; child environments and provider destinations are allowlisted.
-8. Deployment/workspace/client/execution/model/credential contracts cannot express an overloaded profile or plaintext secret; a workspace has one monotonic fenced authority epoch and a signed handoff cannot activate two owners.
-9. A request cannot exist without deployment, workspace authority epoch, discriminated scope, immutable audience snapshot, requester, client/transport context, acting agent grant, requester access bundle, policy digest, correlation ID, and idempotency key.
-10. Effective authority is the minimum requester/agent/delegation/channel/workspace/budget/placement/credential/kill-switch intersection; deny wins and scope never broadens.
+8. Deployment/workspace/client/execution/model/credential contracts cannot express an overloaded profile or plaintext secret; database restore cannot recreate authority, every active epoch has a live non-exportable key or lease proof, handoff closes/anchors and destroys/revokes the old capability before target activation, and restored copies default to read/queue-only quarantine.
+9. A request cannot exist without deployment, current authority credential/lease proof, discriminated scope, immutable audience snapshot, requester, client/transport context, acting agent grant, requester access bundle, policy digest, signed immutable authorization-decision snapshot and signing-key version, correlation ID, and idempotency key.
+10. Effective authority is the minimum current authority/requester/agent/delegation/channel/workspace/budget/placement/credential/kill-switch intersection; deny wins, scope never broadens, and historical snapshots remain immutable while current revocations are rechecked.
 11. Equivalent authenticated requester/transport/agent authority creates and reads one project through every enabled client surface; disabled adapters, mismatched transports, tampered contexts, and cross-workspace/project/audience substitutions fail.
-12. Allow and deny decisions create immutable requester/agent/authority-epoch receipts with a unique workspace sequence; append and chain-head persistence failure prevents the protected action.
+12. Allow and deny decisions create immutable signed authorization snapshots and requester/agent/authority-attributed receipts with a unique workspace sequence and durable signing-key version; append, signature, or chain-head persistence failure prevents the protected action.
 13. All public V1 command/JSON and database/domain fixtures are hashed; version-aware bootstrap detects partial/unstamped state; quarantine capture runs twice without duplication; each destination migration/import runs twice and preserves rollback/legacy readability.
 14. Idempotent command retries replay only after current read authorization; payload mismatch, revocation, and concurrent duplicates do not disclose data or create a second project.
-15. Empty audit chains are invalid; checkpoints cover a deterministic workspace sequence/authority/key epoch; artifact lookups accept only canonical SHA-256 digests.
+15. Empty audit chains are invalid; checkpoints bind the authorizing snapshot/set digest and deterministic workspace sequence, authority credential, signing-key version and compromise-effective history; artifact lookups accept only canonical SHA-256 digests.
 16. Existing V1 CLI commands remain available; no CLI V2, FastAPI, web, desktop, channel, deployment, purchase, or live provider call occurs in this slice.
 17. Sandbox unavailability still produces no host-execution fallback.
 18. The exact final plan revision receives a fresh independent review before any remaining implementation.
 19. Task 1.1 remains blocked until Tasks 0.3–0.7 pass and an independent reviewer accepts the completed Milestone 0.5 checkpoint.
 
 ### Later client milestones
-- API routes authorize every resource and each live/replayed event against immutable scope/audience.
-- Web, desktop, CLI, and channels render only persisted state plus backend-returned effective capabilities.
-- Team collaboration and provider/secret-broker flows stabilize through CLI/web before channel or desktop packaging.
-- Connector and offline behavior have explicit scheduling, revocation, unavailable-reason, and recovery tests.
+- API routes authorize every resource and each live/replayed event against immutable scope/audience and a signed authorization-decision snapshot while rechecking current revocation.
+- Web, desktop, CLI and channels consume transport-neutral ports/generated clients and render only persisted state plus backend-returned effective capabilities; direct legacy manager/registry calls are removed at each capability cutover.
+- `local_daemon` is unsupported until Milestone 4 pairing/auth/rotation/origin/CSRF/lifecycle/recovery and CLI/web connection tests pass.
+- Team, provider/OAuth, broker, autonomy and shadow flows stabilize through real CLI/web end-to-end paths before channel or desktop packaging.
+- Governed memory, skills, context provenance and routines expose owned ports plus retained-CLI/API/web tests before their milestones pass.
+- Connector and offline behavior expose owned ports and real-client scheduling, restore-quarantine, revocation, unavailable-reason and recovery tests.
 - Desktop has no generic shell/filesystem grant and contains no duplicate policy, persistence, or run-state implementation.
 - Self-hosted and vendor-cloud modes are not supported until separate install/migrate/backup/restore/tenant-isolation/rollout-rollback deployment gates pass.
 - Desktop updates use threshold-signed expiring metadata, rollback/freeze protection, key-rotation/revocation recovery, reproducible provenance, and SBOM binding.
@@ -729,10 +771,10 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 
 | Layer | Tests |
 |---|---|
-| Configuration/domain | allowed/invalid combinations, authority epoch/handoff fencing, capability projection, canonical digests, discriminated scope parentage, audience snapshots, state transitions |
-| Authorization | requester/agent/delegation intersection, deny precedence, expiry/revocation, authority epoch, audience, limits, kill switches, enabled-client parity |
-| Persistence/migration | V1 golden/quarantine capture, version-aware bootstrap, per-domain repeated imports, rollback fixtures, uniqueness, transactions, sequenced receipt/event chains, tamper and isolation |
-| Outcomes/workflows/effects | pinned criteria/evidence, immutable lineage closure, claim races, fenced leases, semantic idempotency, transactional outbox, effect-gateway kill/budget races, compensation, stuck recovery, dependencies, cancellation |
+| Configuration/domain | allowed/invalid combinations, non-exportable authority credentials or lease expiry, externally anchored close-before-activate handoff, restore quarantine, capability projection, canonical digests, discriminated scope parentage, audience snapshots, state transitions |
+| Authorization/audit | requester/agent/delegation intersection, signed immutable decision snapshots, current revocation, deny precedence, authority proof, signing-key rotation/revocation/compromise history, limits, kill switches, enabled-client parity |
+| Persistence/migration | V1 golden/quarantine capture, version-aware bootstrap, per-domain repeated imports, restored pre-handoff source, rollback fixtures, uniqueness/check constraints, transactions, sequenced signed receipt/event chains, tamper and isolation |
+| Outcomes/workflows/effects | pinned criteria/evidence, immutable authorization/effect/lineage closure, claim races, fenced leases, canonical semantic idempotency, one-per-intent permit/outbox, unique attempts, hierarchical budget settlement, materialized kill locks, `outcome_unknown`, reconciliation, transactional outbox, compensation, stuck recovery, dependencies, cancellation |
 | Context firewall | provenance, instruction/data separation, bounded ingestion, prompt-injection and retrieved-content canaries |
 | Secret broker/providers | zero-secret traces, workspace/connection/version/request/agent/placement/purpose/use binding, host/method/path limits, atomic rotation/revocation, local and server OAuth lifecycle fixtures |
 | Skills/autonomy | normative action/effect matrix, no-effect shadow, evaluation versions, hidden holdouts, reversible canary approval/limits/compensation, regression and rollback |
@@ -740,9 +782,10 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 | Sandbox | option contract unit tests; marked Docker/Podman integration tests only where available |
 | Delivery | manifest/artifact rehash, approval binding, locking, crash atomicity, backup/undo, malicious paths |
 | CLI | Typer tests, stable envelopes, V1 compatibility, later project/work/evidence commands |
-| API/events | OIDC/session/CSRF/token tests, 403/404 behavior, idempotency, OpenAPI, scoped cursor replay/reconnect |
+| API/local daemon/events | OIDC/session/CSRF/token tests, local same-user bootstrap/browser pairing/rotation/origin/Host/lifecycle/recovery, 403/404 behavior, idempotency, OpenAPI, scoped cursor replay/reconnect |
+| Capability clients | transport-neutral port parity, retained-CLI cutover, API/web routes and end-to-end OAuth/broker/autonomy/shadow/memory/skill/context/work/lineage/kill workflows; no direct legacy repository/manager path |
 | Web/channels | API-backed Playwright, accessibility, hostile preview, signed ingress, dedupe, step-up approval |
-| Connector/offline | mTLS pairing, no connector authority, consent, health, egress, signed intent dedupe/conflict/revocation/replay, local-authority execution, remote-authority queue-only behavior |
+| Connector/offline | mTLS pairing, no connector authority, non-exportable epoch proof, restore quarantine, consent, health, egress, signed intent dedupe/conflict/revocation/replay, local-authority execution, remote/restored queue-only behavior, real-client reconnect |
 | Deployment operations | separate self-host/cloud install and upgrade, PostgreSQL/workers/artifacts/vault/KMS, tenant isolation, backup/restore/DR, observability, staged rollout rollback |
 | Desktop/distribution | Tauri capability audit, sidecar protocol, TUF-style threshold metadata, expiry/rollback/freeze defense, key rotation/revocation, provenance/SBOM, OS/architecture CI |
 | Security/quality | Pytest, Ruff, Bandit under Python 3.12, dependency audit, SBOM, secret scan, tenant/scope isolation |
@@ -751,7 +794,7 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 - **One Python core, thin clients:** avoids three diverging agent/security implementations.
 - **Fix V1 trust boundaries before exposing V2:** authorization models do not make an unsafe snapshot/verification/delivery pipeline safe; critical build and delivery defects are gated ahead of web/team enablement.
 - **Separated configuration contracts, not editions or one profile:** deployment, workspace collaboration, client context, execution placement, model route, and credential ownership resolve independently into effective capabilities.
-- **One fenced authoritative control plane per workspace:** a persisted monotonic authority epoch and signed atomic handoff govern local/cloud movement; connectors never become authority and remote-offline copies can queue intents only.
+- **One non-rollback authoritative control plane per workspace:** database epochs are fenced by a non-exportable epoch capability or expiring external lease; handoff requires an externally anchored close certificate and old-capability destruction/revocation before target activation; restored copies quarantine read/queue-only.
 - **Earned autonomy:** agents and skills begin in shadow/proposal stages and advance only through versioned evidence, approval, canaries, monitoring, and rollback.
 - **Bring-your-own models:** users supply local endpoints, API credentials, or provider OAuth. Corvus stores credential references and brokers access; it does not conflate a Corvus subscription with model entitlement.
 - **Local model with cloud control plane requires a connector:** Corvus Cloud never assumes it can reach localhost and never asks users to expose an unauthenticated model port.
@@ -760,7 +803,7 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 - **Incremental migration rather than wholesale directory move:** preserves V1 behavior and makes regressions attributable.
 - **New scoped audit repository before rewriting legacy events:** provides a safe team boundary without an all-at-once event-store migration. Legacy events remain local-only until adapted.
 - **Fake provider/sandbox for deterministic tests, no host fallback:** allows verification on this machine without pretending unsandboxed builds are secure.
-- **Transport-neutral ports plus generated clients:** one composition root and in-process/HTTP Python parity prevent CLI drift; OpenAPI-generated TypeScript prevents web/desktop contract drift.
+- **Transport-neutral ports plus generated clients:** one composition root and in-process/HTTP parity prevent CLI drift; OpenAPI-generated TypeScript prevents web/desktop drift; every locked capability must cut retained CLI, API and web over its named ports before its milestone passes.
 - **Context firewall before model or memory use:** external/retrieved content remains attributed untrusted data and cannot grant instruction, tools, secrets, permissions, or autonomy.
 - **Server-side access bundle resolution:** transport tokens are references, not authority.
 - **No OpenClaw shared gateway as tenant boundary:** borrow queue/session/capability patterns only; Corvus owns authorization or isolates gateways per tenant.
@@ -772,7 +815,7 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 - **Model-selected verification:** repository/server-required checks and independent reviewer evidence must dominate model suggestions.
 - **Bundle TOCTOU/crash windows:** rehash at apply, durable one-time approvals, locks, and crash-point testing are mandatory.
 - **Large CLI/TUI modules:** keep adapter registration changes minimal; extract use cases before UI rewrites.
-- **Hash-chain concurrency or incomplete checkpoints:** append each schema-versioned receipt, workspace-global sequence, authority/key epoch, and chain head transactionally; test concurrent appends, signing-key rotation/revocation, and checkpoint completeness.
+- **Hash-chain, authorization-snapshot, or signing-key ambiguity:** append signed canonical decision snapshots, schema-versioned receipts, workspace-global sequence, authority credential and chain head transactionally; persist public-key versions/validity/compromise times; test tampering, concurrent appends, rotation/revocation, obsolete-key signing and uncompromised re-anchoring.
 - **SQLite limits:** supported only for one authoritative single-process individual local workspace with file locking, integrity checks, backups, and documented recovery; PostgreSQL is required before networked or multi-worker operation.
 - **Scope-comparison bugs:** centralize containment logic and use exhaustive table/property tests.
 - **Approval replay:** store nonce digest and single-use status in a transaction; bind to requester/reviewer/action/manifest/expiry.
@@ -781,14 +824,17 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 - **Context injection:** all external/retrieved content remains provenance-labelled untrusted data behind instruction/context separation and adversarial fixtures.
 - **Premature autonomy promotion:** shadow/canary stages, hidden holdouts, independent approval, regression thresholds, kill switches, and rollback gate every increase.
 - **Memory deletion gaps:** export/deletion receipts cover primary rows, indexes, caches, artifacts, and documented backup-retention exceptions.
-- **Stale worker duplicate effects:** no worker calls an external provider directly; semantic idempotency, fenced leases, transactional effect outbox, current kill/budget authorization, provider idempotency, and explicit compensation/cancellation are enforced by one effect gateway.
-- **Connector compromise or offline ambiguity:** outbound-only mTLS, model-only RPC, consent, egress limits, health scheduling, revocation, fenced workspace authority, queue-only remote-offline intents, and explicit unavailable states fail closed.
+- **Database rollback resurrects authority:** backups never contain non-exportable epoch capabilities; leases expire externally; handoff anchors close/revocation and destroys the old capability before activation; every restore starts quarantined and a pre-handoff restore test must remain read/queue-only.
+- **Stale worker, write-skew or duplicate effects:** effect intents bind resolvable signed authorization/credential/payload evidence; canonical locks, concrete budget reservations/settlements, unique materialized kill rows, one-per-intent permit/outbox and unique attempt numbers close local races. Unknown provider outcomes never auto-retry without provider idempotency; compensation is remediation only.
+- **Parallel legacy capability paths:** every locked capability owns application ports, retained-CLI cutover, API/web adapters and end-to-end client proof; direct `MemoryManager`, `SkillRegistry`, provider repository or offline-row access cannot satisfy a milestone.
+- **Local-daemon exposure or lifecycle drift:** Milestone 4 must prove same-user bootstrap, one-time pairing, loopback/Host/origin/CSRF enforcement, rotation/revocation, single-owner lifecycle and crash recovery before the topology is supported.
+- **Connector compromise or offline ambiguity:** outbound-only mTLS, model-only RPC, consent, egress limits, health scheduling, revocation, non-exportable/leased workspace authority, restore quarantine, queue-only remote/restored intents, and explicit unavailable states fail closed.
 - **SSE data leakage:** authorize every event against immutable scope/audience and test opaque cursor replay, retention gaps, backpressure, and cross-thread denial.
 - **Desktop privilege creep:** Tauri capabilities are reviewed as code and tested against an allowlist.
 - **Dependency/update supply chain:** lock Python/Node/Rust dependencies; add audits, reproducible provenance, SBOM binding, and a TUF-style threshold-signed updater with offline root, delegated rotating keys, expiry, rollback/freeze defense, revocation recovery, and staged rollback tests.
 - **Declared deployment modes without operational proof:** keep self-hosted/vendor-cloud unsupported until PostgreSQL, workers, durable artifacts, vault/KMS, tenant isolation, backup/restore/DR, observability, migration, and failed-rollout rollback gates pass separately.
 - **Resource pressure:** serialize Node/Rust builds and avoid local container builds while RAM is constrained.
-- **Review availability:** Claude returned HTTP 401, Gemini required Antigravity migration, and Codex timed out without a verdict. Earlier Hermes audits found V1 trust/topology issues. The exact-commit paired review of `6bc2136` completed with two `VERDICT: REVISE` results and 17 accepted findings now recorded in `PLAN-REVIEW-LOG.md`. This new exact revision still requires both fresh scopes to return without a revise verdict; no timeout or partial result is approval.
+- **Review availability:** Claude returned HTTP 401, Gemini required Antigravity migration, and Codex timed out without a verdict. Earlier paired Hermes rounds and their responses are recorded in `PLAN-REVIEW-LOG.md`. Exact commit `74e98a74b7ae4b0648e6437911b4ec136c579c9a` received two `VERDICT: REVISE` results with six high findings, all incorporated into this new candidate. Both fresh scopes must return `VERDICT: PASS` on the same exact commit; no timeout, partial result or single pass is approval.
 
 ## Rollback and Checkpoints
 1. `1410d7f` remains the immutable imported V1 baseline.
@@ -797,10 +843,11 @@ The baseline-capture/bootstrap portion of Task 0.7 is the first pending action d
 4. One commit per TDD task or tightly coupled security fix; never rewrite baseline or hide incomplete gates.
 5. Before authority schema work, complete Tasks 0.3–0.7: hash every V1 public/database/domain fixture, validate version-aware bootstrap, run sealed quarantine capture twice, pass the Milestone 0.5 checkpoint, and obtain independent acceptance.
 6. After each destination migration, run only that domain's importer twice and verify legacy readability plus backup/restore/downgrade boundaries; never use a premature all-domain conversion.
-7. CLI V2 commands are additive until replacements pass compatibility tests.
-8. API, web, team/provider, connector, channel, deployment, and desktop work live on separate reversible feature commits.
-9. Autonomy/skill promotions always retain the previous active version and rollback receipt.
-10. No deployment, public release, live provider call, external message, credential migration, or purchase occurs in this plan.
+7. Backups exclude non-exportable authority/signing private capabilities. Every restore starts `restore_quarantine`; handoff rollback may abort before source close but can never reactivate a source after its close certificate is externally anchored and old epoch capability is destroyed/revoked.
+8. CLI V2 commands are additive until replacements pass compatibility tests; each governed capability removes its direct legacy-manager path when its port cutover passes.
+9. API, web, team/provider, connector, channel, deployment, and desktop work live on separate reversible feature commits.
+10. Autonomy/skill promotions always retain the previous active version and rollback receipt.
+11. No deployment, public release, live provider call, external message, credential migration, or purchase occurs in this plan.
 
 ## First Implementation Slice to Build Immediately
 After this exact plan revision passes fresh review, finish Tasks 0.3–0.7 as separately reviewed TDD commits: release-blocking trust fixes, context provenance persistence, complete V1 golden capture, version-aware bootstrap, and sealed quarantine capture. Obtain independent acceptance of the completed Milestone 0.5 checkpoint. Only then may Worker B begin Milestone 1's transport-neutral project create/read authority contracts, followed sequentially by persistence and application workers. Do not add CLI V2, FastAPI, React, channel, connector, deployment, desktop, live providers, or broad workflow/autonomy features until that project slice and complete quality/security gate pass.

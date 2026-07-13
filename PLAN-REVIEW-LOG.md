@@ -80,3 +80,22 @@ Accepted all 17 findings. `PLAN.md` now adds monotonic `WorkspaceAuthority` epoc
 
 ### Remaining gate
 Validate, commit, and hash the new plan-only revision, then rerun the same two independent read-only scopes against that exact commit. No remaining implementation begins while either verdict requires revision.
+
+## Round 6 - Exact-commit paired Hermes review of `74e98a7`
+Two fresh read-only GPT-5.6-sol reviewers verified exact commit `74e98a74b7ae4b0648e6437911b4ec136c579c9a`, `PLAN.md` SHA-256 `a2d37bf8d7796e53bec63976912803b8a91011ed9134e1ba3f5a5f3888cccdd3`, and a clean unchanged tree. Both returned `VERDICT: REVISE`; no implementation began.
+
+### Security/schema/authorization findings
+- High: authority epoch/closed state remained rollbackable because a restored pre-handoff database could resurrect the old active authority without a non-exportable capability, expiring external lease, anchored close/revocation or restore quarantine.
+- High: external-effect records lacked resolvable request/requester/access/agent/delegation/placement/provider/credential/payload authorization evidence needed for the promised current gateway checks.
+- High: budget accounts/reservations/settlements and unique materialized kill/permit/outbox/attempt constraints were missing; unknown non-idempotent provider outcomes could still duplicate effects on retry.
+- High: immutable authorization-decision snapshots and durable workspace signing-key versions/validity/rotation/revocation/compromise semantics were not modeled or bound throughout requests, receipts, checkpoints, effects and handoffs.
+
+### Product topology/client findings
+- High: `local_daemon` was declared supported after the API slice without a Milestone 4 bootstrap/pairing/rotation/origin/CSRF/lifecycle/recovery gate.
+- High: several locked capabilities had persistence/service tests but no owned application ports, retained-CLI cutover, API/web tasks or client-driven end-to-end proof, allowing parallel legacy implementations.
+
+### Codex/Hermes response
+Accepted all six findings. `PLAN.md` now makes authority non-rollback through non-exportable epoch credentials or expiring registry leases, externally anchored close certificates, old-capability destruction/revocation and default restore quarantine; restores from pre-handoff snapshots must remain read/queue-only. It adds self-contained signed `AuthorizationDecisionSnapshot` and durable `WorkspaceSigningKeyVersion` records with historical compromise semantics and binds them through requests, receipts, checkpoints, handoffs, effects and lineage. Effects now carry the complete authorization/provider/credential/payload chain; concrete hierarchical budget accounts/reservations/settlements, unique materialized kill rows, one-per-intent permits/outboxes, unique attempt numbers, canonical lock order and `outcome_unknown` no-auto-retry rules close local race/duplicate paths. Milestone 4 now owns the local-daemon bootstrap/auth/pairing/rotation/origin/CSRF/lifecycle/recovery proof. A second eleven-row ledger and Milestones 6–8 now require named application ports, retained-CLI cutover, API/web ownership and real client-driven OAuth, broker, autonomy, shadow, memory, skill, context and offline end-to-end tests.
+
+### Remaining gate
+Validate, commit and hash this plan-only revision, then rerun both independent scopes against that exact commit. Continue the review/revise cycle until both return `VERDICT: PASS`; implementation remains blocked.
