@@ -12,6 +12,7 @@ from corvus.database import M1_AUDIT_REVISION as _M1_AUDIT_REVISION
 from corvus.database import M1_AUTHORITY_REVISION as _M1_AUTHORITY_REVISION
 from corvus.database import M1_AUTHORIZATION_INPUT_REVISION as _M1_AUTHORIZATION_INPUT_REVISION
 from corvus.database import M1_HANDOFF_REVISION as _M1_HANDOFF_REVISION
+from corvus.database import M1_IDENTITY_SCOPE_REVISION as _M1_IDENTITY_SCOPE_REVISION
 from corvus.database import M1_PROJECT_REVISION as _M1_PROJECT_REVISION
 from corvus.database import M1_REGISTRY_REVISION as _M1_REGISTRY_REVISION
 from corvus.database import DatabaseState, classify_database
@@ -22,7 +23,8 @@ M1_AUTHORITY_REVISION: Final = _M1_AUTHORITY_REVISION
 M1_REGISTRY_REVISION: Final = _M1_REGISTRY_REVISION
 M1_AUTHORIZATION_INPUT_REVISION: Final = _M1_AUTHORIZATION_INPUT_REVISION
 M1_HANDOFF_REVISION: Final = _M1_HANDOFF_REVISION
-M1_CURRENT_REVISION: Final = M1_HANDOFF_REVISION
+M1_IDENTITY_SCOPE_REVISION: Final = _M1_IDENTITY_SCOPE_REVISION
+M1_CURRENT_REVISION: Final = M1_IDENTITY_SCOPE_REVISION
 
 
 class InfrastructureDatabaseError(RuntimeError):
@@ -64,6 +66,7 @@ def upgrade_database(database: Path) -> str:
         M1_AUTHORITY_REVISION,
         M1_REGISTRY_REVISION,
         M1_AUTHORIZATION_INPUT_REVISION,
+        M1_HANDOFF_REVISION,
         M1_CURRENT_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
@@ -84,6 +87,7 @@ def downgrade_database(database: Path, revision: str) -> str:
         M1_AUTHORITY_REVISION,
         M1_REGISTRY_REVISION,
         M1_AUTHORIZATION_INPUT_REVISION,
+        M1_HANDOFF_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
     command.downgrade(_alembic_config(database), revision)
