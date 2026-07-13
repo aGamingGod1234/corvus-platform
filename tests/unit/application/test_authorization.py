@@ -9,6 +9,7 @@ from corvus.application.authorization import (
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
+    CredentialVerificationProof,
     RegistryVerificationProof,
     evaluate_capability_intersection,
 )
@@ -17,6 +18,9 @@ from corvus.domain.access import (
     AgentGrant,
     CapabilityEffect,
     CapabilityGrant,
+    CredentialKind,
+    CredentialRef,
+    CredentialStatus,
     DelegationGrant,
 )
 from corvus.domain.deployment import (
@@ -97,6 +101,7 @@ def _exact_allow_case() -> tuple[
     )
     request = AuthorizationRequest(
         workspace_id=workspace_id,
+        request_context_id=uuid4(),
         deployment_instance_id=uuid4(),
         workspace_authority_epoch=3,
         workspace_authority_generation=4,
@@ -1420,3 +1425,325 @@ def test_unsolicited_execution_placement_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "execution_placement_unsolicited"
+
+
+def _credential_bound_case() -> tuple[
+    tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ],
+    AuthorityEvaluationContext,
+    CredentialRef,
+    CredentialVerificationProof,
+]:
+    case, context, placement = _placement_bound_case()
+    request_context_id = uuid4()
+    provider_connection_id = uuid4()
+    credential_ref_id = uuid4()
+    credential_version_id = uuid4()
+    credential_grant_id = uuid4()
+    request = case[0].model_copy(
+        update={
+            "request_context_id": request_context_id,
+            "provider_connection_id": provider_connection_id,
+            "credential_ref_id": credential_ref_id,
+            "credential_version_id": credential_version_id,
+            "credential_grant_id": credential_grant_id,
+        }
+    )
+    bound_case = (request, case[1], case[2], case[3], case[4], case[5])
+    credential_ref = CredentialRef(
+        id=credential_ref_id,
+        workspace_id=request.workspace_id,
+        owner_principal_id=request.requester_id,
+        provider_connection_id=provider_connection_id,
+        kind=CredentialKind.OS_KEYRING,
+        opaque_locator="keyring://corvus/provider/current",
+        scopes=frozenset({"model.invoke"}),
+        expires_at=request.evaluated_at + timedelta(hours=1),
+        version=3,
+        created_at=request.evaluated_at - timedelta(hours=1),
+        updated_at=request.evaluated_at - timedelta(minutes=1),
+    )
+    proof = CredentialVerificationProof(
+        request_context_id=request.request_context_id,
+        workspace_id=request.workspace_id,
+        provider_connection_id=provider_connection_id,
+        credential_ref_id=credential_ref_id,
+        credential_ref_version=credential_ref.version,
+        credential_version_id=credential_version_id,
+        credential_grant_id=credential_grant_id,
+        acting_agent_id=request.acting_agent_id,
+        execution_placement_id=placement.id,
+        operation=request.action,
+        rotation_epoch=4,
+        nonce_digest="f" * 64,
+        use_limit=2,
+        use_count=0,
+        issued_at=request.evaluated_at - timedelta(minutes=1),
+        expires_at=request.evaluated_at + timedelta(minutes=5),
+        credential_version_active=True,
+        credential_grant_active=True,
+        finalized=True,
+    )
+    context = context.model_copy(
+        update={
+            "credential_ref": credential_ref,
+            "credential_verification_proof": proof,
+            "expected_credential_rotation_epoch": proof.rotation_epoch,
+            "expected_credential_nonce_digest": proof.nonce_digest,
+        }
+    )
+    return bound_case, context, credential_ref, proof
+
+
+def test_exact_current_credential_binding_allows() -> None:
+    case, context, _, _ = _credential_bound_case()
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"
+
+
+def test_partial_credential_claims_fail_closed() -> None:
+    case, context, _, _ = _credential_bound_case()
+    request = case[0].model_copy(update={"credential_version_id": None})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_claims_incomplete"
+
+
+def test_credential_without_request_placement_fails_closed() -> None:
+    case, context, _, _ = _credential_bound_case()
+    request = case[0].model_copy(update={"execution_placement_id": None})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    context = context.model_copy(update={"execution_placement": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_placement_missing"
+
+
+def test_missing_credential_ref_fails_closed() -> None:
+    case, context, _, _ = _credential_bound_case()
+    context = context.model_copy(update={"credential_ref": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_ref_missing"
+
+
+def test_provider_connection_substitution_fails_closed() -> None:
+    case, context, credential_ref, _ = _credential_bound_case()
+    substituted = credential_ref.model_copy(update={"provider_connection_id": uuid4()})
+    context = context.model_copy(update={"credential_ref": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_ref_mismatch"
+
+
+def test_revoked_credential_ref_fails_closed() -> None:
+    case, context, credential_ref, _ = _credential_bound_case()
+    revoked = credential_ref.model_copy(update={"status": CredentialStatus.REVOKED})
+    context = context.model_copy(update={"credential_ref": revoked})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_ref_revoked"
+
+
+def test_expired_credential_ref_fails_closed() -> None:
+    case, context, credential_ref, _ = _credential_bound_case()
+    expired = credential_ref.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"credential_ref": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_ref_expired"
+
+
+def test_missing_credential_verification_proof_fails_closed() -> None:
+    case, context, _, _ = _credential_bound_case()
+    context = context.model_copy(update={"credential_verification_proof": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_missing"
+
+
+def test_credential_proof_request_substitution_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    substituted = proof.model_copy(update={"request_context_id": uuid4()})
+    context = context.model_copy(update={"credential_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_mismatch"
+
+
+def test_credential_proof_agent_substitution_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    substituted = proof.model_copy(update={"acting_agent_id": uuid4()})
+    context = context.model_copy(update={"credential_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_mismatch"
+
+
+def test_credential_proof_placement_substitution_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    substituted = proof.model_copy(update={"execution_placement_id": uuid4()})
+    context = context.model_copy(update={"credential_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_mismatch"
+
+
+def test_credential_proof_operation_overreach_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    substituted = proof.model_copy(update={"operation": "project.write"})
+    context = context.model_copy(update={"credential_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_mismatch"
+
+
+def test_exhausted_credential_grant_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    exhausted = proof.model_copy(update={"use_count": proof.use_limit})
+    context = context.model_copy(update={"credential_verification_proof": exhausted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_grant_use_limit_exhausted"
+
+
+def test_expired_credential_verification_proof_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    expired = proof.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"credential_verification_proof": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_proof_expired"
+
+
+def test_inactive_credential_version_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    inactive = proof.model_copy(update={"credential_version_active": False})
+    context = context.model_copy(update={"credential_verification_proof": inactive})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_version_inactive"
+
+
+def test_inactive_credential_grant_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    inactive = proof.model_copy(update={"credential_grant_active": False})
+    context = context.model_copy(update={"credential_verification_proof": inactive})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_grant_inactive"
+
+
+def test_unfinalized_credential_verification_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    unfinalized = proof.model_copy(update={"finalized": False})
+    context = context.model_copy(update={"credential_verification_proof": unfinalized})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_verification_not_finalized"
+
+
+def test_credential_owner_substitution_fails_closed() -> None:
+    case, context, credential_ref, _ = _credential_bound_case()
+    substituted = credential_ref.model_copy(update={"owner_principal_id": uuid4()})
+    context = context.model_copy(update={"credential_ref": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_owner_mismatch"
+
+
+def test_future_credential_ref_fails_closed() -> None:
+    case, context, credential_ref, _ = _credential_bound_case()
+    future = credential_ref.model_copy(
+        update={"updated_at": case[0].evaluated_at + timedelta(seconds=1)}
+    )
+    context = context.model_copy(update={"credential_ref": future})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_ref_not_yet_current"
+
+
+def test_credential_rotation_epoch_mismatch_fails_closed() -> None:
+    case, context, _, proof = _credential_bound_case()
+    context = context.model_copy(
+        update={"expected_credential_rotation_epoch": proof.rotation_epoch + 1}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_rotation_epoch_mismatch"
+
+
+def test_credential_nonce_mismatch_fails_closed() -> None:
+    case, context, _, _ = _credential_bound_case()
+    context = context.model_copy(update={"expected_credential_nonce_digest": "0" * 64})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_nonce_mismatch"
+
+
+def test_unsolicited_credential_evidence_fails_closed() -> None:
+    _, _, credential_ref, proof = _credential_bound_case()
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={
+            "credential_ref": credential_ref,
+            "credential_verification_proof": proof,
+            "expected_credential_rotation_epoch": proof.rotation_epoch,
+            "expected_credential_nonce_digest": proof.nonce_digest,
+        }
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "credential_evidence_unsolicited"

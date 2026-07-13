@@ -12,6 +12,8 @@ from corvus.domain.access import (
     AgentGrant,
     CapabilityEffect,
     CapabilityGrant,
+    CredentialRef,
+    CredentialStatus,
     DelegationGrant,
 )
 from corvus.domain.deployment import (
@@ -49,6 +51,7 @@ class AuthorizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     workspace_id: UUID
+    request_context_id: UUID
     deployment_instance_id: UUID
     workspace_authority_epoch: int = Field(ge=1)
     workspace_authority_generation: int = Field(ge=0)
@@ -64,6 +67,10 @@ class AuthorizationRequest(BaseModel):
     authority_manifest_version_id: UUID
     authority_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     execution_placement_id: UUID | None = None
+    provider_connection_id: UUID | None = None
+    credential_ref_id: UUID | None = None
+    credential_version_id: UUID | None = None
+    credential_grant_id: UUID | None = None
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -109,6 +116,30 @@ class RegistryVerificationProof(BaseModel):
     finalized: bool
 
 
+class CredentialVerificationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_context_id: UUID
+    workspace_id: UUID
+    provider_connection_id: UUID
+    credential_ref_id: UUID
+    credential_ref_version: int = Field(ge=1)
+    credential_version_id: UUID
+    credential_grant_id: UUID
+    acting_agent_id: UUID
+    execution_placement_id: UUID
+    operation: str = Field(min_length=1, max_length=200)
+    rotation_epoch: int = Field(ge=1)
+    nonce_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    use_limit: int = Field(ge=1)
+    use_count: int = Field(ge=0)
+    issued_at: datetime
+    expires_at: datetime
+    credential_version_active: bool
+    credential_grant_active: bool
+    finalized: bool
+
+
 class AuthorityEvaluationContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -129,6 +160,13 @@ class AuthorityEvaluationContext(BaseModel):
     authority_manifest_families: tuple[AuthorityStateRootLeafFamily, ...] = ()
     mutable_authority_families: frozenset[str] = frozenset()
     execution_placement: ExecutionPlacement | None = None
+    credential_ref: CredentialRef | None = None
+    credential_verification_proof: CredentialVerificationProof | None = None
+    expected_credential_rotation_epoch: int | None = Field(default=None, ge=1)
+    expected_credential_nonce_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     deployment_instance_key_available: bool
     epoch_credential_key_available: bool = True
     os_lock_held: bool
@@ -310,6 +348,110 @@ def _placement_denial_reason(
     return None
 
 
+def _credential_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    claims = (
+        request.provider_connection_id,
+        request.credential_ref_id,
+        request.credential_version_id,
+        request.credential_grant_id,
+    )
+    if all(claim is None for claim in claims):
+        if (
+            context.credential_ref is not None
+            or context.credential_verification_proof is not None
+            or context.expected_credential_rotation_epoch is not None
+            or context.expected_credential_nonce_digest is not None
+        ):
+            return "credential_evidence_unsolicited"
+        return None
+    if any(claim is None for claim in claims):
+        return "credential_claims_incomplete"
+    if request.execution_placement_id is None:
+        return "credential_placement_missing"
+
+    provider_connection_id = request.provider_connection_id
+    credential_ref_id = request.credential_ref_id
+    credential_version_id = request.credential_version_id
+    credential_grant_id = request.credential_grant_id
+    if (
+        provider_connection_id is None
+        or credential_ref_id is None
+        or credential_version_id is None
+        or credential_grant_id is None
+    ):
+        return "credential_claims_incomplete"
+
+    credential_ref = context.credential_ref
+    if credential_ref is None:
+        return "credential_ref_missing"
+    if (
+        credential_ref.id != credential_ref_id
+        or credential_ref.workspace_id != request.workspace_id
+        or credential_ref.provider_connection_id != provider_connection_id
+    ):
+        return "credential_ref_mismatch"
+    if (
+        credential_ref.owner_principal_id is not None
+        and credential_ref.owner_principal_id != request.requester_id
+    ):
+        return "credential_owner_mismatch"
+    if credential_ref.status is CredentialStatus.REVOKED:
+        return "credential_ref_revoked"
+    if credential_ref.status is CredentialStatus.EXPIRED:
+        return "credential_ref_expired"
+    if credential_ref.expires_at is not None and credential_ref.expires_at <= request.evaluated_at:
+        return "credential_ref_expired"
+    if (
+        credential_ref.created_at > request.evaluated_at
+        or credential_ref.updated_at > request.evaluated_at
+    ):
+        return "credential_ref_not_yet_current"
+
+    proof = context.credential_verification_proof
+    if proof is None:
+        return "credential_verification_proof_missing"
+    if (
+        proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.provider_connection_id != provider_connection_id
+        or proof.credential_ref_id != credential_ref_id
+        or proof.credential_ref_version != credential_ref.version
+        or proof.credential_version_id != credential_version_id
+        or proof.credential_grant_id != credential_grant_id
+        or proof.acting_agent_id != request.acting_agent_id
+        or proof.execution_placement_id != request.execution_placement_id
+        or proof.operation != request.action
+    ):
+        return "credential_verification_proof_mismatch"
+    if not proof.finalized:
+        return "credential_verification_not_finalized"
+    if not proof.credential_version_active:
+        return "credential_version_inactive"
+    if not proof.credential_grant_active:
+        return "credential_grant_inactive"
+    if proof.issued_at > request.evaluated_at:
+        return "credential_verification_proof_not_yet_valid"
+    if proof.expires_at <= request.evaluated_at:
+        return "credential_verification_proof_expired"
+    if (
+        context.expected_credential_rotation_epoch is None
+        or context.expected_credential_nonce_digest is None
+    ):
+        return "credential_verification_expectations_missing"
+    if proof.rotation_epoch != context.expected_credential_rotation_epoch:
+        return "credential_rotation_epoch_mismatch"
+    if proof.nonce_digest != context.expected_credential_nonce_digest:
+        return "credential_nonce_mismatch"
+    if proof.use_count >= proof.use_limit:
+        return "credential_grant_use_limit_exhausted"
+    return None
+
+
 def _authority_denial_reason(
     request: AuthorizationRequest,
     context: AuthorityEvaluationContext | None,
@@ -488,6 +630,12 @@ def evaluate_capability_intersection(
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code=placement_denial,
+        )
+    credential_denial = _credential_denial_reason(request, authority_context)
+    if credential_denial is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code=credential_denial,
         )
     if agent_grant is None:
         return AuthorizationResult(
