@@ -37,6 +37,7 @@ from corvus.domain.deployment import (
     validate_registry_trust_transition,
     validate_registry_verifier_time,
 )
+from corvus.domain.execution import ExecutionPlacement, ExecutionStatus
 
 
 class AuthorizationDecision(StrEnum):
@@ -62,6 +63,7 @@ class AuthorizationRequest(BaseModel):
     registry_freshness_sequence: int | None = Field(default=None, ge=1)
     authority_manifest_version_id: UUID
     authority_manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    execution_placement_id: UUID | None = None
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -126,6 +128,7 @@ class AuthorityEvaluationContext(BaseModel):
     authority_manifest: AuthorityStateRootManifestVersion | None
     authority_manifest_families: tuple[AuthorityStateRootLeafFamily, ...] = ()
     mutable_authority_families: frozenset[str] = frozenset()
+    execution_placement: ExecutionPlacement | None = None
     deployment_instance_key_available: bool
     epoch_credential_key_available: bool = True
     os_lock_held: bool
@@ -282,6 +285,28 @@ def _manifest_denial_reason(
         )
     except AuthorityContractError as exc:
         return exc.reason_code
+    return None
+
+
+def _placement_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    placement = context.execution_placement
+    if request.execution_placement_id is None:
+        return "execution_placement_unsolicited" if placement is not None else None
+    if placement is None:
+        return "execution_placement_missing"
+    if placement.id != request.execution_placement_id:
+        return "execution_placement_mismatch"
+    if placement.status is ExecutionStatus.REVOKED:
+        return "execution_placement_revoked"
+    if placement.status is ExecutionStatus.UNAVAILABLE:
+        return "execution_placement_unavailable"
+    if placement.created_at > request.evaluated_at:
+        return "execution_placement_not_yet_active"
     return None
 
 
@@ -457,6 +482,12 @@ def evaluate_capability_intersection(
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code=authority_denial,
+        )
+    placement_denial = _placement_denial_reason(request, authority_context)
+    if placement_denial is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code=placement_denial,
         )
     if agent_grant is None:
         return AuthorizationResult(

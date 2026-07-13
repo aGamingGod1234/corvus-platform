@@ -37,6 +37,7 @@ from corvus.domain.deployment import (
     WorkspaceAuthorityState,
     fixed_workspace_lock_name,
 )
+from corvus.domain.execution import ExecutionKind, ExecutionPlacement, ExecutionStatus
 
 
 def _exact_allow_case() -> tuple[
@@ -1300,3 +1301,122 @@ def test_unlisted_mutable_authority_family_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "unlisted_authority_family"
+
+
+def _placement_bound_case() -> tuple[
+    tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ],
+    AuthorityEvaluationContext,
+    ExecutionPlacement,
+]:
+    case = _exact_allow_case()
+    placement = ExecutionPlacement(
+        kind=ExecutionKind.LOCAL_RUNNER,
+        runner_id=uuid4(),
+        sandbox_profile="strict-build",
+        data_policy_digest="e" * 64,
+        created_at=case[0].evaluated_at - timedelta(minutes=1),
+    )
+    request = case[0].model_copy(update={"execution_placement_id": placement.id})
+    bound_case = (
+        request,
+        case[1],
+        case[2],
+        case[3],
+        case[4],
+        case[5],
+    )
+    context = _valid_authority_context(request).model_copy(
+        update={"execution_placement": placement}
+    )
+    return bound_case, context, placement
+
+
+def test_exact_active_execution_placement_allows() -> None:
+    case, context, _ = _placement_bound_case()
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"
+
+
+def test_missing_execution_placement_fails_closed() -> None:
+    case, context, _ = _placement_bound_case()
+    context = context.model_copy(update={"execution_placement": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_missing"
+
+
+def test_execution_placement_substitution_fails_closed() -> None:
+    case, context, placement = _placement_bound_case()
+    substituted = placement.model_copy(update={"id": uuid4()})
+    context = context.model_copy(update={"execution_placement": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_mismatch"
+
+
+def test_unavailable_execution_placement_fails_closed() -> None:
+    case, context, placement = _placement_bound_case()
+    unavailable = placement.model_copy(update={"status": ExecutionStatus.UNAVAILABLE})
+    context = context.model_copy(update={"execution_placement": unavailable})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_unavailable"
+
+
+def test_revoked_execution_placement_fails_closed() -> None:
+    case, context, placement = _placement_bound_case()
+    revoked = placement.model_copy(update={"status": ExecutionStatus.REVOKED})
+    context = context.model_copy(update={"execution_placement": revoked})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_revoked"
+
+
+def test_future_execution_placement_fails_closed() -> None:
+    case, context, placement = _placement_bound_case()
+    future = placement.model_copy(
+        update={"created_at": case[0].evaluated_at + timedelta(seconds=1)}
+    )
+    context = context.model_copy(update={"execution_placement": future})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_not_yet_active"
+
+
+def test_unsolicited_execution_placement_fails_closed() -> None:
+    case = _exact_allow_case()
+    placement = ExecutionPlacement(
+        kind=ExecutionKind.LOCAL_RUNNER,
+        runner_id=uuid4(),
+        sandbox_profile="strict-build",
+        data_policy_digest="e" * 64,
+        created_at=case[0].evaluated_at - timedelta(minutes=1),
+    )
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"execution_placement": placement}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "execution_placement_unsolicited"
