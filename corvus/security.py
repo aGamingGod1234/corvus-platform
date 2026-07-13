@@ -2,18 +2,42 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import math
 import os
 import re
 import stat
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 
 class SecurityError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class BoundedRedactedText:
+    text: str
+    truncated: bool
+    original_sha256: str
+    captured_sha256: str
+    original_bytes: int
+    original_chars: int
+    captured_bytes: int
+    captured_chars: int
+
+
 class SecretRedactor:
+    _SECRET_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = (
+        "apikey",
+        "token",
+        "secret",
+        "password",
+        "authorization",
+        "cookie",
+    )
     _TOKEN_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
         re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?([^\s'\"]+)"),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
@@ -42,6 +66,109 @@ class SecretRedactor:
             else:
                 result = pattern.sub("[REDACTED]", result)
         return result
+
+    @classmethod
+    def _is_secret_key(cls, key: str) -> bool:
+        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+        return any(normalized.endswith(suffix) for suffix in cls._SECRET_KEY_SUFFIXES)
+
+    def redact_value(self, value: Any) -> Any:
+        return self._redact_value(value, active=set())
+
+    def _redact_value(self, value: Any, *, active: set[int]) -> Any:
+        if value is None or isinstance(value, (bool, int)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise SecurityError("non-finite numbers are not JSON-safe")
+            return value
+        if isinstance(value, str):
+            return self.redact(value)
+
+        if isinstance(value, Mapping):
+            identity = id(value)
+            if identity in active:
+                raise SecurityError("cyclic structured value rejected")
+            active.add(identity)
+            try:
+                result: dict[str, Any] = {}
+                for raw_key, item in sorted(value.items(), key=lambda pair: str(pair[0])):
+                    key = self.redact(str(raw_key))
+                    if key in result:
+                        raise SecurityError("mapping keys collide after JSON normalization")
+                    result[key] = (
+                        "[REDACTED]"
+                        if self._is_secret_key(str(raw_key))
+                        else self._redact_value(item, active=active)
+                    )
+                return result
+            finally:
+                active.remove(identity)
+
+        if isinstance(value, (list, tuple)):
+            identity = id(value)
+            if identity in active:
+                raise SecurityError("cyclic structured value rejected")
+            active.add(identity)
+            try:
+                return [self._redact_value(item, active=active) for item in value]
+            finally:
+                active.remove(identity)
+
+        if isinstance(value, (set, frozenset)):
+            identity = id(value)
+            if identity in active:
+                raise SecurityError("cyclic structured value rejected")
+            active.add(identity)
+            try:
+                items = [self._redact_value(item, active=active) for item in value]
+                return sorted(
+                    items,
+                    key=lambda item: json.dumps(
+                        item,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            finally:
+                active.remove(identity)
+
+        raise SecurityError(f"unsupported structured value type: {type(value).__name__}")
+
+    def redact_json(self, value: Any) -> str:
+        return json.dumps(
+            self.redact_value(value),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def bound_text(self, text: str, *, max_characters: int) -> BoundedRedactedText:
+        if max_characters <= 0:
+            raise ValueError("max_characters must be positive")
+        redacted = self.redact(text)
+        truncated = len(redacted) > max_characters
+        if truncated:
+            full_marker = "[TRUNCATED]"
+            marker = full_marker if max_characters >= len(full_marker) else "…"
+            captured = redacted[: max_characters - len(marker)] + marker
+        else:
+            captured = redacted
+        original_bytes = redacted.encode("utf-8")
+        captured_bytes = captured.encode("utf-8")
+        return BoundedRedactedText(
+            text=captured,
+            truncated=truncated,
+            original_sha256=hashlib.sha256(original_bytes).hexdigest(),
+            captured_sha256=hashlib.sha256(captured_bytes).hexdigest(),
+            original_bytes=len(original_bytes),
+            original_chars=len(redacted),
+            captured_bytes=len(captured_bytes),
+            captured_chars=len(captured),
+        )
 
 
 def sha256_bytes(data: bytes) -> str:
