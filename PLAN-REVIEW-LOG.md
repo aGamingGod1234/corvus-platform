@@ -50,3 +50,33 @@ Lucas added outcome contracts; evaluated/canary/rollback skills; context firewal
 
 ### Remaining gate
 Commit and hash this revised plan, then run a fresh independent review against that exact revision. Do not begin Task 1.1 schema/domain implementation while that verdict is pending or requires revision.
+
+## Round 5 - Exact-commit paired Hermes review of `6bc2136`
+Two fresh read-only GPT-5.6-sol reviewers completed non-overlapping reviews of exact commit `6bc2136038c8abdea7746243cb057c004969f150`. Both returned `VERDICT: REVISE`; this is not approval and no authority/schema implementation began.
+
+### Security/schema/authorization findings
+- Critical: “one authoritative control plane” lacked persisted epochs/fencing and atomic handoff, so remote-offline work could execute under stale grants.
+- Critical: leases prevented duplicate completion but not duplicate external effects or kill-switch/budget check-to-effect races.
+- High: invalid-state-prone optional scope fields and digest-only audience references could not support deterministic replay authorization.
+- High: credential grants were insufficiently bound to workspace, provider connection/version, request/agent grant, placement, purpose, and usage.
+- High: idempotency lacked a complete persisted principal/context key and could replay data after revocation.
+- High: workflows did not pin immutable outcome versions and lineage used mutable bare-ID arrays.
+- High: audit checkpoints lacked a corresponding transactional workspace-global sequence, authority epoch, schema version, and signing-key lifecycle.
+- High: autonomy levels had no normative effect semantics; shadow mode could still use existing credentials/effects.
+- High: memory owner/scope/audience/promotion/encryption/deletion-retention contracts were ambiguous.
+- High: V1 migration needed complete golden fixtures, version-aware bootstrap, quarantine, and policy/autonomy coverage before schema evolution.
+- High: the Milestone 1 client-surface denial contradicted transport-neutral authority.
+- High: desktop updates lacked a threshold-signed trust root, rollback/freeze protection, key lifecycle, provenance, and SBOM binding.
+
+### Product topology/sequencing findings
+- Worker B was allowed to overlap unfinished Milestone 0.5 work, contradicting the security gate.
+- One all-domain importer was scheduled before most destination schemas existed and omitted V1 policy/autonomy YAML.
+- The eleven locked capabilities lacked a complete persistence/migration/cutover/rollback/test ledger.
+- Provider OAuth lacked a persisted authorization, PKCE/device, callback, refresh, revocation, and acceptance lifecycle.
+- Self-hosted and vendor-cloud modes lacked an operational deployment milestone for PostgreSQL, workers, artifacts, vault/KMS, isolation, backup/restore, observability, and rollback.
+
+### Codex/Hermes response
+Accepted all 17 findings. `PLAN.md` now adds monotonic `WorkspaceAuthority` epochs and signed atomic handoff; queue-only remote-offline intents; a fenced centralized external-effect gateway with semantic idempotency, transactional outbox, current authorization/limits, and compensation; discriminated scopes and immutable audience snapshots; fully bound credential/OAuth records; authorization-aware idempotency; immutable outcome/lineage/audit contracts; normative autonomy/shadow effect rules; typed governed memory; complete V1 golden/quarantine/bootstrap work followed by per-domain importers; client-surface parity; TUF-style updates; an eleven-row capability implementation ledger; strict Worker A -> review -> Worker B -> review -> Worker C -> review -> Worker D sequencing; and a separate operational self-hosted/vendor-cloud deployment milestone.
+
+### Remaining gate
+Validate, commit, and hash the new plan-only revision, then rerun the same two independent read-only scopes against that exact commit. No remaining implementation begins while either verdict requires revision.
