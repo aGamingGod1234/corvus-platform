@@ -71,6 +71,11 @@ class AuthorizationRequest(BaseModel):
     credential_ref_id: UUID | None = None
     credential_version_id: UUID | None = None
     credential_grant_id: UUID | None = None
+    budget_snapshot_ids: tuple[UUID, ...] = ()
+    budget_snapshot_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    runtime_limit_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    budget_unit: str | None = Field(default=None, min_length=1, max_length=100)
+    budget_requested_amount: int | None = Field(default=None, ge=1)
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -140,6 +145,35 @@ class CredentialVerificationProof(BaseModel):
     finalized: bool
 
 
+class BudgetRuntimeVerificationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_context_id: UUID
+    workspace_id: UUID
+    scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
+    scope_id: UUID
+    action: str = Field(min_length=1, max_length=200)
+    budget_snapshot_ids: tuple[UUID, ...]
+    budget_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    runtime_limit_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    unit: str = Field(min_length=1, max_length=100)
+    requested_amount: int = Field(ge=1)
+    canonical_account_ids: tuple[UUID, ...]
+    canonical_account_closure_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_account_count: int = Field(ge=1)
+    minimum_remaining_amount: int = Field(ge=0)
+    runtime_limit_ms: int = Field(ge=1)
+    runtime_consumed_ms: int = Field(ge=0)
+    period_starts_at: datetime
+    period_ends_at: datetime
+    observed_at: datetime
+    expires_at: datetime
+    hierarchy_verified: bool
+    period_non_overlapping_verified: bool
+    all_accounts_active: bool
+    finalized: bool
+
+
 class AuthorityEvaluationContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -162,6 +196,7 @@ class AuthorityEvaluationContext(BaseModel):
     execution_placement: ExecutionPlacement | None = None
     credential_ref: CredentialRef | None = None
     credential_verification_proof: CredentialVerificationProof | None = None
+    budget_runtime_verification_proof: BudgetRuntimeVerificationProof | None = None
     expected_credential_rotation_epoch: int | None = Field(default=None, ge=1)
     expected_credential_nonce_digest: str | None = Field(
         default=None,
@@ -452,6 +487,86 @@ def _credential_denial_reason(
     return None
 
 
+def _budget_runtime_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    has_snapshot_ids = bool(request.budget_snapshot_ids)
+    remaining_claims = (
+        request.budget_snapshot_digest,
+        request.runtime_limit_digest,
+        request.budget_unit,
+        request.budget_requested_amount,
+    )
+    if not has_snapshot_ids and all(claim is None for claim in remaining_claims):
+        return (
+            "budget_runtime_evidence_unsolicited"
+            if context.budget_runtime_verification_proof is not None
+            else None
+        )
+    if not has_snapshot_ids or any(claim is None for claim in remaining_claims):
+        return "budget_runtime_claims_incomplete"
+    if len(set(request.budget_snapshot_ids)) != len(request.budget_snapshot_ids):
+        return "budget_snapshot_set_ambiguous"
+
+    budget_snapshot_digest = request.budget_snapshot_digest
+    runtime_limit_digest = request.runtime_limit_digest
+    budget_unit = request.budget_unit
+    budget_requested_amount = request.budget_requested_amount
+    if (
+        budget_snapshot_digest is None
+        or runtime_limit_digest is None
+        or budget_unit is None
+        or budget_requested_amount is None
+    ):
+        return "budget_runtime_claims_incomplete"
+
+    proof = context.budget_runtime_verification_proof
+    if proof is None:
+        return "budget_runtime_verification_proof_missing"
+    if (
+        proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.scope_kind != request.scope_kind
+        or proof.scope_id != request.scope_id
+        or proof.action != request.action
+        or proof.budget_snapshot_ids != request.budget_snapshot_ids
+        or proof.budget_snapshot_digest != budget_snapshot_digest
+        or proof.runtime_limit_digest != runtime_limit_digest
+        or proof.unit != budget_unit
+        or proof.requested_amount != budget_requested_amount
+    ):
+        return "budget_runtime_verification_proof_mismatch"
+    if not proof.finalized:
+        return "budget_runtime_verification_not_finalized"
+    if proof.observed_at > request.evaluated_at:
+        return "budget_runtime_verification_proof_not_yet_valid"
+    if proof.expires_at <= request.evaluated_at:
+        return "budget_runtime_verification_proof_expired"
+    if not proof.hierarchy_verified:
+        return "budget_hierarchy_unverified"
+    if not proof.period_non_overlapping_verified:
+        return "budget_period_overlap_unverified"
+    if not proof.all_accounts_active:
+        return "budget_account_inactive"
+    if not (
+        proof.period_starts_at <= request.evaluated_at < proof.period_ends_at
+        and proof.period_starts_at < proof.period_ends_at
+    ):
+        return "budget_period_inactive"
+    if len(proof.canonical_account_ids) != proof.expected_account_count:
+        return "budget_account_closure_incomplete"
+    if len(set(proof.canonical_account_ids)) != len(proof.canonical_account_ids):
+        return "budget_account_closure_ambiguous"
+    if proof.minimum_remaining_amount < budget_requested_amount:
+        return "budget_exhausted"
+    if proof.runtime_consumed_ms >= proof.runtime_limit_ms:
+        return "runtime_exhausted"
+    return None
+
+
 def _authority_denial_reason(
     request: AuthorizationRequest,
     context: AuthorityEvaluationContext | None,
@@ -636,6 +751,12 @@ def evaluate_capability_intersection(
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code=credential_denial,
+        )
+    budget_runtime_denial = _budget_runtime_denial_reason(request, authority_context)
+    if budget_runtime_denial is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code=budget_runtime_denial,
         )
     if agent_grant is None:
         return AuthorizationResult(

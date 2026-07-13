@@ -9,6 +9,7 @@ from corvus.application.authorization import (
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
+    BudgetRuntimeVerificationProof,
     CredentialVerificationProof,
     RegistryVerificationProof,
     evaluate_capability_intersection,
@@ -1747,3 +1748,257 @@ def test_unsolicited_credential_evidence_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "credential_evidence_unsolicited"
+
+
+def _budget_bound_case() -> tuple[
+    tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ],
+    AuthorityEvaluationContext,
+    BudgetRuntimeVerificationProof,
+]:
+    case = _exact_allow_case()
+    snapshot_ids = (uuid4(), uuid4())
+    budget_snapshot_digest = "1" * 64
+    runtime_limit_digest = "2" * 64
+    budget_unit = "micro_usd"
+    budget_requested_amount = 5
+    request = case[0].model_copy(
+        update={
+            "budget_snapshot_ids": snapshot_ids,
+            "budget_snapshot_digest": budget_snapshot_digest,
+            "runtime_limit_digest": runtime_limit_digest,
+            "budget_unit": budget_unit,
+            "budget_requested_amount": budget_requested_amount,
+        }
+    )
+    bound_case = (request, case[1], case[2], case[3], case[4], case[5])
+    account_ids = (uuid4(), uuid4(), uuid4())
+    proof = BudgetRuntimeVerificationProof(
+        request_context_id=request.request_context_id,
+        workspace_id=request.workspace_id,
+        scope_kind=request.scope_kind,
+        scope_id=request.scope_id,
+        action=request.action,
+        budget_snapshot_ids=snapshot_ids,
+        budget_snapshot_digest=budget_snapshot_digest,
+        runtime_limit_digest=runtime_limit_digest,
+        unit=budget_unit,
+        requested_amount=budget_requested_amount,
+        canonical_account_ids=account_ids,
+        canonical_account_closure_digest="3" * 64,
+        expected_account_count=len(account_ids),
+        minimum_remaining_amount=10,
+        runtime_limit_ms=60_000,
+        runtime_consumed_ms=1_000,
+        period_starts_at=request.evaluated_at - timedelta(hours=1),
+        period_ends_at=request.evaluated_at + timedelta(hours=1),
+        observed_at=request.evaluated_at - timedelta(seconds=1),
+        expires_at=request.evaluated_at + timedelta(minutes=5),
+        hierarchy_verified=True,
+        period_non_overlapping_verified=True,
+        all_accounts_active=True,
+        finalized=True,
+    )
+    context = _valid_authority_context(request).model_copy(
+        update={"budget_runtime_verification_proof": proof}
+    )
+    return bound_case, context, proof
+
+
+def test_exact_budget_and_runtime_evidence_allows() -> None:
+    case, context, _ = _budget_bound_case()
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"
+
+
+def test_partial_budget_claims_fail_closed() -> None:
+    case, context, _ = _budget_bound_case()
+    request = case[0].model_copy(update={"runtime_limit_digest": None})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_claims_incomplete"
+
+
+def test_missing_budget_runtime_proof_fails_closed() -> None:
+    case, context, _ = _budget_bound_case()
+    context = context.model_copy(update={"budget_runtime_verification_proof": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_verification_proof_missing"
+
+
+def test_budget_snapshot_substitution_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    substituted = proof.model_copy(update={"budget_snapshot_digest": "4" * 64})
+    context = context.model_copy(update={"budget_runtime_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_verification_proof_mismatch"
+
+
+def test_unfinalized_budget_verification_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    unfinalized = proof.model_copy(update={"finalized": False})
+    context = context.model_copy(update={"budget_runtime_verification_proof": unfinalized})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_verification_not_finalized"
+
+
+def test_unverified_budget_hierarchy_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    unverified = proof.model_copy(update={"hierarchy_verified": False})
+    context = context.model_copy(update={"budget_runtime_verification_proof": unverified})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_hierarchy_unverified"
+
+
+def test_overlapping_budget_period_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    unverified = proof.model_copy(update={"period_non_overlapping_verified": False})
+    context = context.model_copy(update={"budget_runtime_verification_proof": unverified})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_period_overlap_unverified"
+
+
+def test_inactive_budget_account_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    inactive = proof.model_copy(update={"all_accounts_active": False})
+    context = context.model_copy(update={"budget_runtime_verification_proof": inactive})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_account_inactive"
+
+
+def test_incomplete_budget_account_closure_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    incomplete = proof.model_copy(
+        update={"expected_account_count": proof.expected_account_count + 1}
+    )
+    context = context.model_copy(update={"budget_runtime_verification_proof": incomplete})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_account_closure_incomplete"
+
+
+def test_duplicate_budget_accounts_fail_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    duplicated = proof.model_copy(
+        update={"canonical_account_ids": (proof.canonical_account_ids[0],) * 3}
+    )
+    context = context.model_copy(update={"budget_runtime_verification_proof": duplicated})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_account_closure_ambiguous"
+
+
+def test_expired_budget_runtime_proof_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    expired = proof.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"budget_runtime_verification_proof": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_verification_proof_expired"
+
+
+def test_inactive_budget_period_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    inactive = proof.model_copy(update={"period_ends_at": case[0].evaluated_at})
+    context = context.model_copy(update={"budget_runtime_verification_proof": inactive})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_period_inactive"
+
+
+def test_budget_exhaustion_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    exhausted = proof.model_copy(update={"minimum_remaining_amount": 4})
+    context = context.model_copy(update={"budget_runtime_verification_proof": exhausted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_exhausted"
+
+
+def test_runtime_exhaustion_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    exhausted = proof.model_copy(update={"runtime_consumed_ms": proof.runtime_limit_ms})
+    context = context.model_copy(update={"budget_runtime_verification_proof": exhausted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "runtime_exhausted"
+
+
+def test_unsolicited_budget_evidence_fails_closed() -> None:
+    _, _, proof = _budget_bound_case()
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"budget_runtime_verification_proof": proof}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_evidence_unsolicited"
+
+
+def test_duplicate_budget_snapshot_claims_fail_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    duplicate_id = case[0].budget_snapshot_ids[0]
+    request = case[0].model_copy(update={"budget_snapshot_ids": (duplicate_id, duplicate_id)})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    duplicated = proof.model_copy(update={"budget_snapshot_ids": request.budget_snapshot_ids})
+    context = context.model_copy(update={"budget_runtime_verification_proof": duplicated})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_snapshot_set_ambiguous"
+
+
+def test_future_budget_runtime_proof_fails_closed() -> None:
+    case, context, proof = _budget_bound_case()
+    future = proof.model_copy(update={"observed_at": case[0].evaluated_at + timedelta(seconds=1)})
+    context = context.model_copy(update={"budget_runtime_verification_proof": future})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "budget_runtime_verification_proof_not_yet_valid"
