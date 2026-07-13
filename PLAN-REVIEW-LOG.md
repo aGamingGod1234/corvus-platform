@@ -116,3 +116,22 @@ Accepted all four findings. `PLAN.md` now requires every authority-bearing commi
 
 ### Remaining gate
 Validate, commit and hash this exact plan-only revision, then rerun both independent scopes. Continue until both return `VERDICT: PASS` on one commit; implementation remains blocked.
+
+## Round 8 - Exact-commit paired Hermes review of `8343418`
+Two fresh read-only GPT-5.6-sol reviewers verified exact commit `834341842a870fd723093bf511540cf6a35a6a69`, `PLAN.md` SHA-256 `498b72b3a3e79f1dcebdf8cc7c0d316b1778f204cebd2626333c4c0a4eec71ab`, and a clean unchanged tree at both boundaries. Both returned `VERDICT: REVISE`; no production files changed and implementation remained blocked.
+
+### Security/schema/authorization findings
+- High: locally stored registry verifier history could be rolled back to an older still-valid chain prefix because it lacked an outside-database monotonic history head, mandatory expiry, and fresh challenge binding.
+- High: the authority-state root omitted deployment-instance, trust-anchor, lease/epoch-credential, registry-verifier, and workspace-signing-key lifecycle families, allowing selective rollback without changing the accepted root.
+- High: audit anchoring was circular because a receipt appeared to hash the resulting state root while that root also included the receipt hash.
+- High: budget parentage enforced rank only, not same unit, real semantic owner ancestry, or compatible parent/child active windows.
+- High: request-owned reservations could be reused by multiple permits and settlements, so one held capacity could authorize multiple external effects.
+
+### Product topology/client finding
+- High: self-hosted and vendor-cloud could be called supported after infrastructure fixtures without exercising real authentication, callback, session/CSRF, rotation, reconnect, upgrade, or restore flows through the retained CLI HTTP and generated React clients; desktop support was not separately gated through Tauri.
+
+### Codex/Hermes response
+Accepted all six findings. `PLAN.md` now adds threshold-signed, expiring, externally/sealed `AuthorityRegistryTrustState` metadata with a monotonic complete-history head plus nonce/sequence-bound freshness proofs and adversarial prefix/freeze/recovery tests. A schema-versioned exhaustive authority-root manifest requires every mutable authority/key family to be an in-root leaf or named external proof, and per-family rollback/unlisted-family tests fail closed. Audit receipts now sign only prior authority state and intended mutation; the receipt hash becomes the proposed audit-head leaf, and an immutable post-finalization `AuditAnchorBinding` proves the resulting generation/root/commit receipt without circularity, with crash tests at every boundary. Budgets now use database-validated real-owner scope nodes/containment, same-unit and containing-window account links, exclusive per-effect reservation sets, globally unique permit bindings, and one-time conserved settlements. Milestone 10 now requires no-substitute self-host/cloud authentication and lifecycle flows through the retained CLI HTTP and actual generated React clients before enabling CLI/web/channel support; Milestone 11 reruns each flow through Tauri before enabling desktop.
+
+### Remaining gate
+Validate, commit and hash the new plan-only revision, then rerun the same two exact-commit scopes. Continue until both return `VERDICT: PASS` on one immutable commit; implementation remains blocked.
