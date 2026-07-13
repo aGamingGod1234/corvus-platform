@@ -34,6 +34,13 @@ class AuthorizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     workspace_id: UUID
+    deployment_instance_id: UUID
+    workspace_authority_epoch: int = Field(ge=1)
+    workspace_authority_generation: int = Field(ge=0)
+    authority_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_epoch_credential_id: UUID
+    authority_commit_receipt_id: UUID
+    authority_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -52,6 +59,20 @@ class AuthorizationResult(BaseModel):
     actions: frozenset[str] = Field(default_factory=frozenset)
 
 
+class AuthorityCommitProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workspace_id: UUID
+    deployment_instance_id: UUID
+    authority_epoch_credential_id: UUID
+    authority_epoch: int = Field(ge=1)
+    authority_generation: int = Field(ge=0)
+    authority_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_commit_receipt_id: UUID
+    authority_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    finalized: bool
+
+
 class AuthorityEvaluationContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -59,6 +80,7 @@ class AuthorityEvaluationContext(BaseModel):
     workspace_authority: WorkspaceAuthority
     epoch_credential: AuthorityEpochCredential | None
     active_lease: DeploymentInstanceLease | None
+    commit_proof: AuthorityCommitProof | None
     deployment_instance_key_available: bool
     epoch_credential_key_available: bool = True
     os_lock_held: bool
@@ -87,8 +109,21 @@ def _authority_denial_reason(
     if (
         authority.deployment_profile_id != instance.deployment_profile_id
         or authority.deployment_instance_id != instance.id
+        or request.deployment_instance_id != instance.id
     ):
         return "deployment_instance_mismatch"
+    if request.workspace_authority_epoch < authority.epoch:
+        return "stale_authority_epoch"
+    if request.workspace_authority_epoch != authority.epoch:
+        return "authority_epoch_mismatch"
+    if request.workspace_authority_generation < authority.authority_generation:
+        return "stale_authority_generation"
+    if request.workspace_authority_generation != authority.authority_generation:
+        return "authority_generation_mismatch"
+    if request.authority_state_root != authority.authority_state_root:
+        return "authority_state_root_mismatch"
+    if request.authority_epoch_credential_id != authority.authority_epoch_credential_id:
+        return "authority_epoch_credential_mismatch"
     credential = context.epoch_credential
     if credential is None:
         return "authority_epoch_credential_missing"
@@ -107,6 +142,31 @@ def _authority_denial_reason(
         return "authority_epoch_credential_mismatch"
     if credential.device_binding_digest != instance.device_binding_digest:
         return "authority_device_binding_mismatch"
+    proof = context.commit_proof
+    if proof is None:
+        return "authority_commit_proof_missing"
+    if not proof.finalized:
+        return "authority_commit_not_finalized"
+    if proof.workspace_id != request.workspace_id:
+        return "cross_workspace_authority_proof"
+    if proof.deployment_instance_id != instance.id:
+        return "authority_proof_instance_mismatch"
+    if proof.authority_epoch_credential_id != credential.id:
+        return "authority_proof_credential_mismatch"
+    if proof.authority_epoch < authority.epoch:
+        return "stale_authority_epoch"
+    if proof.authority_epoch != authority.epoch:
+        return "authority_epoch_mismatch"
+    if proof.authority_generation < authority.authority_generation:
+        return "stale_authority_generation"
+    if proof.authority_generation != authority.authority_generation:
+        return "authority_generation_mismatch"
+    if proof.authority_state_root != authority.authority_state_root:
+        return "authority_state_root_mismatch"
+    if proof.authority_commit_receipt_id != request.authority_commit_receipt_id:
+        return "authority_commit_receipt_mismatch"
+    if proof.authority_proof_digest != request.authority_proof_digest:
+        return "authority_proof_digest_mismatch"
     if not context.os_lock_held:
         return "workspace_os_lock_not_held"
     lease = context.active_lease

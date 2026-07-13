@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from corvus.application.authorization import (
+    AuthorityCommitProof,
     AuthorityEvaluationContext,
     AuthorizationDecision,
     AuthorizationRequest,
@@ -85,6 +86,13 @@ def _exact_allow_case() -> tuple[
     )
     request = AuthorizationRequest(
         workspace_id=workspace_id,
+        deployment_instance_id=uuid4(),
+        workspace_authority_epoch=3,
+        workspace_authority_generation=4,
+        authority_state_root="2" * 64,
+        authority_epoch_credential_id=uuid4(),
+        authority_commit_receipt_id=uuid4(),
+        authority_proof_digest="3" * 64,
         requester_id=requester_id,
         acting_agent_id=agent_id,
         scope_kind="project",
@@ -107,14 +115,16 @@ def _exact_allow_case() -> tuple[
 def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluationContext:
     deployment_profile_id = uuid4()
     deployment_instance = DeploymentInstance(
+        id=request.deployment_instance_id,
         deployment_profile_id=deployment_profile_id,
         instance_public_key="instance-public-key",
         non_exportable_activation_key_ref="keyring://corvus/instance/current",
         device_binding_digest="1" * 64,
         activated_at=request.evaluated_at - timedelta(minutes=5),
     )
-    epoch = 3
+    epoch = request.workspace_authority_epoch
     epoch_credential = AuthorityEpochCredential(
+        id=request.authority_epoch_credential_id,
         workspace_id=request.workspace_id,
         authority_epoch=epoch,
         deployment_instance_id=deployment_instance.id,
@@ -136,19 +146,31 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         deployment_profile_id=deployment_profile_id,
         deployment_instance_id=deployment_instance.id,
         epoch=epoch,
-        authority_generation=4,
-        authority_state_root="2" * 64,
+        authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
         authority_epoch_credential_id=epoch_credential.id,
         trust_anchor_id=uuid4(),
         active_lease_id=lease.id,
         state=WorkspaceAuthorityState.ACTIVE,
         activated_at=request.evaluated_at - timedelta(minutes=2),
     )
+    commit_proof = AuthorityCommitProof(
+        workspace_id=request.workspace_id,
+        deployment_instance_id=deployment_instance.id,
+        authority_epoch_credential_id=epoch_credential.id,
+        authority_epoch=epoch,
+        authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
+        authority_commit_receipt_id=request.authority_commit_receipt_id,
+        authority_proof_digest=request.authority_proof_digest,
+        finalized=True,
+    )
     return AuthorityEvaluationContext(
         deployment_instance=deployment_instance,
         workspace_authority=authority,
         epoch_credential=epoch_credential,
         active_lease=lease,
+        commit_proof=commit_proof,
         deployment_instance_key_available=True,
         os_lock_held=True,
     )
@@ -856,3 +878,93 @@ def test_revoked_epoch_credential_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "authority_epoch_credential_revoked"
+
+
+def test_missing_authority_commit_proof_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"commit_proof": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_commit_proof_missing"
+
+
+def test_non_finalized_authority_commit_proof_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(update={"finalized": False})
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_commit_not_finalized"
+
+
+def test_stale_external_authority_generation_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(
+        update={"authority_generation": case[0].workspace_authority_generation - 1}
+    )
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "stale_authority_generation"
+
+
+def test_external_authority_state_root_mismatch_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(update={"authority_state_root": "9" * 64})
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_state_root_mismatch"
+
+
+def test_authority_commit_receipt_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(update={"authority_commit_receipt_id": uuid4()})
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_commit_receipt_mismatch"
+
+
+def test_authority_proof_deployment_instance_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(update={"deployment_instance_id": uuid4()})
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_proof_instance_mismatch"
+
+
+def test_authority_proof_digest_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.commit_proof is not None
+    proof = context.commit_proof.model_copy(update={"authority_proof_digest": "8" * 64})
+    context = context.model_copy(update={"commit_proof": proof})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_proof_digest_mismatch"
