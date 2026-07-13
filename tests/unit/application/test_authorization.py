@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
+
 from corvus.application.authorization import (
     AuthorityCommitProof,
     AuthorityEvaluationContext,
@@ -11,6 +13,9 @@ from corvus.application.authorization import (
     AuthorizationResult,
     BudgetRuntimeVerificationProof,
     CredentialVerificationProof,
+    KillSwitchScopeBinding,
+    KillSwitchSnapshotEntry,
+    KillSwitchVerificationProof,
     RegistryVerificationProof,
     evaluate_capability_intersection,
 )
@@ -100,6 +105,11 @@ def _exact_allow_case() -> tuple[
         issued_by=requester_id,
         expires_at=now + timedelta(hours=1),
     )
+    kill_switch_snapshot_ids = (uuid4(), uuid4())
+    kill_switch_scope_bindings = (
+        KillSwitchScopeBinding(scope_kind="workspace", scope_id=workspace_id),
+        KillSwitchScopeBinding(scope_kind="agent", scope_id=agent_id),
+    )
     request = AuthorizationRequest(
         workspace_id=workspace_id,
         request_context_id=uuid4(),
@@ -117,6 +127,9 @@ def _exact_allow_case() -> tuple[
         registry_freshness_sequence=10,
         authority_manifest_version_id=uuid4(),
         authority_manifest_digest="7" * 64,
+        kill_switch_snapshot_ids=kill_switch_snapshot_ids,
+        kill_switch_snapshot_digest="e" * 64,
+        kill_switch_scope_bindings=kill_switch_scope_bindings,
         requester_id=requester_id,
         acting_agent_id=agent_id,
         scope_kind="project",
@@ -278,6 +291,36 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
             canonicalization_version=1,
         ),
     )
+    kill_switch_entries = tuple(
+        KillSwitchSnapshotEntry(
+            snapshot_id=snapshot_id,
+            workspace_id=request.workspace_id,
+            scope_kind=binding.scope_kind,
+            scope_id=binding.scope_id,
+            state="clear",
+            version=1,
+            updated_at=request.evaluated_at - timedelta(seconds=1),
+        )
+        for snapshot_id, binding in zip(
+            request.kill_switch_snapshot_ids,
+            request.kill_switch_scope_bindings,
+            strict=True,
+        )
+    )
+    kill_switch_verification_proof = KillSwitchVerificationProof(
+        request_context_id=request.request_context_id,
+        workspace_id=request.workspace_id,
+        acting_agent_id=request.acting_agent_id,
+        action=request.action,
+        kill_switch_snapshot_ids=request.kill_switch_snapshot_ids,
+        kill_switch_snapshot_digest=request.kill_switch_snapshot_digest,
+        required_scope_bindings=request.kill_switch_scope_bindings,
+        entries=kill_switch_entries,
+        observed_at=request.evaluated_at - timedelta(seconds=1),
+        expires_at=request.evaluated_at + timedelta(minutes=5),
+        hierarchy_exhaustive=True,
+        finalized=True,
+    )
     return AuthorityEvaluationContext(
         deployment_instance=deployment_instance,
         workspace_authority=authority,
@@ -295,6 +338,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         authority_manifest=authority_manifest,
         authority_manifest_families=authority_manifest_families,
         mutable_authority_families=frozenset({"workspace_memberships", "access_bundles"}),
+        kill_switch_verification_proof=kill_switch_verification_proof,
         deployment_instance_key_available=True,
         os_lock_held=True,
     )
@@ -583,7 +627,16 @@ def _delegated_allow_case() -> tuple[
         _exact_allow_case()
     )
     child_agent_id = uuid4()
-    delegated_request = request.model_copy(update={"acting_agent_id": child_agent_id})
+    child_kill_switch_bindings = (
+        request.kill_switch_scope_bindings[0],
+        KillSwitchScopeBinding(scope_kind="agent", scope_id=child_agent_id),
+    )
+    delegated_request = request.model_copy(
+        update={
+            "acting_agent_id": child_agent_id,
+            "kill_switch_scope_bindings": child_kill_switch_bindings,
+        }
+    )
     delegation = DelegationGrant(
         parent_agent_grant_id=agent_grant.id,
         child_agent_id=child_agent_id,
@@ -1457,6 +1510,9 @@ def _credential_bound_case() -> tuple[
         }
     )
     bound_case = (request, case[1], case[2], case[3], case[4], case[5])
+    context = _valid_authority_context(request).model_copy(
+        update={"execution_placement": placement}
+    )
     credential_ref = CredentialRef(
         id=credential_ref_id,
         workspace_id=request.workspace_id,
@@ -2002,3 +2058,253 @@ def test_future_budget_runtime_proof_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "budget_runtime_verification_proof_not_yet_valid"
+
+
+def _kill_switch_case() -> tuple[
+    tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ],
+    AuthorityEvaluationContext,
+    KillSwitchVerificationProof,
+]:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    proof = context.kill_switch_verification_proof
+    assert proof is not None
+    return case, context, proof
+
+
+def test_missing_kill_switch_proof_fails_closed() -> None:
+    case, context, _ = _kill_switch_case()
+    context = context.model_copy(update={"kill_switch_verification_proof": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_verification_proof_missing"
+
+
+def test_incomplete_kill_switch_claims_fail_closed() -> None:
+    case, context, _ = _kill_switch_case()
+    request = case[0].model_copy(update={"kill_switch_snapshot_ids": ()})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_claims_incomplete"
+
+
+def test_kill_switch_snapshot_substitution_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    substituted = proof.model_copy(update={"kill_switch_snapshot_digest": "f" * 64})
+    context = context.model_copy(update={"kill_switch_verification_proof": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_verification_proof_mismatch"
+
+
+def test_missing_workspace_kill_switch_scope_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    agent_binding = case[0].kill_switch_scope_bindings[1]
+    agent_snapshot_id = case[0].kill_switch_snapshot_ids[1]
+    request = case[0].model_copy(
+        update={
+            "kill_switch_snapshot_ids": (agent_snapshot_id,),
+            "kill_switch_scope_bindings": (agent_binding,),
+        }
+    )
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    changed = proof.model_copy(
+        update={
+            "kill_switch_snapshot_ids": (agent_snapshot_id,),
+            "required_scope_bindings": (agent_binding,),
+            "entries": (proof.entries[1],),
+        }
+    )
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_hierarchy_incomplete"
+
+
+def test_agent_kill_switch_scope_substitution_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    foreign_agent = KillSwitchScopeBinding(scope_kind="agent", scope_id=uuid4())
+    bindings = (case[0].kill_switch_scope_bindings[0], foreign_agent)
+    request = case[0].model_copy(update={"kill_switch_scope_bindings": bindings})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    changed = proof.model_copy(update={"required_scope_bindings": bindings})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_hierarchy_incomplete"
+
+
+def test_duplicate_kill_switch_scope_claims_fail_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    workspace_binding = case[0].kill_switch_scope_bindings[0]
+    bindings = (workspace_binding, workspace_binding)
+    request = case[0].model_copy(update={"kill_switch_scope_bindings": bindings})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    changed = proof.model_copy(update={"required_scope_bindings": bindings})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_scope_set_ambiguous"
+
+
+def test_duplicate_kill_switch_snapshot_claims_fail_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    duplicate_id = case[0].kill_switch_snapshot_ids[0]
+    snapshot_ids = (duplicate_id, duplicate_id)
+    request = case[0].model_copy(update={"kill_switch_snapshot_ids": snapshot_ids})
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    changed = proof.model_copy(update={"kill_switch_snapshot_ids": snapshot_ids})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_snapshot_set_ambiguous"
+
+
+def test_unfinalized_kill_switch_proof_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"finalized": False})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_verification_not_finalized"
+
+
+def test_nonexhaustive_kill_switch_proof_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"hierarchy_exhaustive": False})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_hierarchy_unverified"
+
+
+def test_expired_kill_switch_proof_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_verification_proof_expired"
+
+
+def test_future_kill_switch_proof_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"observed_at": case[0].evaluated_at + timedelta(seconds=1)})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_verification_proof_not_yet_valid"
+
+
+def test_incomplete_kill_switch_entries_fail_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"entries": proof.entries[:-1]})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_snapshot_set_incomplete"
+
+
+def test_duplicate_kill_switch_entries_fail_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    changed = proof.model_copy(update={"entries": (proof.entries[0], proof.entries[0])})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_snapshot_set_ambiguous"
+
+
+def test_kill_switch_entry_scope_substitution_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    entry = proof.entries[0].model_copy(update={"scope_id": uuid4()})
+    changed = proof.model_copy(update={"entries": (entry, proof.entries[1])})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_snapshot_binding_mismatch"
+
+
+def test_future_kill_switch_entry_fails_closed() -> None:
+    case, context, proof = _kill_switch_case()
+    entry = proof.entries[0].model_copy(
+        update={"updated_at": case[0].evaluated_at + timedelta(seconds=1)}
+    )
+    changed = proof.model_copy(update={"entries": (entry, proof.entries[1])})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "kill_switch_snapshot_not_yet_current"
+
+
+@pytest.mark.parametrize("state", ["armed", "stopping", "stopped"])
+def test_active_kill_switch_state_fails_closed(state: str) -> None:
+    case, context, proof = _kill_switch_case()
+    entry = proof.entries[0].model_copy(update={"state": state})
+    changed = proof.model_copy(update={"entries": (entry, proof.entries[1])})
+    context = context.model_copy(update={"kill_switch_verification_proof": changed})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == f"kill_switch_{state}"
+
+
+def test_clear_workspace_agent_workflow_run_hierarchy_allows() -> None:
+    case = _exact_allow_case()
+    workflow_id = uuid4()
+    run_id = uuid4()
+    request = case[0].model_copy(
+        update={
+            "kill_switch_snapshot_ids": (*case[0].kill_switch_snapshot_ids, uuid4(), uuid4()),
+            "kill_switch_scope_bindings": (
+                *case[0].kill_switch_scope_bindings,
+                KillSwitchScopeBinding(scope_kind="workflow", scope_id=workflow_id),
+                KillSwitchScopeBinding(scope_kind="run", scope_id=run_id),
+            ),
+        }
+    )
+    case = (request, case[1], case[2], case[3], case[4], case[5])
+    context = _valid_authority_context(request)
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"

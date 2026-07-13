@@ -47,6 +47,42 @@ class AuthorizationDecision(StrEnum):
     DENY = "deny"
 
 
+class KillSwitchScopeBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scope_kind: Literal["workspace", "agent", "workflow", "run"]
+    scope_id: UUID
+
+
+class KillSwitchSnapshotEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    snapshot_id: UUID
+    workspace_id: UUID
+    scope_kind: Literal["workspace", "agent", "workflow", "run"]
+    scope_id: UUID
+    state: Literal["armed", "stopping", "stopped", "clear"]
+    version: int = Field(ge=1)
+    updated_at: datetime
+
+
+class KillSwitchVerificationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_context_id: UUID
+    workspace_id: UUID
+    acting_agent_id: UUID
+    action: str = Field(min_length=1, max_length=200)
+    kill_switch_snapshot_ids: tuple[UUID, ...]
+    kill_switch_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    required_scope_bindings: tuple[KillSwitchScopeBinding, ...]
+    entries: tuple[KillSwitchSnapshotEntry, ...]
+    observed_at: datetime
+    expires_at: datetime
+    hierarchy_exhaustive: bool
+    finalized: bool
+
+
 class AuthorizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -76,6 +112,9 @@ class AuthorizationRequest(BaseModel):
     runtime_limit_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     budget_unit: str | None = Field(default=None, min_length=1, max_length=100)
     budget_requested_amount: int | None = Field(default=None, ge=1)
+    kill_switch_snapshot_ids: tuple[UUID, ...]
+    kill_switch_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kill_switch_scope_bindings: tuple[KillSwitchScopeBinding, ...]
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -197,6 +236,7 @@ class AuthorityEvaluationContext(BaseModel):
     credential_ref: CredentialRef | None = None
     credential_verification_proof: CredentialVerificationProof | None = None
     budget_runtime_verification_proof: BudgetRuntimeVerificationProof | None = None
+    kill_switch_verification_proof: KillSwitchVerificationProof | None = None
     expected_credential_rotation_epoch: int | None = Field(default=None, ge=1)
     expected_credential_nonce_digest: str | None = Field(
         default=None,
@@ -567,6 +607,72 @@ def _budget_runtime_denial_reason(
     return None
 
 
+def _kill_switch_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    snapshot_ids = request.kill_switch_snapshot_ids
+    bindings = request.kill_switch_scope_bindings
+    if not snapshot_ids or not bindings or len(snapshot_ids) != len(bindings):
+        return "kill_switch_claims_incomplete"
+    if len(set(snapshot_ids)) != len(snapshot_ids):
+        return "kill_switch_snapshot_set_ambiguous"
+    binding_keys = tuple((binding.scope_kind, binding.scope_id) for binding in bindings)
+    if len(set(binding_keys)) != len(binding_keys):
+        return "kill_switch_scope_set_ambiguous"
+    required_workspace = ("workspace", request.workspace_id)
+    required_agent = ("agent", request.acting_agent_id)
+    if required_workspace not in binding_keys or required_agent not in binding_keys:
+        return "kill_switch_hierarchy_incomplete"
+
+    proof = context.kill_switch_verification_proof
+    if proof is None:
+        return "kill_switch_verification_proof_missing"
+    if (
+        proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.acting_agent_id != request.acting_agent_id
+        or proof.action != request.action
+        or proof.kill_switch_snapshot_ids != snapshot_ids
+        or proof.kill_switch_snapshot_digest != request.kill_switch_snapshot_digest
+        or proof.required_scope_bindings != bindings
+    ):
+        return "kill_switch_verification_proof_mismatch"
+    if not proof.finalized:
+        return "kill_switch_verification_not_finalized"
+    if proof.observed_at > request.evaluated_at:
+        return "kill_switch_verification_proof_not_yet_valid"
+    if proof.expires_at <= request.evaluated_at:
+        return "kill_switch_verification_proof_expired"
+    if not proof.hierarchy_exhaustive:
+        return "kill_switch_hierarchy_unverified"
+    if len(proof.entries) != len(snapshot_ids):
+        return "kill_switch_snapshot_set_incomplete"
+    entry_ids = tuple(entry.snapshot_id for entry in proof.entries)
+    if len(set(entry_ids)) != len(entry_ids):
+        return "kill_switch_snapshot_set_ambiguous"
+    for snapshot_id, binding, entry in zip(
+        snapshot_ids,
+        bindings,
+        proof.entries,
+        strict=True,
+    ):
+        if (
+            entry.snapshot_id != snapshot_id
+            or entry.workspace_id != request.workspace_id
+            or entry.scope_kind != binding.scope_kind
+            or entry.scope_id != binding.scope_id
+        ):
+            return "kill_switch_snapshot_binding_mismatch"
+        if entry.updated_at > request.evaluated_at:
+            return "kill_switch_snapshot_not_yet_current"
+        if entry.state != "clear":
+            return f"kill_switch_{entry.state}"
+    return None
+
+
 def _authority_denial_reason(
     request: AuthorizationRequest,
     context: AuthorityEvaluationContext | None,
@@ -757,6 +863,12 @@ def evaluate_capability_intersection(
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code=budget_runtime_denial,
+        )
+    kill_switch_denial = _kill_switch_denial_reason(request, authority_context)
+    if kill_switch_denial is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code=kill_switch_denial,
         )
     if agent_grant is None:
         return AuthorizationResult(
