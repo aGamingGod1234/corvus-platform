@@ -156,10 +156,10 @@ def _manifest() -> tuple[
     ]
     manifest = AuthorityStateRootManifestVersion(
         id=manifest_id,
-        schema_version=2,
+        schema_version=6,
         canonicalization_version=1,
         manifest_digest=canonical_authority_manifest_digest(
-            schema_version=2,
+            schema_version=6,
             canonicalization_version=1,
             families=families,
         ),

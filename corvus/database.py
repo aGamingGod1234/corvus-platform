@@ -32,6 +32,7 @@ M1_REGISTRY_REVISION = "m1_004_registry_manifest"
 M1_AUTHORIZATION_INPUT_REVISION = "m1_005_authorization_inputs"
 M1_HANDOFF_REVISION = "m1_006_handoff_restore"
 M1_IDENTITY_SCOPE_REVISION = "m1_007_identity_scope"
+M1_ROOT_MANIFEST_REVISION = "m1_008_non_circular_root_manifest"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -136,7 +137,7 @@ M1_HANDOFF_V3_FAMILY_NAMES = frozenset(
         "restore_validation_receipts",
     }
 )
-M1_AUTHORITY_FAMILY_NAMES = frozenset(
+M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES = frozenset(
     {
         *M1_HANDOFF_V3_FAMILY_NAMES,
         "agent_identities",
@@ -144,6 +145,13 @@ M1_AUTHORITY_FAMILY_NAMES = frozenset(
         "principals",
         "scopes",
         "workspace_memberships",
+    }
+)
+M1_AUTHORITY_FAMILY_NAMES = frozenset(
+    M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES
+    - {
+        "audit_anchor_recovery_checkpoints",
+        "audit_result_bindings",
     }
 )
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
@@ -905,7 +913,8 @@ def _m1_registry_schema_controls_match(
         1: M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES,
         2: M1_AUTHORIZATION_INPUT_V2_FAMILY_NAMES,
         3: M1_HANDOFF_V3_FAMILY_NAMES,
-        4: M1_AUTHORITY_FAMILY_NAMES,
+        4: M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES,
+        5: M1_AUTHORITY_FAMILY_NAMES,
     }
     for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
         expected_families = family_sets.get(int(schema_version))
@@ -1111,26 +1120,44 @@ def classify_database(path: Path) -> DatabaseStatus:
                                 "apply the transactional provenance migration"
                             ),
                         )
+                    revision_rows = (
+                        connection.execute("SELECT version_num FROM alembic_version").fetchall()
+                        if "alembic_version" in tables
+                        else []
+                    )
+                    actual_revision = revision_rows[0][0] if len(revision_rows) == 1 else None
                     if tables == m1_current_tables:
                         expected_revision = M1_PROJECT_REVISION
+                        latest_manifest_schema_version = 0
                     elif tables == m1_audit_current_tables:
                         expected_revision = M1_AUDIT_REVISION
+                        latest_manifest_schema_version = 0
                     elif tables == m1_authority_current_tables:
                         expected_revision = M1_AUTHORITY_REVISION
+                        latest_manifest_schema_version = 0
                     elif tables == m1_registry_current_tables:
                         expected_revision = M1_REGISTRY_REVISION
+                        latest_manifest_schema_version = 1
                     elif tables == m1_authorization_input_current_tables:
                         expected_revision = M1_AUTHORIZATION_INPUT_REVISION
+                        latest_manifest_schema_version = 2
                     elif tables == m1_handoff_current_tables:
                         expected_revision = M1_HANDOFF_REVISION
+                        latest_manifest_schema_version = 3
+                    elif tables == m1_identity_scope_current_tables:
+                        if actual_revision == M1_ROOT_MANIFEST_REVISION:
+                            expected_revision = M1_ROOT_MANIFEST_REVISION
+                            latest_manifest_schema_version = 5
+                        else:
+                            expected_revision = M1_IDENTITY_SCOPE_REVISION
+                            latest_manifest_schema_version = 4
                     else:
                         expected_revision = M1_IDENTITY_SCOPE_REVISION
+                        latest_manifest_schema_version = 0
                     m1_revision_matches = tables in {
                         stamped_v1_tables,
                         current_tables,
-                    } or connection.execute(
-                        "SELECT version_num FROM alembic_version"
-                    ).fetchall() == [(expected_revision,)]
+                    } or revision_rows == [(expected_revision,)]
                     audit_triggers_match = tables not in {
                         m1_audit_current_tables,
                         m1_authority_current_tables,
@@ -1153,15 +1180,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_identity_scope_current_tables,
                     } or _m1_registry_schema_controls_match(
                         connection,
-                        latest_schema_version=(
-                            4
-                            if tables == m1_identity_scope_current_tables
-                            else 3
-                            if tables == m1_handoff_current_tables
-                            else 2
-                            if tables == m1_authorization_input_current_tables
-                            else 1
-                        ),
+                        latest_schema_version=latest_manifest_schema_version,
                     )
                     authorization_input_controls_match = tables not in {
                         m1_authorization_input_current_tables,
