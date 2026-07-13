@@ -78,11 +78,36 @@ def evaluate_capability_intersection(
     *,
     requester_bundle: AccessBundle,
     requester_grants: list[CapabilityGrant],
-    agent_grant: AgentGrant,
+    agent_grant: AgentGrant | None,
     agent_bundle: AccessBundle,
     agent_capabilities: list[CapabilityGrant],
     delegation_grants: list[DelegationGrant],
 ) -> AuthorizationResult:
+    if agent_grant is None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="no_agent_grant",
+        )
+    workspace_ids = {
+        requester_bundle.workspace_id,
+        agent_bundle.workspace_id,
+        agent_grant.workspace_id,
+        *(grant.workspace_id for grant in requester_grants),
+        *(grant.workspace_id for grant in agent_capabilities),
+    }
+    if workspace_ids != {request.workspace_id}:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="cross_workspace_grant",
+        )
+    if (
+        requester_bundle.expires_at is not None
+        and request.evaluated_at >= requester_bundle.expires_at
+    ):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="requester_grant_expired",
+        )
     bundles_match = (
         requester_bundle.workspace_id == request.workspace_id
         and requester_bundle.principal_id == request.requester_id

@@ -156,3 +156,67 @@ def test_explicit_deny_overrides_matching_allows() -> None:
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "explicit_deny"
     assert result.actions == frozenset()
+
+
+def test_missing_agent_grant_denies_without_inheriting_requester_authority() -> None:
+    request, requester_bundle, requester_grant, _, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=None,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "no_agent_grant"
+    assert result.actions == frozenset()
+
+
+def test_cross_workspace_agent_grant_denies_before_capability_matching() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    foreign_workspace_id = uuid4()
+    foreign_bundle = agent_bundle.model_copy(update={"workspace_id": foreign_workspace_id})
+    foreign_agent_grant = agent_grant.model_copy(update={"workspace_id": foreign_workspace_id})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=foreign_agent_grant,
+        agent_bundle=foreign_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "cross_workspace_grant"
+    assert result.actions == frozenset()
+
+
+def test_requester_bundle_expiry_has_zero_grace() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    expired_bundle = requester_bundle.model_copy(update={"expires_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=expired_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "requester_grant_expired"
+    assert result.actions == frozenset()
