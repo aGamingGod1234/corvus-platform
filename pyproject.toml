@@ -11,6 +11,7 @@ requires-python = ">=3.12,<3.14"
 license = { text = "Proprietary" }
 authors = [{ name = "Corvus" }]
 dependencies = [
+  "alembic>=1.14,<2",
   "cryptography>=48.0.1,<49",
   "docker>=7,<8",
   "httpcore>=1,<2",

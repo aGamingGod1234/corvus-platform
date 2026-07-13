@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 LEGACY_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = 2
 M005_001_MIGRATION = "M005-001"
+M1_PROJECT_REVISION = "m1_001_projects"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -33,6 +34,7 @@ V1_REQUIRED_TABLES = frozenset(
     }
 )
 M005_001_REQUIRED_TABLES = frozenset({"external_contents", "context_envelopes"})
+M1_ADDITIVE_REQUIRED_TABLES = frozenset({"alembic_version", "projects"})
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
@@ -122,7 +124,24 @@ M005_001_REQUIRED_COLUMNS = {
         }
     ),
 }
+M1_ADDITIVE_REQUIRED_COLUMNS = {
+    "alembic_version": frozenset({"version_num"}),
+    "projects": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "name",
+            "root_locator",
+            "privacy",
+            "status",
+            "created_at",
+            "updated_at",
+            "version",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
+M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 
 
 class DatabaseState(StrEnum):
@@ -256,10 +275,14 @@ def classify_database(path: Path) -> DatabaseStatus:
             current_tables = frozenset(
                 {*V1_REQUIRED_TABLES, *M005_001_REQUIRED_TABLES, SCHEMA_METADATA_TABLE}
             )
-            if tables in {stamped_v1_tables, current_tables}:
-                expected_columns = (
-                    V1_REQUIRED_COLUMNS if tables == stamped_v1_tables else CURRENT_REQUIRED_COLUMNS
-                )
+            m1_current_tables = frozenset({*current_tables, *M1_ADDITIVE_REQUIRED_TABLES})
+            if tables in {stamped_v1_tables, current_tables, m1_current_tables}:
+                if tables == stamped_v1_tables:
+                    expected_columns = V1_REQUIRED_COLUMNS
+                elif tables == current_tables:
+                    expected_columns = CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M1_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -285,16 +308,24 @@ def classify_database(path: Path) -> DatabaseStatus:
                                 "apply the transactional provenance migration"
                             ),
                         )
+                    m1_revision_matches = tables != m1_current_tables or connection.execute(
+                        "SELECT version_num FROM alembic_version"
+                    ).fetchall() == [(M1_PROJECT_REVISION,)]
                     if (
-                        tables == current_tables
+                        tables in {current_tables, m1_current_tables}
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
+                        and m1_revision_matches
                     ):
                         return DatabaseStatus(
                             DatabaseState.CURRENT,
                             tables,
                             schema_version=CURRENT_SCHEMA_VERSION,
-                            detail="database schema is current",
+                            detail=(
+                                "database schema is current with M1 project persistence"
+                                if tables == m1_current_tables
+                                else "database schema is current"
+                            ),
                         )
                     if isinstance(schema_version, int) and schema_version > CURRENT_SCHEMA_VERSION:
                         return DatabaseStatus(
