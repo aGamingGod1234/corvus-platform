@@ -149,3 +149,19 @@ Accepted all three completed findings. `PLAN.md` now has a retained platform-sur
 
 ### Remaining gate
 Validate, commit and hash this plan-only revision, then rerun both independent scopes. Continue until both return `VERDICT: PASS` on the same immutable commit; implementation remains blocked.
+
+## Round 10 - Exact-commit paired Hermes review of `4927aab`
+Both read-only reviewers verified exact commit `4927aab94fd51c3583dd018b33d2f08eec9684d3`, `PLAN.md` SHA-256 `fa7c553b409a026f152f2a28d4759f16afeed979e5ef1041fb40f5d1dc1adeb1`, review-log SHA-256 `3d1362fefd0cd49c999fba8ef71c1a6484b30c277cf5364db522e08613baf12c`, and a clean unchanged tree at both boundaries. The product/topology reviewer returned `VERDICT: PASS`; the security/schema reviewer returned `VERDICT: REVISE` with two HIGH findings. Implementation remained blocked because both verdicts did not pass the same commit.
+
+### Security/schema/effect findings
+- High: generic external-effect intent/attempt records required provider connection and credential fields, while filesystem apply/undo has neither; permits/gateway locks also lacked exact approval request/decision binding and atomic consumption, forcing synthetic credentials or a parallel delivery path.
+- High: reservation/settlement amounts lacked positive/nonnegative database constraints and set-wide equality, allowing negative values or child/ancestor skew to mint reusable capacity even if each individual settlement equation balanced.
+
+### Product topology result
+- Pass: all three Round 9 findings were materially closed. Retained chat/run/TUI and review/apply/undo have sequenced in-process then HTTP/SSE cutovers, Milestone 10 creates/tests exact packaged non-desktop artifacts before support, and installed Tauri reruns remain separately gated.
+
+### Codex/Hermes response
+Accepted both security findings without changing the passing product topology. Effects now use an immutable discriminated `EffectBinding` with exactly one `ProviderEffectBinding` or `FilesystemDeliveryEffectBinding`. Generic intents/attempts no longer require provider credentials. Filesystem apply/undo carries exact bundle, manifest, destination, rollback snapshot and original-successful-apply references. Signed versioned approvals bind one effect, and permit claim serializably reauthorizes and consumes the exact current unexpired/unreplayed approval once. Budgets now use signed 64-bit integer canonical base units, one strictly positive set amount, composite foreign keys that force every closure reservation to carry that unit/amount, a common immutable settlement set with nonnegative actual/released values and conservation, equal per-account rows, closure digest/cardinality checks, and atomic full-set reserve/claim/settle/release transitions. These new approval, effect-binding and settlement families are covered by the exhaustive authority root and adverse tests.
+
+### Remaining gate
+Validate, commit and hash this plan-only revision, then rerun both exact-commit scopes. Continue until both return `VERDICT: PASS` on the same immutable commit; implementation remains blocked.
