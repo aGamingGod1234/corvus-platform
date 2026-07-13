@@ -362,7 +362,9 @@ def launch_tui(
         state = onboarding.reset()
     needs_onboarding = not state.completed
     selected_sandbox = SandboxOption(state.choices.sandbox_backend)
-    should_probe_sandboxes = needs_onboarding or (sandbox or selected_sandbox) is not SandboxOption.NONE
+    should_probe_sandboxes = (
+        needs_onboarding or (sandbox or selected_sandbox) is not SandboxOption.NONE
+    )
     if should_probe_sandboxes:
         docker_available, docker_detail = DockerSandbox.available()
         podman_available, podman_detail = PodmanSandbox.available()

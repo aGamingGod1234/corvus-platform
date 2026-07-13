@@ -126,11 +126,14 @@ class DockerSandbox:
             "pids_limit": self.policy.pids_limit,
             "tmpfs": {
                 "/workspace": "rw,noexec,nosuid,size=1g",
-                "/tmp": "rw,noexec,nosuid,size=256m",
+                "/tmp": "rw,noexec,nosuid,size=256m",  # noqa: S108 - container tmpfs
             },
             "working_dir": "/workspace",
             "user": "65534:65534",
-            "environment": {"HOME": "/tmp", "PYTHONDONTWRITEBYTECODE": "1"},
+            "environment": {
+                "HOME": "/tmp",  # noqa: S108 - container tmpfs
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
             "labels": {"io.corvus.sandbox": "true"},
         }
 

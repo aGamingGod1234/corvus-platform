@@ -168,7 +168,9 @@ class TraceStore:
 
     def verify(self, run_id: UUID) -> bool:
         previous_hash = "0" * 64
+        seen_event = False
         for event in self.events(run_id):
+            seen_event = True
             if event.previous_hash != previous_hash:
                 return False
             canonical = json.dumps(
@@ -187,7 +189,7 @@ class TraceStore:
             if sha256_bytes(canonical) != event.event_hash:
                 return False
             previous_hash = event.event_hash
-        return True
+        return seen_event
 
     def backup(self, target: Path) -> str:
         target.parent.mkdir(parents=True, exist_ok=True)
