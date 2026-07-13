@@ -14,6 +14,15 @@ from corvus.domain.access import (
     CapabilityGrant,
     DelegationGrant,
 )
+from corvus.domain.deployment import (
+    AuthorityEpochCredential,
+    AuthorityEpochCredentialStatus,
+    DeploymentInstance,
+    DeploymentInstanceLease,
+    DeploymentInstanceStatus,
+    WorkspaceAuthority,
+    WorkspaceAuthorityState,
+)
 
 
 class AuthorizationDecision(StrEnum):
@@ -41,6 +50,83 @@ class AuthorizationResult(BaseModel):
     decision: AuthorizationDecision
     reason_code: str = Field(min_length=1, max_length=200)
     actions: frozenset[str] = Field(default_factory=frozenset)
+
+
+class AuthorityEvaluationContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    deployment_instance: DeploymentInstance | None
+    workspace_authority: WorkspaceAuthority
+    epoch_credential: AuthorityEpochCredential | None
+    active_lease: DeploymentInstanceLease | None
+    deployment_instance_key_available: bool
+    epoch_credential_key_available: bool = True
+    os_lock_held: bool
+
+
+def _authority_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    instance = context.deployment_instance
+    if instance is None:
+        return "deployment_instance_missing"
+    authority = context.workspace_authority
+    if authority.workspace_id != request.workspace_id:
+        return "cross_workspace_authority"
+    if authority.state is WorkspaceAuthorityState.RESTORE_QUARANTINE:
+        return "restore_quarantine"
+    if authority.state is not WorkspaceAuthorityState.ACTIVE:
+        return "workspace_authority_inactive"
+    if instance.status is not DeploymentInstanceStatus.ACTIVE:
+        return "deployment_instance_inactive"
+    if not context.deployment_instance_key_available:
+        return "deployment_instance_key_unavailable"
+    if (
+        authority.deployment_profile_id != instance.deployment_profile_id
+        or authority.deployment_instance_id != instance.id
+    ):
+        return "deployment_instance_mismatch"
+    credential = context.epoch_credential
+    if credential is None:
+        return "authority_epoch_credential_missing"
+    if credential.status is AuthorityEpochCredentialStatus.REVOKED:
+        return "authority_epoch_credential_revoked"
+    if credential.status is AuthorityEpochCredentialStatus.DESTROYED:
+        return "authority_epoch_credential_destroyed"
+    if not context.epoch_credential_key_available:
+        return "authority_epoch_key_unavailable"
+    if (
+        credential.id != authority.authority_epoch_credential_id
+        or credential.workspace_id != request.workspace_id
+        or credential.authority_epoch != authority.epoch
+        or credential.deployment_instance_id != instance.id
+    ):
+        return "authority_epoch_credential_mismatch"
+    if credential.device_binding_digest != instance.device_binding_digest:
+        return "authority_device_binding_mismatch"
+    if not context.os_lock_held:
+        return "workspace_os_lock_not_held"
+    lease = context.active_lease
+    if lease is None:
+        return "authority_lease_missing"
+    if authority.active_lease_id != lease.id:
+        return "authority_lease_mismatch"
+    if lease.released_at is not None:
+        return "authority_lease_released"
+    if lease.acquired_at > request.evaluated_at:
+        return "authority_lease_not_yet_active"
+    if (
+        lease.workspace_id != request.workspace_id
+        or lease.authority_epoch != authority.epoch
+        or lease.deployment_instance_id != instance.id
+    ):
+        return "authority_lease_mismatch"
+    if authority.activated_at > request.evaluated_at:
+        return "workspace_authority_not_yet_active"
+    return None
 
 
 def _bundle_is_current(bundle: AccessBundle, *, at: datetime) -> bool:
@@ -76,6 +162,7 @@ def _grant_matches(
 def evaluate_capability_intersection(
     request: AuthorizationRequest,
     *,
+    authority_context: AuthorityEvaluationContext | None,
     requester_bundle: AccessBundle,
     requester_grants: list[CapabilityGrant],
     agent_grant: AgentGrant | None,
@@ -83,6 +170,12 @@ def evaluate_capability_intersection(
     agent_capabilities: list[CapabilityGrant],
     delegation_grants: list[DelegationGrant],
 ) -> AuthorizationResult:
+    authority_denial = _authority_denial_reason(request, authority_context)
+    if authority_denial is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code=authority_denial,
+        )
     if agent_grant is None:
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,

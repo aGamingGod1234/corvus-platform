@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from corvus.application.authorization import (
+    AuthorityEvaluationContext,
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
@@ -15,6 +16,15 @@ from corvus.domain.access import (
     CapabilityEffect,
     CapabilityGrant,
     DelegationGrant,
+)
+from corvus.domain.deployment import (
+    AuthorityEpochCredential,
+    AuthorityEpochCredentialStatus,
+    DeploymentInstance,
+    DeploymentInstanceLease,
+    WorkspaceAuthority,
+    WorkspaceAuthorityState,
+    fixed_workspace_lock_name,
 )
 
 
@@ -94,6 +104,56 @@ def _exact_allow_case() -> tuple[
     )
 
 
+def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluationContext:
+    deployment_profile_id = uuid4()
+    deployment_instance = DeploymentInstance(
+        deployment_profile_id=deployment_profile_id,
+        instance_public_key="instance-public-key",
+        non_exportable_activation_key_ref="keyring://corvus/instance/current",
+        device_binding_digest="1" * 64,
+        activated_at=request.evaluated_at - timedelta(minutes=5),
+    )
+    epoch = 3
+    epoch_credential = AuthorityEpochCredential(
+        workspace_id=request.workspace_id,
+        authority_epoch=epoch,
+        deployment_instance_id=deployment_instance.id,
+        public_key="epoch-public-key",
+        non_exportable_private_key_ref="keyring://corvus/epoch/current",
+        device_binding_digest=deployment_instance.device_binding_digest,
+        issued_at=request.evaluated_at - timedelta(minutes=4),
+    )
+    lease = DeploymentInstanceLease(
+        workspace_id=request.workspace_id,
+        authority_epoch=epoch,
+        deployment_instance_id=deployment_instance.id,
+        lock_name=fixed_workspace_lock_name(request.workspace_id, epoch),
+        fencing_token=1,
+        acquired_at=request.evaluated_at - timedelta(minutes=3),
+    )
+    authority = WorkspaceAuthority(
+        workspace_id=request.workspace_id,
+        deployment_profile_id=deployment_profile_id,
+        deployment_instance_id=deployment_instance.id,
+        epoch=epoch,
+        authority_generation=4,
+        authority_state_root="2" * 64,
+        authority_epoch_credential_id=epoch_credential.id,
+        trust_anchor_id=uuid4(),
+        active_lease_id=lease.id,
+        state=WorkspaceAuthorityState.ACTIVE,
+        activated_at=request.evaluated_at - timedelta(minutes=2),
+    )
+    return AuthorityEvaluationContext(
+        deployment_instance=deployment_instance,
+        workspace_authority=authority,
+        epoch_credential=epoch_credential,
+        active_lease=lease,
+        deployment_instance_key_available=True,
+        os_lock_held=True,
+    )
+
+
 def test_exact_requester_and_agent_grants_allow() -> None:
     request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
         _exact_allow_case()
@@ -101,6 +161,7 @@ def test_exact_requester_and_agent_grants_allow() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -119,6 +180,7 @@ def test_missing_requester_grant_denies_with_reason() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[],
         agent_grant=agent_grant,
@@ -147,6 +209,7 @@ def test_explicit_deny_overrides_matching_allows() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant, requester_deny],
         agent_grant=agent_grant,
@@ -167,6 +230,7 @@ def test_missing_agent_grant_denies_without_inheriting_requester_authority() -> 
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=None,
@@ -190,6 +254,7 @@ def test_cross_workspace_agent_grant_denies_before_capability_matching() -> None
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=foreign_agent_grant,
@@ -211,6 +276,7 @@ def test_requester_bundle_expiry_has_zero_grace() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=expired_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -234,6 +300,7 @@ def test_project_scoped_bundle_cannot_broaden_to_another_project() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -255,6 +322,7 @@ def test_requester_bundle_revocation_fails_closed_with_reason() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=revoked_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -276,6 +344,7 @@ def test_agent_bundle_expiry_has_zero_grace() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -297,6 +366,7 @@ def test_agent_bundle_revocation_fails_closed_with_reason() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -318,6 +388,7 @@ def test_agent_grant_expiry_has_zero_grace() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=expired_grant,
@@ -339,6 +410,7 @@ def test_agent_grant_revocation_fails_closed_with_reason() -> None:
 
     result = evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=revoked_grant,
@@ -398,6 +470,7 @@ def _evaluate_delegated_case(
 ) -> AuthorizationResult:
     return evaluate_capability_intersection(
         request,
+        authority_context=_valid_authority_context(request),
         requester_bundle=requester_bundle,
         requester_grants=[requester_grant],
         agent_grant=agent_grant,
@@ -641,3 +714,145 @@ def test_unlinked_multi_hop_delegation_chain_fails_closed() -> None:
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "delegation_chain_unverifiable"
+
+
+def _evaluate_direct_case(
+    case: tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ],
+    authority_context: AuthorityEvaluationContext | None,
+) -> AuthorizationResult:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = case
+    return evaluate_capability_intersection(
+        request,
+        authority_context=authority_context,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+
+def test_missing_authority_context_fails_closed() -> None:
+    result = _evaluate_direct_case(_exact_allow_case(), None)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_context_missing"
+
+
+def test_missing_deployment_instance_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"deployment_instance": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "deployment_instance_missing"
+
+
+def test_missing_deployment_instance_key_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"deployment_instance_key_available": False}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "deployment_instance_key_unavailable"
+
+
+def test_missing_epoch_credential_key_binding_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"epoch_credential_key_available": False}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_epoch_key_unavailable"
+
+
+def test_missing_os_lock_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"os_lock_held": False})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "workspace_os_lock_not_held"
+
+
+def test_missing_authority_lease_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(update={"active_lease": None})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_lease_missing"
+
+
+def test_released_authority_lease_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.active_lease is not None
+    released_lease = context.active_lease.model_copy(update={"released_at": case[0].evaluated_at})
+    context = context.model_copy(update={"active_lease": released_lease})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_lease_released"
+
+
+def test_wrong_deployment_instance_binding_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    authority = context.workspace_authority.model_copy(update={"deployment_instance_id": uuid4()})
+    context = context.model_copy(update={"workspace_authority": authority})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "deployment_instance_mismatch"
+
+
+def test_restore_quarantine_cannot_authorize_mutation() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    authority = context.workspace_authority.model_copy(
+        update={"state": WorkspaceAuthorityState.RESTORE_QUARANTINE}
+    )
+    context = context.model_copy(update={"workspace_authority": authority})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "restore_quarantine"
+
+
+def test_revoked_epoch_credential_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.epoch_credential is not None
+    credential = context.epoch_credential.model_copy(
+        update={
+            "status": AuthorityEpochCredentialStatus.REVOKED,
+            "revoked_at": case[0].evaluated_at,
+        }
+    )
+    context = context.model_copy(update={"epoch_credential": credential})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_epoch_credential_revoked"
