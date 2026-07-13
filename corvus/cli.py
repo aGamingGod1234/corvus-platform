@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from corvus.onboarding_tui import FirstRunApp
 from corvus.orchestration import AgentOrchestrator
 from corvus.provider_control import ConfiguredLiveModelController
 from corvus.providers import HttpProvider, ModelProviderClient
-from corvus.sandbox import DockerSandbox, PodmanSandbox
+from corvus.sandbox import DockerSandbox, PodmanSandbox, SandboxError, validate_sandbox_image
 from corvus.skills import SkillRegistry
 from corvus.store import TraceStore
 from corvus.tui import CorvusApp
@@ -74,6 +75,8 @@ class SandboxRuntime:
 def resolve_sandbox_runtime(
     requested: SandboxOption | str,
     *,
+    image: str | None = None,
+    production: bool = True,
     docker_status: tuple[bool, str] | None = None,
     podman_status: tuple[bool, str] | None = None,
 ) -> SandboxRuntime:
@@ -90,13 +93,25 @@ def resolve_sandbox_runtime(
                 "disabled."
             ),
         )
+    selected_image = image or "python:3.12-slim"
+    try:
+        validate_sandbox_image(selected_image, production=production)
+    except SandboxError as exc:
+        return SandboxRuntime(
+            requested=selection,
+            backend="none",
+            factory=None,
+            detail=f"Isolated /build is disabled: {exc}.",
+        )
     docker_ok, docker_detail = docker_status or DockerSandbox.available()
     podman_ok, podman_detail = podman_status or PodmanSandbox.available()
     if selection is SandboxOption.DOCKER:
         return SandboxRuntime(
             requested=selection,
             backend="docker" if docker_ok else "none",
-            factory=(lambda: DockerSandbox()) if docker_ok else None,
+            factory=(lambda: DockerSandbox(image=selected_image, production=production))
+            if docker_ok
+            else None,
             detail=(
                 f"Docker {docker_detail}"
                 if docker_ok
@@ -107,7 +122,9 @@ def resolve_sandbox_runtime(
         return SandboxRuntime(
             requested=selection,
             backend="podman" if podman_ok else "none",
-            factory=(lambda: PodmanSandbox()) if podman_ok else None,
+            factory=(lambda: PodmanSandbox(image=selected_image, production=production))
+            if podman_ok
+            else None,
             detail=(
                 f"Podman {podman_detail}"
                 if podman_ok
@@ -118,14 +135,14 @@ def resolve_sandbox_runtime(
         return SandboxRuntime(
             requested=selection,
             backend="docker",
-            factory=lambda: DockerSandbox(),
+            factory=lambda: DockerSandbox(image=selected_image, production=production),
             detail=f"Auto selected Docker {docker_detail}",
         )
     if podman_ok:
         return SandboxRuntime(
             requested=selection,
             backend="podman",
-            factory=lambda: PodmanSandbox(),
+            factory=lambda: PodmanSandbox(image=selected_image, production=production),
             detail=f"Auto selected Podman {podman_detail}",
         )
     return SandboxRuntime(
@@ -138,6 +155,11 @@ def resolve_sandbox_runtime(
             "Ordinary chat remains available; isolated /build is disabled."
         ),
     )
+
+
+def configured_sandbox_image() -> str | None:
+    image = os.environ.get("CORVUS_SANDBOX_IMAGE", "").strip()
+    return image or None
 
 
 def configured_sandbox_option(paths: CorvusPaths) -> SandboxOption:
@@ -432,6 +454,7 @@ def launch_tui(
 
     sandbox_runtime = resolve_sandbox_runtime(
         sandbox or selected_sandbox,
+        image=configured_sandbox_image(),
         docker_status=(docker_available, docker_detail),
         podman_status=(podman_available, podman_detail),
     )
@@ -528,7 +551,10 @@ def chat(
         raise typer.BadParameter("a prompt is required in plain or JSON mode")
     provider = configured_provider(config)
     orchestrator = AgentOrchestrator(store, provider)
-    sandbox_runtime = resolve_sandbox_runtime(sandbox or configured_sandbox_option(paths))
+    sandbox_runtime = resolve_sandbox_runtime(
+        sandbox or configured_sandbox_option(paths),
+        image=configured_sandbox_image(),
+    )
 
     async def execute() -> None:
         if provider is not None and sandbox_runtime.factory is not None:
@@ -640,6 +666,7 @@ def doctor(json_output: Annotated[bool, typer.Option("--json")] = False) -> None
     podman_ok, podman_detail = PodmanSandbox.available()
     sandbox_runtime = resolve_sandbox_runtime(
         configured_sandbox_option(paths),
+        image=configured_sandbox_image(),
         docker_status=(docker_ok, docker_detail),
         podman_status=(podman_ok, podman_detail),
     )
@@ -745,9 +772,9 @@ def review(
     for changed in bundle.changed_files:
         console.print(f"  • {changed}")
     if approve:
-        grant = manager.approve(bundle)
+        grant = manager.approve(bundle, actor_id="local-cli")
         try:
-            backup = manager.apply(bundle, grant)
+            backup = manager.apply(bundle, grant, actor_id="local-cli")
         except DeliveryError as exc:
             console.print(f"[red]Delivery blocked: {exc}[/red]")
             raise typer.Exit(2) from exc
@@ -765,7 +792,8 @@ def undo(delivery_id: UUID) -> None:
     manager = delivery_manager(paths)
     try:
         bundle = manager.load(delivery_id)
-        manager.undo(bundle)
+        approval = manager.approve_undo(bundle, actor_id="local-cli")
+        manager.undo(bundle, approval, actor_id="local-cli")
     except (OSError, ValueError, DeliveryError) as exc:
         console.print(f"[red]Undo blocked: {exc}[/red]")
         raise typer.Exit(2) from exc

@@ -18,6 +18,11 @@ from corvus.models import (
 from corvus.security import atomic_write
 
 
+def _minimum_present(*values: int | None) -> int | None:
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
+
+
 class CorvusPaths:
     def __init__(self, home: Path | None = None) -> None:
         environment_home = os.environ.get("CORVUS_HOME")
@@ -88,8 +93,14 @@ class ConfigManager:
                 max_repair_attempts=min(
                     user.budgets.max_repair_attempts, project.budgets.max_repair_attempts
                 ),
-                max_input_tokens=project.budgets.max_input_tokens,
-                max_output_tokens=project.budgets.max_output_tokens,
+                max_input_tokens=_minimum_present(
+                    user.budgets.max_input_tokens,
+                    project.budgets.max_input_tokens,
+                ),
+                max_output_tokens=_minimum_present(
+                    user.budgets.max_output_tokens,
+                    project.budgets.max_output_tokens,
+                ),
             ),
             sandbox=SandboxPolicy(
                 network_default=user.sandbox.network_default and project.sandbox.network_default,

@@ -74,24 +74,28 @@ _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CHATGPT_STATUS = re.compile(
     r"(?im)^\s*(?:logged|signed)\s+in\s+(?:using|with)\s+chatgpt(?:\s+account)?[.!]?\s*$"
 )
-_SECRET_ENVIRONMENT = {
-    "BASH_ENV",
-    "CODEX_ACCESS_TOKEN",
-    "CODEX_API_KEY",
-    "ENV",
-    "GIT_ASKPASS",
-    "GIT_SSH",
-    "GIT_SSH_COMMAND",
-    "OPENAI_API_KEY",
-    "OPENAI_API_BASE",
-    "OPENAI_BASE_URL",
-    "NODE_OPTIONS",
-    "PYTHONHOME",
-    "PYTHONPATH",
-    "SSH_ASKPASS",
-    "SSLKEYLOGFILE",
-    "ZDOTDIR",
-}
+_CHILD_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "APPDATA",
+        "COLORTERM",
+        "COMSPEC",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LOCALAPPDATA",
+        "NO_COLOR",
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "TEMP",
+        "TERM",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "WINDIR",
+    }
+)
 _SAFE_ITEM_TYPES = {"agent_message", "reasoning", "plan", "plan_update"}
 
 
@@ -160,23 +164,70 @@ def _is_link_or_reparse(path: Path) -> bool:
     return bool(attributes & reparse)
 
 
-def _child_environment() -> dict[str, str]:
-    environment = dict(os.environ)
-    for key in tuple(environment):
-        upper = key.upper()
-        if upper in _SECRET_ENVIRONMENT or upper.startswith(("LD_", "DYLD_")):
-            environment.pop(key, None)
-    raw_path = environment.get("PATH", "")
-    environment["PATH"] = os.pathsep.join(
-        part
-        for part in raw_path.split(os.pathsep)
-        if part and Path(part).expanduser().is_absolute()
+def _windows_directory() -> Path:
+    try:
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32_768)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        length = int(kernel32.GetWindowsDirectoryW(buffer, len(buffer)))
+        if 0 < length < len(buffer):
+            candidate = Path(buffer.value)
+            if candidate.is_absolute() and candidate.is_dir():
+                return candidate
+    except (AttributeError, OSError, ValueError):
+        pass
+    fallback = Path(r"C:\Windows")
+    if fallback.is_dir():
+        return fallback
+    raise RuntimeError("trusted Windows system directory is unavailable")
+
+
+def _environment_keys_case_insensitive() -> bool:
+    return os.name == "nt"
+
+
+def _child_environment(trusted_executable: Path | None = None) -> dict[str, str]:
+    source = (
+        {key.upper(): value for key, value in os.environ.items()}
+        if _environment_keys_case_insensitive()
+        else dict(os.environ)
     )
+    derived_keys = {"COMSPEC", "PATH", "SYSTEMROOT", "WINDIR"}
+    environment = {
+        key: source[key] for key in _CHILD_ENVIRONMENT_ALLOWLIST - derived_keys if key in source
+    }
+
+    path_candidates: list[Path] = []
+    if trusted_executable is not None:
+        executable_parent = trusted_executable.expanduser().resolve(strict=False).parent
+        if executable_parent.is_dir():
+            path_candidates.append(executable_parent)
     if os.name == "nt":
-        system_root = Path(environment.get("SystemRoot", r"C:\Windows"))
-        command_processor = system_root / "System32" / "cmd.exe"
+        system_root = _windows_directory()
+        system32 = system_root / "System32"
+        environment["SYSTEMROOT"] = str(system_root)
+        environment["WINDIR"] = str(system_root)
+        command_processor = system32 / "cmd.exe"
         if command_processor.is_file():
             environment["COMSPEC"] = str(command_processor)
+        path_candidates.extend(
+            (system32, system_root, system_root.parent / "Program Files" / "nodejs")
+        )
+    else:
+        path_candidates.extend(Path(item) for item in ("/usr/local/bin", "/usr/bin", "/bin"))
+
+    trusted_path: list[str] = []
+    seen: set[str] = set()
+    for candidate in path_candidates:
+        if not candidate.is_absolute() or not candidate.is_dir():
+            continue
+        rendered = str(candidate)
+        identity = rendered.casefold() if os.name == "nt" else rendered
+        if identity not in seen:
+            seen.add(identity)
+            trusted_path.append(rendered)
+    environment["PATH"] = os.pathsep.join(trusted_path)
     return environment
 
 
@@ -198,7 +249,7 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
                         stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
-                        env=_child_environment(),
+                        env=_child_environment(taskkill),
                     )
                     await asyncio.wait_for(killer.wait(), timeout=5)
                 except (OSError, TimeoutError):
@@ -349,7 +400,7 @@ class CodexCliService:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=_child_environment(),
+            env=_child_environment(self.executable),
             limit=1_048_576,
             **_process_group_options(),  # type: ignore[arg-type]
         )
@@ -463,7 +514,7 @@ class CodexCliProvider(ModelProviderClient):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=call_root,
-                env=_child_environment(),
+                env=_child_environment(self.service.executable),
                 limit=1_048_576,
                 **_process_group_options(),  # type: ignore[arg-type]
             )

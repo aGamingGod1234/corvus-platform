@@ -172,6 +172,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "docker" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "keyring" },
     { name = "platformdirs" },
@@ -197,6 +198,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=44,<47" },
     { name = "docker", specifier = ">=7,<8" },
+    { name = "httpcore", specifier = ">=1,<2" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "keyring", specifier = ">=25,<26" },
     { name = "platformdirs", specifier = ">=4,<5" },

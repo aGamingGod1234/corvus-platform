@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,28 +51,272 @@ class CommandResult:
     timed_out: bool = False
 
 
-def _archive_source(source: Path) -> bytes:
-    if source.is_symlink() or source.is_junction():
+@dataclass(frozen=True)
+class SandboxLimits:
+    max_files: int = 20_000
+    max_entries: int = 25_000
+    max_directory_depth: int = 64
+    max_file_bytes: int = 10 * 1024 * 1024
+    max_total_file_bytes: int = 100 * 1024 * 1024
+    max_archive_bytes: int = 128 * 1024 * 1024
+    max_output_bytes: int = 2 * 1024 * 1024
+    max_command_arguments: int = 128
+    max_argument_bytes: int = 16 * 1024
+
+    def __post_init__(self) -> None:
+        for name, value in self.__dict__.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+
+
+@dataclass(frozen=True)
+class _SourceFile:
+    path: Path
+    relative_path: str
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+
+
+class _BoundedBytesIO(io.BytesIO):
+    def __init__(self, limit: int) -> None:
+        super().__init__()
+        self.limit = limit
+        self.high_watermark = 0
+
+    def write(self, data: Any) -> int:
+        end = self.tell() + len(data)
+        self.high_watermark = max(self.high_watermark, end)
+        if self.high_watermark > self.limit:
+            raise SandboxError("sandbox source archive byte limit exceeded")
+        return super().write(data)
+
+
+_IMAGE_DIGEST = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+
+
+def validate_sandbox_image(image: str, *, production: bool) -> None:
+    if production and _IMAGE_DIGEST.fullmatch(image) is None:
+        raise SandboxError("production sandbox image must be digest-pinned")
+
+
+def _validate_command(command: list[str], limits: SandboxLimits) -> None:
+    if not command:
+        raise SandboxError("sandbox command must not be empty")
+    if len(command) > limits.max_command_arguments:
+        raise SandboxError("sandbox command argument count limit exceeded")
+    if any(not isinstance(argument, str) for argument in command):
+        raise SandboxError("sandbox command arguments must be strings")
+    if any(len(argument.encode("utf-8")) > limits.max_argument_bytes for argument in command):
+        raise SandboxError("sandbox command argument byte limit exceeded")
+
+
+async def _bounded_process_communicate(
+    process: asyncio.subprocess.Process,
+    input_data: bytes | None,
+    limit: int,
+) -> tuple[bytes, bytes, int]:
+    stdout_reader = process.stdout
+    stderr_reader = process.stderr
+    if stdout_reader is None or stderr_reader is None:
+        raise SandboxError("sandbox process pipes are unavailable")
+    stdout = bytearray()
+    stderr = bytearray()
+    total = [0]
+
+    async def read_stream(reader: Any, destination: bytearray) -> None:
+        while True:
+            chunk = await reader.read(64 * 1024)
+            if not chunk:
+                return
+            total[0] += len(chunk)
+            if total[0] > limit:
+                raise SandboxError("sandbox command output byte limit exceeded")
+            destination.extend(chunk)
+
+    async def write_input() -> None:
+        if input_data is None:
+            return
+        writer = process.stdin
+        if writer is None:
+            raise SandboxError("sandbox process stdin is unavailable")
+        try:
+            for offset in range(0, len(input_data), 64 * 1024):
+                writer.write(input_data[offset : offset + 64 * 1024])
+                await writer.drain()
+        finally:
+            writer.close()
+            wait_closed = getattr(writer, "wait_closed", None)
+            if wait_closed is not None:
+                await wait_closed()
+
+    tasks = (
+        asyncio.create_task(read_stream(stdout_reader, stdout)),
+        asyncio.create_task(read_stream(stderr_reader, stderr)),
+        asyncio.create_task(write_input()),
+        asyncio.create_task(process.wait()),
+    )
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        pending = [task for task in tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            await process.wait()
+        except ProcessLookupError:
+            pass
+        raise
+    returncode = process.returncode if process.returncode is not None else 1
+    return bytes(stdout), bytes(stderr), returncode
+
+
+def _is_link_or_reparse_info(info: os.stat_result) -> bool:
+    attributes = getattr(info, "st_file_attributes", 0)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(info.st_mode) or bool(attributes & reparse)
+
+
+def _iter_directory(directory: Path) -> Iterator[os.DirEntry[str]]:
+    try:
+        with os.scandir(directory) as entries:
+            yield from entries
+    except OSError as exc:
+        raise SandboxError(f"sandbox source directory is unsafe: {directory}") from exc
+
+
+def _archive_source(source: Path, limits: SandboxLimits) -> bytes:
+    try:
+        source_info = source.lstat()
+    except OSError as exc:
+        raise SandboxError(f"sandbox source is unavailable: {source}") from exc
+    if _is_link_or_reparse_info(source_info):
         raise SandboxError(f"source symlink or junction rejected: {source}")
-    if not source.is_dir():
+    if not stat.S_ISDIR(source_info.st_mode):
         raise SandboxError(f"sandbox source is not a directory: {source}")
-    archive = io.BytesIO()
-    with tarfile.open(fileobj=archive, mode="w") as tar:
-        for path in source.rglob("*"):
-            if path.is_symlink() or path.is_junction():
+    source = source.resolve(strict=True)
+
+    files: list[_SourceFile] = []
+    total_bytes = 0
+    entry_count = 0
+    directories: list[tuple[Path, int, int, int]] = [
+        (source, 0, source_info.st_dev, source_info.st_ino)
+    ]
+    while directories:
+        directory, depth, expected_device, expected_inode = directories.pop()
+        try:
+            current_directory = directory.stat(follow_symlinks=False)
+            if (
+                _is_link_or_reparse_info(current_directory)
+                or not stat.S_ISDIR(current_directory.st_mode)
+                or current_directory.st_dev != expected_device
+                or current_directory.st_ino != expected_inode
+            ):
+                raise SandboxError(f"sandbox source directory changed during capture: {directory}")
+            entries = _iter_directory(directory)
+        except OSError as exc:
+            raise SandboxError(f"sandbox source directory is unsafe: {directory}") from exc
+
+        for entry in entries:
+            entry_count += 1
+            if entry_count > limits.max_entries:
+                raise SandboxError("sandbox source entry count limit exceeded")
+            path = Path(entry.path)
+            try:
+                info = path.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise SandboxError(f"sandbox source entry is unavailable: {path}") from exc
+            if _is_link_or_reparse_info(info):
                 raise SandboxError(f"source symlink or junction rejected: {path}")
-            if path.is_dir():
+            if stat.S_ISDIR(info.st_mode):
+                child_depth = depth + 1
+                if child_depth > limits.max_directory_depth:
+                    raise SandboxError("sandbox source directory depth limit exceeded")
+                directories.append((path, child_depth, info.st_dev, info.st_ino))
                 continue
-            if not path.is_file():
+            if not stat.S_ISREG(info.st_mode):
                 raise SandboxError(f"unsupported source entry rejected: {path}")
-            info = tar.gettarinfo(str(path), arcname=path.relative_to(source).as_posix())
-            info.uid = 65534
-            info.gid = 65534
-            info.uname = "nobody"
-            info.gname = "nogroup"
-            info.mode &= 0o777
-            with path.open("rb") as handle:
-                tar.addfile(info, handle)
+            if info.st_size > limits.max_file_bytes:
+                raise SandboxError(f"sandbox source per-file byte limit exceeded: {path}")
+            files.append(
+                _SourceFile(
+                    path=path,
+                    relative_path=path.relative_to(source).as_posix(),
+                    device=info.st_dev,
+                    inode=info.st_ino,
+                    size=info.st_size,
+                    modified_ns=info.st_mtime_ns,
+                )
+            )
+            if len(files) > limits.max_files:
+                raise SandboxError("sandbox source file count limit exceeded")
+            total_bytes += info.st_size
+            if total_bytes > limits.max_total_file_bytes:
+                raise SandboxError("sandbox source total file bytes limit exceeded")
+
+    archive = _BoundedBytesIO(limits.max_archive_bytes)
+    actual_total_bytes = 0
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        for source_file in sorted(files, key=lambda item: item.relative_path):
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(source_file.path, flags)
+            except OSError as exc:
+                raise SandboxError(
+                    f"sandbox source file cannot be opened safely: {source_file.path}"
+                ) from exc
+            with os.fdopen(descriptor, "rb") as handle:
+                opened = os.fstat(handle.fileno())
+                identity = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+                expected = (
+                    source_file.device,
+                    source_file.inode,
+                    source_file.size,
+                    source_file.modified_ns,
+                )
+                if not stat.S_ISREG(opened.st_mode) or identity != expected:
+                    raise SandboxError(
+                        f"sandbox source file changed during capture: {source_file.path}"
+                    )
+                actual_total_bytes += opened.st_size
+                if opened.st_size > limits.max_file_bytes:
+                    raise SandboxError(
+                        f"sandbox source per-file byte limit exceeded: {source_file.path}"
+                    )
+                if actual_total_bytes > limits.max_total_file_bytes:
+                    raise SandboxError("sandbox source total file bytes limit exceeded")
+                tar_entry = tarfile.TarInfo(source_file.relative_path)
+                tar_entry.size = opened.st_size
+                tar_entry.mtime = int(opened.st_mtime)
+                tar_entry.mode = stat.S_IMODE(opened.st_mode)
+                tar_entry.uid = 65534
+                tar_entry.gid = 65534
+                tar_entry.uname = "nobody"
+                tar_entry.gname = "nogroup"
+                try:
+                    tar.addfile(tar_entry, handle)
+                except OSError as exc:
+                    raise SandboxError(
+                        f"sandbox source file changed during capture: {source_file.path}"
+                    ) from exc
+                completed = os.fstat(handle.fileno())
+                completed_identity = (
+                    completed.st_dev,
+                    completed.st_ino,
+                    completed.st_size,
+                    completed.st_mtime_ns,
+                )
+                if completed_identity != identity:
+                    raise SandboxError(
+                        f"sandbox source file changed during capture: {source_file.path}"
+                    )
     return archive.getvalue()
 
 
@@ -78,11 +326,17 @@ class DockerSandbox:
         image: str = "python:3.12-slim",
         policy: SandboxPolicy | None = None,
         client: Any | None = None,
+        *,
+        limits: SandboxLimits | None = None,
+        production: bool = True,
     ) -> None:
+        validate_sandbox_image(image, production=production)
         self.image = image
         self.policy = policy or SandboxPolicy()
         self.client = client
+        self.limits = limits or SandboxLimits()
         self.container: Any | None = None
+        self._container_name: str | None = None
 
     @staticmethod
     def available() -> tuple[bool, str]:
@@ -137,23 +391,49 @@ class DockerSandbox:
             "labels": {"io.corvus.sandbox": "true"},
         }
 
+    async def _discard_container(self, container: Any | None, name: str) -> None:
+        candidate = container
+        if candidate is None and self.client is not None:
+            try:
+                candidate = await asyncio.to_thread(self.client.containers.get, name)
+            except (DockerException, OSError):
+                candidate = None
+        if candidate is not None:
+            try:
+                await asyncio.to_thread(candidate.remove, force=True)
+            except (DockerException, OSError):
+                pass
+        if self.container is candidate:
+            self.container = None
+        if self._container_name == name:
+            self._container_name = None
+
     async def start(self) -> None:
         if self.container is not None:
             return
         if self.client is None:
             try:
-                self.client = docker.from_env()
+                self.client = docker.from_env(timeout=60)
             except DockerException as exc:
                 raise SandboxError("Docker is unavailable") from exc
         client = self.client
+        container_name = f"corvus-{uuid4().hex}"
+        self._container_name = container_name
 
         def create_container() -> Any:
-            return client.containers.run(**self.container_options())
+            return client.containers.run(name=container_name, **self.container_options())
 
+        creation = asyncio.create_task(asyncio.to_thread(create_container))
+        created_container: Any | None = None
         try:
-            self.container = await asyncio.to_thread(create_container)
-        except DockerException as exc:
+            created_container = await asyncio.shield(creation)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._discard_container(created_container, container_name))
+            raise
+        except (DockerException, OSError) as exc:
+            await self._discard_container(None, container_name)
             raise SandboxError("failed to create constrained Docker sandbox") from exc
+        self.container = created_container
 
     async def stage(self, source: Path) -> None:
         if self.container is None:
@@ -163,38 +443,79 @@ class DockerSandbox:
         if not ok:
             raise SandboxError("Docker rejected source archive")
 
-    @staticmethod
-    def _archive_source(source: Path) -> bytes:
-        return _archive_source(source)
+    def _archive_source(self, source: Path) -> bytes:
+        return _archive_source(source, self.limits)
 
     async def run(self, command: list[str], timeout_seconds: float = 300) -> CommandResult:
-        if self.container is None:
+        if self.container is None or self.client is None:
             raise SandboxError("sandbox has not started")
+        _validate_command(command, self.limits)
         container = self.container
+        container_name = self._container_name or str(container.id)
+        api = self.client.api
 
-        def execute() -> Any:
-            return container.exec_run(command, demux=True, workdir="/workspace", user="65534:65534")
+        def execute() -> CommandResult:
+            created = api.exec_create(
+                container.id,
+                command,
+                workdir="/workspace",
+                user="65534:65534",
+            )
+            exec_id = created.get("Id") if isinstance(created, dict) else None
+            if not isinstance(exec_id, str) or not exec_id:
+                raise SandboxError("Docker did not return a valid exec identifier")
+            stdout_bytes = bytearray()
+            stderr_bytes = bytearray()
+            total = 0
+            stream = api.exec_start(exec_id, stream=True, demux=True)
+            for chunk in stream:
+                if isinstance(chunk, tuple):
+                    stdout_chunk, stderr_chunk = chunk
+                else:
+                    stdout_chunk, stderr_chunk = chunk, None
+                for source, destination in (
+                    (stdout_chunk, stdout_bytes),
+                    (stderr_chunk, stderr_bytes),
+                ):
+                    if not source:
+                        continue
+                    total += len(source)
+                    if total > self.limits.max_output_bytes:
+                        raise SandboxError("sandbox command output byte limit exceeded")
+                    destination.extend(source)
+            inspected = api.exec_inspect(exec_id)
+            exit_code = inspected.get("ExitCode") if isinstance(inspected, dict) else None
+            return CommandResult(
+                exit_code=int(exit_code) if isinstance(exit_code, int) else 1,
+                stdout=bytes(stdout_bytes).decode(errors="replace"),
+                stderr=bytes(stderr_bytes).decode(errors="replace"),
+            )
 
         try:
-            result = await asyncio.wait_for(asyncio.to_thread(execute), timeout_seconds)
+            return await asyncio.wait_for(asyncio.to_thread(execute), timeout_seconds)
         except TimeoutError:
-            await asyncio.to_thread(self.container.kill)
+            await self._discard_container(container, container_name)
             return CommandResult(
-                exit_code=124, stdout="", stderr="command timed out", timed_out=True
+                exit_code=124,
+                stdout="",
+                stderr="command timed out",
+                timed_out=True,
             )
-        stdout, stderr = result.output
-        return CommandResult(
-            exit_code=int(result.exit_code),
-            stdout=(stdout or b"").decode(errors="replace"),
-            stderr=(stderr or b"").decode(errors="replace"),
-        )
+        except asyncio.CancelledError:
+            await asyncio.shield(self._discard_container(container, container_name))
+            raise
+        except SandboxError:
+            await self._discard_container(container, container_name)
+            raise
+        except (DockerException, OSError) as exc:
+            await self._discard_container(container, container_name)
+            raise SandboxError("Docker sandbox command failed") from exc
 
     async def close(self) -> None:
         if self.container is not None:
-            try:
-                await asyncio.to_thread(self.container.remove, force=True)
-            finally:
-                self.container = None
+            container = self.container
+            name = self._container_name or str(container.id)
+            await self._discard_container(container, name)
         if self.client is not None:
             self.client.close()
 
@@ -219,10 +540,15 @@ class PodmanSandbox:
         image: str = "python:3.12-slim",
         policy: SandboxPolicy | None = None,
         executable: str | Path | None = None,
+        *,
+        limits: SandboxLimits | None = None,
+        production: bool = True,
     ) -> None:
+        validate_sandbox_image(image, production=production)
         self.image = image
         self.policy = policy or SandboxPolicy()
         self.executable = str(executable) if executable is not None else None
+        self.limits = limits or SandboxLimits()
         self.container: str | None = None
 
     @staticmethod
@@ -298,20 +624,30 @@ class PodmanSandbox:
             )
         except OSError as exc:
             raise SandboxError("Podman is unavailable") from exc
+        collection = asyncio.create_task(
+            _bounded_process_communicate(process, input_data, self.limits.max_output_bytes)
+        )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input_data), timeout=timeout_seconds
+            stdout, stderr, returncode = await asyncio.wait_for(
+                asyncio.shield(collection), timeout=timeout_seconds
             )
         except TimeoutError:
             try:
                 process.kill()
             except ProcessLookupError:
                 pass
-            stdout, stderr = await process.communicate()
+            try:
+                await asyncio.wait_for(asyncio.shield(collection), timeout=5)
+            except SandboxError:
+                raise
+            except TimeoutError as exc:
+                collection.cancel()
+                await asyncio.gather(collection, return_exceptions=True)
+                raise SandboxError("Podman command did not terminate after timeout") from exc
             return CommandResult(
                 exit_code=124,
-                stdout=stdout.decode(errors="replace"),
-                stderr=(stderr.decode(errors="replace") or "Podman command timed out"),
+                stdout="",
+                stderr="Podman command timed out",
                 timed_out=True,
             )
         except asyncio.CancelledError:
@@ -319,9 +655,12 @@ class PodmanSandbox:
                 process.kill()
             except ProcessLookupError:
                 pass
-            await process.communicate()
+            try:
+                await asyncio.shield(collection)
+            except BaseException:  # noqa: S110
+                # pragma: no cover - best-effort cleanup on cancellation/error
+                pass
             raise
-        returncode = process.returncode if process.returncode is not None else 1
         return CommandResult(
             exit_code=returncode,
             stdout=stdout.decode(errors="replace"),
@@ -380,27 +719,30 @@ class PodmanSandbox:
             self.container = None
             raise SandboxError("Podman rejected source archive")
 
-    @staticmethod
-    def _archive_source(source: Path) -> bytes:
-        return _archive_source(source)
+    def _archive_source(self, source: Path) -> bytes:
+        return _archive_source(source, self.limits)
 
     async def run(self, command: list[str], timeout_seconds: float = 300) -> CommandResult:
         if self.container is None:
             raise SandboxError("sandbox has not started")
-        if not command:
-            raise SandboxError("sandbox command must not be empty")
+        _validate_command(command, self.limits)
         container = self.container
-        result = await self._invoke(
-            [
-                "exec",
-                "--user=65534:65534",
-                "--workdir=/workspace",
-                "--",
-                container,
-                *command,
-            ],
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            result = await self._invoke(
+                [
+                    "exec",
+                    "--user=65534:65534",
+                    "--workdir=/workspace",
+                    "--",
+                    container,
+                    *command,
+                ],
+                timeout_seconds=timeout_seconds,
+            )
+        except (SandboxError, asyncio.CancelledError):
+            await asyncio.shield(self._remove(container))
+            self.container = None
+            raise
         if result.timed_out:
             await asyncio.shield(self._remove(container))
             self.container = None

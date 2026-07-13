@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -14,7 +15,13 @@ from sqlalchemy.orm import Session as DbSession
 
 from corvus.database import bootstrap_database
 from corvus.models import RunEvent, RunPhase
-from corvus.security import SecretRedactor, atomic_write, sha256_bytes
+from corvus.security import (
+    SecretRedactor,
+    SecurityError,
+    atomic_write,
+    resolve_under,
+    sha256_bytes,
+)
 
 
 class Base(DeclarativeBase):
@@ -216,16 +223,40 @@ class TraceStore:
 
 
 class ArtifactStore:
+    _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
     def __init__(self, root: Path) -> None:
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
 
+    def _path(self, digest: str, *, for_write: bool) -> Path:
+        if self._DIGEST.fullmatch(digest) is None:
+            raise SecurityError("invalid artifact digest")
+        if for_write:
+            directory = resolve_under(self.root, digest[:2])
+            directory.mkdir(exist_ok=True)
+        return resolve_under(
+            self.root,
+            f"{digest[:2]}/{digest}",
+            allow_missing_leaf=for_write,
+        )
+
     def put(self, data: bytes) -> tuple[str, Path]:
         digest = sha256_bytes(data)
-        path = self.root / digest[:2] / digest
-        if not path.exists():
+        path = self._path(digest, for_write=True)
+        if path.exists():
+            existing = path.read_bytes()
+            if sha256_bytes(existing) != digest:
+                raise SecurityError("artifact integrity check failed during put")
+        else:
             atomic_write(path, data)
+        if sha256_bytes(path.read_bytes()) != digest:
+            raise SecurityError("artifact integrity check failed after put")
         return digest, path
 
     def get(self, digest: str) -> bytes:
-        return (self.root / digest[:2] / digest).read_bytes()
+        path = self._path(digest, for_write=False)
+        data = path.read_bytes()
+        if sha256_bytes(data) != digest:
+            raise SecurityError("artifact integrity check failed during get")
+        return data
