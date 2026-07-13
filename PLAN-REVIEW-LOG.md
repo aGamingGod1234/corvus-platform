@@ -135,3 +135,17 @@ Accepted all six findings. `PLAN.md` now adds threshold-signed, expiring, extern
 
 ### Remaining gate
 Validate, commit and hash the new plan-only revision, then rerun the same two exact-commit scopes. Continue until both return `VERDICT: PASS` on one immutable commit; implementation remains blocked.
+
+## Round 9 - Exact-commit paired Hermes review of `0f4a560`
+Both read-only reviewers targeted exact commit `0f4a560863e06d7c886fd8db1b16c0c6ae621984` and `PLAN.md` SHA-256 `841681e6b5e70e471f199245d6ecd6a81b7f0269198089cb64e9ad32cfd7f12e`. The security/schema reviewer timed out after 21 calls and returned no summary or verdict; that is blocked evidence, not approval. The product/topology reviewer verified the exact commit/hash and a clean unchanged tree at both boundaries, modified no files, and returned `VERDICT: REVISE`. Implementation remained blocked.
+
+### Product topology/client findings
+- High: retained `corvus chat`, `corvus run`, and the Textual TUI still directly constructed configuration/provider/workflow/`ConversationRuntime` paths; no sequenced in-process/HTTP/SSE client cutover prevented the main interface from bypassing the composition root when CLI topology support was enabled.
+- High: retained review/approve/apply and undo still called `DeliveryManager` directly; no delivery/approval/undo application ports or real-client current-authorization/effect/audit/conflict/crash/undo parity gate owned that authority-bearing filesystem mutation path.
+- High: Milestone 10 enabled self-hosted support before the wheel/standalone CLI, OCI image and static web distribution artifacts were created in Milestone 11, allowing source-tree fixtures rather than shipped artifact digests to satisfy install/upgrade/rollback claims.
+
+### Codex/Hermes response
+Accepted all three completed findings. `PLAN.md` now has a retained platform-surface cutover ledger. Milestone 2 defines durable conversation command/query/event ports and delivery query/approval/apply/undo ports over the centralized authority/effect/audit path. Milestone 3 routes the actual retained chat/run/TUI and review/apply/undo adapters through the in-process client, forbids direct runtime/provider/workflow/delivery construction, and proves command/exit/JSON, restart, cancellation, event parity, approval conflict/replay/expiry, crash recovery, current revocation and undo receipts before enabling embedded CLI support. Milestone 4 reruns the same retained surfaces over real HTTP/SSE before daemon CLI support; Milestone 5 adds generated-web conversation and delivery controls; Milestones 10–11 rerun them through packaged network and Tauri clients. Milestone 10 now creates, signs, provenance/SBOM-binds, installs, upgrades, restores and rolls back the exact wheel/standalone CLI, OCI image and static web digests before self-host/cloud support. Milestone 11 is limited to installed Tauri/sidecar artifacts and desktop-specific updates. The timed-out security scope must be rerun against the next exact candidate.
+
+### Remaining gate
+Validate, commit and hash this plan-only revision, then rerun both independent scopes. Continue until both return `VERDICT: PASS` on the same immutable commit; implementation remains blocked.
