@@ -9,12 +9,14 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine
 
 from corvus.database import M1_AUDIT_REVISION as _M1_AUDIT_REVISION
+from corvus.database import M1_AUTHORITY_REVISION as _M1_AUTHORITY_REVISION
 from corvus.database import M1_PROJECT_REVISION as _M1_PROJECT_REVISION
 from corvus.database import DatabaseState, classify_database
 
 M1_PROJECT_REVISION: Final = _M1_PROJECT_REVISION
 M1_AUDIT_REVISION: Final = _M1_AUDIT_REVISION
-M1_CURRENT_REVISION: Final = M1_AUDIT_REVISION
+M1_AUTHORITY_REVISION: Final = _M1_AUTHORITY_REVISION
+M1_CURRENT_REVISION: Final = M1_AUTHORITY_REVISION
 
 
 class InfrastructureDatabaseError(RuntimeError):
@@ -49,7 +51,12 @@ def upgrade_database(database: Path) -> str:
             f"database_not_ready_for_milestone_migration:{status.state.value}"
         )
     revision = current_revision(database)
-    if revision not in {None, M1_PROJECT_REVISION, M1_CURRENT_REVISION}:
+    if revision not in {
+        None,
+        M1_PROJECT_REVISION,
+        M1_AUDIT_REVISION,
+        M1_CURRENT_REVISION,
+    }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
     command.upgrade(_alembic_config(database), "head")
     upgraded = current_revision(database)

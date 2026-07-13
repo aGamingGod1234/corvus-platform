@@ -25,6 +25,7 @@ CURRENT_SCHEMA_VERSION = 2
 M005_001_MIGRATION = "M005-001"
 M1_PROJECT_REVISION = "m1_001_projects"
 M1_AUDIT_REVISION = "m1_002_scoped_audit"
+M1_AUTHORITY_REVISION = "m1_003_authority_core"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -44,6 +45,17 @@ M1_AUDIT_REQUIRED_TABLES = frozenset(
         "audit_anchor_recovery_checkpoints",
     }
 )
+M1_AUTHORITY_REQUIRED_TABLES = frozenset(
+    {
+        "deployment_profiles",
+        "deployment_instances",
+        "authority_epoch_credentials",
+        "authority_trust_anchors",
+        "deployment_instance_leases",
+        "workspace_authorities",
+        "authority_commit_intents",
+    }
+)
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
@@ -61,6 +73,24 @@ M1_AUDIT_TRIGGERS = frozenset(
         "audit_result_bindings_no_delete",
         "audit_result_bindings_no_update",
         "audit_anchor_recovery_checkpoints_no_delete",
+    }
+)
+M1_AUTHORITY_TRIGGERS = frozenset(
+    {
+        "deployment_profiles_no_delete",
+        "deployment_profiles_no_update",
+        "deployment_instances_no_delete",
+        "authority_epoch_credentials_no_delete",
+        "authority_trust_anchors_no_delete",
+        "deployment_instance_leases_no_delete",
+        "workspace_authorities_no_delete",
+        "authority_commit_intents_no_delete",
+    }
+)
+M1_AUTHORITY_REQUIRED_INDEXES = frozenset(
+    {
+        "uq_deployment_instance_leases_active_workspace_epoch",
+        "uq_authority_commit_intents_inflight_workspace",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -211,11 +241,89 @@ M1_AUDIT_REQUIRED_COLUMNS = {
         }
     ),
 }
+M1_AUTHORITY_REQUIRED_COLUMNS = {
+    "deployment_profiles": frozenset({"id", "version", "created_at", "payload_json"}),
+    "deployment_instances": frozenset(
+        {
+            "id",
+            "deployment_profile_id",
+            "status",
+            "device_binding_digest",
+            "activated_at",
+            "payload_json",
+        }
+    ),
+    "authority_epoch_credentials": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "authority_epoch",
+            "deployment_instance_id",
+            "status",
+            "device_binding_digest",
+            "issued_at",
+            "payload_json",
+        }
+    ),
+    "authority_trust_anchors": frozenset(
+        {"id", "workspace_id", "kind", "status", "created_at", "payload_json"}
+    ),
+    "deployment_instance_leases": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "authority_epoch",
+            "deployment_instance_id",
+            "lock_name",
+            "fencing_token",
+            "acquired_at",
+            "released_at",
+            "payload_json",
+        }
+    ),
+    "workspace_authorities": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "deployment_profile_id",
+            "deployment_instance_id",
+            "epoch",
+            "authority_generation",
+            "authority_state_root",
+            "authority_epoch_credential_id",
+            "trust_anchor_id",
+            "active_lease_id",
+            "state",
+            "version",
+            "payload_json",
+        }
+    ),
+    "authority_commit_intents": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "epoch",
+            "deployment_instance_id",
+            "prior_generation",
+            "next_generation",
+            "prior_state_root",
+            "mutation_digest",
+            "proposed_state_root",
+            "state",
+            "created_at",
+            "payload_json",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
     **M1_CURRENT_REQUIRED_COLUMNS,
     **M1_AUDIT_REQUIRED_COLUMNS,
+}
+M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS = {
+    **M1_AUDIT_CURRENT_REQUIRED_COLUMNS,
+    **M1_AUTHORITY_REQUIRED_COLUMNS,
 }
 
 
@@ -301,6 +409,45 @@ def _m1_audit_triggers_match(connection: sqlite3.Connection) -> bool:
     return M1_AUDIT_TRIGGERS.issubset(triggers)
 
 
+def _m1_authority_schema_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    indexes = {
+        row[0]: " ".join((row[1] or "").lower().split())
+        for row in connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' ORDER BY name"
+        )
+    }
+    lease_sql = indexes.get("uq_deployment_instance_leases_active_workspace_epoch", "")
+    commit_sql = indexes.get("uq_authority_commit_intents_inflight_workspace", "")
+    return (
+        M1_AUTHORITY_TRIGGERS.issubset(triggers)
+        and M1_AUTHORITY_REQUIRED_INDEXES.issubset(indexes)
+        and all(
+            fragment in lease_sql
+            for fragment in (
+                "create unique index",
+                "on deployment_instance_leases",
+                "workspace_id, authority_epoch",
+                "where released_at is null",
+            )
+        )
+        and all(
+            fragment in commit_sql
+            for fragment in (
+                "create unique index",
+                "on authority_commit_intents",
+                "workspace_id",
+                "where state not in ('anchor_finalized', 'quarantined')",
+            )
+        )
+    )
+
+
 @contextmanager
 def _classification_path(path: Path) -> Iterator[Path]:
     """Avoid touching live WAL shared-memory bytes while classifying a database."""
@@ -362,11 +509,15 @@ def classify_database(path: Path) -> DatabaseStatus:
             )
             m1_current_tables = frozenset({*current_tables, *M1_ADDITIVE_REQUIRED_TABLES})
             m1_audit_current_tables = frozenset({*m1_current_tables, *M1_AUDIT_REQUIRED_TABLES})
+            m1_authority_current_tables = frozenset(
+                {*m1_audit_current_tables, *M1_AUTHORITY_REQUIRED_TABLES}
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
                 m1_current_tables,
                 m1_audit_current_tables,
+                m1_authority_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -375,8 +526,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = CURRENT_REQUIRED_COLUMNS
                 elif tables == m1_current_tables:
                     expected_columns = M1_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m1_audit_current_tables:
                     expected_columns = M1_AUDIT_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -402,26 +555,43 @@ def classify_database(path: Path) -> DatabaseStatus:
                                 "apply the transactional provenance migration"
                             ),
                         )
-                    expected_revision = (
-                        M1_PROJECT_REVISION if tables == m1_current_tables else M1_AUDIT_REVISION
-                    )
+                    if tables == m1_current_tables:
+                        expected_revision = M1_PROJECT_REVISION
+                    elif tables == m1_audit_current_tables:
+                        expected_revision = M1_AUDIT_REVISION
+                    else:
+                        expected_revision = M1_AUTHORITY_REVISION
                     m1_revision_matches = tables in {
                         stamped_v1_tables,
                         current_tables,
                     } or connection.execute(
                         "SELECT version_num FROM alembic_version"
                     ).fetchall() == [(expected_revision,)]
-                    audit_triggers_match = (
-                        tables != m1_audit_current_tables or _m1_audit_triggers_match(connection)
+                    audit_triggers_match = tables not in {
+                        m1_audit_current_tables,
+                        m1_authority_current_tables,
+                    } or _m1_audit_triggers_match(connection)
+                    authority_controls_match = (
+                        tables != m1_authority_current_tables
+                        or _m1_authority_schema_controls_match(connection)
                     )
                     if (
-                        tables in {current_tables, m1_current_tables, m1_audit_current_tables}
+                        tables
+                        in {
+                            current_tables,
+                            m1_current_tables,
+                            m1_audit_current_tables,
+                            m1_authority_current_tables,
+                        }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
                         and m1_revision_matches
                         and audit_triggers_match
+                        and authority_controls_match
                     ):
-                        if tables == m1_audit_current_tables:
+                        if tables == m1_authority_current_tables:
+                            detail = "database schema is current with M1 authority persistence"
+                        elif tables == m1_audit_current_tables:
                             detail = "database schema is current with M1 scoped audit persistence"
                         elif tables == m1_current_tables:
                             detail = "database schema is current with M1 project persistence"
