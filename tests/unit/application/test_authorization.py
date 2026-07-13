@@ -40,6 +40,7 @@ from corvus.domain.audit import (
     WorkspaceSigningKeyVersion,
     authorization_snapshot_digest,
 )
+from corvus.domain.client import ClientContext, ClientSurface
 from corvus.domain.deployment import (
     AuthorityEpochCredential,
     AuthorityEpochCredentialStatus,
@@ -59,6 +60,7 @@ from corvus.domain.deployment import (
     fixed_workspace_lock_name,
 )
 from corvus.domain.execution import ExecutionKind, ExecutionPlacement, ExecutionStatus
+from corvus.domain.scope import AudiencePolicySnapshot
 
 
 def _exact_allow_case() -> tuple[
@@ -121,6 +123,8 @@ def _exact_allow_case() -> tuple[
         KillSwitchScopeBinding(scope_kind="workspace", scope_id=workspace_id),
         KillSwitchScopeBinding(scope_kind="agent", scope_id=agent_id),
     )
+    audience_policy_snapshot_id = uuid4()
+    client_context_id = uuid4()
     request = AuthorizationRequest(
         workspace_id=workspace_id,
         request_context_id=uuid4(),
@@ -141,6 +145,12 @@ def _exact_allow_case() -> tuple[
         kill_switch_snapshot_ids=kill_switch_snapshot_ids,
         kill_switch_snapshot_digest="e" * 64,
         kill_switch_scope_bindings=kill_switch_scope_bindings,
+        audience_policy_snapshot_id=audience_policy_snapshot_id,
+        audience_policy_digest="f" * 64,
+        scope_digest="0" * 64,
+        client_context_id=client_context_id,
+        client_surface=ClientSurface.CLI,
+        transport_principal_id=requester_id,
         requester_id=requester_id,
         acting_agent_id=agent_id,
         scope_kind="project",
@@ -332,6 +342,26 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         hierarchy_exhaustive=True,
         finalized=True,
     )
+    audience_policy_snapshot = AudiencePolicySnapshot(
+        id=request.audience_policy_snapshot_id,
+        workspace_id=request.workspace_id,
+        visibility="explicit_principals",
+        principal_ids=frozenset({request.requester_id}),
+        scope_digest=request.scope_digest,
+        policy_version=1,
+        policy_digest=request.audience_policy_digest,
+        created_by=request.requester_id,
+        created_at=request.evaluated_at - timedelta(minutes=1),
+    )
+    client_context = ClientContext(
+        id=request.client_context_id,
+        surface=request.client_surface,
+        transport_principal_id=request.transport_principal_id,
+        session_id=uuid4(),
+        origin="test-client",
+        issued_at=request.evaluated_at - timedelta(minutes=1),
+        expires_at=request.evaluated_at + timedelta(minutes=5),
+    )
     return AuthorityEvaluationContext(
         deployment_instance=deployment_instance,
         workspace_authority=authority,
@@ -350,6 +380,10 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         authority_manifest_families=authority_manifest_families,
         mutable_authority_families=frozenset({"workspace_memberships", "access_bundles"}),
         kill_switch_verification_proof=kill_switch_verification_proof,
+        audience_policy_snapshot=audience_policy_snapshot,
+        requester_role_ids=frozenset(),
+        client_context=client_context,
+        enabled_client_surfaces=frozenset(ClientSurface),
         deployment_instance_key_available=True,
         os_lock_held=True,
     )
@@ -2595,3 +2629,172 @@ def test_authorization_snapshot_verification_proof_substitution_fails_closed() -
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "authorization_snapshot_verification_proof_mismatch"
+
+
+def test_requester_outside_immutable_audience_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    audience = context.audience_policy_snapshot
+    assert audience is not None
+    denied_audience = audience.model_copy(update={"principal_ids": frozenset()})
+    context = context.model_copy(update={"audience_policy_snapshot": denied_audience})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "audience_principal_denied"
+
+
+def test_disabled_client_surface_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"enabled_client_surfaces": frozenset({ClientSurface.WEB})}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "client_surface_disabled"
+
+
+def test_missing_audience_snapshot_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"audience_policy_snapshot": None}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "audience_policy_snapshot_missing"
+
+
+def test_audience_snapshot_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    audience = context.audience_policy_snapshot
+    assert audience is not None
+    substituted = audience.model_copy(update={"id": uuid4()})
+    context = context.model_copy(update={"audience_policy_snapshot": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "audience_policy_snapshot_mismatch"
+
+
+def test_future_audience_snapshot_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    audience = context.audience_policy_snapshot
+    assert audience is not None
+    future = audience.model_copy(update={"created_at": case[0].evaluated_at + timedelta(seconds=1)})
+    context = context.model_copy(update={"audience_policy_snapshot": future})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "audience_policy_snapshot_not_yet_current"
+
+
+def test_matching_role_audience_allows() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    audience = context.audience_policy_snapshot
+    assert audience is not None
+    role_id = uuid4()
+    role_audience = audience.model_copy(
+        update={
+            "visibility": "role",
+            "principal_ids": frozenset(),
+            "role_ids": frozenset({role_id}),
+        }
+    )
+    context = context.model_copy(
+        update={
+            "audience_policy_snapshot": role_audience,
+            "requester_role_ids": frozenset({role_id}),
+        }
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"
+
+
+def test_wrong_scoped_audience_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    audience = context.audience_policy_snapshot
+    assert audience is not None
+    wrong_scope = audience.model_copy(
+        update={
+            "visibility": "thread",
+            "principal_ids": frozenset(),
+        }
+    )
+    context = context.model_copy(update={"audience_policy_snapshot": wrong_scope})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "audience_scope_mismatch"
+
+
+def test_transport_principal_substitution_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    client = context.client_context
+    assert client is not None
+    substituted = client.model_copy(update={"transport_principal_id": uuid4()})
+    context = context.model_copy(update={"client_context": substituted})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "transport_principal_mismatch"
+
+
+def test_expired_client_context_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    client = context.client_context
+    assert client is not None
+    expired = client.model_copy(update={"expires_at": case[0].evaluated_at})
+    context = context.model_copy(update={"client_context": expired})
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "client_context_expired"
+
+
+def test_enabled_client_surfaces_have_identical_allow_decisions() -> None:
+    base_case = _exact_allow_case()
+    results: list[AuthorizationResult] = []
+    for surface in ClientSurface:
+        request = base_case[0].model_copy(update={"client_surface": surface})
+        case = (request, *base_case[1:])
+        results.append(_evaluate_direct_case(case, _valid_authority_context(request)))
+
+    assert {result.decision for result in results} == {AuthorizationDecision.ALLOW}
+    assert {result.reason_code for result in results} == {"exact_capability_intersection"}
+    assert {result.actions for result in results} == {frozenset({base_case[0].action})}
+
+
+def test_enabled_client_surfaces_have_identical_audience_denials() -> None:
+    base_case = _exact_allow_case()
+    results: list[AuthorizationResult] = []
+    for surface in ClientSurface:
+        request = base_case[0].model_copy(update={"client_surface": surface})
+        case = (request, *base_case[1:])
+        context = _valid_authority_context(request)
+        audience = context.audience_policy_snapshot
+        assert audience is not None
+        denied = audience.model_copy(update={"principal_ids": frozenset()})
+        context = context.model_copy(update={"audience_policy_snapshot": denied})
+        results.append(_evaluate_direct_case(case, context))
+
+    assert {result.decision for result in results} == {AuthorizationDecision.DENY}
+    assert {result.reason_code for result in results} == {"audience_principal_denied"}

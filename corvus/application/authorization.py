@@ -24,6 +24,7 @@ from corvus.domain.audit import (
     authorization_snapshot_digest,
     validate_signing_time,
 )
+from corvus.domain.client import ClientContext, ClientSurface
 from corvus.domain.deployment import (
     AuthorityContractError,
     AuthorityEpochCredential,
@@ -48,6 +49,7 @@ from corvus.domain.deployment import (
     validate_registry_verifier_time,
 )
 from corvus.domain.execution import ExecutionPlacement, ExecutionStatus
+from corvus.domain.scope import AudiencePolicySnapshot
 
 
 class AuthorizationDecision(StrEnum):
@@ -123,6 +125,12 @@ class AuthorizationRequest(BaseModel):
     kill_switch_snapshot_ids: tuple[UUID, ...]
     kill_switch_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     kill_switch_scope_bindings: tuple[KillSwitchScopeBinding, ...]
+    audience_policy_snapshot_id: UUID
+    audience_policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scope_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    client_context_id: UUID
+    client_surface: ClientSurface
+    transport_principal_id: UUID
     requester_id: UUID
     acting_agent_id: UUID
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
@@ -267,6 +275,10 @@ class AuthorityEvaluationContext(BaseModel):
     credential_verification_proof: CredentialVerificationProof | None = None
     budget_runtime_verification_proof: BudgetRuntimeVerificationProof | None = None
     kill_switch_verification_proof: KillSwitchVerificationProof | None = None
+    audience_policy_snapshot: AudiencePolicySnapshot | None = None
+    requester_role_ids: frozenset[UUID] = frozenset()
+    client_context: ClientContext | None = None
+    enabled_client_surfaces: frozenset[ClientSurface] = frozenset()
     expected_credential_rotation_epoch: int | None = Field(default=None, ge=1)
     expected_credential_nonce_digest: str | None = Field(
         default=None,
@@ -837,6 +849,57 @@ def _kill_switch_denial_reason(
     return None
 
 
+def _audience_client_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> str | None:
+    if context is None:
+        return "authority_context_missing"
+    audience = context.audience_policy_snapshot
+    client = context.client_context
+    if audience is None:
+        return "audience_policy_snapshot_missing"
+    if client is None:
+        return "client_context_missing"
+    if (
+        audience.id != request.audience_policy_snapshot_id
+        or audience.workspace_id != request.workspace_id
+        or audience.policy_digest != request.audience_policy_digest
+        or audience.scope_digest != request.scope_digest
+    ):
+        return "audience_policy_snapshot_mismatch"
+    if audience.created_at > request.evaluated_at:
+        return "audience_policy_snapshot_not_yet_current"
+    audience_allows = False
+    if audience.visibility == "personal":
+        audience_allows = audience.owner_principal_id == request.requester_id
+    elif audience.visibility == "explicit_principals":
+        audience_allows = request.requester_id in audience.principal_ids
+    elif audience.visibility == "role":
+        audience_allows = bool(audience.role_ids & context.requester_role_ids)
+    elif audience.visibility in {"project", "channel", "thread"}:
+        if audience.visibility != request.scope_kind:
+            return "audience_scope_mismatch"
+        audience_allows = True
+    elif audience.visibility == "workspace":
+        audience_allows = True
+    if not audience_allows:
+        return "audience_principal_denied"
+    if request.client_surface not in context.enabled_client_surfaces:
+        return "client_surface_disabled"
+    if client.id != request.client_context_id:
+        return "client_context_mismatch"
+    if client.surface is not request.client_surface:
+        return "client_surface_mismatch"
+    if client.transport_principal_id != request.transport_principal_id:
+        return "transport_principal_mismatch"
+    if client.issued_at > request.evaluated_at:
+        return "client_context_not_yet_active"
+    if client.expires_at is not None and request.evaluated_at >= client.expires_at:
+        return "client_context_expired"
+    return None
+
+
 def _authority_denial_reason(
     request: AuthorizationRequest,
     context: AuthorityEvaluationContext | None,
@@ -1185,6 +1248,12 @@ def evaluate_capability_intersection(
             reason_code="no_requester_grant",
         )
     if bundles_match and grants_current and requester_allows and agent_allows:
+        audience_client_denial = _audience_client_denial_reason(request, authority_context)
+        if audience_client_denial is not None:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code=audience_client_denial,
+            )
         return AuthorizationResult(
             decision=AuthorizationDecision.ALLOW,
             reason_code=(
