@@ -12,10 +12,14 @@ from corvus.domain.deployment import (
     AuthorityMode,
     AuthProfile,
     ConfigurationContractError,
+    DeploymentInstance,
     DeploymentInstanceLease,
+    DeploymentInstanceStatus,
     DeploymentProfile,
     NetworkProfile,
     StorageProfile,
+    WorkspaceAuthority,
+    WorkspaceAuthorityState,
     fixed_workspace_lock_name,
     validate_configuration_combination,
     validate_exclusive_instance_lease,
@@ -161,3 +165,39 @@ def test_same_epoch_clone_cannot_hold_fixed_workspace_lock() -> None:
         )
 
     assert exc_info.value.reason_code == "same_epoch_instance_lease_conflict"
+
+
+def test_deployment_instance_cannot_persist_private_activation_capability() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DeploymentInstance.model_validate(
+            {
+                "deployment_profile_id": str(uuid4()),
+                "instance_public_key": "public-key-material",
+                "non_exportable_activation_key_ref": "keyring://corvus/instance/current",
+                "device_binding_digest": "a" * 64,
+                "status": DeploymentInstanceStatus.ACTIVE,
+                "activation_private_key": "must-never-be-persisted",
+            }
+        )
+
+    assert tuple(exc_info.value.errors()[0]["loc"]) == ("activation_private_key",)
+    assert exc_info.value.errors()[0]["type"] == "extra_forbidden"
+
+
+def test_active_workspace_authority_requires_exclusive_instance_lease() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        WorkspaceAuthority(
+            workspace_id=uuid4(),
+            deployment_profile_id=uuid4(),
+            deployment_instance_id=uuid4(),
+            epoch=2,
+            authority_generation=9,
+            authority_state_root="b" * 64,
+            authority_epoch_credential_id=uuid4(),
+            trust_anchor_id=uuid4(),
+            state=WorkspaceAuthorityState.ACTIVE,
+        )
+
+    assert exc_info.value.errors()[0]["ctx"]["reason_code"] == (
+        "active_authority_requires_exclusive_lease"
+    )

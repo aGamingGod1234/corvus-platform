@@ -60,6 +60,119 @@ class DeploymentProfile(BaseModel):
     updated_at: datetime = Field(default_factory=_now_utc)
 
 
+class DeploymentInstanceStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    RETIRED = "retired"
+
+
+class DeploymentInstance(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    deployment_profile_id: UUID
+    instance_public_key: str = Field(min_length=1)
+    non_exportable_activation_key_ref: str = Field(min_length=1)
+    device_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: DeploymentInstanceStatus = DeploymentInstanceStatus.ACTIVE
+    activated_at: datetime = Field(default_factory=_now_utc)
+    revoked_at: datetime | None = None
+    retired_at: datetime | None = None
+
+
+class WorkspaceAuthorityState(StrEnum):
+    ACTIVE = "active"
+    HANDOFF_PENDING = "handoff_pending"
+    CLOSED = "closed"
+    RESTORE_QUARANTINE = "restore_quarantine"
+
+
+class WorkspaceAuthority(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    deployment_profile_id: UUID
+    deployment_instance_id: UUID
+    epoch: int = Field(ge=1)
+    authority_generation: int = Field(ge=0)
+    authority_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    authority_epoch_credential_id: UUID
+    trust_anchor_id: UUID
+    active_lease_id: UUID | None = None
+    state: WorkspaceAuthorityState
+    previous_epoch_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    activated_at: datetime = Field(default_factory=_now_utc)
+    closed_at: datetime | None = None
+    version: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def validate_active_lease(self) -> WorkspaceAuthority:
+        if (
+            self.state
+            in {
+                WorkspaceAuthorityState.ACTIVE,
+                WorkspaceAuthorityState.HANDOFF_PENDING,
+            }
+            and self.active_lease_id is None
+        ):
+            raise PydanticCustomError(
+                "active_authority_without_lease",
+                "reason_code={reason_code}",
+                {"reason_code": "active_authority_requires_exclusive_lease"},
+            )
+        return self
+
+
+class AuthorityTrustAnchorKind(StrEnum):
+    REGISTRY_GENERATION = "registry_generation"
+    SEALED_LOCAL_GENERATION = "sealed_local_generation"
+
+
+class AuthorityTrustAnchorStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    RETIRED = "retired"
+
+
+class AuthorityTrustAnchor(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    kind: AuthorityTrustAnchorKind
+    anchor_registry_id: UUID | None = None
+    pinned_registry_root_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    local_lock_name: str | None = Field(default=None, min_length=1, max_length=200)
+    sealed_generation_ref: str | None = Field(default=None, min_length=1)
+    device_binding_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: AuthorityTrustAnchorStatus = AuthorityTrustAnchorStatus.ACTIVE
+    created_at: datetime = Field(default_factory=_now_utc)
+
+
+class AuthorityEpochCredentialStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    DESTROYED = "destroyed"
+
+
+class AuthorityEpochCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    authority_epoch: int = Field(ge=1)
+    deployment_instance_id: UUID
+    public_key: str = Field(min_length=1)
+    non_exportable_private_key_ref: str = Field(min_length=1)
+    device_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: AuthorityEpochCredentialStatus = AuthorityEpochCredentialStatus.ACTIVE
+    issued_at: datetime = Field(default_factory=_now_utc)
+    revoked_at: datetime | None = None
+    destroyed_at: datetime | None = None
+
+
 def validate_configuration_combination(
     profile: DeploymentProfile,
     workspace: object,
@@ -204,6 +317,64 @@ def validate_exclusive_instance_lease(
         )
 
 
+class RegistryVerifierKeyStatus(StrEnum):
+    ACTIVE = "active"
+    ROTATED = "rotated"
+    REVOKED = "revoked"
+    COMPROMISED = "compromised"
+
+
+class AuthorityRegistryVerifierKeyVersion(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    registry_id: UUID
+    key_version: int = Field(ge=1)
+    public_key: str = Field(min_length=1)
+    status: RegistryVerifierKeyStatus
+    valid_from: datetime
+    valid_until: datetime | None = None
+    revoked_at: datetime | None = None
+    compromise_effective_at: datetime | None = None
+    predecessor_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    threshold_attestation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def validate_registry_verifier_time(
+    verifier: AuthorityRegistryVerifierKeyVersion,
+    *,
+    now: datetime,
+) -> None:
+    if now < verifier.valid_from:
+        raise AuthorityContractError(
+            "registry_verifier_not_yet_valid",
+            "registry verifier key is not yet valid",
+        )
+    if verifier.valid_until is not None and now >= verifier.valid_until:
+        raise AuthorityContractError(
+            "registry_verifier_expired",
+            "registry verifier key has expired",
+        )
+    if (
+        verifier.status is RegistryVerifierKeyStatus.REVOKED
+        and verifier.revoked_at is not None
+        and now >= verifier.revoked_at
+    ):
+        raise AuthorityContractError(
+            "registry_verifier_revoked_at_verification_time",
+            "registry verifier key was revoked at verification time",
+        )
+    if (
+        verifier.status is RegistryVerifierKeyStatus.COMPROMISED
+        and verifier.compromise_effective_at is not None
+        and now >= verifier.compromise_effective_at
+    ):
+        raise AuthorityContractError(
+            "registry_verifier_compromised_at_verification_time",
+            "registry verifier key was compromised at verification time",
+        )
+
+
 class AuthorityRegistryTrustState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -261,6 +432,18 @@ class AuthorityStateRootLeafFamily(BaseModel):
     canonicalization_version: int = Field(ge=1)
 
 
+class AuthorityStateRootLeafCommitment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    manifest_version_id: UUID
+    authority_generation: int = Field(ge=0)
+    ordinal: int = Field(ge=1)
+    family_name: str = Field(min_length=1, max_length=200)
+    record_version: int = Field(ge=1)
+    leaf_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    external_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class AuthorityRegistryFreshnessProof(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -291,6 +474,45 @@ def validate_authority_root_manifest(
         )
 
 
+def validate_authority_family_commitments(
+    manifest: AuthorityStateRootManifestVersion,
+    families: list[AuthorityStateRootLeafFamily],
+    commitments: list[AuthorityStateRootLeafCommitment],
+    *,
+    observed_leaf_digests: dict[str, str],
+) -> None:
+    family_by_name = {family.family_name: family for family in families}
+    commitment_by_name = {commitment.family_name: commitment for commitment in commitments}
+    expected_names = set(family_by_name)
+    if (
+        len(family_by_name) != len(families)
+        or len(commitment_by_name) != len(commitments)
+        or set(commitment_by_name) != expected_names
+        or set(observed_leaf_digests) != expected_names
+    ):
+        raise AuthorityContractError(
+            "authority_family_commitment_set_mismatch",
+            "manifest families, commitments, and observed leaves must match exactly",
+        )
+    for family_name in sorted(expected_names):
+        family = family_by_name[family_name]
+        commitment = commitment_by_name[family_name]
+        if (
+            family.manifest_version_id != manifest.id
+            or commitment.manifest_version_id != manifest.id
+            or commitment.ordinal != family.ordinal
+        ):
+            raise AuthorityContractError(
+                "authority_family_commitment_binding_mismatch",
+                "a leaf commitment does not bind its exact manifest family",
+            )
+        if observed_leaf_digests[family_name] != commitment.leaf_digest:
+            raise AuthorityContractError(
+                "authority_family_rollback_detected",
+                f"authority family {family_name!r} does not match its committed digest",
+            )
+
+
 def validate_registry_freshness_proof(
     proof: AuthorityRegistryFreshnessProof,
     trust_state: AuthorityRegistryTrustState,
@@ -317,6 +539,11 @@ def validate_registry_trust_transition(
     *,
     now: datetime,
 ) -> None:
+    if current.registry_id != previous.registry_id:
+        raise AuthorityContractError(
+            "registry_identity_mismatch",
+            "registry trust metadata belongs to another registry",
+        )
     if current.metadata_version != previous.metadata_version + 1:
         raise AuthorityContractError(
             "registry_metadata_version_skipped",
@@ -326,6 +553,26 @@ def validate_registry_trust_transition(
         raise AuthorityContractError(
             "registry_metadata_prefix_mismatch",
             "registry trust metadata does not bind its exact predecessor",
+        )
+    if current.complete_history_head_digest == previous.complete_history_head_digest:
+        raise AuthorityContractError(
+            "registry_history_head_frozen",
+            "registry history head did not advance",
+        )
+    if current.issued_at <= previous.issued_at:
+        raise AuthorityContractError(
+            "registry_metadata_time_not_advanced",
+            "registry trust metadata issuance time did not advance",
+        )
+    if current.latest_verifier_key_version < previous.latest_verifier_key_version:
+        raise AuthorityContractError(
+            "registry_verifier_version_rollback",
+            "registry verifier key version moved backward",
+        )
+    if current.latest_verifier_key_version > previous.latest_verifier_key_version + 1:
+        raise AuthorityContractError(
+            "registry_verifier_version_skipped",
+            "registry verifier key version skipped rotation history",
         )
     if current.expires_at <= now:
         raise AuthorityContractError(
@@ -430,19 +677,27 @@ class RestoreValidationReceipt(BaseModel):
     takeover_lease_or_local_anchor_receipt_digest: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
+    takeover_epoch: int | None = Field(default=None, ge=2)
     decision: RestoreDecision = RestoreDecision.READ_QUEUE_ONLY
     reason_code: str = Field(min_length=1, max_length=200)
     validated_at: datetime = Field(default_factory=_now_utc)
 
     @model_validator(mode="after")
     def validate_takeover_evidence(self) -> RestoreValidationReceipt:
-        if self.decision is RestoreDecision.EXCLUSIVE_TAKEOVER_NEW_EPOCH and (
-            self.former_instance_revocation_digest is None
-            or self.takeover_lease_or_local_anchor_receipt_digest is None
-        ):
-            raise PydanticCustomError(
-                "unsafe_restore_takeover",
-                "reason_code={reason_code}",
-                {"reason_code": "takeover_requires_revocation_and_exclusive_receipt"},
-            )
+        if self.decision is RestoreDecision.EXCLUSIVE_TAKEOVER_NEW_EPOCH:
+            if (
+                self.former_instance_revocation_digest is None
+                or self.takeover_lease_or_local_anchor_receipt_digest is None
+            ):
+                raise PydanticCustomError(
+                    "unsafe_restore_takeover",
+                    "reason_code={reason_code}",
+                    {"reason_code": "takeover_requires_revocation_and_exclusive_receipt"},
+                )
+            if self.takeover_epoch != self.observed_epoch + 1:
+                raise PydanticCustomError(
+                    "unsafe_restore_takeover_epoch",
+                    "reason_code={reason_code}",
+                    {"reason_code": "takeover_epoch_must_advance_once"},
+                )
         return self
