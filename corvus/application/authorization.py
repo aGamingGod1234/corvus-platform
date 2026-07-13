@@ -142,17 +142,63 @@ def evaluate_capability_intersection(
             decision=AuthorizationDecision.DENY,
             reason_code="agent_grant_expired",
         )
+    delegation: DelegationGrant | None = None
+    if len(delegation_grants) > 1:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="delegation_chain_unverifiable",
+        )
+    if delegation_grants:
+        delegation = delegation_grants[0]
+        if delegation.parent_agent_grant_id != agent_grant.id:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_parent_mismatch",
+            )
+        if delegation.child_agent_id != request.acting_agent_id:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_child_mismatch",
+            )
+        if delegation.revoked_at is not None:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_revoked",
+            )
+        if request.evaluated_at < delegation.issued_at:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_not_yet_active",
+            )
+        if request.evaluated_at >= delegation.expires_at:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_expired",
+            )
+        if delegation.depth_limit < 1:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_depth_exceeded",
+            )
+        if request.action not in delegation.capabilities:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code="delegation_overreach",
+            )
+    expected_bundle_principal_id = (
+        agent_grant.agent_id if delegation is not None else request.acting_agent_id
+    )
     bundles_match = (
         requester_bundle.workspace_id == request.workspace_id
         and requester_bundle.principal_id == request.requester_id
         and requester_bundle.scope_kind == request.scope_kind
         and requester_bundle.scope_id == request.scope_id
         and agent_bundle.workspace_id == request.workspace_id
-        and agent_bundle.principal_id == request.acting_agent_id
+        and agent_bundle.principal_id == expected_bundle_principal_id
         and agent_bundle.scope_kind == request.scope_kind
         and agent_bundle.scope_id == request.scope_id
         and agent_grant.workspace_id == request.workspace_id
-        and agent_grant.agent_id == request.acting_agent_id
+        and agent_grant.agent_id == expected_bundle_principal_id
         and agent_grant.capability_bundle_id == agent_bundle.id
     )
     grants_current = (
@@ -187,16 +233,14 @@ def evaluate_capability_intersection(
             decision=AuthorizationDecision.DENY,
             reason_code="no_requester_grant",
         )
-    if (
-        bundles_match
-        and grants_current
-        and requester_allows
-        and agent_allows
-        and not delegation_grants
-    ):
+    if bundles_match and grants_current and requester_allows and agent_allows:
         return AuthorizationResult(
             decision=AuthorizationDecision.ALLOW,
-            reason_code="exact_capability_intersection",
+            reason_code=(
+                "delegated_capability_intersection"
+                if delegation is not None
+                else "exact_capability_intersection"
+            ),
             actions=frozenset({request.action}),
         )
     return AuthorizationResult(
