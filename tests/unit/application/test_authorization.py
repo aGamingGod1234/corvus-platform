@@ -11,13 +11,18 @@ from corvus.application.authorization import (
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
+    AuthorizationSnapshotExpectedInputs,
+    AuthorizationSnapshotVerificationProof,
     BudgetRuntimeVerificationProof,
     CredentialVerificationProof,
     KillSwitchScopeBinding,
     KillSwitchSnapshotEntry,
     KillSwitchVerificationProof,
     RegistryVerificationProof,
+    authorization_snapshot_bound_input_digest,
+    authorization_snapshot_record_digest,
     evaluate_capability_intersection,
+    verify_authorization_decision_snapshot,
 )
 from corvus.domain.access import (
     AccessBundle,
@@ -28,6 +33,12 @@ from corvus.domain.access import (
     CredentialRef,
     CredentialStatus,
     DelegationGrant,
+)
+from corvus.domain.audit import (
+    AuthorizationDecisionSnapshot,
+    SigningKeyStatus,
+    WorkspaceSigningKeyVersion,
+    authorization_snapshot_digest,
 )
 from corvus.domain.deployment import (
     AuthorityEpochCredential,
@@ -2308,3 +2319,279 @@ def test_clear_workspace_agent_workflow_run_hierarchy_allows() -> None:
 
     assert result.decision is AuthorizationDecision.ALLOW
     assert result.reason_code == "exact_capability_intersection"
+
+
+def _authorization_snapshot_case() -> tuple[
+    AuthorizationDecisionSnapshot,
+    AuthorizationSnapshotExpectedInputs,
+    WorkspaceSigningKeyVersion,
+    AuthorizationSnapshotVerificationProof,
+    datetime,
+]:
+    case = _exact_allow_case()
+    request, requester_bundle, _, agent_grant, _, _ = case
+    canonical_inputs = {
+        "action": request.action,
+        "resource_id": str(request.resource_id),
+        "workspace_id": str(request.workspace_id),
+    }
+    source_versions = {"access_bundle": 1, "agent_grant": 1}
+    canonical_digest = authorization_snapshot_digest(canonical_inputs, source_versions)
+    signing_key = WorkspaceSigningKeyVersion(
+        workspace_id=request.workspace_id,
+        key_epoch=1,
+        algorithm="ed25519",
+        public_key="workspace-public-key",
+        non_exportable_private_key_ref="keyring://corvus/workspace-signing/current",
+        status=SigningKeyStatus.ACTIVE,
+        valid_from=request.evaluated_at - timedelta(hours=1),
+        attestation_digest="a" * 64,
+    )
+    snapshot = AuthorizationDecisionSnapshot(
+        workspace_id=request.workspace_id,
+        request_context_id=request.request_context_id,
+        deployment_instance_id=request.deployment_instance_id,
+        authority_epoch_credential_id=request.authority_epoch_credential_id,
+        authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
+        authority_commit_receipt_id=request.authority_commit_receipt_id,
+        authority_proof_digest=request.authority_proof_digest,
+        membership_version_ids=(uuid4(),),
+        membership_digest="b" * 64,
+        scope_kind=request.scope_kind,
+        scope_id=request.scope_id,
+        scope_digest="c" * 64,
+        audience_policy_snapshot_id=uuid4(),
+        audience_digest="d" * 64,
+        requester_id=request.requester_id,
+        transport_principal_id=request.requester_id,
+        access_bundle_id=requester_bundle.id,
+        access_bundle_version_digest="e" * 64,
+        agent_grant_id=agent_grant.id,
+        agent_delegation_digest="f" * 64,
+        execution_placement_id=request.execution_placement_id,
+        provider_connection_id=request.provider_connection_id,
+        credential_grant_id=request.credential_grant_id,
+        credential_version_id=request.credential_version_id,
+        policy_digest=requester_bundle.policy_digest,
+        autonomy_policy_digest="0" * 64,
+        budget_snapshot_ids=request.budget_snapshot_ids,
+        budget_snapshot_digest=request.budget_snapshot_digest or "1" * 64,
+        kill_switch_snapshot_ids=request.kill_switch_snapshot_ids,
+        kill_switch_snapshot_digest=request.kill_switch_snapshot_digest,
+        decision="allow",
+        reason_code="exact_capability_intersection",
+        canonical_inputs_json=canonical_inputs,
+        source_record_version_map=source_versions,
+        canonical_digest=canonical_digest,
+        signing_key_version_id=signing_key.id,
+        snapshot_signature="verified-snapshot-signature",
+        created_at=request.evaluated_at - timedelta(seconds=1),
+    )
+    record_digest = authorization_snapshot_record_digest(snapshot)
+    bound_input_digest = authorization_snapshot_bound_input_digest(snapshot)
+    expected = AuthorizationSnapshotExpectedInputs(
+        authorization_snapshot_id=snapshot.id,
+        authorization_snapshot_digest=record_digest,
+        bound_input_digest=bound_input_digest,
+        signing_key_version_id=signing_key.id,
+        verified_at=request.evaluated_at,
+    )
+    proof = AuthorizationSnapshotVerificationProof(
+        authorization_snapshot_id=snapshot.id,
+        authorization_snapshot_digest=record_digest,
+        bound_input_digest=bound_input_digest,
+        signing_key_version_id=signing_key.id,
+        signature_verified=True,
+        referential_integrity_verified=True,
+        finalized=True,
+    )
+    return snapshot, expected, signing_key, proof, request.evaluated_at
+
+
+def test_exact_signed_authorization_snapshot_verifies() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "authorization_snapshot_verified"
+
+
+def test_canonical_authorization_snapshot_tamper_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    tampered = snapshot.model_copy(update={"canonical_inputs_json": {"action": "admin"}})
+
+    result = verify_authorization_decision_snapshot(
+        tampered,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_digest_mismatch"
+
+
+def test_top_level_authority_snapshot_tamper_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    tampered = snapshot.model_copy(update={"authority_state_root": "9" * 64})
+
+    result = verify_authorization_decision_snapshot(
+        tampered,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_record_digest_mismatch"
+
+
+def test_resigned_stale_snapshot_inputs_fail_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    tampered = snapshot.model_copy(
+        update={"authority_generation": snapshot.authority_generation + 1}
+    )
+    record_digest = authorization_snapshot_record_digest(tampered)
+    expected = expected.model_copy(update={"authorization_snapshot_digest": record_digest})
+    proof = proof.model_copy(update={"authorization_snapshot_digest": record_digest})
+
+    result = verify_authorization_decision_snapshot(
+        tampered,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_bound_inputs_mismatch"
+
+
+def test_unverified_authorization_snapshot_signature_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    proof = proof.model_copy(update={"signature_verified": False})
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_signature_invalid"
+
+
+def test_unverified_snapshot_referential_integrity_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    proof = proof.model_copy(update={"referential_integrity_verified": False})
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_referential_integrity_invalid"
+
+
+def test_unfinalized_authorization_snapshot_proof_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    proof = proof.model_copy(update={"finalized": False})
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_verification_not_finalized"
+
+
+def test_authorization_snapshot_signing_key_substitution_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    substituted = signing_key.model_copy(update={"id": uuid4()})
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=substituted,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_signing_key_mismatch"
+
+
+def test_revoked_snapshot_signing_key_at_signing_time_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    revoked = signing_key.model_copy(
+        update={
+            "status": SigningKeyStatus.REVOKED,
+            "revoked_at": snapshot.created_at,
+        }
+    )
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=revoked,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_signing_key_invalid"
+
+
+def test_future_authorization_snapshot_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    future = snapshot.model_copy(update={"created_at": verified_at + timedelta(seconds=1)})
+    record_digest = authorization_snapshot_record_digest(future)
+    expected = expected.model_copy(update={"authorization_snapshot_digest": record_digest})
+    proof = proof.model_copy(update={"authorization_snapshot_digest": record_digest})
+
+    result = verify_authorization_decision_snapshot(
+        future,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_not_yet_current"
+
+
+def test_authorization_snapshot_verification_proof_substitution_fails_closed() -> None:
+    snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
+    proof = proof.model_copy(update={"authorization_snapshot_id": uuid4()})
+
+    result = verify_authorization_decision_snapshot(
+        snapshot,
+        expected=expected,
+        signing_key=signing_key,
+        verification_proof=proof,
+        verified_at=verified_at,
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authorization_snapshot_verification_proof_mismatch"

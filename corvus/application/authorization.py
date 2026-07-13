@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
@@ -15,6 +17,12 @@ from corvus.domain.access import (
     CredentialRef,
     CredentialStatus,
     DelegationGrant,
+)
+from corvus.domain.audit import (
+    AuthorizationDecisionSnapshot,
+    WorkspaceSigningKeyVersion,
+    authorization_snapshot_digest,
+    validate_signing_time,
 )
 from corvus.domain.deployment import (
     AuthorityContractError,
@@ -133,6 +141,28 @@ class AuthorizationResult(BaseModel):
     actions: frozenset[str] = Field(default_factory=frozenset)
 
 
+class AuthorizationSnapshotExpectedInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    authorization_snapshot_id: UUID
+    authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    bound_input_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signing_key_version_id: UUID
+    verified_at: datetime
+
+
+class AuthorizationSnapshotVerificationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    authorization_snapshot_id: UUID
+    authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    bound_input_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signing_key_version_id: UUID
+    signature_verified: bool
+    referential_integrity_verified: bool
+    finalized: bool
+
+
 class AuthorityCommitProof(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -245,6 +275,140 @@ class AuthorityEvaluationContext(BaseModel):
     deployment_instance_key_available: bool
     epoch_credential_key_available: bool = True
     os_lock_held: bool
+
+
+def _snapshot_digest(
+    snapshot: AuthorizationDecisionSnapshot,
+    *,
+    exclude: set[str],
+) -> str:
+    encoded = json.dumps(
+        snapshot.model_dump(mode="json", exclude=exclude),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def authorization_snapshot_record_digest(
+    snapshot: AuthorizationDecisionSnapshot,
+) -> str:
+    return _snapshot_digest(snapshot, exclude={"snapshot_signature"})
+
+
+def authorization_snapshot_bound_input_digest(
+    snapshot: AuthorizationDecisionSnapshot,
+) -> str:
+    return _snapshot_digest(
+        snapshot,
+        exclude={
+            "id",
+            "created_at",
+            "signing_key_version_id",
+            "snapshot_signature",
+        },
+    )
+
+
+def verify_authorization_decision_snapshot(
+    snapshot: AuthorizationDecisionSnapshot,
+    *,
+    expected: AuthorizationSnapshotExpectedInputs,
+    signing_key: WorkspaceSigningKeyVersion,
+    verification_proof: AuthorizationSnapshotVerificationProof,
+    verified_at: datetime,
+) -> AuthorizationResult:
+    try:
+        canonical_digest = authorization_snapshot_digest(
+            snapshot.canonical_inputs_json,
+            snapshot.source_record_version_map,
+        )
+    except (TypeError, ValueError):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_inputs_not_canonical",
+        )
+    if canonical_digest != snapshot.canonical_digest:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_digest_mismatch",
+        )
+    if expected.verified_at != verified_at:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_expected_time_mismatch",
+        )
+    if snapshot.created_at > verified_at:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_not_yet_current",
+        )
+    if (
+        snapshot.id != expected.authorization_snapshot_id
+        or snapshot.signing_key_version_id != expected.signing_key_version_id
+        or signing_key.id != expected.signing_key_version_id
+        or signing_key.workspace_id != snapshot.workspace_id
+    ):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_signing_key_mismatch",
+        )
+    try:
+        validate_signing_time(signing_key, snapshot.created_at)
+    except ValueError:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_signing_key_invalid",
+        )
+    try:
+        record_digest = authorization_snapshot_record_digest(snapshot)
+        bound_input_digest = authorization_snapshot_bound_input_digest(snapshot)
+    except (TypeError, ValueError):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_inputs_not_canonical",
+        )
+    if record_digest != expected.authorization_snapshot_digest:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_record_digest_mismatch",
+        )
+    if bound_input_digest != expected.bound_input_digest:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_bound_inputs_mismatch",
+        )
+    if (
+        verification_proof.authorization_snapshot_id != snapshot.id
+        or verification_proof.authorization_snapshot_digest != record_digest
+        or verification_proof.bound_input_digest != bound_input_digest
+        or verification_proof.signing_key_version_id != signing_key.id
+    ):
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_verification_proof_mismatch",
+        )
+    if not verification_proof.finalized:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_verification_not_finalized",
+        )
+    if not verification_proof.signature_verified:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_signature_invalid",
+        )
+    if not verification_proof.referential_integrity_verified:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="authorization_snapshot_referential_integrity_invalid",
+        )
+    return AuthorizationResult(
+        decision=AuthorizationDecision.ALLOW,
+        reason_code="authorization_snapshot_verified",
+    )
 
 
 def _registry_denial_reason(
