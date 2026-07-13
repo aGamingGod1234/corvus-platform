@@ -29,6 +29,7 @@ M1_PROJECT_REVISION = "m1_001_projects"
 M1_AUDIT_REVISION = "m1_002_scoped_audit"
 M1_AUTHORITY_REVISION = "m1_003_authority_core"
 M1_REGISTRY_REVISION = "m1_004_registry_manifest"
+M1_AUTHORIZATION_INPUT_REVISION = "m1_005_authorization_inputs"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -70,7 +71,18 @@ M1_REGISTRY_REQUIRED_TABLES = frozenset(
         "authority_state_root_leaf_commitments",
     }
 )
-M1_AUTHORITY_FAMILY_NAMES = frozenset(
+M1_AUTHORIZATION_INPUT_REQUIRED_TABLES = frozenset(
+    {
+        "audience_policy_snapshots",
+        "access_bundles",
+        "capability_grants",
+        "agent_grants",
+        "delegation_grants",
+        "workspace_signing_key_versions",
+        "idempotency_envelopes",
+    }
+)
+M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES = frozenset(
     {
         "audit_anchor_recovery_checkpoints",
         "audit_receipts",
@@ -88,6 +100,18 @@ M1_AUTHORITY_FAMILY_NAMES = frozenset(
         "deployment_instances",
         "projects",
         "workspace_authorities",
+    }
+)
+M1_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        *M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES,
+        "access_bundles",
+        "agent_grants",
+        "audience_policy_snapshots",
+        "capability_grants",
+        "delegation_grants",
+        "idempotency_envelopes",
+        "workspace_signing_key_versions",
     }
 )
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
@@ -132,6 +156,23 @@ M1_REGISTRY_TRIGGERS = frozenset(
         f"{table_name}_{operation}"
         for table_name in M1_REGISTRY_REQUIRED_TABLES
         for operation in ("no_delete", "no_update")
+    }
+)
+M1_AUTHORIZATION_INPUT_TRIGGERS = frozenset(
+    {
+        "audience_policy_snapshots_no_delete",
+        "audience_policy_snapshots_no_update",
+        "access_bundles_no_delete",
+        "access_bundles_no_update",
+        "capability_grants_no_delete",
+        "capability_grants_no_update",
+        "agent_grants_no_delete",
+        "agent_grants_no_update",
+        "delegation_grants_no_delete",
+        "delegation_grants_no_update",
+        "workspace_signing_key_versions_no_delete",
+        "workspace_signing_key_versions_no_update",
+        "idempotency_envelopes_no_delete",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -447,6 +488,100 @@ M1_REGISTRY_REQUIRED_COLUMNS = {
         }
     ),
 }
+M1_AUTHORIZATION_INPUT_REQUIRED_COLUMNS = {
+    "audience_policy_snapshots": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "visibility",
+            "policy_version",
+            "policy_digest",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "access_bundles": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "principal_id",
+            "scope_kind",
+            "scope_id",
+            "version",
+            "policy_digest",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "capability_grants": frozenset(
+        {
+            "grant_digest",
+            "bundle_id",
+            "workspace_id",
+            "resource_kind",
+            "resource_id",
+            "action",
+            "effect",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "agent_grants": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "agent_id",
+            "capability_bundle_id",
+            "autonomy_level",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "delegation_grants": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "parent_agent_grant_id",
+            "child_agent_id",
+            "expires_at",
+            "payload_json",
+        }
+    ),
+    "workspace_signing_key_versions": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "key_epoch",
+            "status",
+            "valid_from",
+            "valid_until",
+            "predecessor_digest",
+            "canonical_digest",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "idempotency_envelopes": frozenset(
+        {
+            "id",
+            "workspace_id",
+            "requester_id",
+            "transport_principal_id",
+            "agent_id",
+            "agent_grant_id",
+            "operation",
+            "idempotency_key",
+            "request_context_digest",
+            "payload_digest",
+            "status",
+            "result_digest",
+            "result_ref",
+            "created_at",
+            "completed_at",
+            "payload_json",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
@@ -460,6 +595,10 @@ M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS = {
 M1_REGISTRY_CURRENT_REQUIRED_COLUMNS = {
     **M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS,
     **M1_REGISTRY_REQUIRED_COLUMNS,
+}
+M1_AUTHORIZATION_INPUT_CURRENT_REQUIRED_COLUMNS = {
+    **M1_REGISTRY_CURRENT_REQUIRED_COLUMNS,
+    **M1_AUTHORIZATION_INPUT_REQUIRED_COLUMNS,
 }
 
 
@@ -584,7 +723,11 @@ def _m1_authority_schema_controls_match(connection: sqlite3.Connection) -> bool:
     )
 
 
-def _m1_registry_schema_controls_match(connection: sqlite3.Connection) -> bool:
+def _m1_registry_schema_controls_match(
+    connection: sqlite3.Connection,
+    *,
+    latest_schema_version: int,
+) -> bool:
     triggers = frozenset(
         row[0]
         for row in connection.execute(
@@ -597,9 +740,16 @@ def _m1_registry_schema_controls_match(connection: sqlite3.Connection) -> bool:
         "SELECT id, schema_version, canonicalization_version, manifest_digest "
         "FROM authority_state_root_manifests ORDER BY schema_version, id"
     ).fetchall()
-    if not manifests:
+    if not manifests or max(int(row[1]) for row in manifests) != latest_schema_version:
         return False
+    family_sets = {
+        1: M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES,
+        2: M1_AUTHORITY_FAMILY_NAMES,
+    }
     for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
+        expected_families = family_sets.get(int(schema_version))
+        if expected_families is None:
+            return False
         rows = connection.execute(
             "SELECT ordinal, family_name, coverage_kind, external_proof_kind, "
             "canonicalization_version FROM authority_state_root_leaf_families "
@@ -607,7 +757,7 @@ def _m1_registry_schema_controls_match(connection: sqlite3.Connection) -> bool:
             (manifest_id,),
         ).fetchall()
         if (
-            {row[1] for row in rows} != M1_AUTHORITY_FAMILY_NAMES
+            {row[1] for row in rows} != expected_families
             or [row[0] for row in rows] != list(range(1, len(rows) + 1))
             or any(row[4] != canonicalization_version for row in rows)
             or any((row[2] == "external_proof") != (row[3] is not None) for row in rows)
@@ -637,6 +787,16 @@ def _m1_registry_schema_controls_match(connection: sqlite3.Connection) -> bool:
         if hashlib.sha256(encoded).hexdigest() != manifest_digest:
             return False
     return True
+
+
+def _m1_authorization_input_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    return M1_AUTHORIZATION_INPUT_TRIGGERS.issubset(triggers)
 
 
 @contextmanager
@@ -706,6 +866,9 @@ def classify_database(path: Path) -> DatabaseStatus:
             m1_registry_current_tables = frozenset(
                 {*m1_authority_current_tables, *M1_REGISTRY_REQUIRED_TABLES}
             )
+            m1_authorization_input_current_tables = frozenset(
+                {*m1_registry_current_tables, *M1_AUTHORIZATION_INPUT_REQUIRED_TABLES}
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
@@ -713,6 +876,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                 m1_audit_current_tables,
                 m1_authority_current_tables,
                 m1_registry_current_tables,
+                m1_authorization_input_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -725,8 +889,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = M1_AUDIT_CURRENT_REQUIRED_COLUMNS
                 elif tables == m1_authority_current_tables:
                     expected_columns = M1_AUTHORITY_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m1_registry_current_tables:
                     expected_columns = M1_REGISTRY_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M1_AUTHORIZATION_INPUT_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -758,8 +924,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         expected_revision = M1_AUDIT_REVISION
                     elif tables == m1_authority_current_tables:
                         expected_revision = M1_AUTHORITY_REVISION
-                    else:
+                    elif tables == m1_registry_current_tables:
                         expected_revision = M1_REGISTRY_REVISION
+                    else:
+                        expected_revision = M1_AUTHORIZATION_INPUT_REVISION
                     m1_revision_matches = tables in {
                         stamped_v1_tables,
                         current_tables,
@@ -770,14 +938,25 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_audit_current_tables,
                         m1_authority_current_tables,
                         m1_registry_current_tables,
+                        m1_authorization_input_current_tables,
                     } or _m1_audit_triggers_match(connection)
                     authority_controls_match = tables not in {
                         m1_authority_current_tables,
                         m1_registry_current_tables,
+                        m1_authorization_input_current_tables,
                     } or _m1_authority_schema_controls_match(connection)
-                    registry_controls_match = (
-                        tables != m1_registry_current_tables
-                        or _m1_registry_schema_controls_match(connection)
+                    registry_controls_match = tables not in {
+                        m1_registry_current_tables,
+                        m1_authorization_input_current_tables,
+                    } or _m1_registry_schema_controls_match(
+                        connection,
+                        latest_schema_version=(
+                            2 if tables == m1_authorization_input_current_tables else 1
+                        ),
+                    )
+                    authorization_input_controls_match = (
+                        tables != m1_authorization_input_current_tables
+                        or _m1_authorization_input_controls_match(connection)
                     )
                     if (
                         tables
@@ -787,6 +966,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                             m1_audit_current_tables,
                             m1_authority_current_tables,
                             m1_registry_current_tables,
+                            m1_authorization_input_current_tables,
                         }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
@@ -794,8 +974,11 @@ def classify_database(path: Path) -> DatabaseStatus:
                         and audit_triggers_match
                         and authority_controls_match
                         and registry_controls_match
+                        and authorization_input_controls_match
                     ):
-                        if tables == m1_registry_current_tables:
+                        if tables == m1_authorization_input_current_tables:
+                            detail = "database schema is current with M1 authorization inputs"
+                        elif tables == m1_registry_current_tables:
                             detail = "database schema is current with M1 registry persistence"
                         elif tables == m1_authority_current_tables:
                             detail = "database schema is current with M1 authority persistence"
