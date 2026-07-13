@@ -243,3 +243,108 @@ def test_project_scoped_bundle_cannot_broaden_to_another_project() -> None:
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "scope_mismatch"
     assert result.actions == frozenset()
+
+
+def test_requester_bundle_revocation_fails_closed_with_reason() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    revoked_bundle = requester_bundle.model_copy(update={"revoked_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=revoked_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "requester_grant_revoked"
+    assert result.actions == frozenset()
+
+
+def test_agent_bundle_expiry_has_zero_grace() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    expired_bundle = agent_bundle.model_copy(update={"expires_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=expired_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "agent_bundle_expired"
+    assert result.actions == frozenset()
+
+
+def test_agent_bundle_revocation_fails_closed_with_reason() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    revoked_bundle = agent_bundle.model_copy(update={"revoked_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=agent_grant,
+        agent_bundle=revoked_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "agent_bundle_revoked"
+    assert result.actions == frozenset()
+
+
+def test_agent_grant_expiry_has_zero_grace() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    expired_grant = agent_grant.model_copy(update={"expires_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=expired_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "agent_grant_expired"
+    assert result.actions == frozenset()
+
+
+def test_agent_grant_revocation_fails_closed_with_reason() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    revoked_grant = agent_grant.model_copy(update={"revoked_at": request.evaluated_at})
+
+    result = evaluate_capability_intersection(
+        request,
+        requester_bundle=requester_bundle,
+        requester_grants=[requester_grant],
+        agent_grant=revoked_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=[agent_capability],
+        delegation_grants=[],
+    )
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "agent_grant_revoked"
+    assert result.actions == frozenset()

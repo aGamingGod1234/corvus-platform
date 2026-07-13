@@ -109,6 +109,11 @@ def evaluate_capability_intersection(
             decision=AuthorizationDecision.DENY,
             reason_code="scope_mismatch",
         )
+    if requester_bundle.revoked_at is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="requester_grant_revoked",
+        )
     if (
         requester_bundle.expires_at is not None
         and request.evaluated_at >= requester_bundle.expires_at
@@ -116,6 +121,26 @@ def evaluate_capability_intersection(
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code="requester_grant_expired",
+        )
+    if agent_bundle.revoked_at is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="agent_bundle_revoked",
+        )
+    if agent_bundle.expires_at is not None and request.evaluated_at >= agent_bundle.expires_at:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="agent_bundle_expired",
+        )
+    if agent_grant.revoked_at is not None:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="agent_grant_revoked",
+        )
+    if agent_grant.expires_at is not None and request.evaluated_at >= agent_grant.expires_at:
+        return AuthorizationResult(
+            decision=AuthorizationDecision.DENY,
+            reason_code="agent_grant_expired",
         )
     bundles_match = (
         requester_bundle.workspace_id == request.workspace_id
