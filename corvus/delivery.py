@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import shutil
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -39,7 +40,7 @@ class _AdvisoryFileLock:
                 handle.flush()
                 os.fsync(handle.fileno())
             handle.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
 
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
@@ -59,7 +60,7 @@ class _AdvisoryFileLock:
         self._handle = None
         try:
             handle.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
 
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)

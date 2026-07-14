@@ -318,11 +318,15 @@
 - Split the public-contract assertion by scenario so cross-platform failures identify the exact frozen command without relaxing command order or payload equality.
 - Made read-only SQLite classification retry a bounded number of times when a WAL disappears during snapshot creation, covering the Windows close/checkpoint race.
 - Added a deterministic WAL-disappearance regression and exercised the affected migration test repeatedly.
+- Made the doctor smoke assertion follow the active supported Python interpreter instead of hardcoding 3.12.
+- Replaced runtime-equivalent `os.name` guards with mypy-understood `sys.platform` guards around Windows-only locking and DLL APIs.
 
 ### Files Modified
 - `tests/contract/test_v1_public_golden.py` - byte-stable delivery input and strict scenario-level diagnostics.
 - `corvus/database.py` - bounded retry for a changing read-only SQLite snapshot.
 - `tests/integration/test_database_bootstrap.py` - WAL-disappearance regression coverage.
+- `tests/cli/test_cli_smoke.py` - Python 3.12/3.13-compatible doctor assertion.
+- `corvus/delivery.py`, `corvus/codex_cli.py`, and `corvus/infrastructure/local_authority.py` - cross-platform static-analysis guards with unchanged runtime branches.
 - `PROJECT_LOG.md` - certification repair record.
 
 ### Assumptions Made (flag these for review)

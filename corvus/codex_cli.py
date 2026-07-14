@@ -8,6 +8,7 @@ import re
 import shutil
 import signal
 import stat
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,6 +166,8 @@ def _is_link_or_reparse(path: Path) -> bool:
 
 
 def _windows_directory() -> Path:
+    if sys.platform != "win32":
+        raise RuntimeError("trusted Windows system directory is unavailable")
     try:
         import ctypes
 

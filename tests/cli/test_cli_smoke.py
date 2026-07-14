@@ -1,4 +1,5 @@
 import json
+import sys
 
 from typer.testing import CliRunner
 
@@ -24,6 +25,7 @@ def test_doctor_json_uses_isolated_corvus_home(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["version"] == "0.2.0a1"
-    assert payload["python"].startswith("3.12.")
+    expected_python_prefix = f"{sys.version_info.major}.{sys.version_info.minor}."
+    assert payload["python"].startswith(expected_python_prefix)
     assert payload["database"]["ok"] is True
     assert payload["sandbox"]["selected"] in {"docker", "podman", "none"}
