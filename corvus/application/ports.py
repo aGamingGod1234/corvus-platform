@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
 
 
@@ -15,6 +16,9 @@ class ProjectAuthorizationRequest(BaseModel):
     workspace_id: UUID
     requester_id: UUID
     acting_agent_id: UUID
+    client_context_id: UUID
+    client_surface: ClientSurface
+    transport_principal_id: UUID
     action: Literal["project.create", "project.read"]
     project_id: UUID
 
@@ -34,6 +38,9 @@ class ProjectAuditEvent(BaseModel):
     workspace_id: UUID
     requester_id: UUID
     acting_agent_id: UUID
+    client_context_id: UUID
+    client_surface: ClientSurface
+    transport_principal_id: UUID
     authorization_snapshot_id: UUID
     action: Literal["project.create", "project.read"]
     project_id: UUID

@@ -26,6 +26,7 @@ from corvus.domain.audit import (
     AuthorizationDecisionSnapshot,
     authorization_snapshot_digest,
 )
+from corvus.domain.client import ClientSurface
 from corvus.domain.deployment import (
     AuthorityCommitIntent,
     AuthorityCommitState,
@@ -373,6 +374,9 @@ def _scenario(tmp_path: Path) -> ProjectCreateScenario:
             workspace_id=project.workspace_id,
             requester_id=requester_id,
             acting_agent_id=uuid4(),
+            client_context_id=uuid4(),
+            client_surface=ClientSurface.CLI,
+            transport_principal_id=snapshot.transport_principal_id,
             project=project,
         ),
         anchor=IdempotentAnchor(),
@@ -468,6 +472,9 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         workspace_id=project.workspace_id,
         requester_id=requester_id,
         acting_agent_id=uuid4(),
+        client_context_id=uuid4(),
+        client_surface=ClientSurface.CLI,
+        transport_principal_id=snapshot.transport_principal_id,
         project=project,
     )
     anchor = IdempotentAnchor()

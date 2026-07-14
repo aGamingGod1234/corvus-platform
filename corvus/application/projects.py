@@ -14,6 +14,7 @@ from corvus.application.ports import (
     ProjectCreateLifecyclePort,
     ProjectStorePort,
 )
+from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
 from corvus.infrastructure.repositories.projects import ProjectRepository
 
@@ -25,6 +26,9 @@ class CreateProjectCommand(BaseModel):
     workspace_id: UUID
     requester_id: UUID
     acting_agent_id: UUID
+    client_context_id: UUID
+    client_surface: ClientSurface
+    transport_principal_id: UUID
     project: Project
 
 
@@ -35,6 +39,9 @@ class GetProjectQuery(BaseModel):
     workspace_id: UUID
     requester_id: UUID
     acting_agent_id: UUID
+    client_context_id: UUID
+    client_surface: ClientSurface
+    transport_principal_id: UUID
     project_id: UUID
 
 
@@ -84,6 +91,9 @@ class ProjectService:
             workspace_id=command.workspace_id,
             requester_id=command.requester_id,
             acting_agent_id=command.acting_agent_id,
+            client_context_id=command.client_context_id,
+            client_surface=command.client_surface,
+            transport_principal_id=command.transport_principal_id,
             action="project.create",
             project_id=command.project.id,
             project=command.project,
@@ -95,6 +105,9 @@ class ProjectService:
             workspace_id=query.workspace_id,
             requester_id=query.requester_id,
             acting_agent_id=query.acting_agent_id,
+            client_context_id=query.client_context_id,
+            client_surface=query.client_surface,
+            transport_principal_id=query.transport_principal_id,
             action="project.read",
             project_id=query.project_id,
             project=None,
@@ -107,6 +120,9 @@ class ProjectService:
         workspace_id: UUID,
         requester_id: UUID,
         acting_agent_id: UUID,
+        client_context_id: UUID,
+        client_surface: ClientSurface,
+        transport_principal_id: UUID,
         action: Literal["project.create", "project.read"],
         project_id: UUID,
         project: Project | None,
@@ -116,6 +132,9 @@ class ProjectService:
             workspace_id=workspace_id,
             requester_id=requester_id,
             acting_agent_id=acting_agent_id,
+            client_context_id=client_context_id,
+            client_surface=client_surface,
+            transport_principal_id=transport_principal_id,
             action=action,
             project_id=project_id,
         )
@@ -132,6 +151,9 @@ class ProjectService:
             workspace_id=workspace_id,
             requester_id=requester_id,
             acting_agent_id=acting_agent_id,
+            client_context_id=client_context_id,
+            client_surface=client_surface,
+            transport_principal_id=transport_principal_id,
             authorization_snapshot_id=decision.authorization_snapshot_id,
             action=action,
             project_id=project_id,

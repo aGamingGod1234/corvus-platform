@@ -18,6 +18,7 @@ from corvus.application.projects import (
     ProjectService,
 )
 from corvus.domain.audit import AuthorizationDecisionSnapshot, authorization_snapshot_digest
+from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
 from corvus.infrastructure.db import upgrade_database
 from corvus.infrastructure.project_audit import (
@@ -192,6 +193,9 @@ def _service_fixture(tmp_path: Path):
         workspace_id=project.workspace_id,
         requester_id=requester_id,
         acting_agent_id=acting_agent_id,
+        client_context_id=uuid4(),
+        client_surface=ClientSurface.CLI,
+        transport_principal_id=snapshot.transport_principal_id,
         project=project,
     )
     return (

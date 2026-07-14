@@ -12,6 +12,7 @@ from corvus.application.projects import (
     InProcessProjectClient,
     ProjectService,
 )
+from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
 
 
@@ -70,6 +71,9 @@ def _command(project: Project) -> CreateProjectCommand:
         workspace_id=project.workspace_id,
         requester_id=uuid4(),
         acting_agent_id=uuid4(),
+        client_context_id=uuid4(),
+        client_surface=ClientSurface.CLI,
+        transport_principal_id=uuid4(),
         project=project,
     )
 
@@ -99,6 +103,9 @@ def test_create_and_read_share_one_authorized_audited_path() -> None:
             workspace_id=project.workspace_id,
             requester_id=uuid4(),
             acting_agent_id=uuid4(),
+            client_context_id=uuid4(),
+            client_surface=ClientSurface.CLI,
+            transport_principal_id=uuid4(),
             project_id=project.id,
         )
     )
