@@ -264,3 +264,26 @@
 ### Suggested Next Steps
 - Commit and fast-forward M11 to GitHub main.
 - Run the final 20-point acceptance path, restart persistence proof, full suite, and clean-tree audit.
+
+## 2026-07-14 - Final M2-M11 Acceptance and Release Evidence
+
+### What Was Implemented
+- Executed the documented durable demo and capability demo against one fresh SQLite database and asserted the complete M2-M11 local path.
+- Verified restart persistence, exactly-once approved effect execution, budget settlement, durable CLI inspection, governed collaboration/memory/routine behavior, offline reconciliation, and signed channel step-up/deduplication.
+- Rebuilt and launched the HMAC-authenticated Tauri/sidecar release, confirmed the connected WebView on a repeat launch, and proved real-window close leaves no desktop or sidecar process.
+- Ran the full Python repository suite once in an isolated temp root and recorded exact web, Rust, installer, and security-review evidence.
+
+### Files Modified
+- `HACKATHON_STATUS.md` - exact 20-point acceptance mapping, final test/build counts, installer digest, and current published milestone.
+- `PROJECT_LOG.md` - final acceptance and release record.
+
+### Assumptions Made (flag these for review)
+- The locally executable adapters and explicitly documented external-infrastructure limits satisfy hackathon-MVP depth without claiming production certification.
+
+### Known Issues / Deferred
+- Docker/Podman remains unavailable for a local image launch.
+- The unsigned NSIS installer still expects a separately available local Python sidecar and is not a production distribution artifact.
+
+### Suggested Next Steps
+- Bundle and sign a standalone sidecar before distributing the installer beyond this development workstation.
+- Exercise the existing container definition when a container engine is available.

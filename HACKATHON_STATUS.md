@@ -6,7 +6,7 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 
 - Verified baseline: `repair/m1-certification` at `8c18f53`.
 - Original implementation branch: `hackathon/m2-m11-mvp`; current fast-forward integration branch: `codex/main-integration`.
-- GitHub `main` contains the verified M2-M5 and M6-M10 contract work through `a6396e4`.
+- GitHub `main` contains the verified M2-M11 hackathon implementation through `424aeb6`; the final acceptance evidence follows as a documentation-only release commit.
 - M0.5/M1 history and frozen `corvus` CLI behavior remain intact. Additive MVP code lives under `corvus.mvp`, uses `mvp_*` SQLite tables, and exposes a separate `corvus-mvp` command.
 
 ## Architecture
@@ -128,13 +128,36 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `452 passed`; repository Ruff passed; strict mypy passed for 87 source files.
+- Python: `459 passed` in 68.62 seconds using an isolated final temp root; repository Ruff passed; strict mypy passed for 90 source files.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `5 passed`; Vite production build passed (35 modules, 230.86 kB JS / 70.44 kB gzip); `pnpm audit` reported no known vulnerabilities.
+- Web: `6 passed`; Vite production build passed (35 modules, 231.29 kB JS / 70.60 kB gzip); `pnpm audit` reported no known vulnerabilities.
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
-- M11 desktop: Python subprocess two-launch start/instance-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, decoy-readiness, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; the real second-launch WebView was visually confirmed paired; closing the real window stopped both desktop and sidecar processes; unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` built.
+- M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; the real second-launch WebView was visually confirmed paired; closing the real window stopped both desktop and sidecar processes; unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` built (2,558,724 bytes, SHA-256 `2eafd51ab287c051a35a1a91741f72a43a3acc48828dee3413c702e1b4b54707`).
 - Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
 - Design blueprint: packet, provenance, source evidence, fixed viewport captures, and responsive visual inspection exist. Its automated gate still fails because the installed auditor unconditionally requires a restaurant `dish-selector`, requires packet approval after edits, and statically scans one React source file at a time; no fake restaurant artifact was added.
+
+## Final 20-point acceptance evidence
+
+1. The install, single-origin server, CLI, web, and desktop startup sequences are documented above.
+2. API, real browser, and repeat desktop launch pairing succeeded; the desktop fragment was removed before HTTP traffic.
+3. The final CLI acceptance run created a persisted project.
+4. It created a versioned outcome and a two-item dependency graph.
+5. It started the workflow through the authoritative application service.
+6. The scheduler completed both work items with the deterministic executor.
+7. CLI inspection found two work items, two artifacts with lineage, 12 events, two conversation entries, and durable attempts/leases/checkpoints in the same SQLite core.
+8. The second item required an approval-bearing filesystem effect.
+9. The effect executed exactly once; duplicate approval/application tests safely replayed the persisted decision.
+10. The 10-unit budget ended with 4 settled, 0 reserved, and 6 available.
+11. SSE monotonic replay/reconnect passed in API tests and the real browser execution path.
+12. The same durable run was inspected by CLI, API, and connected web controls.
+13. The capabilities run connected a provider reference and returned supervised autonomy after shadow/evidence evaluation.
+14. Governed memory stored and retrieved external content as untrusted.
+15. A versioned active skill completed through a routine.
+16. An offline intent queued while disconnected, reconciled as applied, and retained application count 1.
+17. A signed channel event mapped identity, required step-up, and retained processing count 1 after retry.
+18. The production web application built successfully.
+19. The Tauri release executable and unsigned current-user NSIS package built; a real WebView launch rendered the connected UI.
+20. The demo reopened the backend store and reported `restart_verified: true`; the desktop also re-paired across launches using the same persisted database.
 
 ## Known limitations
 
