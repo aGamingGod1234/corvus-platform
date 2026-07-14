@@ -20,7 +20,14 @@ from corvus.domain.audit import (
     AuditReceipt,
     AuditResultBinding,
 )
-from corvus.domain.deployment import AuthorityCommitIntent, AuthorityCommitState, WorkspaceAuthority
+from corvus.domain.deployment import (
+    AuthorityCommitIntent,
+    AuthorityCommitState,
+    AuthorityStateRootCalculation,
+    AuthorityStateRootLeafCommitment,
+    AuthorityStateRootManifestVersion,
+    WorkspaceAuthority,
+)
 from corvus.domain.identity import Project
 from corvus.infrastructure.project_audit import (
     ProjectAuditReceiptContext,
@@ -66,6 +73,24 @@ class ProjectAuthorityRepositoryPort(Protocol):
     ) -> None: ...
 
 
+class ProjectAuthorityCommitmentRepositoryPort(Protocol):
+    def append_leaf_commitments(
+        self,
+        *,
+        workspace_id: UUID,
+        manifest: AuthorityStateRootManifestVersion,
+        commitments: list[AuthorityStateRootLeafCommitment],
+        observed_leaf_digests: dict[str, str],
+    ) -> None: ...
+
+    def list_leaf_commitments(
+        self,
+        *,
+        workspace_id: UUID,
+        authority_generation: int,
+    ) -> list[AuthorityStateRootLeafCommitment]: ...
+
+
 class ProjectAuthorityAnchorPort(Protocol):
     def reserve(self, intent: AuthorityCommitIntent) -> None: ...
 
@@ -76,7 +101,11 @@ class ProjectAuthorityMutationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mutation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    proposed_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    calculation: AuthorityStateRootCalculation
+
+    @property
+    def proposed_state_root(self) -> str:
+        return self.calculation.root_digest
 
 
 class ProjectAuthorityMutationPlannerPort(Protocol):
@@ -85,6 +114,7 @@ class ProjectAuthorityMutationPlannerPort(Protocol):
         project: Project,
         event: ProjectAuditEvent,
         authority: WorkspaceAuthority,
+        intent: AuthorityCommitIntent,
     ) -> ProjectAuthorityMutationPlan: ...
 
 
@@ -114,11 +144,19 @@ def _stable_id(namespace: UUID, event: ProjectAuditEvent) -> UUID:
     return uuid5(namespace, f"{event.workspace_id}:{event.request_id}:{event.project_id}")
 
 
+def _unbound_state_root(intent_id: UUID, prior_state_root: str) -> str:
+    candidate = hashlib.sha256(f"corvus-unbound-root-v1:{intent_id}".encode()).hexdigest()
+    if candidate == prior_state_root:
+        return hashlib.sha256(f"{candidate}:retry".encode()).hexdigest()
+    return candidate
+
+
 class RecoverableProjectCreateLifecycle:
     def __init__(
         self,
         *,
         authority_repository: ProjectAuthorityRepositoryPort,
+        commitment_repository: ProjectAuthorityCommitmentRepositoryPort,
         audit_repository: AuditRepository,
         project_repository: ProjectRepository,
         audit_adapter: SignedProjectAuditAdapter,
@@ -128,6 +166,7 @@ class RecoverableProjectCreateLifecycle:
         clock: Callable[[], datetime],
     ) -> None:
         self.authority_repository = authority_repository
+        self.commitment_repository = commitment_repository
         self.audit_repository = audit_repository
         self.project_repository = project_repository
         self.audit_adapter = audit_adapter
@@ -139,11 +178,10 @@ class RecoverableProjectCreateLifecycle:
     def create(self, project: Project, event: ProjectAuditEvent) -> None:
         self._validate_request(project, event)
         mutation_digest = project_mutation_digest(project)
-        intent = self._load_or_prepare_intent(project, event, mutation_digest)
+        intent, plan, receipt = self._load_or_prepare_intent(project, event, mutation_digest)
         if intent.state is AuthorityCommitState.QUARANTINED:
             raise ProjectCreateRecoveryError("authority_commit_quarantined")
         intent = self._reserve_anchor(intent)
-        receipt = self._load_or_append_receipt(event, intent)
         checkpoint = self._load_or_prepare_checkpoint(event, receipt, mutation_digest)
 
         try:
@@ -151,6 +189,7 @@ class RecoverableProjectCreateLifecycle:
         except Exception as exc:
             raise ProjectCreateRecoveryError("project_persistence_failed") from exc
 
+        self._persist_or_validate_commitments(event.workspace_id, plan)
         intent = self._commit_authority(intent)
         evidence, intent = self._finalize_authority(intent)
         checkpoint = self._mark_authority_finalized(checkpoint)
@@ -178,46 +217,59 @@ class RecoverableProjectCreateLifecycle:
         project: Project,
         event: ProjectAuditEvent,
         mutation_digest: str,
-    ) -> AuthorityCommitIntent:
+    ) -> tuple[AuthorityCommitIntent, ProjectAuthorityMutationPlan, AuditReceipt]:
         intent_id = _stable_id(_INTENT_NAMESPACE, event)
         existing = self.authority_repository.get_commit_intent(
             workspace_id=event.workspace_id,
             intent_id=intent_id,
         )
-        if existing is not None:
-            if existing.mutation_digest != mutation_digest:
-                raise ProjectCreateRecoveryError("project_replay_mismatch")
-            return existing
+        if existing is not None and existing.mutation_digest != mutation_digest:
+            raise ProjectCreateRecoveryError("project_replay_mismatch")
+        if existing is not None and existing.state is AuthorityCommitState.QUARANTINED:
+            raise ProjectCreateRecoveryError("authority_commit_quarantined")
         authority = self.authority_repository.get_workspace_authority(event.workspace_id)
         if authority is None:
             raise ProjectCreateRecoveryError("workspace_authority_missing")
+        intent = existing
+        if intent is None:
+            intent = AuthorityCommitIntent(
+                id=intent_id,
+                workspace_id=event.workspace_id,
+                epoch=authority.epoch,
+                deployment_instance_id=authority.deployment_instance_id,
+                prior_generation=authority.authority_generation,
+                next_generation=authority.authority_generation + 1,
+                prior_state_root=authority.authority_state_root,
+                mutation_digest=mutation_digest,
+                proposed_state_root=_unbound_state_root(intent_id, authority.authority_state_root),
+                state=AuthorityCommitState.PREPARED,
+                created_at=self.clock(),
+            )
+        receipt = self._load_or_append_receipt(event, intent)
+        if existing is None:
+            intent = intent.model_copy(update={"created_at": receipt.created_at})
         try:
-            plan = self.mutation_planner.plan(project, event, authority)
+            plan = self.mutation_planner.plan(project, event, authority, intent)
         except Exception as exc:
             raise ProjectCreateRecoveryError("authority_root_plan_failed") from exc
         if (
             plan.mutation_digest != mutation_digest
-            or plan.proposed_state_root == authority.authority_state_root
+            or plan.calculation.workspace_id != event.workspace_id
+            or plan.calculation.authority_generation != intent.next_generation
         ):
             raise ProjectCreateRecoveryError("authority_root_plan_mismatch")
-        intent = AuthorityCommitIntent(
-            id=intent_id,
-            workspace_id=event.workspace_id,
-            epoch=authority.epoch,
-            deployment_instance_id=authority.deployment_instance_id,
-            prior_generation=authority.authority_generation,
-            next_generation=authority.authority_generation + 1,
-            prior_state_root=authority.authority_state_root,
-            mutation_digest=mutation_digest,
-            proposed_state_root=plan.proposed_state_root,
-            state=AuthorityCommitState.PREPARED,
-            created_at=self.clock(),
-        )
+        if existing is not None:
+            if plan.proposed_state_root != intent.proposed_state_root:
+                raise ProjectCreateRecoveryError("authority_root_plan_mismatch")
+            return intent, plan, receipt
+        if plan.proposed_state_root == authority.authority_state_root:
+            raise ProjectCreateRecoveryError("authority_root_plan_mismatch")
+        intent = intent.model_copy(update={"proposed_state_root": plan.proposed_state_root})
         try:
             self.authority_repository.prepare_commit(intent)
         except Exception as exc:
             raise ProjectCreateRecoveryError("authority_prepare_failed") from exc
-        return intent
+        return intent, plan, receipt
 
     def _reserve_anchor(self, intent: AuthorityCommitIntent) -> AuthorityCommitIntent:
         if intent.state is not AuthorityCommitState.PREPARED:
@@ -310,6 +362,30 @@ class RecoverableProjectCreateLifecycle:
         except Exception as exc:
             raise ProjectCreateRecoveryError("audit_recovery_prepare_failed") from exc
         return checkpoint
+
+    def _persist_or_validate_commitments(
+        self,
+        workspace_id: UUID,
+        plan: ProjectAuthorityMutationPlan,
+    ) -> None:
+        calculation = plan.calculation
+        existing = self.commitment_repository.list_leaf_commitments(
+            workspace_id=workspace_id,
+            authority_generation=calculation.authority_generation,
+        )
+        if existing:
+            if existing != list(calculation.commitments):
+                raise ProjectCreateRecoveryError("authority_commitment_replay_mismatch")
+            return
+        try:
+            self.commitment_repository.append_leaf_commitments(
+                workspace_id=workspace_id,
+                manifest=calculation.manifest,
+                commitments=list(calculation.commitments),
+                observed_leaf_digests=calculation.observed_leaf_digests,
+            )
+        except Exception as exc:
+            raise ProjectCreateRecoveryError("authority_commitment_persistence_failed") from exc
 
     def _commit_authority(self, intent: AuthorityCommitIntent) -> AuthorityCommitIntent:
         if intent.state is not AuthorityCommitState.ANCHOR_RESERVED:

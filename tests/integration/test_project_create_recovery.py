@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from corvus.application.ports import (
-    ProjectAuditEvent,
     ProjectAuthorizationDecision,
     ProjectAuthorizationRequest,
 )
@@ -41,18 +40,19 @@ from corvus.domain.deployment import (
     fixed_workspace_lock_name,
 )
 from corvus.domain.identity import Project
+from corvus.infrastructure.authority_root import AuthorityRootCalculator
 from corvus.infrastructure.db import upgrade_database
 from corvus.infrastructure.project_audit import SignedProjectAuditAdapter
+from corvus.infrastructure.project_authority import ManifestProjectAuthorityMutationPlanner
 from corvus.infrastructure.project_recovery import (
     AuthorityCommitReceiptEvidence,
-    ProjectAuthorityMutationPlan,
     RecoverableProjectCreateLifecycle,
     audit_result_binding_hash,
-    project_mutation_digest,
 )
 from corvus.infrastructure.repositories.audit import AuditRepository
 from corvus.infrastructure.repositories.authority import AuthorityRepository
 from corvus.infrastructure.repositories.projects import ProjectRepository
+from corvus.infrastructure.repositories.registry import RegistryManifestRepository
 from corvus.store import TraceStore
 
 _NOW = datetime(2026, 7, 14, 20, 0, tzinfo=UTC)
@@ -225,18 +225,22 @@ class IdempotentAnchor:
         )
 
 
-class FixedManifestPlanner:
-    def plan(
-        self,
-        project: Project,
-        event: ProjectAuditEvent,
-        authority: WorkspaceAuthority,
-    ) -> ProjectAuthorityMutationPlan:
-        assert event.workspace_id == authority.workspace_id
-        return ProjectAuthorityMutationPlan(
-            mutation_digest=project_mutation_digest(project),
-            proposed_state_root="7" * 64,
+class FailCommitmentOnce:
+    def __init__(self, repository: RegistryManifestRepository) -> None:
+        self.repository = repository
+        self.failed = False
+
+    def list_leaf_commitments(self, *, workspace_id: UUID, authority_generation: int):
+        return self.repository.list_leaf_commitments(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
         )
+
+    def append_leaf_commitments(self, **kwargs) -> None:
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("injected commitment persistence failure")
+        self.repository.append_leaf_commitments(**kwargs)
 
 
 class FailDbCommitOnce:
@@ -267,7 +271,9 @@ class FailDbCommitOnce:
 
 def _lifecycle(
     *,
+    database: Path,
     authority,
+    commitment_repository,
     audit_repository: AuditRepository,
     project_repository: ProjectRepository,
     anchor: IdempotentAnchor,
@@ -275,6 +281,7 @@ def _lifecycle(
 ) -> RecoverableProjectCreateLifecycle:
     return RecoverableProjectCreateLifecycle(
         authority_repository=authority,
+        commitment_repository=commitment_repository,
         audit_repository=audit_repository,
         project_repository=project_repository,
         audit_adapter=SignedProjectAuditAdapter(
@@ -284,7 +291,7 @@ def _lifecycle(
             clock=lambda: _NOW,
         ),
         anchor=anchor,
-        mutation_planner=FixedManifestPlanner(),
+        mutation_planner=ManifestProjectAuthorityMutationPlanner(database),
         signer=signer,
         clock=lambda: _NOW,
     )
@@ -326,9 +333,43 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         project=project,
     )
     anchor = IdempotentAnchor()
+    commitment_repository = RegistryManifestRepository(database)
+    fail_commitments = FailCommitmentOnce(commitment_repository)
+    commitment_lifecycle = _lifecycle(
+        database=database,
+        authority=authority_repository,
+        commitment_repository=fail_commitments,
+        audit_repository=audit_repository,
+        project_repository=project_repository,
+        anchor=anchor,
+        signer=signer,
+    )
+    commitment_service = ProjectService(
+        store=ProjectRepositoryAdapter(project_repository),
+        authorization=FixedAuthorization(snapshot),
+        audit=commitment_lifecycle.audit_adapter,
+        create_lifecycle=commitment_lifecycle,
+    )
+
+    commitment_failed = commitment_service.create(command)
+
+    assert commitment_failed.ok is False
+    assert commitment_failed.reason_code == "authority_commitment_persistence_failed"
+    unchanged = authority_repository.get_workspace_authority(project.workspace_id)
+    assert unchanged == authority
+    assert (
+        commitment_repository.list_leaf_commitments(
+            workspace_id=project.workspace_id,
+            authority_generation=authority.authority_generation + 1,
+        )
+        == []
+    )
+
     fail_once = FailDbCommitOnce(authority_repository)
     failing_lifecycle = _lifecycle(
+        database=database,
         authority=fail_once,
+        commitment_repository=commitment_repository,
         audit_repository=audit_repository,
         project_repository=project_repository,
         anchor=anchor,
@@ -350,6 +391,11 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         project_repository.get(workspace_id=project.workspace_id, project_id=project.id) == project
     )
     assert len(audit_repository.list_receipts(project.workspace_id)) == 1
+    planned_commitments = commitment_repository.list_leaf_commitments(
+        workspace_id=project.workspace_id,
+        authority_generation=authority.authority_generation + 1,
+    )
+    assert len(planned_commitments) == 30
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
@@ -361,7 +407,9 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         ).fetchone() == ("prepared",)
 
     lifecycle = _lifecycle(
+        database=database,
         authority=authority_repository,
+        commitment_repository=commitment_repository,
         audit_repository=audit_repository,
         project_repository=project_repository,
         anchor=anchor,
@@ -382,6 +430,12 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
     advanced = authority_repository.get_workspace_authority(project.workspace_id)
     assert advanced is not None
     assert advanced.authority_generation == authority.authority_generation + 1
+    verified = AuthorityRootCalculator(database).calculate(
+        workspace_id=project.workspace_id,
+        authority_generation=advanced.authority_generation,
+    )
+    assert verified.root_digest == advanced.authority_state_root
+    assert list(verified.commitments) == planned_commitments
     assert len(audit_repository.list_receipts(project.workspace_id)) == 1
     with sqlite3.connect(database) as connection:
         assert connection.execute(
