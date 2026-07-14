@@ -340,6 +340,13 @@ class OfflineConnectorService(_SignedEnvelopeService):
                 raise DomainNotFound("offline_intent_not_found")
             return self._intent(row)
 
+    def list_intents(self) -> tuple[OfflineIntentRecord, ...]:
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM mvp_offline_intents ORDER BY created_at"
+            ).fetchall()
+        return tuple(self._intent(row) for row in rows)
+
     @staticmethod
     def _intent(row: sqlite3.Row) -> OfflineIntentRecord:
         return OfflineIntentRecord(
@@ -435,6 +442,13 @@ class ChannelIngressService(_SignedEnvelopeService):
             if row is None:
                 raise DomainNotFound("channel_event_not_found")
             return self._event(row)
+
+    def list_events(self) -> tuple[ChannelEventRecord, ...]:
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM mvp_channel_events ORDER BY created_at"
+            ).fetchall()
+        return tuple(self._event(row) for row in rows)
 
     @staticmethod
     def _event(row: sqlite3.Row) -> ChannelEventRecord:

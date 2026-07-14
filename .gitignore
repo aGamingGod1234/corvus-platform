@@ -9,6 +9,12 @@ __pycache__/
 htmlcov/
 dist/
 build/
+node_modules/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+.playwright-cli/
+output/
 *.egg-info/
 .env
 .env.*

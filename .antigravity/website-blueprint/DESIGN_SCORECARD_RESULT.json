@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "anchors": {
+    "10": "portfolio-level and distinctive",
+    "8": "polished, non-generic, conversion goal clear",
+    "6": "acceptable but ordinary",
+    "4": "generic template/card stack",
+    "2": "broken or off-brand"
+  },
+  "screenshots": {
+    "beforeDesktop": null,
+    "beforeTablet": null,
+    "beforeMobile": null,
+    "afterDesktop": ".antigravity/website-blueprint/screenshots/after/after-desktop.png",
+    "afterTablet": ".antigravity/website-blueprint/screenshots/after/after-tablet.png",
+    "afterMobile": ".antigravity/website-blueprint/screenshots/after/after-mobile.png"
+  },
+  "motionEvidence": ".antigravity/website-blueprint/screenshots/after/after-browser-evidence.json",
+  "scores": {
+    "visualImpact": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "sourceAlignment": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "brandFit": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "conversionClarity": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "mobilePolish": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "motionTaste": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    },
+    "genericnessPenalty": {
+      "score": 0,
+      "screenshotEvidence": "Automated audit created the slot; an agent/human must inspect the fixed viewport screenshots and fill specific region evidence.",
+      "critique": "Not scored yet. This intentionally fails the quality gate until screenshot-based critique is provided.",
+      "requiredIteration": "Complete screenshot-based scoring with the v2.3 anchors."
+    }
+  },
+  "verdict": "fail",
+  "issues": [
+    "INTERACTION_SPEC.json must define a `dish-selector` interaction.",
+    "Packet is not approved.",
+    "Applied component source `shadcn-button` selector `.button--primary` is not present in HTML.",
+    "Applied component source `lucide-activity` has no visible `data-component-source` usage in HTML.",
+    "Applied component source `lucide-play` has no visible `data-component-source` usage in HTML.",
+    "visualImpact is below 8/10.",
+    "sourceAlignment is below 8/10.",
+    "brandFit is below 8/10.",
+    "conversionClarity is below 8/10.",
+    "mobilePolish is below 8/10.",
+    "motionTaste is below 8/10."
+  ],
+  "requiredIterations": [
+    "Provide screenshot-region evidence and score every category before claiming success."
+  ]
+}

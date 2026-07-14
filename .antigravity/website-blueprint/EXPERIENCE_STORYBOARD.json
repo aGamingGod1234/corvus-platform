@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "cardBudget": {
+    "maximumGenericCards": 3,
+    "implementedGenericCards": 0
+  },
+  "sections": [
+    {
+      "id": "pairing",
+      "treatment": "single-purpose pairing panel",
+      "primaryMedia": "live pairing form",
+      "interactionModel": "Paste the one-time local pairing value and connect",
+      "motionTimeline": "No entrance animation; connection result updates in place",
+      "failureConditions": ["Credentials or internal process text persist in the DOM after pairing"]
+    },
+    {
+      "id": "app-header",
+      "treatment": "compact command strip",
+      "primaryMedia": "workspace and connection state",
+      "interactionModel": "Read global state without leaving execution context",
+      "motionTimeline": "Errors update in place without moving controls",
+      "failureConditions": ["The strip competes with the workflow for visual priority"]
+    },
+    {
+      "id": "project-rail",
+      "treatment": "indexed navigation rail",
+      "primaryMedia": "real project rows from the API",
+      "interactionModel": "Select or create a project in context",
+      "motionTimeline": "The selected row receives one 160ms state tint",
+      "failureConditions": ["The rail shows fake projects or loses selected state"]
+    },
+    {
+      "id": "execution-canvas",
+      "treatment": "continuous dependency rail",
+      "primaryMedia": "real work-item state from the API",
+      "interactionModel": "Create, start, advance, and inspect a durable workflow",
+      "motionTimeline": "SSE changes tint only the affected node",
+      "failureConditions": ["Displayed order or state diverges from the API"]
+    },
+    {
+      "id": "detail-inspector",
+      "treatment": "contextual side sheet",
+      "primaryMedia": "selected item, budget, effects, and artifacts",
+      "interactionModel": "Review durable detail and approve waiting effects",
+      "motionTimeline": "Inspector enters in 280ms and returns focus on close",
+      "failureConditions": ["The inspector obscures context or exposes a fake action"]
+    },
+    {
+      "id": "operations-canvas",
+      "treatment": "governed operations register",
+      "primaryMedia": "real team, reference, memory, skill, routine, and ingress records",
+      "interactionModel": "Create and inspect governed resources without leaving the project boundary",
+      "motionTimeline": "Mutations append records in place with no decorative transition",
+      "failureConditions": ["A credential value is requested or an untrusted record is presented as authority"]
+    }
+  ]
+}

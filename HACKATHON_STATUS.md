@@ -1,113 +1,92 @@
-# Corvus M2–M11 Hackathon MVP Status
+# Corvus M2-M11 Hackathon MVP Status
 
-This is a hackathon MVP implementation record, not formal M2–M11 certification.
+This is a hackathon MVP implementation record, not formal M2-M11 certification.
 
-## Baseline and Branch
+## Baseline and branch
 
-- Baseline: `repair/m1-certification` at `8c18f53`.
+- Verified baseline: `repair/m1-certification` at `8c18f53`.
 - Implementation branch: `hackathon/m2-m11-mvp`.
-- M0.5 and M1 history and behavior were preserved; the MVP uses additive `corvus.mvp` code and `mvp_*` SQLite tables.
+- M0.5/M1 history and frozen `corvus` CLI behavior remain intact. Additive MVP code lives under `corvus.mvp`, uses `mvp_*` SQLite tables, and exposes a separate `corvus-mvp` command.
 
 ## Architecture
 
-- `corvus.mvp.core.CorvusService` is the authoritative local workflow/effect/budget core.
-- `GovernanceService`, `OfflineConnectorService`, and `ChannelIngressService` are server-side application services over the same transactional SQLite store.
-- `corvus-mvp` is a separate thin Typer adapter that preserves the frozen V1 `corvus` command tree.
-- FastAPI is a thin authenticated adapter over the same core; the React and Tauri adapters are still pending.
-- Credentials persist only as `env://` or `keyring://` references. The local broker resolves values only at the effect boundary.
+- `CorvusService` is the authoritative workflow, effect, approval, budget, artifact, conversation, and event core.
+- `GovernanceService`, `OfflineConnectorService`, and `ChannelIngressService` share the same transactional SQLite store.
+- CLI, FastAPI, generated TypeScript client, and React UI are thin adapters. They do not duplicate authority rules.
+- Credentials persist only as `env://` or `keyring://` references and are resolved only by the broker at an effect boundary.
+- Signed connector/channel envelopes remain proposals or untrusted input; server-side identity and authorization decide what is accepted.
 
-## Current Commands
-
-Install the locked Python environment:
+## Install and run
 
 ```powershell
 uv sync --all-groups --locked
+cd apps/web
+pnpm install --frozen-lockfile
+pnpm build
+cd ../..
 ```
 
-Migration is automatic and explicit when an MVP service opens its SQLite database:
-
-```powershell
-uv run corvus-mvp config-check --mode local --database-url sqlite:///corvus-mvp.sqlite3 --json
-```
-
-Run the durable workflow demo and inspect the same persisted run:
-
-```powershell
-uv run corvus-mvp demo --database corvus-mvp.sqlite3 --json
-uv run corvus-mvp workflow inspect <WORKFLOW_ID> --database corvus-mvp.sqlite3 --json
-```
-
-Run governed M6–M10 local capabilities:
-
-```powershell
-uv run corvus-mvp capabilities-demo --database corvus-capabilities.sqlite3 --json
-
-Run the authenticated loopback API with runtime credential references:
+Migrations run transactionally when the SQLite-backed service opens.
 
 ```powershell
 $env:CORVUS_BOOTSTRAP_TOKEN = '<one-time-pairing-value>'
 $env:CORVUS_SESSION_SECRET = '<at-least-32-byte-signing-value>'
 uv run corvus-mvp server --database corvus-mvp.sqlite3
 ```
-```
 
-Build the Python package and supply-chain artifacts:
+In a second terminal:
 
 ```powershell
-uv build
-uv run python scripts/generate_supply_chain.py --output-dir dist/supply-chain
+cd apps/web
+pnpm dev
 ```
 
-The pnpm and Rust toolchains are installed. Web and desktop commands remain undocumented until their connected builds pass.
+Open `http://127.0.0.1:5173`, pair once, then use Execution and Operations. For a CLI-only durable demo:
 
-## Concise Local Demo
+```powershell
+uv run corvus-mvp demo --database corvus-mvp.sqlite3 --json
+uv run corvus-mvp workflow inspect <WORKFLOW_ID> --database corvus-mvp.sqlite3 --json
+uv run corvus-mvp capabilities-demo --database corvus-mvp.sqlite3 --json
+```
 
-1. Run `uv run corvus-mvp demo --database corvus-mvp.sqlite3 --json`.
-2. Copy `workflow_id` from the JSON result.
-3. Run `uv run corvus-mvp workflow inspect <WORKFLOW_ID> --database corvus-mvp.sqlite3 --json`.
-4. Run `uv run corvus-mvp capabilities-demo --database corvus-mvp.sqlite3 --json`.
-5. Re-run either inspect/capabilities command to observe persisted and duplicate-safe state.
+## Milestone status
 
-## Milestone Status
+### Implemented and locally verified
 
-### Implemented and Locally Verified
+- **M2:** durable outcomes, dependency graphs, legal states, scheduler, attempts, fenced leases/heartbeat/recovery, checkpoints, artifacts/lineage, conversations/events, typed effects, deterministic idempotency, one-time approval decisions, budget reservation/settlement/release, kill switches, controls, and restart persistence.
+- **M3:** additive project/outcome/workflow CLI, workflow inspection, configuration checking, durable demo, and governed capabilities demo over application services.
+- **M4:** one-time pairing, signed cookie sessions, CSRF/origin checks, tenant-scoped API, typed OpenAPI responses/errors, workflow controls, team/provider/memory/skill/routine/offline/channel routes, signed HTTP channel ingress, and bounded resumable SSE.
+- **M5:** generated OpenAPI TypeScript client; connected React pairing, project/outcome/workflow execution, dependency rail, live SSE activity, approval inbox with approve/reject, budget and kill controls, artifacts/conversation inspector, collaboration/provider/autonomy controls, governed memory, skills/routines, and offline/channel visibility. Desktop and mobile browser paths were exercised.
+- **M6:** teams/memberships, owner authorization, provider references/grants, secret broker, simulated OAuth PKCE/device flow, shadow decisions, and evidence-gated autonomy promotion.
+- **M7:** governed memory with untrusted retrieval, versioned active skills, routines, and authorized routine runs.
+- **M8:** Ed25519-signed offline intents, disconnect/queue/reconcile, duplicate-safe application, and restore quarantine.
+- **M9:** Ed25519-signed channel envelopes, expiry/digest/signature checks, identity mapping, deduplication, persisted results, step-up state, and real HTTP ingress.
+- **M10 contracts:** validated local/self-host configuration, tenant isolation queries, simulated OIDC mapping, wheel build, deterministic CycloneDX SBOM, and provenance generation.
+- **M11 contracts:** sidecar lifecycle state and expiring, rollback-protected, threshold-signed update metadata using explicitly non-production ephemeral test keys.
 
-- **M2:** Versioned outcomes; durable dependency graphs; states; scheduling; attempts; fenced leases/heartbeat/recovery; checkpoints; artifacts/lineage; conversations/events; typed effects; deterministic idempotency; one-time approvals; budgets; kill switches; pause/resume/cancel/retry; deterministic executor; restart persistence.
-- **M3:** Additive CLI project/outcome/workflow creation, execution, status, inspection, configuration checking, and two end-to-end demos over application services.
-- **M4:** One-time pairing, signed cookie session, CSRF/origin enforcement, tenant-scoped REST mutations, typed errors, bounded resumable SSE, and a secret-reference local server command.
-- **M6:** Teams/memberships; owner authorization; provider references/grants; local secret broker; simulated OAuth PKCE and device flow; evidence-backed shadow/autonomy promotion.
-- **M7:** Governed memory with untrusted context-firewall output; versioned/activated skills; routines and authorized routine runs.
-- **M8:** Ed25519-signed offline intents; local disconnect/queue/reconnect; signature/expiry/digest validation; idempotent reconciliation; restore quarantine.
-- **M9:** Ed25519-signed channel envelopes; expiry/digest/signature validation; identity mapping; deduplication; persisted result; sensitive-action step-up state.
-- **M10 contracts:** Local/self-host configuration validation, SQLite path, PostgreSQL configuration recognition, simulated OIDC mapping, tenant-scoped project reads, wheel build, deterministic SBOM and provenance generation.
-- **M11 contracts:** Sidecar lifecycle state machine and expiring, rollback-protected, threshold-signed update metadata with non-production ephemeral test keys.
+### Implemented but not externally exercised
 
-### Implemented but Not Externally Exercised
+- PostgreSQL configuration recognition, real OAuth/OIDC providers, external secret stores, production key ceremonies, and external channel/provider delivery.
 
-- PostgreSQL configuration recognition, real OAuth/OIDC providers, external secret stores, and production signing infrastructure.
+### Scaffolded or partial
 
-### Scaffolded/Partial
-
-- **M5:** Not started; the approved pnpm toolchain is installed and implementation is next.
-- **M10:** Container/static-web integration waits for M4/M5 executable adapters.
-- **M11:** Tauri shell/packaging waits for the web build and Rust/Cargo/Tauri toolchain.
+- **M10:** executable container startup and built static-web integration remain to be added.
+- **M11:** a real Tauri shell, sidecar process wiring, and current-OS packaging check remain to be added.
 
 ### Blocked
 
-- No current dependency-installation blocker; remaining adapters are in progress.
+- No dependency or toolchain blocker. Rust/Cargo and pnpm are available.
 
-## Verification Performed
+## Verification actually run
 
-- Focused baseline: `3 passed`.
-- Latest M4 focused gate: `9 passed`; frozen V1 contract gate: `2 passed`; repository-wide Ruff and strict source mypy passed.
-- Real Uvicorn subprocess probe returned `200` for health, one-time pairing, and authenticated session while creating the requested SQLite database.
-- Python build: `dist/corvus-0.2.0a1-py3-none-any.whl` and source archive built successfully; the wheel contained `corvus/mvp/core.py`.
-- Generated CycloneDX SBOM and in-toto/SLSA-style provenance parsed as valid JSON.
-- Web production build: not run; dependencies absent.
-- Desktop check/build: not run; Rust/Cargo absent.
+- Python: `452 passed`; repository Ruff passed; strict mypy passed for 87 source files.
+- API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
+- Web: `5 passed`; Vite production build passed (35 modules, 230.86 kB JS / 70.44 kB gzip); `pnpm audit` reported no known vulnerabilities.
+- Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
+- Design blueprint: packet, provenance, source evidence, fixed viewport captures, and responsive visual inspection exist. Its automated gate still fails because the installed auditor unconditionally requires a restaurant `dish-selector`, requires packet approval after edits, and statically scans one React source file at a time; no fake restaurant artifact was added.
 
-## Known Limitations
+## Known limitations
 
-- No generated TypeScript client, connected web UI, or executable Tauri shell exists yet.
-- The local deterministic effect adapter produces digest-bound results but does not perform an external provider call or privileged host write.
-- No production cloud, real OAuth registration, PostgreSQL server, signing ceremony, notarization, or multi-OS certification was attempted.
+- The deterministic local effect adapter returns digest-bound results and does not perform privileged host writes or real provider calls.
+- No production cloud, PostgreSQL server, external OAuth registration, notarization, production signing, or multi-OS installer certification was attempted.
+- Container/static-web and Tauri executable surfaces are the remaining objective work.

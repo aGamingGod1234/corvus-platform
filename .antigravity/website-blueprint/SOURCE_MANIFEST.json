@@ -1,0 +1,117 @@
+{
+  "version": 2,
+  "generatedAt": "2026-07-14T12:26:52.557491+00:00",
+  "projectRoot": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform",
+  "mcpUrl": "http://100.90.87.7:3000/mcp",
+  "sources": [
+    {
+      "id": "docs-github-com",
+      "kind": "direct-business-source",
+      "tool": null,
+      "sourceUrl": "https://docs.github.com/en/actions/concepts/workflows-and-actions/workflows",
+      "localFile": ".antigravity/website-blueprint/research/direct/direct-business-source-https-docs-github-com-en-actions-concepts-workflows-and-actions-workflows.html",
+      "evidenceStatus": "fetched",
+      "hash": "235425bcb2365176ba97aa13e16436402f8a7f458c59b3f847be5c2844ea7dbe",
+      "relevanceScore": 10,
+      "usedIn": [
+        "project-rail",
+        "execution-canvas"
+      ],
+      "contributes": [
+        "direct business/domain positioning"
+      ],
+      "doNotCopy": [
+        "exact layout or private details"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "vercel-com",
+      "kind": "high-end-visual-reference",
+      "tool": null,
+      "sourceUrl": "https://vercel.com/geist/introduction",
+      "localFile": ".antigravity/website-blueprint/research/direct/high-end-visual-reference-https-vercel-com-geist-stack.html",
+      "evidenceStatus": "fetched",
+      "hash": "1c76f36eff2e3f4e448d5da1035e7f6e4009a186f812c87092f7d14b261ab671",
+      "relevanceScore": 8,
+      "usedIn": ["app-header"],
+      "contributes": [
+        "visual quality bar and composition pattern"
+      ],
+      "doNotCopy": [
+        "protected brand assets or exact creative"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "vercel-com-2",
+      "kind": "conversion-ux-reference",
+      "tool": null,
+      "sourceUrl": "https://vercel.com/geist/sheet",
+      "localFile": ".antigravity/website-blueprint/research/direct/conversion-ux-reference-https-vercel-com-geist-sheet.html",
+      "evidenceStatus": "fetched",
+      "hash": "d1f8d4d53b390dae007cec5dd18bb4ec2c8c8af18fd83d710cf834173d5291d3",
+      "relevanceScore": 8,
+      "usedIn": ["detail-inspector"],
+      "contributes": [
+        "conversion flow and CTA pattern"
+      ],
+      "doNotCopy": [
+        "exact copy or brand-specific claims"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "shadcn-button",
+      "kind": "component",
+      "tool": "fetch_component_source",
+      "sourceUrl": "https://ui.shadcn.com/r/styles/new-york/button.json",
+      "localFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
+      "evidenceStatus": "fetched",
+      "hash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
+      "relevanceScore": 8,
+      "usedIn": ["detail-inspector"],
+      "contributes": [
+        "shadcn button implementation source and API shape"
+      ],
+      "doNotCopy": [
+        "incompatible imports or dependency changes without declaration"
+      ],
+      "dependencies": [
+        "@radix-ui/react-slot"
+      ]
+    },
+    {
+      "id": "lucide-activity",
+      "kind": "icon",
+      "tool": "fetch_icon_source",
+      "sourceUrl": "https://unpkg.com/lucide-static@1.24.0/icons/activity.svg",
+      "localFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-activity.json",
+      "evidenceStatus": "fetched",
+      "hash": "61fd0ac133b0df215bedaab7101da6084ca0bd1aa00c73381084869f95ad8087",
+      "relevanceScore": 7,
+      "usedIn": ["detail-inspector"],
+      "contributes": [
+        "activity interface icon source"
+      ],
+      "doNotCopy": [
+        "decorative icon use without semantic label"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "lucide-play",
+      "kind": "icon",
+      "tool": "fetch_icon_source",
+      "sourceUrl": "https://unpkg.com/lucide-static@1.24.0/icons/play.svg",
+      "localFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-play.json",
+      "evidenceStatus": "fetched",
+      "hash": "dbcf7c869683d0ece02b88566af9337db6d8fe1d12193fd8bad0cecb80ea1a6e",
+      "relevanceScore": 7,
+      "usedIn": ["execution-canvas"],
+      "contributes": ["play interface icon source"],
+      "doNotCopy": ["decorative icon use without semantic label"],
+      "dependencies": []
+    }
+  ]
+}

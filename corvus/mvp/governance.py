@@ -64,6 +64,13 @@ class Team(MvpModel):
     created_at: datetime
 
 
+class TeamMember(MvpModel):
+    team_id: str
+    principal_id: str
+    role: Literal["owner", "operator", "viewer"]
+    created_at: datetime
+
+
 class ProviderConnection(MvpModel):
     id: str
     project_id: str
@@ -204,6 +211,55 @@ class GovernanceService:
             )
         return team
 
+    def list_teams(self, project_id: str) -> tuple[Team, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_teams WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return tuple(
+            Team(
+                id=row["id"],
+                project_id=row["project_id"],
+                name=row["name"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        )
+
+    def get_team(self, team_id: str) -> Team:
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_teams WHERE id = ?", (team_id,)
+            ).fetchone()
+        if row is None:
+            raise DomainNotFound("team_not_found")
+        return Team(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def list_team_members(self, team_id: str) -> tuple[TeamMember, ...]:
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM mvp_team_members WHERE team_id = ? ORDER BY created_at",
+                (team_id,),
+            ).fetchall()
+        if not rows:
+            raise DomainNotFound("team_not_found")
+        return tuple(
+            TeamMember(
+                team_id=row["team_id"],
+                principal_id=row["principal_id"],
+                role=row["role"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        )
+
     def add_member(
         self,
         team_id: str,
@@ -260,6 +316,15 @@ class GovernanceService:
                 ),
             )
         return record
+
+    def list_provider_connections(self, project_id: str) -> tuple[ProviderConnection, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_provider_connections WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._provider(row) for row in rows)
 
     def grant_provider_capability(
         self,
@@ -591,6 +656,27 @@ class GovernanceService:
                 for row in rows
             )
 
+    def list_memory_entries(self, project_id: str) -> tuple[MemoryEntry, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_memory_entries WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return tuple(
+            MemoryEntry(
+                id=row["id"],
+                project_id=row["project_id"],
+                scope=row["scope"],
+                version=int(row["version"]),
+                content=row["content"],
+                provenance=row["provenance"],
+                status=row["status"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        )
+
     def create_skill(self, *, project_id: str, name: str, content: str) -> SkillVersion:
         now = _now_utc()
         with self.store.transaction() as connection:
@@ -634,6 +720,20 @@ class GovernanceService:
             values = dict(row)
             values["status"] = "active"
             return self._skill(values)
+
+    def get_skill(self, skill_version_id: str) -> SkillVersion:
+        with self.store.connect() as connection:
+            return self._skill(self._require_skill(connection, skill_version_id))
+
+    def list_skills(self, project_id: str) -> tuple[SkillVersion, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_skill_versions WHERE project_id = ? "
+                "ORDER BY name, version",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._skill(row) for row in rows)
 
     def create_routine(
         self,
@@ -696,6 +796,24 @@ class GovernanceService:
                 ),
             )
             return run
+
+    def get_routine(self, routine_id: str) -> Routine:
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_routines WHERE id = ?", (routine_id,)
+            ).fetchone()
+        if row is None:
+            raise DomainNotFound("routine_not_found")
+        return self._routine(row)
+
+    def list_routines(self, project_id: str) -> tuple[Routine, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_routines WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._routine(row) for row in rows)
 
     def quarantine_restore(
         self,
@@ -840,6 +958,16 @@ class GovernanceService:
             version=int(row["version"]),
             content=row["content"],
             status=row["status"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _routine(row: sqlite3.Row | dict[str, Any]) -> Routine:
+        return Routine(
+            id=row["id"],
+            project_id=row["project_id"],
+            name=row["name"],
+            skill_version_id=row["skill_version_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 

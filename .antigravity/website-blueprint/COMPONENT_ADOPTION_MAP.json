@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "sourceId": "shadcn-button",
+      "implementationStatus": "applied",
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
+      "evidenceHash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
+      "adoptedPatterns": ["disabled state", "visible focus treatment", "primary and quiet variants"],
+      "customizationBoundaries": ["Native buttons and local semantic CSS only", "No Radix or shadcn runtime dependency"],
+      "implementationSelectors": ["[data-component-source=\"shadcn-button\"]", ".button--primary"],
+      "visibleSections": ["execution-canvas", "detail-inspector", "operations-canvas"]
+    },
+    {
+      "sourceId": "lucide-activity",
+      "implementationStatus": "applied",
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-activity.json",
+      "evidenceHash": "61fd0ac133b0df215bedaab7101da6084ca0bd1aa00c73381084869f95ad8087",
+      "adoptedPatterns": ["activity SVG path"],
+      "customizationBoundaries": ["Stroke inherits currentColor", "Icon remains decorative beside a text label"],
+      "implementationSelectors": ["[data-component-source=\"lucide-activity\"]"],
+      "visibleSections": ["detail-inspector"]
+    },
+    {
+      "sourceId": "lucide-play",
+      "implementationStatus": "applied",
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-play.json",
+      "evidenceHash": "dbcf7c869683d0ece02b88566af9337db6d8fe1d12193fd8bad0cecb80ea1a6e",
+      "adoptedPatterns": ["play SVG path"],
+      "customizationBoundaries": ["Stroke inherits currentColor", "Icon remains decorative beside a text label"],
+      "implementationSelectors": ["[data-component-source=\"lucide-play\"]"],
+      "visibleSections": ["execution-canvas"]
+    }
+  ]
+}

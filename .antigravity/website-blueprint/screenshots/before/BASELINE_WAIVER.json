@@ -1,0 +1,5 @@
+{
+  "waived": true,
+  "waivedAt": "2026-07-14T12:30:14.842224+00:00",
+  "waiverNote": "Greenfield React client: no prior visual UI exists; the frozen Python CLI/API remains covered by its own contract tests."
+}

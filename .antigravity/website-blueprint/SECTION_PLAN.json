@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "page": "operator-console",
+  "sections": [
+    {
+      "id": "app-header",
+      "treatment": "command-strip",
+      "purpose": "Name the current local workspace and expose connection state.",
+      "sourceRefs": ["vercel-com"],
+      "interactions": ["open-create-project"],
+      "photoSlotCount": 0
+    },
+    {
+      "id": "project-rail",
+      "treatment": "indexed-sidebar",
+      "purpose": "List real API projects and select the active project.",
+      "sourceRefs": ["docs-github-com"],
+      "interactions": ["select-project"],
+      "photoSlotCount": 0
+    },
+    {
+      "id": "execution-canvas",
+      "treatment": "dependency-rail",
+      "purpose": "Create and operate a durable outcome, workflow, and ordered work items.",
+      "sourceRefs": ["docs-github-com", "lucide-play", "shadcn-button"],
+      "interactions": ["create-outcome-workflow", "start-workflow", "run-next", "select-work-item"],
+      "photoSlotCount": 0
+    },
+    {
+      "id": "detail-inspector",
+      "treatment": "context-sheet",
+      "purpose": "Show the selected run state, events, effects, budget, artifacts, and approvals.",
+      "sourceRefs": ["vercel-com-2", "lucide-activity", "shadcn-button"],
+      "interactions": ["close-inspector", "approve-effect", "refresh-data"],
+      "photoSlotCount": 0
+    },
+    {
+      "id": "operations-canvas",
+      "treatment": "governed-register",
+      "purpose": "Operate collaboration, references, memory, skills, routines, and signed ingress visibility.",
+      "sourceRefs": ["docs-github-com", "shadcn-button"],
+      "interactions": ["switch-view", "create-team", "create-provider", "evaluate-autonomy", "store-memory", "retrieve-memory", "create-skill", "create-routine", "run-routine"],
+      "photoSlotCount": 0
+    }
+  ]
+}

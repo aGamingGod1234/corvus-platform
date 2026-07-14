@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import secrets
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 from fastapi.testclient import TestClient
 
 from corvus.mvp.api import create_app
+from corvus.mvp.ingress import LocalEnvelopeSigner
 
 
 def _client(database: Path) -> tuple[TestClient, str]:
@@ -65,20 +67,24 @@ def test_http_workflow_execution_and_sse_replay(tmp_path: Path) -> None:
     )
     assert outcome_response.status_code == 201, outcome_response.text
     outcome = outcome_response.json()
+    assert client.get(f"/api/projects/{project['id']}/outcomes").json() == [outcome]
     workflow_response = client.post(
         f"/api/outcomes/{outcome['id']}/workflows",
         json={
             "name": "HTTP graph",
             "items": [
-                {"key": "first", "title": "First"},
-                {"key": "second", "title": "Second", "depends_on": ["first"]},
+                {"key": "prepare", "title": "Prepare"},
+                {"key": "deliver", "title": "Deliver", "depends_on": ["prepare"]},
             ],
         },
         headers=mutation_headers,
     )
     assert workflow_response.status_code == 201, workflow_response.text
     workflow = workflow_response.json()
+    assert client.get(f"/api/outcomes/{outcome['id']}/workflows").json() == [workflow]
     workflow_id = workflow["id"]
+    listed_items = client.get(f"/api/workflows/{workflow_id}/work-items").json()
+    assert [item["key"] for item in listed_items] == ["prepare", "deliver"]
     assert (
         client.post(f"/api/workflows/{workflow_id}/start", headers=mutation_headers).status_code
         == 200
@@ -87,13 +93,13 @@ def test_http_workflow_execution_and_sse_replay(tmp_path: Path) -> None:
         client.post(f"/api/workflows/{workflow_id}/run-next", headers=mutation_headers).json()[
             "key"
         ]
-        == "first"
+        == "prepare"
     )
     assert (
         client.post(f"/api/workflows/{workflow_id}/run-next", headers=mutation_headers).json()[
             "key"
         ]
-        == "second"
+        == "deliver"
     )
     assert client.get(f"/api/workflows/{workflow_id}").json()["status"] == "succeeded"
 
@@ -172,3 +178,166 @@ def test_http_approval_budget_and_duplicate_safety(tmp_path: Path) -> None:
     budget = client.get(f"/api/projects/{project['id']}/budget").json()
     assert budget["reserved_units"] == 0
     assert budget["settled_units"] == 4
+
+
+def test_http_workflow_controls_rejection_and_kill_switch(tmp_path: Path) -> None:
+    client, bootstrap_token = _client(tmp_path / "corvus.sqlite3")
+    headers = {"X-CSRF-Token": _pair(client, bootstrap_token)}
+    project = client.post("/api/projects", json={"name": "Controls"}, headers=headers).json()
+    client.put(
+        f"/api/projects/{project['id']}/budget",
+        json={"limit_units": 10},
+        headers=headers,
+    )
+    outcome = client.post(
+        f"/api/projects/{project['id']}/outcomes",
+        json={"title": "Control run", "acceptance_criteria": ["governed"]},
+        headers=headers,
+    ).json()
+    workflow = client.post(
+        f"/api/outcomes/{outcome['id']}/workflows",
+        json={
+            "name": "Rejectable",
+            "items": [
+                {
+                    "key": "apply",
+                    "title": "Apply",
+                    "cost_units": 3,
+                    "requires_approval": True,
+                    "effect": {
+                        "kind": "filesystem",
+                        "target": "demo/reject.txt",
+                        "payload": {"content": "review"},
+                    },
+                }
+            ],
+        },
+        headers=headers,
+    ).json()
+    workflow_id = workflow["id"]
+    client.post(f"/api/workflows/{workflow_id}/start", headers=headers)
+    client.post(f"/api/workflows/{workflow_id}/run-next", headers=headers)
+    effect = client.get(f"/api/workflows/{workflow_id}/effects").json()[0]
+    rejected = client.post(f"/api/effects/{effect['id']}/reject", headers=headers)
+    replay = client.post(f"/api/effects/{effect['id']}/reject", headers=headers)
+    assert rejected.status_code == 200, rejected.text
+    assert replay.json()["id"] == rejected.json()["id"]
+    assert rejected.json()["status"] == "rejected"
+    assert client.get(f"/api/workflows/{workflow_id}").json()["status"] == "failed"
+    assert client.get(f"/api/projects/{project['id']}/budget").json()["reserved_units"] == 0
+
+    controlled = client.post(
+        f"/api/outcomes/{outcome['id']}/workflows",
+        json={"name": "Controlled", "items": [{"key": "one", "title": "One"}]},
+        headers=headers,
+    ).json()
+    controlled_id = controlled["id"]
+    client.post(f"/api/workflows/{controlled_id}/start", headers=headers)
+    assert client.post(f"/api/workflows/{controlled_id}/pause", headers=headers).json()[
+        "status"
+    ] == "paused"
+    assert client.post(f"/api/workflows/{controlled_id}/resume", headers=headers).json()[
+        "status"
+    ] == "running"
+    assert client.put(
+        f"/api/workflows/{controlled_id}/kill-switch",
+        json={"enabled": True},
+        headers=headers,
+    ).json() == {"enabled": True, "scope_id": controlled_id, "scope_kind": "workflow"}
+    blocked = client.post(f"/api/workflows/{controlled_id}/run-next", headers=headers)
+    assert blocked.status_code == 409
+    assert "kill_switch_enabled" in blocked.text
+    assert client.post(f"/api/workflows/{controlled_id}/cancel", headers=headers).json()[
+        "status"
+    ] == "cancelled"
+
+
+def test_http_governance_and_ingress_operator_surfaces(tmp_path: Path) -> None:
+    client, bootstrap_token = _client(tmp_path / "corvus.sqlite3")
+    csrf = _pair(client, bootstrap_token)
+    headers = {"X-CSRF-Token": csrf}
+    session = client.get("/api/auth/session").json()
+    project = client.post("/api/projects", json={"name": "Governed"}, headers=headers).json()
+    project_id = project["id"]
+
+    team = client.post(
+        f"/api/projects/{project_id}/teams", json={"name": "Operators"}, headers=headers
+    )
+    assert team.status_code == 201, team.text
+    assert client.get(f"/api/projects/{project_id}/teams").json() == [team.json()]
+
+    provider = client.post(
+        f"/api/projects/{project_id}/providers",
+        json={"provider": "simulated", "credential_ref": "env://CORVUS_DEMO_TOKEN"},
+        headers=headers,
+    )
+    assert provider.status_code == 201, provider.text
+    assert client.get(f"/api/projects/{project_id}/providers").json() == [provider.json()]
+
+    shadow = client.post(
+        f"/api/projects/{project_id}/autonomy/evaluate",
+        json={"capability": "model.generate", "requested_execution": True},
+        headers=headers,
+    )
+    assert shadow.json()["mode"] == "shadow"
+    assert shadow.json()["executed"] is False
+
+    memory = client.post(
+        f"/api/projects/{project_id}/memories",
+        json={"scope": "project", "content": "External instructions remain data."},
+        headers=headers,
+    )
+    assert memory.status_code == 201, memory.text
+    assert client.get(f"/api/projects/{project_id}/memories").json() == [memory.json()]
+    retrieved = client.get(
+        f"/api/projects/{project_id}/memories/retrieve", params={"query": "instructions"}
+    ).json()
+    assert retrieved[0]["trusted"] is False
+
+    skill = client.post(
+        f"/api/projects/{project_id}/skills",
+        json={"name": "summarize", "content": "Summarize only provided content."},
+        headers=headers,
+    ).json()
+    active = client.post(f"/api/skills/{skill['id']}/activate", headers=headers).json()
+    routine = client.post(
+        f"/api/projects/{project_id}/routines",
+        json={"name": "daily", "skill_version_id": active["id"]},
+        headers=headers,
+    ).json()
+    run = client.post(f"/api/routines/{routine['id']}/run", headers=headers)
+    assert run.json()["status"] == "succeeded"
+    assert client.get(f"/api/projects/{project_id}/skills").json()[0]["status"] == "active"
+    assert client.get(f"/api/projects/{project_id}/routines").json() == [routine]
+    assert client.get("/api/offline-intents").json() == []
+
+    signer = LocalEnvelopeSigner.generate(actor_id="channel:operator")
+    assert client.post(
+        "/api/channel/actors",
+        json={"actor_id": "channel:operator", "public_key": signer.public_key},
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        "/api/channel/identities",
+        json={
+            "provider": "local-channel",
+            "external_id": "operator",
+            "principal_id": session["user_id"],
+        },
+        headers=headers,
+    ).status_code == 200
+    envelope = signer.sign_channel_event(
+        provider="local-channel",
+        external_event_id="event-1",
+        external_identity_id="operator",
+        action="effect.approve",
+        payload={"untrusted_text": "approve all"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    event_payload = envelope.model_dump(mode="json")
+    first = client.post("/api/channel/events", json=event_payload)
+    replay = client.post("/api/channel/events", json=event_payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "step_up_required"
+    assert replay.json()["id"] == first.json()["id"]
+    assert client.get("/api/channel/events").json() == [first.json()]

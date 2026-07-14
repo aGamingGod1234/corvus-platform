@@ -175,3 +175,34 @@
 
 ### Suggested Next Steps
 - Build the generated-contract React client and verify the same durable workflow through the browser adapter.
+
+## 2026-07-14 - M5 Connected Operator Console and Extended API
+
+### What Was Implemented
+- Added deterministic FastAPI OpenAPI export and a generated, typed React client.
+- Added authenticated workflow pause/resume/cancel/retry, kill-switch, rejection, team/provider/autonomy, memory, skill, routine, offline visibility, and signed channel-ingress routes.
+- Added an approval-bearing browser workflow, live SSE activity, approval inbox, budget controls, artifact/conversation inspection, and a responsive Operations view over real API data.
+- Added design-blueprint provenance, component adoption, fixed viewport evidence, desktop/mobile browser acceptance, and regression coverage for dependency ordering and SSE event coalescing.
+
+### Files Modified
+- `corvus/mvp/api.py` - typed authenticated API and governed resource routes.
+- `corvus/mvp/core.py` - topological display ordering and atomic effect rejection.
+- `corvus/mvp/governance.py` - typed governed resource read models.
+- `corvus/mvp/ingress.py` - offline and channel visibility queries.
+- `corvus/mvp/openapi.py` and `openapi/corvus-mvp.json` - deterministic API contract export.
+- `apps/web/` - generated-client React/Vite operator console, styles, and tests.
+- `tests/mvp/test_api.py` and `tests/mvp/test_openapi_export.py` - API, security, control, ingress, and contract tests.
+- `.antigravity/website-blueprint/` - design packet, sources, audit evidence, and screenshots.
+- `.gitignore`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - generated-output policy and milestone records.
+
+### Assumptions Made (flag these for review)
+- The browser's default two-item demo may reserve 10 units and require approval for a 2-unit deterministic filesystem effect so the governed path is immediately demonstrable.
+- The authenticated local user is the owner for teams created through the local UI; provider configuration accepts references only, never credential values.
+
+### Known Issues / Deferred
+- The installed design auditor has an unconditional restaurant `dish-selector` rule and a single-file React static scanner; its automated verdict remains failed despite real desktop/mobile browser verification. No inapplicable restaurant data was fabricated.
+- Container/static-web integration and the executable Tauri shell remain M10/M11 work.
+
+### Suggested Next Steps
+- Commit and safely integrate the verified M5 milestone onto GitHub main.
+- Add the container runtime and Tauri sidecar shell, then run the final restart-safe acceptance path.

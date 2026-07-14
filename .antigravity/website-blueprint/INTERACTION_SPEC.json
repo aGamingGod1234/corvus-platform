@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "interactions": [
+    {"id": "pair-session", "control": "Pair", "result": "Create signed local session and load projects", "error": "Show the server error and retain the entered value only in component memory"},
+    {"id": "open-create-project", "control": "New project", "result": "Reveal the inline project form and focus its name field", "error": "No state change"},
+    {"id": "select-project", "control": "Project row", "result": "Set the active project and clear stale workflow detail", "error": "Keep the previous project active"},
+    {"id": "create-outcome-workflow", "control": "Create workflow", "result": "Create an outcome and dependency graph through sequential API mutations", "error": "Name the failed stage and preserve entered fields"},
+    {"id": "start-workflow", "control": "Start workflow", "result": "Move the workflow to running and refresh all related resources", "error": "Render the typed API error beside the control"},
+    {"id": "run-next", "control": "Run next", "result": "Execute exactly one ready work item and refresh", "error": "Explain when no ready item exists"},
+    {"id": "select-work-item", "control": "Work-item row", "result": "Open the inspector with that item as context", "error": "No state change"},
+    {"id": "approve-effect", "control": "Approve effect", "result": "Approve the selected effect once and refresh budget/effects", "error": "Keep the effect waiting and show the typed error"},
+    {"id": "close-inspector", "control": "Close", "result": "Close the inspector and return focus to its trigger", "error": "No state change"},
+    {"id": "refresh-data", "control": "Refresh", "result": "Reload the active resources without creating a mutation", "error": "Keep the last good data and announce stale state"},
+    {"id": "switch-view", "control": "Execution or Operations", "result": "Switch the active project canvas without changing durable state", "error": "Keep the current view"},
+    {"id": "control-workflow", "control": "Pause, resume, cancel, or stop effects", "result": "Apply the selected server-authorized workflow control", "error": "Keep the last durable workflow state and show the typed error"},
+    {"id": "reject-effect", "control": "Reject", "result": "Record one durable rejection, release reservation, and fail the affected run", "error": "Keep the effect waiting and show the typed error"},
+    {"id": "update-budget", "control": "Update budget", "result": "Persist a non-negative project limit through the API", "error": "Retain the prior committed budget"},
+    {"id": "create-team", "control": "Create team", "result": "Create an owner-controlled project team", "error": "Retain the entered name and show the typed error"},
+    {"id": "create-provider", "control": "Add provider reference", "result": "Persist only an environment or keyring credential reference", "error": "Never fall back to accepting a credential value"},
+    {"id": "evaluate-autonomy", "control": "Evaluate shadow action", "result": "Record an evidence-bearing shadow decision without execution", "error": "Do not execute on evaluation failure"},
+    {"id": "store-memory", "control": "Store memory", "result": "Persist scoped content with server-owned provenance", "error": "Do not treat unsaved content as durable"},
+    {"id": "retrieve-memory", "control": "Retrieve as untrusted data", "result": "Return firewall-wrapped untrusted context", "error": "Do not return authority-bearing fallback text"},
+    {"id": "create-skill", "control": "Create and activate", "result": "Create a versioned skill and activate that exact version", "error": "Do not create a routine from a draft skill"},
+    {"id": "create-routine", "control": "Create routine", "result": "Bind a routine to an active skill version", "error": "Keep the prior routine list"},
+    {"id": "run-routine", "control": "Run", "result": "Create an authorized routine run record", "error": "Do not report a successful run locally"}
+  ]
+}

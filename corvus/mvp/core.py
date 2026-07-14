@@ -129,6 +129,16 @@ class CorvusService:
             )
         return outcome
 
+    def list_outcomes(self, project_id: str) -> tuple[OutcomeContract, ...]:
+        with self.store.connect() as connection:
+            self._require_project(connection, project_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_outcomes WHERE project_id = ? "
+                "ORDER BY created_at ASC, version ASC",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._outcome(row) for row in rows)
+
     def create_workflow(
         self,
         *,
@@ -230,6 +240,15 @@ class CorvusService:
         with self.store.connect() as connection:
             return self._require_workflow(connection, workflow_id)
 
+    def list_workflows(self, outcome_id: str) -> tuple[Workflow, ...]:
+        with self.store.connect() as connection:
+            self._require_outcome(connection, outcome_id)
+            rows = connection.execute(
+                "SELECT * FROM mvp_workflows WHERE outcome_id = ? ORDER BY created_at ASC",
+                (outcome_id,),
+            ).fetchall()
+        return tuple(self._workflow(row) for row in rows)
+
     def get_work_item(self, workflow_id: str, key: str) -> WorkItem:
         with self.store.connect() as connection:
             row = connection.execute(
@@ -246,7 +265,25 @@ class CorvusService:
                 "SELECT * FROM mvp_work_items WHERE workflow_id = ? ORDER BY item_key",
                 (workflow_id,),
             ).fetchall()
-            return tuple(self._work_item(row) for row in rows)
+        return self._topological_items(tuple(self._work_item(row) for row in rows))
+
+    @staticmethod
+    def _topological_items(items: tuple[WorkItem, ...]) -> tuple[WorkItem, ...]:
+        remaining = {item.key: item for item in items}
+        resolved: set[str] = set()
+        ordered: list[WorkItem] = []
+        while remaining:
+            ready_keys = sorted(
+                key
+                for key, item in remaining.items()
+                if set(item.depends_on).issubset(resolved)
+            )
+            if not ready_keys:
+                raise DomainConflict("persisted_workflow_dependency_cycle")
+            for key in ready_keys:
+                ordered.append(remaining.pop(key))
+                resolved.add(key)
+        return tuple(ordered)
 
     def claim_next(
         self,
@@ -418,6 +455,50 @@ class CorvusService:
                 connection,
                 effect.workflow_id,
                 "effect.approved",
+                {"effect_id": effect_id, "actor_id": actor_id},
+            )
+            row = connection.execute(
+                "SELECT * FROM mvp_approvals WHERE id = ?", (approval_id,)
+            ).fetchone()
+            if row is None:  # pragma: no cover - insert invariant
+                raise DomainConflict("approval_persistence_failed")
+            return self._approval(row)
+
+    def reject_effect(self, effect_id: str, *, actor_id: str) -> ApprovalRecord:
+        now = self.clock()
+        with self.store.transaction() as connection:
+            effect = self._require_effect(connection, effect_id)
+            existing = connection.execute(
+                "SELECT * FROM mvp_approvals WHERE effect_id = ?", (effect_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["status"] != "rejected":
+                    raise DomainConflict("effect_approval_already_decided")
+                return self._approval(existing)
+            approval_id = str(uuid4())
+            connection.execute(
+                "INSERT INTO mvp_approvals(id, effect_id, actor_id, status, created_at) "
+                "VALUES (?, ?, ?, 'rejected', ?)",
+                (approval_id, effect_id, actor_id, now.isoformat()),
+            )
+            connection.execute(
+                "UPDATE mvp_effects SET approval_id = ?, status = 'rejected', updated_at = ? "
+                "WHERE id = ?",
+                (approval_id, now.isoformat(), effect_id),
+            )
+            connection.execute(
+                "UPDATE mvp_work_items SET status = ?, updated_at = ? WHERE id = ?",
+                (WorkItemStatus.FAILED.value, now.isoformat(), effect.work_item_id),
+            )
+            connection.execute(
+                "UPDATE mvp_workflows SET status = ?, updated_at = ? WHERE id = ?",
+                (WorkflowStatus.FAILED.value, now.isoformat(), effect.workflow_id),
+            )
+            self._release_open_reservations(connection, effect.workflow_id, now)
+            self._append_event(
+                connection,
+                effect.workflow_id,
+                "effect.rejected",
                 {"effect_id": effect_id, "actor_id": actor_id},
             )
             row = connection.execute(
@@ -710,7 +791,9 @@ class CorvusService:
             approval_row = connection.execute(
                 "SELECT * FROM mvp_approvals WHERE effect_id = ?", (effect_id,)
             ).fetchone()
-            if bool(item_row["requires_approval"]) and approval_row is None:
+            if bool(item_row["requires_approval"]) and (
+                approval_row is None or approval_row["status"] != "approved"
+            ):
                 raise DomainConflict("effect_approval_required")
             result = {
                 "adapter": f"local-{effect.binding.kind}",
@@ -973,12 +1056,19 @@ class CorvusService:
             raise DomainNotFound("outcome_not_found")
         return cast(sqlite3.Row, row)
 
-    def _require_workflow(self, connection: sqlite3.Connection, workflow_id: str) -> Workflow:
-        row = connection.execute(
-            "SELECT * FROM mvp_workflows WHERE id = ?", (workflow_id,)
-        ).fetchone()
-        if row is None:
-            raise DomainNotFound("workflow_not_found")
+    @staticmethod
+    def _outcome(row: sqlite3.Row) -> OutcomeContract:
+        return OutcomeContract(
+            id=row["id"],
+            project_id=row["project_id"],
+            version=int(row["version"]),
+            title=row["title"],
+            acceptance_criteria=tuple(json.loads(row["acceptance_criteria_json"])),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _workflow(row: sqlite3.Row) -> Workflow:
         return Workflow(
             id=row["id"],
             outcome_id=row["outcome_id"],
@@ -987,6 +1077,14 @@ class CorvusService:
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    def _require_workflow(self, connection: sqlite3.Connection, workflow_id: str) -> Workflow:
+        row = connection.execute(
+            "SELECT * FROM mvp_workflows WHERE id = ?", (workflow_id,)
+        ).fetchone()
+        if row is None:
+            raise DomainNotFound("workflow_not_found")
+        return self._workflow(row)
 
     def _require_effect(self, connection: sqlite3.Connection, effect_id: str) -> EffectRecord:
         row = connection.execute("SELECT * FROM mvp_effects WHERE id = ?", (effect_id,)).fetchone()

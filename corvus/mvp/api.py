@@ -7,7 +7,7 @@ import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -16,7 +16,38 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
-from corvus.mvp.models import WorkItemDefinition
+from corvus.mvp.governance import (
+    AutonomyDecision,
+    GovernanceService,
+    MemoryEntry,
+    ProviderConnection,
+    RetrievedMemory,
+    Routine,
+    RoutineRun,
+    SkillVersion,
+    Team,
+    TeamMember,
+)
+from corvus.mvp.ingress import (
+    ChannelEventEnvelope,
+    ChannelEventRecord,
+    ChannelIngressService,
+    LocalEnvelopeSigner,
+    OfflineConnectorService,
+    OfflineIntentRecord,
+)
+from corvus.mvp.models import (
+    ApprovalRecord,
+    ArtifactRecord,
+    BudgetAccount,
+    ConversationEntry,
+    EffectRecord,
+    OutcomeContract,
+    Project,
+    Workflow,
+    WorkItem,
+    WorkItemDefinition,
+)
 
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
@@ -28,6 +59,11 @@ class ApiModel(BaseModel):
 
 class PairRequest(ApiModel):
     token: str = Field(min_length=1)
+
+
+class PairResponse(ApiModel):
+    status: str
+    username: str
 
 
 class ProjectCreateRequest(ApiModel):
@@ -46,6 +82,65 @@ class WorkflowCreateRequest(ApiModel):
 
 class BudgetUpdateRequest(ApiModel):
     limit_units: int = Field(ge=0)
+
+
+class ToggleRequest(ApiModel):
+    enabled: bool
+
+
+class KillSwitchResponse(ApiModel):
+    scope_kind: str
+    scope_id: str
+    enabled: bool
+
+
+class TeamCreateRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class TeamMemberRequest(ApiModel):
+    principal_id: str = Field(min_length=1)
+    role: Literal["owner", "operator", "viewer"]
+
+
+class ProviderCreateRequest(ApiModel):
+    provider: str = Field(min_length=1, max_length=100)
+    credential_ref: str = Field(min_length=1, max_length=500)
+
+
+class AutonomyEvaluateRequest(ApiModel):
+    capability: str = Field(min_length=1, max_length=200)
+    requested_execution: bool
+
+
+class MemoryCreateRequest(ApiModel):
+    scope: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class SkillCreateRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class RoutineCreateRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=200)
+    skill_version_id: str = Field(min_length=1)
+
+
+class EnvelopeActorRequest(ApiModel):
+    actor_id: str = Field(min_length=1, max_length=200)
+    public_key: str = Field(min_length=1, max_length=1_000)
+
+
+class ChannelIdentityRequest(ApiModel):
+    provider: str = Field(min_length=1, max_length=100)
+    external_id: str = Field(min_length=1, max_length=200)
+    principal_id: str = Field(min_length=1, max_length=200)
+
+
+class MutationStatus(ApiModel):
+    status: str
 
 
 class SessionPrincipal(BaseModel):
@@ -163,6 +258,12 @@ def create_app(
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
     service = CorvusService.open(database)
+    governance = GovernanceService(service.store)
+    offline = OfflineConnectorService(
+        service.store,
+        signer=LocalEnvelopeSigner.generate(actor_id="local-browser-connector"),
+    )
+    channel = ChannelIngressService(service.store)
     auth = _AuthManager(
         service=service,
         bootstrap_token=bootstrap_token,
@@ -177,6 +278,10 @@ def create_app(
     @app.exception_handler(DomainConflict)
     async def conflict_handler(_request: Request, error: DomainConflict) -> JSONResponse:
         return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(_request: Request, error: ValueError) -> JSONResponse:
+        return _error_response(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_request", str(error))
 
     def authenticated(request: Request) -> SessionPrincipal:
         return auth.authenticate(request.cookies.get(_SESSION_COOKIE))
@@ -208,7 +313,7 @@ def create_app(
             connection.execute("SELECT 1").fetchone()
         return {"status": "ready"}
 
-    @app.post("/api/auth/pair")
+    @app.post("/api/auth/pair", response_model=PairResponse)
     def pair(body: PairRequest, response: Response) -> dict[str, str]:
         principal, token = auth.pair(body.token)
         response.set_cookie(
@@ -222,20 +327,24 @@ def create_app(
         )
         return {"status": "paired", "username": principal.username}
 
-    @app.get("/api/auth/session")
+    @app.get("/api/auth/session", response_model=SessionPrincipal)
     def session(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> dict[str, Any]:
         return principal.model_dump(mode="json")
 
-    @app.get("/api/projects")
+    @app.get("/api/projects", response_model=list[Project])
     def projects(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> list[dict[str, Any]]:
         queries = TenantScopedQueries(service.store)
         return [item.model_dump(mode="json") for item in queries.list_projects(principal.tenant_id)]
 
-    @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/projects",
+        status_code=status.HTTP_201_CREATED,
+        response_model=Project,
+    )
     def create_project(
         body: ProjectCreateRequest,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
@@ -246,6 +355,7 @@ def create_app(
     @app.post(
         "/api/projects/{project_id}/outcomes",
         status_code=status.HTTP_201_CREATED,
+        response_model=OutcomeContract,
     )
     def create_outcome(
         project_id: str,
@@ -260,9 +370,21 @@ def create_app(
         )
         return outcome.model_dump(mode="json")
 
+    @app.get(
+        "/api/projects/{project_id}/outcomes",
+        response_model=list[OutcomeContract],
+    )
+    def outcomes(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [item.model_dump(mode="json") for item in service.list_outcomes(project_id)]
+
     @app.post(
         "/api/outcomes/{outcome_id}/workflows",
         status_code=status.HTTP_201_CREATED,
+        response_model=Workflow,
     )
     def create_workflow(
         outcome_id: str,
@@ -277,7 +399,18 @@ def create_app(
         )
         return workflow.model_dump(mode="json")
 
-    @app.get("/api/workflows/{workflow_id}")
+    @app.get(
+        "/api/outcomes/{outcome_id}/workflows",
+        response_model=list[Workflow],
+    )
+    def workflows(
+        outcome_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        _require_outcome_tenant(service, outcome_id, principal.tenant_id)
+        return [item.model_dump(mode="json") for item in service.list_workflows(outcome_id)]
+
+    @app.get("/api/workflows/{workflow_id}", response_model=Workflow)
     def workflow(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -285,7 +418,10 @@ def create_app(
         _require_workflow_tenant(service, workflow_id, principal.tenant_id)
         return service.get_workflow(workflow_id).model_dump(mode="json")
 
-    @app.get("/api/workflows/{workflow_id}/work-items")
+    @app.get(
+        "/api/workflows/{workflow_id}/work-items",
+        response_model=list[WorkItem],
+    )
     def work_items(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -293,7 +429,7 @@ def create_app(
         _require_workflow_tenant(service, workflow_id, principal.tenant_id)
         return [item.model_dump(mode="json") for item in service.list_work_items(workflow_id)]
 
-    @app.post("/api/workflows/{workflow_id}/start")
+    @app.post("/api/workflows/{workflow_id}/start", response_model=Workflow)
     def start_workflow(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
@@ -301,7 +437,31 @@ def create_app(
         _require_workflow_tenant(service, workflow_id, principal.tenant_id)
         return service.start_workflow(workflow_id).model_dump(mode="json")
 
-    @app.post("/api/workflows/{workflow_id}/run-next")
+    @app.post("/api/workflows/{workflow_id}/pause", response_model=Workflow)
+    def pause_workflow(
+        workflow_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_workflow_tenant(service, workflow_id, principal.tenant_id)
+        return service.pause_workflow(workflow_id).model_dump(mode="json")
+
+    @app.post("/api/workflows/{workflow_id}/resume", response_model=Workflow)
+    def resume_workflow(
+        workflow_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_workflow_tenant(service, workflow_id, principal.tenant_id)
+        return service.start_workflow(workflow_id).model_dump(mode="json")
+
+    @app.post("/api/workflows/{workflow_id}/cancel", response_model=Workflow)
+    def cancel_workflow(
+        workflow_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_workflow_tenant(service, workflow_id, principal.tenant_id)
+        return service.cancel_workflow(workflow_id).model_dump(mode="json")
+
+    @app.post("/api/workflows/{workflow_id}/run-next", response_model=WorkItem)
     def run_next(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
@@ -312,7 +472,22 @@ def create_app(
             raise DomainConflict("no_ready_work_item")
         return item.model_dump(mode="json")
 
-    @app.get("/api/workflows/{workflow_id}/effects")
+    @app.post(
+        "/api/workflows/{workflow_id}/work-items/{item_key}/retry",
+        response_model=WorkItem,
+    )
+    def retry_work_item(
+        workflow_id: str,
+        item_key: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_workflow_tenant(service, workflow_id, principal.tenant_id)
+        return service.retry_work_item(workflow_id, item_key).model_dump(mode="json")
+
+    @app.get(
+        "/api/workflows/{workflow_id}/effects",
+        response_model=list[EffectRecord],
+    )
     def effects(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -320,7 +495,7 @@ def create_app(
         _require_workflow_tenant(service, workflow_id, principal.tenant_id)
         return [effect.model_dump(mode="json") for effect in service.list_effects(workflow_id)]
 
-    @app.post("/api/effects/{effect_id}/approve")
+    @app.post("/api/effects/{effect_id}/approve", response_model=ApprovalRecord)
     def approve_effect(
         effect_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
@@ -328,7 +503,28 @@ def create_app(
         _require_effect_tenant(service, effect_id, principal.tenant_id)
         return service.approve_effect(effect_id, actor_id=principal.user_id).model_dump(mode="json")
 
-    @app.put("/api/projects/{project_id}/budget")
+    @app.post("/api/effects/{effect_id}/reject", response_model=ApprovalRecord)
+    def reject_effect(
+        effect_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_effect_tenant(service, effect_id, principal.tenant_id)
+        return service.reject_effect(effect_id, actor_id=principal.user_id).model_dump(mode="json")
+
+    @app.put(
+        "/api/workflows/{workflow_id}/kill-switch",
+        response_model=KillSwitchResponse,
+    )
+    def set_workflow_kill_switch(
+        workflow_id: str,
+        body: ToggleRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        _require_workflow_tenant(service, workflow_id, principal.tenant_id)
+        service.set_kill_switch(scope_kind="workflow", scope_id=workflow_id, enabled=body.enabled)
+        return {"scope_kind": "workflow", "scope_id": workflow_id, "enabled": body.enabled}
+
+    @app.put("/api/projects/{project_id}/budget", response_model=BudgetAccount)
     def set_budget(
         project_id: str,
         body: BudgetUpdateRequest,
@@ -337,7 +533,7 @@ def create_app(
         TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
         return service.set_budget(project_id, limit_units=body.limit_units).model_dump(mode="json")
 
-    @app.get("/api/projects/{project_id}/budget")
+    @app.get("/api/projects/{project_id}/budget", response_model=BudgetAccount)
     def get_budget(
         project_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -345,7 +541,10 @@ def create_app(
         TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
         return service.get_budget(project_id).model_dump(mode="json")
 
-    @app.get("/api/workflows/{workflow_id}/artifacts")
+    @app.get(
+        "/api/workflows/{workflow_id}/artifacts",
+        response_model=list[ArtifactRecord],
+    )
     def artifacts(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -353,7 +552,10 @@ def create_app(
         _require_workflow_tenant(service, workflow_id, principal.tenant_id)
         return [item.model_dump(mode="json") for item in service.list_artifacts(workflow_id)]
 
-    @app.get("/api/workflows/{workflow_id}/conversation")
+    @app.get(
+        "/api/workflows/{workflow_id}/conversation",
+        response_model=list[ConversationEntry],
+    )
     def conversation(
         workflow_id: str,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -362,6 +564,250 @@ def create_app(
         return [
             item.model_dump(mode="json") for item in service.list_conversation_entries(workflow_id)
         ]
+
+    @app.get("/api/projects/{project_id}/teams", response_model=list[Team])
+    def teams(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [item.model_dump(mode="json") for item in governance.list_teams(project_id)]
+
+    @app.post(
+        "/api/projects/{project_id}/teams",
+        status_code=status.HTTP_201_CREATED,
+        response_model=Team,
+    )
+    def create_team(
+        project_id: str,
+        body: TeamCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.create_team(
+            project_id=project_id,
+            name=body.name,
+            owner_id=principal.user_id,
+        ).model_dump(mode="json")
+
+    @app.get("/api/teams/{team_id}/members", response_model=list[TeamMember])
+    def team_members(
+        team_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        members = governance.list_team_members(team_id)
+        _require_team_tenant(service, governance, team_id, principal.tenant_id)
+        return [item.model_dump(mode="json") for item in members]
+
+    @app.post("/api/teams/{team_id}/members", response_model=MutationStatus)
+    def add_team_member(
+        team_id: str,
+        body: TeamMemberRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, str]:
+        _require_team_tenant(service, governance, team_id, principal.tenant_id)
+        governance.add_member(
+            team_id,
+            actor_id=principal.user_id,
+            principal_id=body.principal_id,
+            role=body.role,
+        )
+        return {"status": "member_added"}
+
+    @app.get(
+        "/api/projects/{project_id}/providers",
+        response_model=list[ProviderConnection],
+    )
+    def providers(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [
+            item.model_dump(mode="json")
+            for item in governance.list_provider_connections(project_id)
+        ]
+
+    @app.post(
+        "/api/projects/{project_id}/providers",
+        status_code=status.HTTP_201_CREATED,
+        response_model=ProviderConnection,
+    )
+    def create_provider(
+        project_id: str,
+        body: ProviderCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.create_provider_connection(
+            project_id=project_id,
+            provider=body.provider,
+            credential_ref=body.credential_ref,
+        ).model_dump(mode="json")
+
+    @app.post(
+        "/api/projects/{project_id}/autonomy/evaluate",
+        response_model=AutonomyDecision,
+    )
+    def evaluate_autonomy(
+        project_id: str,
+        body: AutonomyEvaluateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.evaluate_autonomy(
+            project_id=project_id,
+            principal_id=principal.user_id,
+            capability=body.capability,
+            requested_execution=body.requested_execution,
+        ).model_dump(mode="json")
+
+    @app.get("/api/projects/{project_id}/memories", response_model=list[MemoryEntry])
+    def memories(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [
+            item.model_dump(mode="json") for item in governance.list_memory_entries(project_id)
+        ]
+
+    @app.post(
+        "/api/projects/{project_id}/memories",
+        status_code=status.HTTP_201_CREATED,
+        response_model=MemoryEntry,
+    )
+    def store_memory(
+        project_id: str,
+        body: MemoryCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.store_memory(
+            project_id=project_id,
+            scope=body.scope,
+            content=body.content,
+            provenance=f"user:{principal.user_id}",
+        ).model_dump(mode="json")
+
+    @app.get(
+        "/api/projects/{project_id}/memories/retrieve",
+        response_model=list[RetrievedMemory],
+    )
+    def retrieve_memory(
+        project_id: str,
+        query: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [
+            item.model_dump(mode="json")
+            for item in governance.retrieve_memory(project_id=project_id, query=query)
+        ]
+
+    @app.get("/api/projects/{project_id}/skills", response_model=list[SkillVersion])
+    def skills(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [item.model_dump(mode="json") for item in governance.list_skills(project_id)]
+
+    @app.post(
+        "/api/projects/{project_id}/skills",
+        status_code=status.HTTP_201_CREATED,
+        response_model=SkillVersion,
+    )
+    def create_skill(
+        project_id: str,
+        body: SkillCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.create_skill(
+            project_id=project_id,
+            name=body.name,
+            content=body.content,
+        ).model_dump(mode="json")
+
+    @app.post("/api/skills/{skill_id}/activate", response_model=SkillVersion)
+    def activate_skill(
+        skill_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        skill = governance.get_skill(skill_id)
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, skill.project_id)
+        return governance.activate_skill(skill_id).model_dump(mode="json")
+
+    @app.get("/api/projects/{project_id}/routines", response_model=list[Routine])
+    def routines(
+        project_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return [item.model_dump(mode="json") for item in governance.list_routines(project_id)]
+
+    @app.post(
+        "/api/projects/{project_id}/routines",
+        status_code=status.HTTP_201_CREATED,
+        response_model=Routine,
+    )
+    def create_routine(
+        project_id: str,
+        body: RoutineCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
+        return governance.create_routine(
+            project_id=project_id,
+            name=body.name,
+            skill_version_id=body.skill_version_id,
+        ).model_dump(mode="json")
+
+    @app.post("/api/routines/{routine_id}/run", response_model=RoutineRun)
+    def run_routine(
+        routine_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        routine = governance.get_routine(routine_id)
+        TenantScopedQueries(service.store).get_project(principal.tenant_id, routine.project_id)
+        return governance.run_routine(routine_id, actor_id=principal.user_id).model_dump(mode="json")
+
+    @app.get("/api/offline-intents", response_model=list[OfflineIntentRecord])
+    def offline_intents(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in offline.list_intents()]
+
+    @app.post("/api/channel/actors", response_model=MutationStatus)
+    def register_channel_actor(
+        body: EnvelopeActorRequest,
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, str]:
+        channel.register_actor(body.actor_id, body.public_key)
+        return {"status": "actor_registered"}
+
+    @app.post("/api/channel/identities", response_model=MutationStatus)
+    def map_channel_identity(
+        body: ChannelIdentityRequest,
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, str]:
+        channel.map_identity(
+            provider=body.provider,
+            external_id=body.external_id,
+            principal_id=body.principal_id,
+        )
+        return {"status": "identity_mapped"}
+
+    @app.post("/api/channel/events", response_model=ChannelEventRecord)
+    def ingest_channel_event(body: ChannelEventEnvelope) -> dict[str, Any]:
+        return channel.ingest(body).model_dump(mode="json")
+
+    @app.get("/api/channel/events", response_model=list[ChannelEventRecord])
+    def channel_events(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in channel.list_events()]
 
     @app.get("/api/workflows/{workflow_id}/events")
     async def events(
@@ -486,3 +932,13 @@ def _require_effect_tenant(service: CorvusService, effect_id: str, tenant_id: st
         ).fetchone()
         if row is None:
             raise DomainNotFound("effect_not_found")
+
+
+def _require_team_tenant(
+    service: CorvusService,
+    governance: GovernanceService,
+    team_id: str,
+    tenant_id: str,
+) -> None:
+    team = governance.get_team(team_id)
+    TenantScopedQueries(service.store).get_project(tenant_id, team.project_id)
