@@ -33,6 +33,7 @@ from corvus.domain.deployment import (
     WorkspaceAuthority,
     fixed_workspace_lock_name,
 )
+from corvus.infrastructure.audit_history import AuditHistoryHeads
 from corvus.infrastructure.project_recovery import AuthorityCommitReceiptEvidence
 
 _RECEIPT_NAMESPACE = UUID("fd60e877-6aaa-4988-94aa-3cf63e12d047")
@@ -89,6 +90,13 @@ class SealedAuthorityState(BaseModel):
     pending_mutation_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     pending_generation: int | None = Field(default=None, ge=1)
     pending_state_root: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    checkpoint_history_head: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    result_binding_history_head: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    pending_checkpoint_history_head: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    pending_result_binding_history_head: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     last_finalized_intent_id: UUID | None = None
     last_receipt_id: UUID | None = None
     last_receipt_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -187,10 +195,15 @@ class SealedLocalAuthorityAnchor:
         self.secret_store = secret_store
         self.lock = FixedWorkspaceFileLock(root=lock_root, lock_name=expected_lock)
 
-    def bootstrap(self) -> None:
+    def bootstrap(self, *, audit_history_heads: AuditHistoryHeads | None = None) -> None:
         with self.lock.held():
             if self.secret_store.get(self._state_reference) is not None:
                 raise LocalAuthorityError("sealed_authority_already_initialized")
+            if audit_history_heads is None:
+                audit_history_heads = AuditHistoryHeads(
+                    checkpoint_history_head="0" * 64,
+                    result_binding_history_head="0" * 64,
+                )
             self._save(
                 SealedAuthorityState(
                     workspace_id=self.authority.workspace_id,
@@ -200,6 +213,8 @@ class SealedLocalAuthorityAnchor:
                     generation=self.authority.authority_generation,
                     state_root=self.authority.authority_state_root,
                     device_binding_digest=self.deployment_instance.device_binding_digest,
+                    checkpoint_history_head=audit_history_heads.checkpoint_history_head,
+                    result_binding_history_head=audit_history_heads.result_binding_history_head,
                 )
             )
 
@@ -251,16 +266,54 @@ class SealedLocalAuthorityAnchor:
             digest=hashlib.sha256(encoded).hexdigest(),
         )
 
-    def reserve(self, intent: AuthorityCommitIntent) -> None:
+    def reserve(
+        self,
+        intent: AuthorityCommitIntent,
+        *,
+        prior_audit_history_heads: AuditHistoryHeads | None = None,
+        next_audit_history_heads: AuditHistoryHeads | None = None,
+    ) -> None:
         with self.lock.held():
             state = self._load()
+            if prior_audit_history_heads is None:
+                if (
+                    state.checkpoint_history_head is None
+                    or state.result_binding_history_head is None
+                ):
+                    raise LocalAuthorityError("sealed_audit_histories_uninitialized")
+                prior_audit_history_heads = AuditHistoryHeads(
+                    checkpoint_history_head=state.checkpoint_history_head,
+                    result_binding_history_head=state.result_binding_history_head,
+                )
+            if next_audit_history_heads is None:
+                if (
+                    state.pending_checkpoint_history_head is not None
+                    and state.pending_result_binding_history_head is not None
+                ):
+                    next_audit_history_heads = AuditHistoryHeads(
+                        checkpoint_history_head=state.pending_checkpoint_history_head,
+                        result_binding_history_head=state.pending_result_binding_history_head,
+                    )
+                else:
+                    next_audit_history_heads = prior_audit_history_heads
             if state.pending_intent_id == intent.id:
                 if (
                     state.pending_mutation_digest != intent.mutation_digest
                     or state.pending_generation != intent.next_generation
                     or state.pending_state_root != intent.proposed_state_root
+                    or state.pending_checkpoint_history_head
+                    != next_audit_history_heads.checkpoint_history_head
+                    or state.pending_result_binding_history_head
+                    != next_audit_history_heads.result_binding_history_head
                 ):
                     raise LocalAuthorityError("sealed_authority_reservation_replay_mismatch")
+                if (
+                    state.checkpoint_history_head
+                    != prior_audit_history_heads.checkpoint_history_head
+                    or state.result_binding_history_head
+                    != prior_audit_history_heads.result_binding_history_head
+                ):
+                    raise LocalAuthorityError("sealed_audit_history_mismatch")
                 return
             if state.pending_intent_id is not None:
                 raise LocalAuthorityError("sealed_authority_reservation_busy")
@@ -271,6 +324,10 @@ class SealedLocalAuthorityAnchor:
                 or intent.prior_generation != state.generation
                 or intent.prior_state_root != state.state_root
                 or intent.next_generation != state.generation + 1
+                or state.checkpoint_history_head
+                != prior_audit_history_heads.checkpoint_history_head
+                or state.result_binding_history_head
+                != prior_audit_history_heads.result_binding_history_head
             ):
                 raise LocalAuthorityError("sealed_authority_prior_state_mismatch")
             self._save(
@@ -280,6 +337,8 @@ class SealedLocalAuthorityAnchor:
                         "pending_mutation_digest": intent.mutation_digest,
                         "pending_generation": intent.next_generation,
                         "pending_state_root": intent.proposed_state_root,
+                        "pending_checkpoint_history_head": next_audit_history_heads.checkpoint_history_head,
+                        "pending_result_binding_history_head": next_audit_history_heads.result_binding_history_head,
                     }
                 )
             )
@@ -318,6 +377,8 @@ class SealedLocalAuthorityAnchor:
                         "pending_mutation_digest": None,
                         "pending_generation": None,
                         "pending_state_root": None,
+                        "pending_checkpoint_history_head": state.pending_checkpoint_history_head,
+                        "pending_result_binding_history_head": state.pending_result_binding_history_head,
                         "last_finalized_intent_id": intent.id,
                         "last_receipt_id": evidence.id,
                         "last_receipt_digest": evidence.digest,
@@ -325,6 +386,60 @@ class SealedLocalAuthorityAnchor:
                 )
             )
         return evidence
+
+    def finalize_audit_histories(
+        self,
+        intent: AuthorityCommitIntent,
+        next_audit_history_heads: AuditHistoryHeads,
+    ) -> None:
+        if intent.state not in {
+            AuthorityCommitState.DB_COMMITTED,
+            AuthorityCommitState.ANCHOR_FINALIZED,
+        }:
+            raise LocalAuthorityError("sealed_audit_histories_state_invalid")
+        with self.lock.held():
+            state = self._load()
+            if state.last_finalized_intent_id != intent.id:
+                raise LocalAuthorityError("sealed_audit_history_not_ready")
+            if (
+                state.pending_checkpoint_history_head is None
+                or state.pending_result_binding_history_head is None
+            ):
+                if (
+                    state.checkpoint_history_head
+                    == next_audit_history_heads.checkpoint_history_head
+                    and state.result_binding_history_head
+                    == next_audit_history_heads.result_binding_history_head
+                ):
+                    return
+                raise LocalAuthorityError("sealed_audit_history_mismatch")
+            if (
+                state.pending_checkpoint_history_head
+                != next_audit_history_heads.checkpoint_history_head
+                or state.pending_result_binding_history_head
+                != next_audit_history_heads.result_binding_history_head
+            ):
+                raise LocalAuthorityError("sealed_audit_history_mismatch")
+            self._save(
+                state.model_copy(
+                    update={
+                        "checkpoint_history_head": next_audit_history_heads.checkpoint_history_head,
+                        "result_binding_history_head": next_audit_history_heads.result_binding_history_head,
+                        "pending_checkpoint_history_head": None,
+                        "pending_result_binding_history_head": None,
+                    }
+                )
+            )
+
+    def current_audit_history_heads(self) -> AuditHistoryHeads:
+        with self.lock.held():
+            state = self._load()
+            if state.checkpoint_history_head is None or state.result_binding_history_head is None:
+                raise LocalAuthorityError("sealed_audit_histories_uninitialized")
+            return AuditHistoryHeads(
+                checkpoint_history_head=state.checkpoint_history_head,
+                result_binding_history_head=state.result_binding_history_head,
+            )
 
     def issue_runtime_proof(
         self,
@@ -337,6 +452,11 @@ class SealedLocalAuthorityAnchor:
             state = self._load()
             if state.pending_intent_id is not None:
                 raise LocalAuthorityError("sealed_authority_transition_in_progress")
+            if (
+                state.pending_checkpoint_history_head is not None
+                or state.pending_result_binding_history_head is not None
+            ):
+                raise LocalAuthorityError("sealed_audit_history_transition_in_progress")
             if (
                 request.workspace_id != state.workspace_id
                 or request.deployment_instance_id != state.deployment_instance_id

@@ -25,12 +25,20 @@ from corvus.domain.deployment import (
     WorkspaceAuthorityState,
     fixed_workspace_lock_name,
 )
+from corvus.infrastructure.audit_history import AuditHistoryHeads
 from corvus.infrastructure.local_authority import (
     LocalAuthorityError,
     SealedLocalAuthorityAnchor,
 )
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+
+
+def _history_heads(value: str) -> AuditHistoryHeads:
+    return AuditHistoryHeads(
+        checkpoint_history_head=value * 64,
+        result_binding_history_head=value * 64,
+    )
 
 
 class MemorySecretStore:
@@ -175,11 +183,24 @@ def _request(authority: WorkspaceAuthority) -> AuthorizationRequest:
 
 def test_sealed_anchor_bootstrap_finalize_and_runtime_possession(tmp_path: Path) -> None:
     anchor, authority, instance, credential, instance_key, epoch_key, _ = _anchor(tmp_path)
-    anchor.bootstrap()
+    prior_heads = _history_heads("6")
+    next_heads = AuditHistoryHeads(
+        checkpoint_history_head="7" * 64,
+        result_binding_history_head="8" * 64,
+    )
+    anchor.bootstrap(audit_history_heads=prior_heads)
     intent = _intent(authority)
 
-    anchor.reserve(intent)
-    anchor.reserve(intent)
+    anchor.reserve(
+        intent,
+        prior_audit_history_heads=prior_heads,
+        next_audit_history_heads=next_heads,
+    )
+    anchor.reserve(
+        intent,
+        prior_audit_history_heads=prior_heads,
+        next_audit_history_heads=next_heads,
+    )
     try:
         anchor.issue_runtime_proof(
             _request(authority),
@@ -202,6 +223,36 @@ def test_sealed_anchor_bootstrap_finalize_and_runtime_possession(tmp_path: Path)
         }
     )
     request = _request(advanced)
+    try:
+        anchor.issue_runtime_proof(
+            request,
+            nonce_digest="5" * 64,
+            expires_at=_NOW + timedelta(seconds=15),
+        )
+    except LocalAuthorityError as exc:
+        assert str(exc) == "sealed_audit_history_transition_in_progress"
+    else:  # pragma: no cover - fail-closed assertion
+        raise AssertionError("runtime proof issued before audit histories were sealed")
+
+    for altered_result, altered_checkpoint in [
+        (next_heads.result_binding_history_head, "9" * 64),
+        ("9" * 64, next_heads.checkpoint_history_head),
+    ]:
+        try:
+            anchor.finalize_audit_histories(
+                committed,
+                AuditHistoryHeads(
+                    checkpoint_history_head=altered_checkpoint,
+                    result_binding_history_head=altered_result,
+                ),
+            )
+        except LocalAuthorityError as exc:
+            assert str(exc) == "sealed_audit_history_mismatch"
+        else:  # pragma: no cover - fail-closed assertion
+            raise AssertionError("substituted audit history was sealed")
+
+    anchor.finalize_audit_histories(committed, next_heads)
+    assert anchor.current_audit_history_heads() == next_heads
     proof = anchor.issue_runtime_proof(
         request,
         nonce_digest="5" * 64,
