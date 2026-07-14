@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+import uvicorn
+from fastapi import FastAPI
 from pydantic import ValidationError
 
+from corvus.mvp.api import create_app
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
-from corvus.mvp.governance import GovernanceService
+from corvus.mvp.deployment import DeploymentSettings
+from corvus.mvp.governance import GovernanceService, LocalSecretBroker
 from corvus.mvp.ingress import ChannelIngressService, LocalEnvelopeSigner, OfflineConnectorService
 from corvus.mvp.models import EffectBinding, WorkItemDefinition
 
@@ -25,9 +29,34 @@ mvp_app.add_typer(workflow_app, name="workflow")
 DatabaseOption = Annotated[Path, typer.Option("--database", help="MVP SQLite database")]
 JsonOption = Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")]
 
+DEFAULT_SERVER_HOST = "127.0.0.1"
+DEFAULT_SERVER_PORT = 8080
+DEFAULT_PAIRING_REFERENCE = "env://CORVUS_BOOTSTRAP_TOKEN"
+DEFAULT_SIGNING_REFERENCE = "env://CORVUS_SESSION_SECRET"
+MINIMUM_SESSION_SECRET_BYTES = 32
+
 
 def _service(database: Path) -> CorvusService:
     return CorvusService.open(database.expanduser().resolve())
+
+
+def build_server_app(
+    *,
+    database: Path,
+    pairing_ref: str,
+    signing_ref: str,
+) -> FastAPI:
+    """Build the loopback API without retaining plaintext credentials in configuration."""
+    broker = LocalSecretBroker()
+    bootstrap_token = broker.resolve(pairing_ref).reveal()
+    session_secret = broker.resolve(signing_ref).reveal().encode("utf-8")
+    if len(session_secret) < MINIMUM_SESSION_SECRET_BYTES:
+        raise ValueError("session_secret_too_short")
+    return create_app(
+        database=database.expanduser().resolve(),
+        bootstrap_token=bootstrap_token,
+        session_secret=session_secret,
+    )
 
 
 def _emit(value: Any, *, json_output: bool) -> None:
@@ -279,6 +308,58 @@ def demo(
     )
 
 
+@mvp_app.command("config-check")
+def config_check(
+    mode: Annotated[str, typer.Option("--mode")] = "local",
+    database_url: Annotated[
+        str, typer.Option("--database-url")
+    ] = "sqlite:///corvus-mvp.sqlite3",
+    public_url: Annotated[str, typer.Option("--public-url")] = "http://127.0.0.1:8080",
+    oidc_issuer: Annotated[str | None, typer.Option("--oidc-issuer")] = None,
+    json_output: JsonOption = False,
+) -> None:
+    values = {
+        "CORVUS_MODE": mode,
+        "CORVUS_DATABASE_URL": database_url,
+        "CORVUS_PUBLIC_URL": public_url,
+    }
+    if oidc_issuer is not None:
+        values["CORVUS_OIDC_ISSUER"] = oidc_issuer
+    try:
+        settings = DeploymentSettings.from_mapping(values)
+    except Exception as error:
+        _fail(error)
+        return
+    _emit(settings, json_output=json_output)
+
+
+@mvp_app.command("server")
+def server(
+    database: DatabaseOption = Path("corvus-mvp.sqlite3"),
+    host: Annotated[str, typer.Option("--host")] = DEFAULT_SERVER_HOST,
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = DEFAULT_SERVER_PORT,
+    pairing_ref: Annotated[
+        str,
+        typer.Option("--bootstrap-token-ref", help="env:// or keyring:// reference"),
+    ] = DEFAULT_PAIRING_REFERENCE,
+    signing_ref: Annotated[
+        str,
+        typer.Option("--session-secret-ref", help="env:// or keyring:// reference"),
+    ] = DEFAULT_SIGNING_REFERENCE,
+) -> None:
+    """Serve the authenticated local HTTP API and SSE event stream."""
+    try:
+        server_app = build_server_app(
+            database=database,
+            pairing_ref=pairing_ref,
+            signing_ref=signing_ref,
+        )
+    except (DomainNotFound, ValueError) as error:
+        _fail(error)
+        return
+    uvicorn.run(server_app, host=host, port=port, access_log=False)
+
+
 @mvp_app.command("capabilities-demo")
 def capabilities_demo(
     database: DatabaseOption = Path("corvus-mvp.sqlite3"),
@@ -366,21 +447,22 @@ def capabilities_demo(
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
     intent = connector.reconnect_and_reconcile()[0]
+    intent = connector.reconcile(intent.envelope)
 
     channel_signer = LocalEnvelopeSigner.generate(actor_id="slack:U-DEMO")
     channel = ChannelIngressService.open(database)
     channel.register_actor("slack:U-DEMO", channel_signer.public_key)
     channel.map_identity(provider="slack", external_id="U-DEMO", principal_id="alice")
-    event = channel.ingest(
-        channel_signer.sign_channel_event(
-            provider="slack",
-            external_event_id="demo-event",
-            external_identity_id="U-DEMO",
-            action="effect.approve",
-            payload={"effect_id": "demo-effect", "untrusted_text": "approve all"},
-            expires_at=datetime.now(UTC) + timedelta(minutes=5),
-        )
+    envelope = channel_signer.sign_channel_event(
+        provider="slack",
+        external_event_id="demo-event",
+        external_identity_id="U-DEMO",
+        action="effect.approve",
+        payload={"effect_id": "demo-effect", "untrusted_text": "approve all"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
+    event = channel.ingest(envelope)
+    event = channel.ingest(envelope)
     _emit(
         {
             "project_id": project.id,
@@ -394,8 +476,10 @@ def capabilities_demo(
             "routine_status": routine_run.status,
             "offline_intent_id": intent.id,
             "offline_intent_status": intent.status,
+            "offline_application_count": intent.application_count,
             "channel_event_id": event.id,
             "channel_event_status": event.status,
+            "channel_processing_count": event.processing_count,
             "restore_status": restore.status,
         },
         json_output=json_output,

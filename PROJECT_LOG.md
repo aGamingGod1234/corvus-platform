@@ -27,7 +27,7 @@
 ## 2026-07-14 — M3 Thin CLI Adapter
 
 ### What Was Implemented
-- Added `corvus mvp` project, outcome, and workflow commands that call the authoritative application service.
+- Added `corvus-mvp` project, outcome, and workflow commands that call the authoritative application service.
 - Added a single-command durable demo covering dependency execution, approval, budget settlement, and restart verification.
 - Added CLI adapter tests that exercise real SQLite state rather than mocks.
 
@@ -38,7 +38,7 @@
 - `PROJECT_LOG.md` — implementation record.
 
 ### Assumptions Made (flag these for review)
-- The additive `corvus mvp` namespace preserves retained M0.5/M1 CLI compatibility while the hackathon surfaces are built.
+- The additive `corvus-mvp` console entry point preserves the frozen M0.5/M1 `corvus` command tree.
 
 ### Known Issues / Deferred
 - FastAPI/uvicorn are not installed and require dependency approval before the M4 adapter can be executed.
@@ -125,3 +125,53 @@
 
 ### Suggested Next Steps
 - Install the approved API/web/desktop dependencies and complete the remaining connected adapters.
+
+## 2026-07-14 — Operator Demo and Truthful Status Checkpoint
+
+### What Was Implemented
+- Extended the capabilities demo to prove offline and channel replay counts remain exactly one.
+- Added an operator-facing self-host configuration validation command.
+- Created a milestone-by-milestone status document with current commands, verification evidence, and explicit dependency-gated gaps.
+
+### Files Modified
+- `corvus/mvp/cli.py` — replay evidence and `config-check` command.
+- `tests/mvp/test_cli_adapter.py` — replay and configuration command tests.
+- `HACKATHON_STATUS.md` — truthful partial implementation and verification status.
+- `PROJECT_LOG.md` — implementation record.
+
+### Assumptions Made (flag these for review)
+- A status document should exist before completion and explicitly mark unimplemented adapters rather than waiting to document risk.
+
+### Known Issues / Deferred
+- M4, M5, executable container integration, and Tauri packaging remain dependency-gated.
+
+### Suggested Next Steps
+- Obtain dependency approval, then implement and verify the connected HTTP, web, and desktop paths.
+
+## 2026-07-14 — Authenticated Local API and SSE Runtime
+
+### What Was Implemented
+- Added a loopback FastAPI adapter over the authoritative SQLite-backed application service.
+- Added one-time pairing, signed cookie sessions, tenant checks, CSRF/origin enforcement, typed errors, and bounded resumable SSE replay.
+- Added project, outcome, workflow, approval, budget, artifact, and conversation endpoints.
+- Added a runnable `corvus-mvp server` command that resolves pairing and signing material only through secret references.
+
+### Files Modified
+- `corvus/mvp/api.py` — authenticated HTTP and SSE adapter.
+- `corvus/mvp/cli.py` — secret-reference server factory and local server command.
+- `corvus/mvp/store.py` — additive local-user migration.
+- `tests/mvp/test_api.py` — HTTP authorization, execution, replay, approval, and budget coverage.
+- `tests/mvp/test_cli_adapter.py` — server factory and credential-boundary coverage.
+- `pyproject.toml` and `uv.lock` — approved FastAPI, Uvicorn, and current test-client dependencies.
+- `PROJECT_LOG.md` — implementation record.
+
+### Assumptions Made (flag these for review)
+- The local MVP binds to loopback by default and uses an environment or keyring reference for each runtime credential.
+- Browser clients use the signed session cookie and obtain the CSRF value from the authenticated session endpoint.
+
+### Known Issues / Deferred
+- The React client and broader collaboration-resource endpoints remain to be connected.
+- Production TLS termination is a deployment concern; the local loopback cookie is intentionally usable over HTTP.
+
+### Suggested Next Steps
+- Build the generated-contract React client and verify the same durable workflow through the browser adapter.

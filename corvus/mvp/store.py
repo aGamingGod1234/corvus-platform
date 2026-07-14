@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -321,6 +321,15 @@ CREATE TABLE mvp_restore_quarantine (
 );
 """
 
+_MIGRATION_004 = """
+CREATE TABLE mvp_local_users (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    username TEXT NOT NULL UNIQUE,
+    paired_at TEXT NOT NULL
+);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -383,4 +392,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(3)
+            if 4 not in versions:
+                connection.executescript(_MIGRATION_004)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )

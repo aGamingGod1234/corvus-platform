@@ -14,6 +14,7 @@ dependencies = [
   "alembic>=1.14,<2",
   "cryptography>=48.0.1,<49",
   "docker>=7,<8",
+  "fastapi>=0.116,<1",
   "httpcore>=1,<2",
   "httpx>=0.28,<1",
   "keyring>=25,<26",
@@ -24,14 +25,17 @@ dependencies = [
   "sqlalchemy>=2,<3",
   "textual>=1,<7",
   "typer>=0.15,<1",
+  "uvicorn>=0.35,<1",
 ]
 
 [project.scripts]
 corvus = "corvus.cli:app"
+corvus-mvp = "corvus.mvp.cli:mvp_app"
 
 [dependency-groups]
 dev = [
   "bandit>=1.8,<2",
+  "httpx2>=2.6.0",
   "mypy>=1.15,<2",
   "pip-audit>=2.9,<3",
   "pytest>=9.0.3,<10",
