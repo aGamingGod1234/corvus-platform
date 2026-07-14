@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -13,6 +14,10 @@ from corvus.domain.audit import (
     AuditReceipt,
     AuditResultBinding,
     AuthorizationDecisionSnapshot,
+)
+from corvus.infrastructure.audit_history import (
+    AuditHistoryHeads,
+    advance_audit_history_head,
 )
 from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
@@ -331,6 +336,30 @@ class AuditRepository:
             or parsed.prepared_result_digest != checkpoint.prepared_result_digest
         ):
             raise AuditRepositoryError("audit_recovery_binding_mismatch")
+
+    def current_history_heads(self, workspace_id: UUID) -> AuditHistoryHeads:
+        checkpoint_head = "0" * 64
+        binding_head = "0" * 64
+        with self._connect() as connection:
+            checkpoints = connection.execute(
+                "SELECT payload_json FROM audit_anchor_recovery_checkpoints "
+                "WHERE workspace_id = ? ORDER BY id",
+                (str(workspace_id),),
+            ).fetchall()
+            bindings = connection.execute(
+                "SELECT binding_hash FROM audit_result_bindings "
+                "WHERE workspace_id = ? ORDER BY id",
+                (str(workspace_id),),
+            ).fetchall()
+        for (payload_json,) in checkpoints:
+            digest = hashlib.sha256(str(payload_json).encode("utf-8")).hexdigest()
+            checkpoint_head = advance_audit_history_head(checkpoint_head, digest)
+        for (binding_hash,) in bindings:
+            binding_head = advance_audit_history_head(binding_head, str(binding_hash))
+        return AuditHistoryHeads(
+            checkpoint_history_head=checkpoint_head,
+            result_binding_history_head=binding_head,
+        )
 
     def close(self) -> None:
         return None

@@ -576,3 +576,16 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
             authority_generation=advanced.authority_generation,
         )
     ) == len(M1_AUTHORITY_FAMILY_NAMES)
+    fresh_request = request.model_copy(
+        update={
+            "workspace_authority_generation": advanced.authority_generation,
+            "authority_state_root": advanced.authority_state_root,
+        }
+    )
+    fresh_proof = anchor.issue_runtime_proof(
+        fresh_request,
+        nonce_digest="f" * 64,
+        expires_at=_NOW + timedelta(minutes=5),
+    )
+    assert fresh_proof.authority_generation == advanced.authority_generation
+    assert anchor.current_audit_history_heads() == audits.current_history_heads(workspace_id)

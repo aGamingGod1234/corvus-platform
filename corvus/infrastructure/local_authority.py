@@ -413,12 +413,17 @@ class SealedLocalAuthorityAnchor:
                 ):
                     return
                 raise LocalAuthorityError("sealed_audit_history_mismatch")
-            if (
+            pending_matches_next = (
                 state.pending_checkpoint_history_head
-                != next_audit_history_heads.checkpoint_history_head
-                or state.pending_result_binding_history_head
-                != next_audit_history_heads.result_binding_history_head
-            ):
+                == next_audit_history_heads.checkpoint_history_head
+                and state.pending_result_binding_history_head
+                == next_audit_history_heads.result_binding_history_head
+            )
+            pending_matches_prior = (
+                state.pending_checkpoint_history_head == state.checkpoint_history_head
+                and state.pending_result_binding_history_head == state.result_binding_history_head
+            )
+            if not pending_matches_next and not pending_matches_prior:
                 raise LocalAuthorityError("sealed_audit_history_mismatch")
             self._save(
                 state.model_copy(

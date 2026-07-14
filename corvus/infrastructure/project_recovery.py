@@ -215,6 +215,17 @@ class RecoverableProjectCreateLifecycle:
             prepared_result_digest=mutation_digest,
         )
         self._complete_checkpoint(checkpoint, binding)
+        self._finalize_audit_histories(intent)
+
+    def _finalize_audit_histories(self, intent: AuthorityCommitIntent) -> None:
+        finalize = getattr(self.anchor, "finalize_audit_histories", None)
+        if finalize is None:
+            return
+        try:
+            heads = self.audit_repository.current_history_heads(intent.workspace_id)
+            finalize(intent, heads)
+        except Exception as exc:
+            raise ProjectCreateRecoveryError("audit_history_finalize_failed") from exc
 
     @staticmethod
     def _validate_request(project: Project, event: ProjectAuditEvent) -> None:
