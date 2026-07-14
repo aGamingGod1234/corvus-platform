@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from collections.abc import AsyncIterator
+from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from corvus.domain.agent_runtime import (
+    AgentCapabilities,
+    AgentRunEvent,
+    AgentRunHandle,
+    AgentRunRequest,
+    CancellationResult,
+    ProviderBinding,
+    ProviderStatus,
+)
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
 from corvus.domain.request import IdempotencyEnvelope, RequestContext
@@ -109,3 +119,32 @@ class ProjectIdempotencyPort(Protocol):
 
 class ProjectAuditPort(Protocol):
     def record(self, event: ProjectAuditEvent) -> None: ...
+
+
+@runtime_checkable
+class AgentRuntimePort(Protocol):
+    def discover(self) -> tuple[ProviderBinding, ...]: ...
+
+    def capabilities(self, binding: ProviderBinding) -> AgentCapabilities: ...
+
+    def health(self, binding: ProviderBinding) -> ProviderStatus: ...
+
+    async def start(self, request: AgentRunRequest) -> AgentRunHandle: ...
+
+    def events(
+        self,
+        handle: AgentRunHandle,
+        after_sequence: int = 0,
+    ) -> AsyncIterator[AgentRunEvent]: ...
+
+    async def cancel(
+        self,
+        handle: AgentRunHandle,
+        current_kill_switch_proof_id: UUID,
+    ) -> CancellationResult: ...
+
+    async def resume(
+        self,
+        handle: AgentRunHandle,
+        request_with_fresh_proofs: AgentRunRequest,
+    ) -> AgentRunHandle: ...

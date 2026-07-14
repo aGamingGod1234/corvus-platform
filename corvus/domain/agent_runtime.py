@@ -1,0 +1,464 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import UTC, datetime
+from decimal import Decimal
+from enum import StrEnum
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic_core import PydanticCustomError
+
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_GENESIS_EVENT_DIGEST = "0" * 64
+_SECRET_KEY_SUFFIXES = (
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+)
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _is_timezone_aware(value: datetime) -> bool:
+    return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _raise_contract_error(error_type: str, reason_code: str) -> None:
+    raise PydanticCustomError(
+        error_type,
+        "reason_code={reason_code}",
+        {"reason_code": reason_code},
+    )
+
+
+class ProviderFamily(StrEnum):
+    CODEX = "codex"
+    CLAUDE = "claude"
+    GEMINI = "gemini"
+    CURSOR = "cursor"
+    XAI = "xai"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    OPENROUTER = "openrouter"
+    OLLAMA = "ollama"
+    OPENAI_COMPATIBLE = "openai_compatible"
+
+
+class ProviderTransport(StrEnum):
+    LOCAL_CLI = "local_cli"
+    HTTP_API = "http_api"
+
+
+class ProviderStatus(StrEnum):
+    AVAILABLE = "available"
+    NEEDS_LOGIN = "needs_login"
+    UNAVAILABLE = "unavailable"
+    PREVIEW = "preview"
+    UNHEALTHY = "unhealthy"
+
+
+class CapabilitySupport(StrEnum):
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNVERIFIED = "unverified"
+
+
+def capability_enabled(support: CapabilitySupport) -> bool:
+    return support is CapabilitySupport.SUPPORTED
+
+
+class AgentCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    text: CapabilitySupport = CapabilitySupport.SUPPORTED
+    structured_output: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    streaming: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    images: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    tools: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    repository_read: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    repository_write: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    shell: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    mcp: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    session_resume: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    usage_cost_reporting: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    provider_side_budget: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    provider_side_cancellation: CapabilitySupport = CapabilitySupport.UNVERIFIED
+
+
+class ExecutableIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    executable_path: Path
+    version: str = Field(min_length=1, max_length=200)
+    sha256_digest: str = Field(pattern=_SHA256_PATTERN)
+
+    @field_validator("executable_path")
+    @classmethod
+    def validate_absolute_executable_path(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("executable_path_must_be_absolute")
+        return value
+
+
+class ProviderBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    project_id: UUID | None = None
+    family: ProviderFamily
+    transport: ProviderTransport
+    status: ProviderStatus
+    executable_identity: ExecutableIdentity | None = None
+    credential_ref_id: UUID | None = None
+    model: str = Field(min_length=1, max_length=200)
+    capabilities: AgentCapabilities
+    health_checked_at: datetime
+    version: int = Field(ge=1)
+    fallback_binding_ids: tuple[UUID, ...] = ()
+    data_egress_disclosure: str = Field(min_length=1, max_length=2000)
+    server_storage_disclosure: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_transport_identity(self) -> ProviderBinding:
+        if self.transport is ProviderTransport.LOCAL_CLI:
+            if self.executable_identity is None:
+                _raise_contract_error(
+                    "invalid_provider_binding_identity",
+                    "local_cli_requires_executable_identity",
+                )
+            if self.credential_ref_id is not None:
+                _raise_contract_error(
+                    "invalid_provider_binding_identity",
+                    "local_cli_forbids_credential_reference",
+                )
+        else:
+            if self.credential_ref_id is None:
+                _raise_contract_error(
+                    "invalid_provider_binding_identity",
+                    "http_api_requires_credential_reference",
+                )
+            if self.executable_identity is not None:
+                _raise_contract_error(
+                    "invalid_provider_binding_identity",
+                    "http_api_forbids_executable_identity",
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_fallbacks(self) -> ProviderBinding:
+        if self.id in self.fallback_binding_ids:
+            raise ValueError("provider_binding_cannot_fallback_to_self")
+        if len(set(self.fallback_binding_ids)) != len(self.fallback_binding_ids):
+            raise ValueError("duplicate_fallback_binding_id")
+        return self
+
+    @field_validator("health_checked_at")
+    @classmethod
+    def validate_health_timestamp(cls, value: datetime) -> datetime:
+        if not _is_timezone_aware(value):
+            raise ValueError("provider_health_timestamp_must_be_timezone_aware")
+        return value
+
+
+class AutonomyProfile(StrEnum):
+    REVIEW_FIRST = "review_first"
+    AUTO_WITHIN_LIMITS = "auto_within_limits"
+    FULL_AUTO_WHILE_AWAY = "full_auto_while_away"
+
+
+class AutonomyGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    workspace_id: UUID
+    project_id: UUID | None = None
+    profile: AutonomyProfile
+    allowed_roots: tuple[Path, ...] = Field(min_length=1)
+    allowed_effect_classes: frozenset[str]
+    denied_effect_classes: frozenset[str]
+    allowed_network_destinations: tuple[str, ...]
+    credential_grant_ids: tuple[UUID, ...]
+    wall_clock_deadline: datetime
+    provider_spend_ceiling: Decimal = Field(ge=0)
+    corvus_budget_ceiling: Decimal = Field(ge=0)
+    max_turns: int = Field(ge=1)
+    max_output_tokens: int = Field(ge=1)
+    max_retries: int = Field(ge=0)
+    approval_ceiling: int = Field(ge=0)
+    always_block_effects: frozenset[str]
+    notification_policy: str = Field(min_length=1, max_length=200)
+    summary_policy: str = Field(min_length=1, max_length=200)
+    issuer_principal_id: UUID
+    issued_at: datetime
+    expires_at: datetime
+    policy_digest: str = Field(pattern=_SHA256_PATTERN)
+    revoked_at: datetime | None = None
+
+    @field_validator("allowed_roots")
+    @classmethod
+    def validate_allowed_roots(cls, roots: tuple[Path, ...]) -> tuple[Path, ...]:
+        for root in roots:
+            if not root.is_absolute():
+                _raise_contract_error(
+                    "invalid_autonomy_root",
+                    "autonomy_root_must_be_absolute",
+                )
+            if root != root.resolve(strict=False):
+                raise ValueError("autonomy_root_must_be_canonical")
+        return roots
+
+    @model_validator(mode="after")
+    def validate_effect_classes(self) -> AutonomyGrant:
+        if self.allowed_effect_classes & self.denied_effect_classes:
+            _raise_contract_error(
+                "invalid_autonomy_effects",
+                "autonomy_effect_classes_overlap",
+            )
+        if self.allowed_effect_classes & self.always_block_effects:
+            _raise_contract_error(
+                "invalid_autonomy_effects",
+                "always_block_effect_cannot_be_allowed",
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_lifetime(self) -> AutonomyGrant:
+        timestamps = (self.issued_at, self.expires_at, self.wall_clock_deadline)
+        if any(not _is_timezone_aware(value) for value in timestamps):
+            _raise_contract_error(
+                "naive_autonomy_timestamp",
+                "autonomy_timestamp_must_be_timezone_aware",
+            )
+        if self.revoked_at is not None and not _is_timezone_aware(self.revoked_at):
+            _raise_contract_error(
+                "naive_autonomy_timestamp",
+                "autonomy_timestamp_must_be_timezone_aware",
+            )
+        if self.expires_at <= self.issued_at:
+            _raise_contract_error(
+                "invalid_autonomy_lifetime",
+                "autonomy_grant_expired_at_issue",
+            )
+        if self.wall_clock_deadline > self.expires_at:
+            _raise_contract_error(
+                "invalid_autonomy_lifetime",
+                "autonomy_deadline_exceeds_expiry",
+            )
+        if self.revoked_at is not None and self.revoked_at < self.issued_at:
+            _raise_contract_error(
+                "invalid_autonomy_lifetime",
+                "autonomy_revocation_precedes_issue",
+            )
+        return self
+
+
+class AgentRunEventType(StrEnum):
+    STARTED = "started"
+    MESSAGE_DELTA = "message_delta"
+    TOOL_REQUESTED = "tool_requested"
+    TOOL_BLOCKED = "tool_blocked"
+    TOOL_STARTED = "tool_started"
+    TOOL_RESULT = "tool_result"
+    USAGE = "usage"
+    APPROVAL_REQUIRED = "approval_required"
+    CHECKPOINT = "checkpoint"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentRunState(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    run_id: UUID
+    workspace_id: UUID
+    project_id: UUID | None = None
+    workflow_id: UUID | None = None
+    work_item_id: UUID | None = None
+    provider_binding_id: UUID
+    model: str = Field(min_length=1, max_length=200)
+    effort: str = Field(min_length=1, max_length=100)
+    messages: tuple[str, ...] | None = None
+    prompt: str | None = Field(default=None, max_length=1_000_000)
+    untrusted_context_ref_ids: tuple[UUID, ...] = ()
+    authorization_proof_id: UUID
+    authorization_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    autonomy_grant_id: UUID
+    autonomy_grant_digest: str = Field(pattern=_SHA256_PATTERN)
+    credential_grant_ids: tuple[UUID, ...]
+    credential_proof_id: UUID
+    credential_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    budget_proof_id: UUID
+    budget_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    kill_switch_proof_id: UUID
+    kill_switch_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    sandbox_profile: str = Field(min_length=1, max_length=200)
+    filesystem_envelope: tuple[str, ...]
+    network_envelope: tuple[str, ...]
+    tool_envelope: tuple[str, ...]
+    deadline: datetime
+    max_output_tokens: int = Field(ge=1)
+    max_output_bytes: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    resume_handle_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_prompt_shape(self) -> AgentRunRequest:
+        has_messages = self.messages is not None and len(self.messages) > 0
+        has_prompt = self.prompt is not None and bool(self.prompt.strip())
+        if not has_messages and not has_prompt:
+            raise ValueError("agent_run_requires_messages_or_prompt")
+        if has_messages and has_prompt:
+            raise ValueError("agent_run_prompt_shape_ambiguous")
+        return self
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("agent_run_idempotency_key_blank")
+        return value
+
+    @field_validator("deadline")
+    @classmethod
+    def validate_deadline(cls, value: datetime) -> datetime:
+        if not _is_timezone_aware(value):
+            raise ValueError("agent_run_deadline_must_be_timezone_aware")
+        if value <= _now_utc():
+            raise ValueError("agent_run_deadline_in_past")
+        return value
+
+
+class AgentRunHandle(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    id: UUID = Field(default_factory=uuid4)
+    run_id: UUID
+    provider_binding_id: UUID
+    created_at: datetime
+    provider_session_ref: str | None = Field(default=None, min_length=1, max_length=2048)
+    state: AgentRunState
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_created_at(cls, value: datetime) -> datetime:
+        if not _is_timezone_aware(value):
+            raise ValueError("agent_run_handle_timestamp_must_be_timezone_aware")
+        return value
+
+
+def _normalize_payload_key(key: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", key.casefold())
+
+
+def _contains_secret_payload_key(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if any(_normalize_payload_key(key).endswith(suffix) for suffix in _SECRET_KEY_SUFFIXES):
+                return True
+            if _contains_secret_payload_key(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_secret_payload_key(item) for item in value)
+    return False
+
+
+def compute_agent_run_event_digest(
+    *,
+    run_id: UUID,
+    handle_id: UUID,
+    sequence: int,
+    timestamp: datetime,
+    event_type: AgentRunEventType,
+    redacted_payload: dict[str, JsonValue],
+    provider_event_id: str | None,
+    previous_event_digest: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "event_type": event_type.value,
+            "handle_id": str(handle_id),
+            "previous_event_digest": previous_event_digest,
+            "provider_event_id": provider_event_id,
+            "redacted_payload": redacted_payload,
+            "run_id": str(run_id),
+            "sequence": sequence,
+            "timestamp": timestamp.isoformat(),
+        },
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class AgentRunEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    run_id: UUID
+    handle_id: UUID
+    sequence: int = Field(ge=1)
+    timestamp: datetime
+    event_type: AgentRunEventType
+    redacted_payload: dict[str, JsonValue]
+    provider_event_id: str | None = Field(default=None, min_length=1, max_length=512)
+    previous_event_digest: str = Field(pattern=_SHA256_PATTERN)
+    event_digest: str = Field(pattern=_SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_payload_and_digest(self) -> AgentRunEvent:
+        if not _is_timezone_aware(self.timestamp):
+            raise ValueError("agent_run_event_timestamp_must_be_timezone_aware")
+        if _contains_secret_payload_key(self.redacted_payload):
+            raise ValueError("agent_run_event_payload_contains_secret_key")
+        expected = compute_agent_run_event_digest(
+            run_id=self.run_id,
+            handle_id=self.handle_id,
+            sequence=self.sequence,
+            timestamp=self.timestamp,
+            event_type=self.event_type,
+            redacted_payload=self.redacted_payload,
+            provider_event_id=self.provider_event_id,
+            previous_event_digest=self.previous_event_digest,
+        )
+        if self.event_digest != expected:
+            raise ValueError("agent_run_event_digest_mismatch")
+        return self
+
+
+class CancellationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    handle_id: UUID
+    accepted: bool
+    terminal: bool
+    reason_code: str = Field(min_length=1, max_length=200)
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def validate_timestamp(cls, value: datetime) -> datetime:
+        if not _is_timezone_aware(value):
+            raise ValueError("cancellation_timestamp_must_be_timezone_aware")
+        return value
+
+
+GENESIS_EVENT_DIGEST = _GENESIS_EVENT_DIGEST
