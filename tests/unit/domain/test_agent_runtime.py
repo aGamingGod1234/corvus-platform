@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -289,3 +291,38 @@ def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> Non
         AgentRunEvent(**{**event.model_dump(), "event_digest": "f" * 64})
     with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
         _event(redacted_payload={"nested": {"access_token": "redacted"}})
+
+
+def test_event_payload_rejects_top_level_mutation_after_validation() -> None:
+    event = _event(redacted_payload={"message": "started"})
+    canary = "plaintext"
+
+    with pytest.raises(TypeError):
+        event.redacted_payload["access_token"] = canary  # type: ignore[index]
+
+
+def test_event_payload_rejects_nested_mutation_after_validation() -> None:
+    event = _event(redacted_payload={"nested": {"message": "started"}})
+    nested = event.redacted_payload["nested"]
+    assert isinstance(nested, Mapping)
+    canary = "plaintext"
+
+    with pytest.raises(TypeError):
+        nested["access_token"] = canary  # type: ignore[index]
+
+
+def test_event_payload_serialization_and_digest_replay_are_stable() -> None:
+    event = _event(
+        redacted_payload={
+            "nested": {"message": "started"},
+            "items": [{"sequence": 1}, {"sequence": 2}],
+        }
+    )
+
+    dumped = event.model_dump(mode="json")
+    serialized = json.loads(event.model_dump_json())
+    replayed = AgentRunEvent.model_validate(dumped)
+
+    assert serialized == dumped
+    assert replayed.event_digest == event.event_digest
+    assert replayed == event

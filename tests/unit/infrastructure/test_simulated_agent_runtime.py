@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -177,6 +178,77 @@ async def test_simulator_snapshots_mutable_event_templates(tmp_path: Path) -> No
     events = [event async for event in runtime.events(handle)]
 
     assert events[0].redacted_payload == {"state": "original"}
+
+
+@pytest.mark.asyncio
+async def test_simulator_never_yields_mutable_payload_aliases(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime(
+        (binding,),
+        {
+            binding.id: (
+                SimulatedEventTemplate(
+                    AgentRunEventType.STARTED,
+                    {"nested": {"state": "running"}},
+                ),
+            )
+        },
+    )
+
+    handle = await runtime.start(_request(binding))
+    event = [item async for item in runtime.events(handle)][0]
+    nested = event.redacted_payload["nested"]
+    assert isinstance(nested, Mapping)
+    canary = "plaintext"
+
+    with pytest.raises(TypeError):
+        nested["access_token"] = canary  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_start_identical_replay_returns_stable_handle(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    request = _request(binding)
+
+    first = await runtime.start(request)
+    second = await runtime.start(request)
+
+    assert second == first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "substitution",
+    [
+        {"prompt": "Use a substituted prompt."},
+        {"authorization_proof_id": uuid4(), "authorization_proof_digest": "f" * 64},
+    ],
+)
+async def test_start_rejects_substituted_idempotent_replay(
+    tmp_path: Path,
+    substitution: dict[str, object],
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    request = _request(binding)
+    await runtime.start(request)
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(request.model_copy(update=substitution))
+
+    assert exc_info.value.reason_code == "agent_run_idempotency_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_binding_model_substitution(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(_request(binding, model="substituted-model"))
+
+    assert exc_info.value.reason_code == "provider_binding_model_mismatch"
 
 
 @pytest.mark.asyncio

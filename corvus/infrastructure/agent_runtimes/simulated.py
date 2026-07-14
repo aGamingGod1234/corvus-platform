@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import AsyncIterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -47,7 +49,19 @@ class SimulatedEventTemplate:
 class _RunRecord:
     handle: AgentRunHandle
     events: list[AgentRunEvent]
+    request_digest: str
     cancellation_result: CancellationResult | None = None
+
+
+def _agent_run_request_digest(request: AgentRunRequest) -> str:
+    encoded = json.dumps(
+        request.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class SimulatedAgentRuntime:
@@ -88,12 +102,18 @@ class SimulatedAgentRuntime:
 
     async def start(self, request: AgentRunRequest) -> AgentRunHandle:
         binding = self._binding_for_start(request)
+        request_digest = _agent_run_request_digest(request)
         handle_id = uuid5(
             _SIMULATED_HANDLE_NAMESPACE,
             f"{request.run_id}:{request.provider_binding_id}:{request.idempotency_key}",
         )
         existing = self._runs.get(handle_id)
         if existing is not None:
+            if existing.request_digest != request_digest:
+                raise AgentRuntimeError(
+                    "agent_run_idempotency_mismatch",
+                    "idempotent start replay does not match the original request",
+                )
             return existing.handle
 
         events, state = self._materialize_events(
@@ -109,7 +129,11 @@ class SimulatedAgentRuntime:
             provider_session_ref=f"simulated-session:{handle_id}",
             state=state,
         )
-        self._runs[handle.id] = _RunRecord(handle=handle, events=events)
+        self._runs[handle.id] = _RunRecord(
+            handle=handle,
+            events=events,
+            request_digest=request_digest,
+        )
         return handle
 
     async def events(
@@ -259,6 +283,11 @@ class SimulatedAgentRuntime:
             raise AgentRuntimeError(
                 "provider_binding_unavailable",
                 "provider binding is not available",
+            )
+        if request.model != binding.model:
+            raise AgentRuntimeError(
+                "provider_binding_model_mismatch",
+                "requested model does not match the provider binding",
             )
         self._validate_binding_scope(request, binding)
         return binding

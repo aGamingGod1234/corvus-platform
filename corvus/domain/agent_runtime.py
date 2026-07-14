@@ -3,13 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
+from typing import cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -368,16 +379,36 @@ def _normalize_payload_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", key.casefold())
 
 
-def _contains_secret_payload_key(value: JsonValue) -> bool:
-    if isinstance(value, dict):
+def _contains_secret_payload_key(value: object) -> bool:
+    if isinstance(value, Mapping):
         for key, item in value.items():
-            if any(_normalize_payload_key(key).endswith(suffix) for suffix in _SECRET_KEY_SUFFIXES):
+            if any(
+                _normalize_payload_key(str(key)).endswith(suffix)
+                for suffix in _SECRET_KEY_SUFFIXES
+            ):
                 return True
             if _contains_secret_payload_key(item):
                 return True
-    elif isinstance(value, list):
+    elif isinstance(value, (list, tuple)):
         return any(_contains_secret_payload_key(item) for item in value)
     return False
+
+
+def _freeze_json(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        frozen = MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+        return cast(JsonValue, frozen)
+    if isinstance(value, list):
+        return cast(JsonValue, tuple(_freeze_json(item) for item in value))
+    return value
+
+
+def _thaw_json(value: object) -> JsonValue:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json(item) for item in value]
+    return cast(JsonValue, value)
 
 
 def compute_agent_run_event_digest(
@@ -387,7 +418,7 @@ def compute_agent_run_event_digest(
     sequence: int,
     timestamp: datetime,
     event_type: AgentRunEventType,
-    redacted_payload: dict[str, JsonValue],
+    redacted_payload: Mapping[str, JsonValue],
     provider_event_id: str | None,
     previous_event_digest: str,
 ) -> str:
@@ -397,7 +428,7 @@ def compute_agent_run_event_digest(
             "handle_id": str(handle_id),
             "previous_event_digest": previous_event_digest,
             "provider_event_id": provider_event_id,
-            "redacted_payload": redacted_payload,
+            "redacted_payload": _thaw_json(redacted_payload),
             "run_id": str(run_id),
             "sequence": sequence,
             "timestamp": timestamp.isoformat(),
@@ -418,10 +449,27 @@ class AgentRunEvent(BaseModel):
     sequence: int = Field(ge=1)
     timestamp: datetime
     event_type: AgentRunEventType
-    redacted_payload: dict[str, JsonValue]
+    redacted_payload: Mapping[str, JsonValue]
     provider_event_id: str | None = Field(default=None, min_length=1, max_length=512)
     previous_event_digest: str = Field(pattern=_SHA256_PATTERN)
     event_digest: str = Field(pattern=_SHA256_PATTERN)
+
+    @field_validator("redacted_payload", mode="after")
+    @classmethod
+    def freeze_redacted_payload(
+        cls,
+        value: Mapping[str, JsonValue],
+    ) -> Mapping[str, JsonValue]:
+        frozen = _freeze_json(dict(value))
+        return cast(Mapping[str, JsonValue], frozen)
+
+    @field_serializer("redacted_payload")
+    def serialize_redacted_payload(
+        self,
+        value: Mapping[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        thawed = _thaw_json(value)
+        return cast(dict[str, JsonValue], thawed)
 
     @model_validator(mode="after")
     def validate_payload_and_digest(self) -> AgentRunEvent:

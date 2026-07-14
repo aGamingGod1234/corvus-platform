@@ -477,3 +477,31 @@
 ### Suggested Next Steps
 - Confirm the recommended defaults in `QUESTIONS.md`.
 - Begin M2A with failing contract/security tests before any live adapter wiring.
+
+## 2026-07-15 — M2A Task 1 Agent Runtime Contracts and Simulator
+
+### What Was Implemented
+- Added strict immutable provider, capability, autonomy, request, handle, event, and cancellation contracts for the agent-runtime boundary.
+- Added an infrastructure-independent application protocol and deterministic simulator with digest-chained replay, idempotent cancellation, and substitution-safe start/resume behavior.
+- Hardened event payloads with deep immutability while preserving JSON serialization and deterministic digest replay.
+- Added focused red-green coverage for transport identity, authority inputs, payload safety, replay idempotency, model binding, cancellation, resume, and typed stable errors.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — typed immutable agent-runtime contracts and event digest behavior.
+- `corvus/application/ports.py` — `AgentRuntimePort` protocol.
+- `corvus/infrastructure/agent_runtimes/` — deterministic simulator and package exports.
+- `tests/unit/domain/test_agent_runtime.py` — domain contract and deep-immutability coverage.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — simulator replay, cancellation, resume, and substitution coverage.
+- `PROJECT_LOG.md` — Task 1 implementation record.
+
+### Assumptions Made (flag these for review)
+- `agent_run_idempotency_mismatch` and `provider_binding_model_mismatch` are the stable reason codes for the reviewed simulator substitution failures.
+- Serialized payloads may be returned as fresh mutable JSON containers while the validated event's stored payload remains deeply immutable.
+
+### Known Issues / Deferred
+- Authority-bound orchestration, proof verification, context-firewall integration, and live provider adapters remain deferred to M2A Task 2 and later tasks.
+- This Task 1 simulator proves boundary behavior only and does not grant provider, filesystem, network, credential, budget, or autonomy authority.
+
+### Suggested Next Steps
+- Submit the Task 1 commit in a ready pull request for external review.
+- Implement Task 2 authority-bound orchestration only after Task 1 review is accepted.
