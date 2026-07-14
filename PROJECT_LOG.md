@@ -287,3 +287,23 @@
 ### Suggested Next Steps
 - Bundle and sign a standalone sidecar before distributing the installer beyond this development workstation.
 - Exercise the existing container definition when a container engine is available.
+
+## 2026-07-14 - Cross-Platform Certification Fixture Stabilization
+
+### What Was Implemented
+- Canonicalized Rich's equivalent rounded and square help-panel borders before comparing the frozen V1 CLI contract.
+- Fixed the MVP server-help assertion to use an explicit wide, no-color terminal on every CI operating system.
+
+### Files Modified
+- `tests/contract/test_v1_public_golden.py` - platform-neutral presentation normalization without changing the frozen command/schema contract.
+- `tests/mvp/test_cli_adapter.py` - deterministic help rendering width and color environment.
+- `PROJECT_LOG.md` - CI portability record.
+
+### Assumptions Made (flag these for review)
+- Rich's rounded and square panel corners are presentation-equivalent and not part of Corvus command semantics.
+
+### Known Issues / Deferred
+- None for this portability correction.
+
+### Suggested Next Steps
+- Confirm the complete GitHub Actions operating-system/Python matrix is green.

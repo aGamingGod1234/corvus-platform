@@ -57,6 +57,7 @@ _DIGEST_RE = re.compile(r"\b[0-9a-f]{64}\b")
 _TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\b"
 )
+_RICH_BORDER_TRANSLATION = str.maketrans({"╭": "┌", "╮": "┐", "╰": "└", "╯": "┘"})
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,7 @@ def _controlled_boundaries(corvus_home: Path) -> Iterator[None]:
 
 
 def _normalize_text(text: str, root: Path) -> str:
-    normalized = text.replace("\\", "/")
+    normalized = text.translate(_RICH_BORDER_TRANSLATION).replace("\\", "/")
     normalized = normalized.replace(str(root).replace("\\", "/"), "<corvus-home>")
     normalized = normalized.replace(str(Path.home()).replace("\\", "/"), "<user-home>")
     normalized = _UUID_RE.sub("<uuid>", normalized)

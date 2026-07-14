@@ -30,12 +30,20 @@ def test_server_app_loads_credentials_only_through_secret_references(
     )
     with TestClient(server_app) as client:
         assert client.get("/health").json() == {"status": "ok"}
-        assert client.post(
-            "/api/auth/pair",
-            json={"token": bootstrap_token},
-        ).status_code == 200
+        assert (
+            client.post(
+                "/api/auth/pair",
+                json={"token": bootstrap_token},
+            ).status_code
+            == 200
+        )
 
-    help_result = runner.invoke(app, ["server", "--help"])
+    help_result = runner.invoke(
+        app,
+        ["server", "--help"],
+        env={"COLUMNS": "240", "NO_COLOR": "1", "TERM": "dumb"},
+        terminal_width=240,
+    )
     assert help_result.exit_code == 0, help_result.output
     assert "bootstrap-token-ref" in help_result.output
 
