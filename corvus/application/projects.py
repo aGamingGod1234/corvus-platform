@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -12,12 +16,79 @@ from corvus.application.ports import (
     ProjectAuthorizationRequest,
     ProjectCreateLifecycleError,
     ProjectCreateLifecyclePort,
+    ProjectIdempotencyPort,
     ProjectStorePort,
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
-from corvus.domain.request import RequestContext
+from corvus.domain.request import IdempotencyEnvelope, IdempotencyStatus, RequestContext
 from corvus.infrastructure.repositories.projects import ProjectRepository
+
+_IDEMPOTENCY_NAMESPACE = UUID("cf955f62-6f36-4187-93e7-a84ac95ceab4")
+_TRANSIENT_CONTEXT_FIELDS = {
+    "id",
+    "correlation_id",
+    "workspace_authority_generation",
+    "authority_state_root",
+    "authority_commit_receipt_id",
+    "authority_proof_digest",
+    "authorization_snapshot_id",
+    "authorization_snapshot_digest",
+    "authorization_signing_key_version_id",
+}
+
+
+def _canonical_digest(value: object) -> str:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    encoded = json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _idempotency_context_digest(context: RequestContext) -> str:
+    return _canonical_digest(context.model_dump(mode="json", exclude=_TRANSIENT_CONTEXT_FIELDS))
+
+
+def _project_idempotency_envelope(
+    context: RequestContext,
+    project: Project,
+    *,
+    created_at: datetime,
+) -> IdempotencyEnvelope:
+    transport_principal_id = context.transport_principal_id
+    if transport_principal_id is None:  # pragma: no cover - command validation
+        raise ValueError("project_transport_principal_missing")
+    identity_material = ":".join(
+        (
+            str(context.workspace_id),
+            str(context.requester_id),
+            str(transport_principal_id),
+            str(context.agent_id),
+            str(context.agent_grant_id),
+            "project.create",
+            context.idempotency_key,
+        )
+    )
+    return IdempotencyEnvelope(
+        id=uuid5(_IDEMPOTENCY_NAMESPACE, identity_material),
+        workspace_id=context.workspace_id,
+        requester_id=context.requester_id,
+        transport_principal_id=transport_principal_id,
+        agent_id=context.agent_id,
+        agent_grant_id=context.agent_grant_id,
+        operation="project.create",
+        idempotency_key=context.idempotency_key,
+        request_context_digest=_idempotency_context_digest(context),
+        payload_digest=_canonical_digest(project),
+        status=IdempotencyStatus.IN_PROGRESS,
+        created_at=created_at,
+    )
 
 
 class CreateProjectCommand(BaseModel):
@@ -100,11 +171,15 @@ class ProjectService:
         authorization: ProjectAuthorizationPort,
         audit: ProjectAuditPort,
         create_lifecycle: ProjectCreateLifecyclePort | None = None,
+        idempotency: ProjectIdempotencyPort | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.store = store
         self.authorization = authorization
         self.audit = audit
         self.create_lifecycle = create_lifecycle
+        self.idempotency = idempotency
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def create(self, command: CreateProjectCommand) -> ProjectResponse:
         return self._execute(
@@ -198,6 +273,48 @@ class ProjectService:
                     ok=False,
                     reason_code="project_authority_lifecycle_unavailable",
                 )
+            idempotency: IdempotencyEnvelope | None = None
+            if self.idempotency is not None:
+                try:
+                    proposed = _project_idempotency_envelope(
+                        context,
+                        project,
+                        created_at=self.clock(),
+                    )
+                    idempotency = self.idempotency.claim_idempotency(proposed)
+                except Exception as exc:
+                    reason = str(exc)
+                    if "idempotency_payload_mismatch" in reason:
+                        reason = "idempotency_payload_mismatch"
+                    elif "idempotency_context_mismatch" in reason:
+                        reason = "idempotency_context_mismatch"
+                    else:
+                        reason = "idempotency_unavailable"
+                    return ProjectResponse(
+                        request_id=context.id,
+                        ok=False,
+                        reason_code=reason,
+                    )
+                if idempotency.status is IdempotencyStatus.SUCCEEDED:
+                    cached = self.store.get(context.workspace_id, project_id)
+                    if cached is None or idempotency.result_digest != _canonical_digest(cached):
+                        return ProjectResponse(
+                            request_id=context.id,
+                            ok=False,
+                            reason_code="idempotency_result_mismatch",
+                        )
+                    return ProjectResponse(
+                        request_id=context.id,
+                        ok=True,
+                        reason_code="project_created",
+                        project=cached,
+                    )
+                if idempotency.status is IdempotencyStatus.FAILED:
+                    return ProjectResponse(
+                        request_id=context.id,
+                        ok=False,
+                        reason_code=idempotency.result_ref or "idempotency_previous_failure",
+                    )
             try:
                 self.create_lifecycle.create(project, audit_event)
             except ProjectCreateLifecycleError as exc:
@@ -212,6 +329,23 @@ class ProjectService:
                     ok=False,
                     reason_code="project_persistence_failed",
                 )
+            if idempotency is not None and self.idempotency is not None:
+                completed = idempotency.model_copy(
+                    update={
+                        "status": IdempotencyStatus.SUCCEEDED,
+                        "result_digest": _canonical_digest(project),
+                        "result_ref": f"project:{project.id}",
+                        "completed_at": self.clock(),
+                    }
+                )
+                try:
+                    self.idempotency.complete_idempotency(completed)
+                except Exception:
+                    return ProjectResponse(
+                        request_id=context.id,
+                        ok=False,
+                        reason_code="idempotency_completion_failed",
+                    )
             result = project
         else:
             try:

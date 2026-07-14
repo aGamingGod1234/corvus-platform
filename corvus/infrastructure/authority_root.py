@@ -31,6 +31,7 @@ _GLOBAL_FAMILIES = frozenset(
 )
 _SELF_REFERENTIAL_FIELDS = {
     "authority_commit_intents": frozenset({"proposed_state_root", "state"}),
+    "idempotency_envelopes": frozenset({"status", "result_digest", "result_ref", "completed_at"}),
     "workspace_authorities": frozenset({"authority_state_root"}),
 }
 _VERSION_MARKERS = ("version", "sequence", "generation")

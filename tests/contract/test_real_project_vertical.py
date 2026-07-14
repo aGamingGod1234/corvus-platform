@@ -71,6 +71,7 @@ from corvus.infrastructure.project_authorization import (
 from corvus.infrastructure.project_recovery import RecoverableProjectCreateLifecycle
 from corvus.infrastructure.repositories.audit import AuditRepository
 from corvus.infrastructure.repositories.authority import AuthorityRepository
+from corvus.infrastructure.repositories.authorization_inputs import AuthorizationInputRepository
 from corvus.infrastructure.repositories.projects import ProjectRepository
 from corvus.infrastructure.repositories.registry import RegistryManifestRepository
 from corvus.store import TraceStore
@@ -162,6 +163,7 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
     database = _database(tmp_path)
     authorities = AuthorityRepository(database)
     audits = AuditRepository(database)
+    authorization_inputs = AuthorizationInputRepository(database)
     projects = ProjectRepository(database)
     commitments = RegistryManifestRepository(database)
     manifest = commitments.get_manifest(_ACTIVE_MANIFEST_ID)
@@ -257,9 +259,7 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
         deployment_instance=instance,
         epoch_credential=credential,
         secret_store=secrets,
-        live_root_verifier=BootstrapAwareLiveRootVerifier(
-            database, authority.authority_generation
-        ),
+        live_root_verifier=BootstrapAwareLiveRootVerifier(database, authority.authority_generation),
     )
     anchor.bootstrap()
 
@@ -568,6 +568,8 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
             authorization=VerifiedProjectAuthorizationAdapter(inputs=inputs, snapshots=audits),
             audit=audit_adapter,
             create_lifecycle=lifecycle,
+            idempotency=authorization_inputs,
+            clock=lambda: _NOW,
         )
     )
     command = CreateProjectCommand(

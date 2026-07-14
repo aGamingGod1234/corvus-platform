@@ -19,7 +19,12 @@ from corvus.application.projects import (
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
-from corvus.domain.request import RequestContext
+from corvus.domain.request import (
+    IdempotencyEnvelope,
+    IdempotencyStatus,
+    RequestContext,
+    validate_idempotency_replay,
+)
 
 _NOW = datetime(2026, 7, 14, 22, 0, tzinfo=UTC)
 _WORKSPACE_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -49,6 +54,27 @@ class ContractAudit:
 
     def record(self, event) -> None:
         self.events.append(event)
+
+
+class MemoryIdempotency:
+    def __init__(self) -> None:
+        self.values: dict[tuple[object, ...], IdempotencyEnvelope] = {}
+
+    def claim_idempotency(self, envelope: IdempotencyEnvelope) -> IdempotencyEnvelope:
+        existing = self.values.get(envelope.composite_identity)
+        if existing is not None:
+            validate_idempotency_replay(
+                existing,
+                request_context_digest=envelope.request_context_digest,
+                payload_digest=envelope.payload_digest,
+            )
+            return existing
+        self.values[envelope.composite_identity] = envelope
+        return envelope
+
+    def complete_idempotency(self, envelope: IdempotencyEnvelope) -> None:
+        assert envelope.status is IdempotencyStatus.SUCCEEDED
+        self.values[envelope.composite_identity] = envelope
 
 
 class SurfaceAuthorization:
@@ -180,12 +206,15 @@ def _client() -> tuple[
     audit = ContractAudit()
     authorization = SurfaceAuthorization()
     lifecycle = IdempotentCreateLifecycle(store, audit)
+    idempotency = MemoryIdempotency()
     client = InProcessProjectClient(
         ProjectService(
             store=store,
             authorization=authorization,
             audit=audit,
             create_lifecycle=lifecycle,
+            idempotency=idempotency,
+            clock=lambda: _NOW,
         )
     )
     return client, store, audit, authorization, lifecycle
@@ -292,6 +321,19 @@ def test_currently_authorized_replay_is_idempotent_and_rechecks_revocation() -> 
 
     created = client.create_project(command)
     replayed = client.create_project(command)
+    fresh_context = command.context.model_copy(
+        update={
+            "id": UUID("10000000-0000-0000-0000-000000000070"),
+            "correlation_id": UUID("10000000-0000-0000-0000-000000000071"),
+            "workspace_authority_generation": 5,
+            "authority_state_root": "9" * 64,
+            "authority_commit_receipt_id": UUID("10000000-0000-0000-0000-000000000072"),
+            "authority_proof_digest": "8" * 64,
+            "authorization_snapshot_id": UUID("10000000-0000-0000-0000-000000000073"),
+            "authorization_snapshot_digest": "7" * 64,
+        }
+    )
+    fresh_replay = client.create_project(command.model_copy(update={"context": fresh_context}))
     mismatched = client.create_project(
         command.model_copy(update={"project": _project(name="Substituted")})
     )
@@ -299,10 +341,13 @@ def test_currently_authorized_replay_is_idempotent_and_rechecks_revocation() -> 
     revoked = client.create_project(command)
 
     assert replayed == created
+    assert fresh_replay.ok is True
+    assert fresh_replay.project == created.project
+    assert fresh_replay.request_id == fresh_context.id
     assert store.create_count == 1
     assert len(lifecycle.requests) == 1
     assert mismatched.ok is False
-    assert mismatched.reason_code == "project_replay_mismatch"
+    assert mismatched.reason_code == "idempotency_payload_mismatch"
     assert revoked.ok is False
     assert revoked.reason_code == "requester_grant_revoked"
     assert len(audit.events) == 2

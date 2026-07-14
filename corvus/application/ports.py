@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
-from corvus.domain.request import RequestContext
+from corvus.domain.request import IdempotencyEnvelope, RequestContext
 
 
 class _ProjectContextBound(BaseModel):
@@ -99,6 +99,12 @@ class ProjectStorePort(Protocol):
 
 class ProjectAuthorizationPort(Protocol):
     def authorize(self, request: ProjectAuthorizationRequest) -> ProjectAuthorizationDecision: ...
+
+
+class ProjectIdempotencyPort(Protocol):
+    def claim_idempotency(self, envelope: IdempotencyEnvelope) -> IdempotencyEnvelope: ...
+
+    def complete_idempotency(self, envelope: IdempotencyEnvelope) -> None: ...
 
 
 class ProjectAuditPort(Protocol):
