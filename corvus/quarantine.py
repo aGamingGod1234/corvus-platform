@@ -17,8 +17,10 @@ import yaml
 from corvus.database import DatabaseBootstrapError, DatabaseState, classify_database
 from corvus.security import SecretRedactor, atomic_write, sha256_bytes, sha256_file
 
-_CAPTURE_SCHEMA_VERSION = 2
-_CONFIG_FILES = ("onboarding.json", "onboarding.yaml", "policy.yaml", "providers.yaml")
+_CAPTURE_SCHEMA_VERSION = 3
+_USER_CONFIG_FILES = ("onboarding.json", "onboarding.yaml", "policy.yaml", "providers.yaml")
+_PROJECT_POLICY_DIRECTORY = ".corvus"
+_PROJECT_POLICY_FILE = "policy.yaml"
 _SECRET_KEYS = {"api_key", "apikey", "password", "secret", "token"}
 _MAX_CONFIG_BYTES = 1_048_576
 _MAX_FILES = 10_000
@@ -162,21 +164,40 @@ def _database_records(snapshot: Path, redactor: SecretRedactor) -> dict[str, lis
     return records
 
 
-def _config_records(root: Path, redactor: SecretRedactor) -> dict[str, Any]:
+def _read_config_record(path: Path, relative_path: str, redactor: SecretRedactor) -> Any:
+    if not path.is_file() or _is_link_or_reparse(path):
+        raise ValueError(f"unsupported quarantine config entry: {relative_path}")
+    size = path.stat().st_size
+    if size > _MAX_CONFIG_BYTES:
+        raise ValueError(f"quarantine config entry exceeds size limit: {relative_path}")
+    text = path.read_text(encoding="utf-8")
+    loaded = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+    return _sanitize(loaded, redactor)
+
+
+def _user_config_records(root: Path, redactor: SecretRedactor) -> dict[str, Any]:
     records: dict[str, Any] = {}
-    for name in _CONFIG_FILES:
+    for name in _USER_CONFIG_FILES:
         path = root / name
-        if not path.exists():
-            continue
-        if not path.is_file() or _is_link_or_reparse(path):
-            raise ValueError(f"unsupported quarantine config entry: {name}")
-        size = path.stat().st_size
-        if size > _MAX_CONFIG_BYTES:
-            raise ValueError(f"quarantine config entry exceeds size limit: {name}")
-        text = path.read_text(encoding="utf-8")
-        loaded = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
-        records[name] = _sanitize(loaded, redactor)
+        if path.exists():
+            records[name] = _read_config_record(path, name, redactor)
     return records
+
+
+def _project_policy_records(project_root: Path | None, redactor: SecretRedactor) -> dict[str, Any]:
+    if project_root is None:
+        return {}
+    relative_path = f"{_PROJECT_POLICY_DIRECTORY}/{_PROJECT_POLICY_FILE}"
+    path = project_root / _PROJECT_POLICY_DIRECTORY / _PROJECT_POLICY_FILE
+    if not path.exists():
+        return {}
+    return {_PROJECT_POLICY_FILE: _read_config_record(path, relative_path, redactor)}
+
+
+def _project_policy_inventory(project_root: Path | None) -> list[dict[str, object]]:
+    if project_root is None:
+        return []
+    return _file_inventory(project_root / _PROJECT_POLICY_DIRECTORY)
 
 
 def _file_inventory(root: Path) -> list[dict[str, object]]:
@@ -211,7 +232,8 @@ def _file_inventory(root: Path) -> list[dict[str, object]]:
 def _source_components(
     *,
     source_database_sha256: str,
-    config: list[dict[str, object]],
+    user_config: list[dict[str, object]],
+    project_policy: list[dict[str, object]],
     artifacts: list[dict[str, object]],
     bundles: list[dict[str, object]],
     backups: list[dict[str, object]],
@@ -220,8 +242,9 @@ def _source_components(
         "artifacts": sha256_bytes(_canonical_json(artifacts)),
         "backups": sha256_bytes(_canonical_json(backups)),
         "bundles": sha256_bytes(_canonical_json(bundles)),
-        "config": sha256_bytes(_canonical_json(config)),
         "database": source_database_sha256,
+        "project_policy": sha256_bytes(_canonical_json(project_policy)),
+        "user_config": sha256_bytes(_canonical_json(user_config)),
     }
 
 
@@ -289,13 +312,22 @@ def verify_v1_quarantine(path: Path) -> bool:
         source_snapshot_sha256 = manifest.get("source_snapshot_sha256")
         source_components = manifest.get("source_components")
         capture_id = manifest.get("capture_id")
-        if not isinstance(source_components, dict) or set(source_components) != {
-            "artifacts",
-            "backups",
-            "bundles",
-            "config",
-            "database",
-        }:
+        schema_version = manifest.get("schema_version")
+        component_keys = (
+            {"artifacts", "backups", "bundles", "config", "database"}
+            if schema_version == 2
+            else {
+                "artifacts",
+                "backups",
+                "bundles",
+                "database",
+                "project_policy",
+                "user_config",
+            }
+        )
+        if schema_version not in {2, _CAPTURE_SCHEMA_VERSION}:
+            return False
+        if not isinstance(source_components, dict) or set(source_components) != component_keys:
             return False
         if not all(_is_sha256(value) for value in source_components.values()):
             return False
@@ -308,7 +340,6 @@ def verify_v1_quarantine(path: Path) -> bool:
             and path.name == capture_id
             and capture_id == _capture_id(records_sha256, source_snapshot_sha256)
             and manifest.get("records_sha256") == records_sha256
-            and manifest.get("schema_version") == _CAPTURE_SCHEMA_VERSION
             and manifest.get("seal_algorithm") == "sha256"
             and seal == sha256_bytes(_canonical_json(manifest))
             and isinstance(json.loads(records_bytes), dict)
@@ -321,6 +352,7 @@ def capture_v1_quarantine(
     *,
     database: Path,
     config_root: Path,
+    project_root: Path | None = None,
     artifact_root: Path,
     bundle_root: Path,
     backup_root: Path,
@@ -338,28 +370,34 @@ def capture_v1_quarantine(
         artifact_inventory = _file_inventory(artifact_root)
         backup_inventory = _file_inventory(backup_root)
         bundle_inventory = _file_inventory(bundle_root)
-        config_inventory = _file_inventory(config_root)
-        config_records = _config_records(config_root, redactor)
-        if _file_inventory(config_root) != config_inventory:
-            raise ValueError("quarantine config source changed during capture")
+        user_config_inventory = _file_inventory(config_root)
+        project_policy_inventory = _project_policy_inventory(project_root)
+        user_config_records = _user_config_records(config_root, redactor)
+        project_policy_records = _project_policy_records(project_root, redactor)
+        if _file_inventory(config_root) != user_config_inventory:
+            raise ValueError("quarantine user config source changed during capture")
+        if _project_policy_inventory(project_root) != project_policy_inventory:
+            raise ValueError("quarantine project policy source changed during capture")
         records = {
             "artifacts": artifact_inventory,
             "backups": backup_inventory,
             "bundles": bundle_inventory,
-            "config": config_records,
             "database": _database_records(snapshot, redactor),
+            "project_policy": project_policy_records,
             "schema_version": _CAPTURE_SCHEMA_VERSION,
             "source_database": {
                 "schema_version": status.schema_version,
                 "state": status.state.value,
             },
+            "user_config": user_config_records,
         }
         records_bytes = _canonical_json(records)
         records_sha256 = sha256_bytes(records_bytes)
         source_database_sha256 = sha256_file(snapshot)
         components = _source_components(
             source_database_sha256=source_database_sha256,
-            config=config_inventory,
+            user_config=user_config_inventory,
+            project_policy=project_policy_inventory,
             artifacts=artifact_inventory,
             bundles=bundle_inventory,
             backups=backup_inventory,

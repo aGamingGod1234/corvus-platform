@@ -46,10 +46,10 @@ from corvus.models import (
 )
 from corvus.onboarding import OnboardingChoices, OnboardingState
 from corvus.store import TraceStore
+from tests.fixture_corpus import verify_v1_fixture_corpus
 
 FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "v1"
 CONTRACT_PATH = FIXTURE_ROOT / "public_contract.json"
-MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
 _FIXED_BACKUP_KEY = base64.urlsafe_b64encode(b"0" * 32)
 
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
@@ -557,12 +557,11 @@ def build_public_contract(corvus_home: Path) -> dict[str, object]:
 def test_v1_public_contract_matches_hashed_golden(tmp_path: Path) -> None:
     corvus_home = tmp_path / "corvus-home"
     fixture_bytes = CONTRACT_PATH.read_bytes()
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    fixture_files = verify_v1_fixture_corpus(FIXTURE_ROOT)
 
-    assert manifest == {
-        "algorithm": "sha256",
-        "files": {"public_contract.json": hashlib.sha256(fixture_bytes).hexdigest()},
-        "schema_version": 1,
+    assert fixture_files["public_contract.json"] == {
+        "sha256": hashlib.sha256(fixture_bytes).hexdigest(),
+        "size": len(fixture_bytes),
     }
     expected = json.loads(fixture_bytes)
     actual = build_public_contract(corvus_home)

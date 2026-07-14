@@ -1,0 +1,2 @@
+# Immutable V1 evidence corpus: preserve every committed byte across platforms.
+tests/fixtures/v1/** -text -diff -merge
