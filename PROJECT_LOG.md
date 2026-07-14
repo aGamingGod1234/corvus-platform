@@ -392,3 +392,38 @@
 ### Suggested Next Steps
 - Implement Milestone 1 test-first: versioned preferences, three-step onboarding, four navigation compositions, Local runtime gate, truthful Cloud Preview, responsive shell, and accessibility states.
 - Stop after the tested Milestone 1 commit is pushed to `main` for hands-on review before identity or database migrations.
+
+## 2026-07-15 — Adaptive Desktop and Web Shell
+
+### What Was Implemented
+- Added versioned, migration-safe workspace preferences and a three-step chooser for Everyday/Developer, Personal/Team, and Local/Corvus Cloud.
+- Added one shared responsive shell with four profile-specific navigation models, preserved project context, desktop rail, mobile bottom navigation/profile sheet, and a full-screen mobile inspector.
+- Kept Local on the authoritative `CorvusApi` path with fragment-only desktop pairing; no service request is made before runtime selection.
+- Added a truthful Cloud Preview with E2B/Google continuity described as planned, no fake sign-in, no price/card collection, disabled billing, and a Local fallback.
+- Added focus restoration, semantic landmarks, keyboard radio selection, skip navigation, reduced-motion handling, connection/loading/error states, and a route render boundary.
+- Completed fixed-viewport blueprint review plus real FastAPI browser and rebuilt Tauri Windows interaction tests.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/main.tsx`, and `apps/web/src/icons.tsx` — adaptive bootstrap integration, protected workspace routing, and sourced UI icons.
+- `apps/web/src/app/` — preference model, onboarding, four workspace profiles, shared shell/router, and render error containment.
+- `apps/web/src/components/` — desktop/mobile navigation, workspace switching, and truthful connection state.
+- `apps/web/src/runtime/CloudPreview.tsx` — capability-honest Cloud Preview and Local fallback.
+- `apps/web/src/styles/` — Corvus visual system, responsive composition, motion, reduced-motion, and mobile inspector behavior.
+- `apps/web/src/**/*.test.tsx` and `apps/web/src/test/memoryStorage.ts` — 23 preference, shell, accessibility, adapter, and workflow regression tests.
+- `.antigravity/website-blueprint/` — after screenshots, runtime evidence, human scorecard, and final audit report.
+- `docs/superpowers/plans/2026-07-14-persona-team-desktop-implementation-plan.md` — completed Milestone 1 checklist and gate evidence.
+- `HACKATHON_STATUS.md` and `PROJECT_LOG.md` — release record and explicit deferred boundary.
+
+### Assumptions Made (flag these for review)
+- Local continues to mean the current machine only; the desktop sidecar and same-machine browser remain separate clients of the existing loopback authority.
+- Team profiles are information-architecture previews until shared membership/capability storage is implemented; selecting Team grants no authority.
+
+### Known Issues / Deferred
+- Corvus Cloud remains Preview: native pre-sidecar runtime selection, Google identity, E2B lifecycle, cross-device continuity, and billing are not implemented.
+- Real multi-user Team collaboration and database migrations remain behind the approved post-Milestone-1 stop boundary.
+- The blueprint static HTML auditor cannot execute the SPA to observe runtime component markers; Playwright-rendered evidence and source markers were reviewed instead.
+- The mobile More sheet does not yet include a project picker; the active project is preserved when switching profiles.
+
+### Suggested Next Steps
+- Perform hands-on review of the pushed adaptive shell.
+- At the next authorized boundary, implement the native Local/Cloud chooser, Google continuity, and E2B sandbox lifecycle before multi-user collaboration migrations.

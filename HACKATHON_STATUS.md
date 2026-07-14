@@ -17,6 +17,14 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Credentials persist only as `env://` or `keyring://` references and are resolved only by the broker at an effect boundary.
 - Signed connector/channel envelopes remain proposals or untrusted input; server-side identity and authorization decide what is accepted.
 
+## Adaptive application shell (Milestone 1)
+
+- The shared React client now starts with a versioned three-step chooser for Everyday/Developer, Personal/Team, and Local/Corvus Cloud.
+- Local is operational on the existing authoritative same-machine API and supervised Tauri sidecar. Corvus Cloud is explicitly labeled Preview and exposes no fake identity, purchase, or payment success.
+- One shell composes four distinct navigation/copy profiles without duplicating workflow, authority, approval, budget, audit, or credential logic.
+- Team selection is capability-honest and grants no membership or permissions; real shared collaboration remains deferred to its authorized database milestone.
+- Responsive behavior includes desktop rail/inspector, mobile bottom navigation and profile sheet, full-screen mobile inspector, focus restoration, skip navigation, and reduced-motion handling.
+
 ## Install and run
 
 ```powershell

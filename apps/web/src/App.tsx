@@ -23,6 +23,18 @@ import {
   type Workflow
 } from "./api";
 import { ActivityIcon, PlayIcon } from "./icons";
+import { OnboardingFlow } from "./app/OnboardingFlow";
+import { AppShell } from "./app/AppShell";
+import { WorkspaceRouter } from "./app/WorkspaceRouter";
+import { WorkspaceErrorBoundary } from "./app/WorkspaceErrorBoundary";
+import {
+  clearWorkspacePreference,
+  loadWorkspacePreference,
+  saveWorkspacePreference,
+  type WorkspacePreference
+} from "./app/preferences";
+import { getWorkspaceProfile } from "./app/workspaceProfiles";
+import { CloudPreview } from "./runtime/CloudPreview";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -58,6 +70,7 @@ const DEFAULT_WORK_ITEMS: WorkItemDefinition[] = [
 
 interface AppProps {
   api?: CorvusApi;
+  preferenceStorage?: Storage;
 }
 
 function takeDesktopPairingValue(): string | null {
@@ -109,8 +122,23 @@ const EMPTY_OPERATIONS: OperationsDetail = {
   channelEvents: []
 };
 
-export function App({ api = browserApi }: AppProps) {
+export function App({ api = browserApi, preferenceStorage = window.localStorage }: AppProps) {
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
+  const initialPreference = useMemo(
+    () => loadWorkspacePreference(preferenceStorage),
+    [preferenceStorage]
+  );
+  const [preference, setPreference] = useState<WorkspacePreference | null>(
+    initialPreference.preference
+  );
+  const profile = useMemo(
+    () =>
+      preference === null
+        ? null
+        : getWorkspaceProfile(preference.experience, preference.scope),
+    [preference]
+  );
+  const [activeRoute, setActiveRoute] = useState("");
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -118,7 +146,6 @@ export function App({ api = browserApi }: AppProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [detail, setDetail] = useState<WorkflowDetail>(EMPTY_DETAIL);
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
-  const [view, setView] = useState<"execution" | "operations">("execution");
   const [operations, setOperations] = useState<OperationsDetail>(EMPTY_OPERATIONS);
   const [autonomy, setAutonomy] = useState<AutonomyDecision | null>(null);
   const [retrievedMemories, setRetrievedMemories] = useState<RetrievedMemory[]>([]);
@@ -133,6 +160,7 @@ export function App({ api = browserApi }: AppProps) {
   }, [api]);
 
   useEffect(() => {
+    if (preference?.runtime !== "local") return;
     let active = true;
     api
       .session()
@@ -159,7 +187,12 @@ export function App({ api = browserApi }: AppProps) {
     return () => {
       active = false;
     };
-  }, [api, loadProjects]);
+  }, [api, loadProjects, preference]);
+
+  useEffect(() => {
+    if (profile === null) return;
+    setActiveRoute(profile.routes[0].id);
+  }, [profile]);
 
   const refreshWorkflow = useCallback(
     async (workflowId: string, projectId: string) => {
@@ -448,67 +481,130 @@ export function App({ api = browserApi }: AppProps) {
     }
   }
 
+  function completeOnboarding(nextPreference: WorkspacePreference) {
+    saveWorkspacePreference(nextPreference, preferenceStorage);
+    setPreference(nextPreference);
+  }
+
+  function useLocalWorkspace() {
+    if (preference === null) return;
+    const localPreference: WorkspacePreference = { ...preference, runtime: "local" };
+    saveWorkspacePreference(localPreference, preferenceStorage);
+    setPreference(localPreference);
+  }
+
+  function changeWorkspaceSetup() {
+    clearWorkspacePreference(preferenceStorage);
+    setPreference(null);
+    setPhase("checking");
+  }
+
+  function changeWorkspacePreference(nextPreference: WorkspacePreference) {
+    saveWorkspacePreference(nextPreference, preferenceStorage);
+    setPreference(nextPreference);
+    setSelectedItem(null);
+  }
+
+  if (preference === null) {
+    return <OnboardingFlow onComplete={completeOnboarding} recovered={initialPreference.recovered} />;
+  }
+  if (preference.runtime === "corvus_cloud") {
+    return (
+      <CloudPreview
+        authAvailable={false}
+        onChangeSetup={changeWorkspaceSetup}
+        onUseLocal={useLocalWorkspace}
+        preference={preference}
+      />
+    );
+  }
+  if (profile === null) return <LoadingScreen />;
+
   if (phase === "checking") return <LoadingScreen />;
   if (phase === "pairing") return <PairingScreen busy={busy} error={error} onPair={pair} />;
 
+  const executionSurface = (
+    <ExecutionCanvas
+      activity={activity}
+      busy={busy}
+      detail={detail}
+      onApprove={approve}
+      onControl={controlWorkflow}
+      onCreate={createWorkflow}
+      onReject={reject}
+      onRun={() => mutateWorkflow("run")}
+      onSelectItem={setSelectedItem}
+      onStart={() => mutateWorkflow("start")}
+      outcome={outcomes.at(-1) ?? null}
+      project={activeProject}
+      selectedItem={selectedItem}
+      workflow={workflow}
+    />
+  );
+  const operationsSurface = (
+    <OperationsPanel
+      autonomy={autonomy}
+      busy={busy}
+      detail={operations}
+      onCreateProvider={createProvider}
+      onCreateRoutine={createRoutine}
+      onCreateSkill={createSkill}
+      onCreateTeam={createTeam}
+      onEvaluateAutonomy={evaluateAutonomy}
+      onRunRoutine={runRoutine}
+      onSearchMemory={searchMemory}
+      onStoreMemory={storeMemory}
+      project={activeProject}
+      retrievedMemories={retrievedMemories}
+    />
+  );
+
   return (
-    <div className="app-shell">
-      <AppHeader error={error} onView={(nextView) => { setView(nextView); if (nextView === "operations") setSelectedItem(null); }} view={view} />
-      <ProjectRail
-        activeProject={activeProject}
-        busy={busy}
-        onCreate={createProject}
-        onSelect={setActiveProject}
-        projects={projects}
-      />
-      <main className="execution-canvas" data-source-refs="docs-github-com lucide-play shadcn-button">
-        {view === "execution" ? (
-          <ExecutionCanvas
-            activity={activity}
-            busy={busy}
-            detail={detail}
-            onApprove={approve}
-            onControl={controlWorkflow}
-            onCreate={createWorkflow}
-            onReject={reject}
-            onRun={() => mutateWorkflow("run")}
-            onSelectItem={setSelectedItem}
-            onStart={() => mutateWorkflow("start")}
-            outcome={outcomes.at(-1) ?? null}
-            project={activeProject}
-            selectedItem={selectedItem}
-            workflow={workflow}
-          />
-        ) : (
-          <OperationsPanel
-            autonomy={autonomy}
-            busy={busy}
-            detail={operations}
-            onCreateProvider={createProvider}
-            onCreateRoutine={createRoutine}
-            onCreateSkill={createSkill}
-            onCreateTeam={createTeam}
-            onEvaluateAutonomy={evaluateAutonomy}
-            onRunRoutine={runRoutine}
-            onSearchMemory={searchMemory}
-            onStoreMemory={storeMemory}
-            project={activeProject}
-            retrievedMemories={retrievedMemories}
-          />
-        )}
-      </main>
-      <Inspector
-        artifacts={detail.artifacts}
-        budget={detail.budget}
-        effects={detail.effects}
-        item={selectedItem}
-        onApprove={approve}
-        onClose={() => setSelectedItem(null)}
-        onReject={reject}
-        onUpdateBudget={updateBudget}
-        conversation={detail.conversation}
-      />
-    </div>
+    <AppShell
+      activeRoute={activeRoute || profile.routes[0].id}
+      error={error}
+      inspector={(
+        <Inspector
+          artifacts={detail.artifacts}
+          budget={detail.budget}
+          effects={detail.effects}
+          item={selectedItem}
+          onApprove={approve}
+          onClose={() => setSelectedItem(null)}
+          onReject={reject}
+          onUpdateBudget={updateBudget}
+          conversation={detail.conversation}
+        />
+      )}
+      inspectorOpen={selectedItem !== null}
+      onChangeSetup={changeWorkspaceSetup}
+      onNavigate={(routeId) => {
+        setActiveRoute(routeId);
+        setSelectedItem(null);
+      }}
+      onPreferenceChange={changeWorkspacePreference}
+      preference={preference}
+      profile={profile}
+      projectContext={(
+        <ProjectRail
+          activeProject={activeProject}
+          busy={busy}
+          onCreate={createProject}
+          onSelect={setActiveProject}
+          projects={projects}
+        />
+      )}
+    >
+      <WorkspaceErrorBoundary>
+        <WorkspaceRouter
+          activeRoute={activeRoute || profile.routes[0].id}
+          executionSurface={executionSurface}
+          operationsSurface={operationsSurface}
+          profile={profile}
+          projectName={activeProject?.name ?? null}
+        />
+      </WorkspaceErrorBoundary>
+    </AppShell>
   );
 }
 
@@ -560,28 +656,6 @@ function PairingScreen({
   );
 }
 
-function AppHeader({
-  error,
-  onView,
-  view
-}: {
-  error: string;
-  onView: (view: "execution" | "operations") => void;
-  view: "execution" | "operations";
-}) {
-  return (
-    <header className="app-header" data-source-refs="vercel-com">
-      <div className="wordmark">Corvus</div>
-      <div className="connection-state"><span /> Local core</div>
-      <nav aria-label="Workspace views" className="view-switcher">
-        <button aria-current={view === "execution" ? "page" : undefined} onClick={() => onView("execution")} type="button">Execution</button>
-        <button aria-current={view === "operations" ? "page" : undefined} onClick={() => onView("operations")} type="button">Operations</button>
-      </nav>
-      {error && <div className="header-error" role="status">{error}</div>}
-    </header>
-  );
-}
-
 function ProjectRail({
   activeProject,
   busy,
@@ -606,7 +680,7 @@ function ProjectRail({
   }
 
   return (
-    <aside className="project-rail" data-source-refs="docs-github-com">
+    <section aria-label="Projects" className="project-rail" data-source-refs="docs-github-com">
       <div className="rail-heading">
         <span>Projects</span>
         <button className="text-button" onClick={() => setCreating(true)} type="button">New project</button>
@@ -632,7 +706,7 @@ function ProjectRail({
           </button>
         ))}
       </nav>
-    </aside>
+    </section>
   );
 }
 
@@ -902,8 +976,23 @@ function Inspector({
   onUpdateBudget: (limitUnits: number) => Promise<void>;
 }) {
   const effect = effects.find((candidate) => candidate.work_item_id === item?.id) ?? null;
+  useEffect(() => {
+    if (item === null) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [item, onClose]);
+
   return (
-    <aside className={`inspector ${item ? "inspector--open" : ""}`} data-source-refs="vercel-com-2 lucide-activity" aria-label="Work item details">
+    <aside
+      aria-label="Work item details"
+      aria-modal={item ? true : undefined}
+      className={`inspector ${item ? "inspector--open" : ""}`}
+      data-source-refs="vercel-com-2 lucide-activity"
+      role={item ? "dialog" : undefined}
+    >
       <div className="inspector-heading">
         <span><ActivityIcon /> Inspector</span>
         {item && <button className="text-button" onClick={onClose} type="button">Close</button>}

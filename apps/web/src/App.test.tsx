@@ -1,9 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import type { CorvusApi, Outcome, Project, Workflow } from "./api";
+import { MemoryStorage } from "./test/memoryStorage";
 
 const PROJECT: Project = {
   id: "project-1",
@@ -87,10 +88,26 @@ function fakeApi(projects: Project[] = []): CorvusApi {
 }
 
 describe("Corvus operator console", () => {
+  let preferenceStorage: MemoryStorage;
+
+  beforeEach(() => {
+    preferenceStorage = new MemoryStorage();
+    preferenceStorage.setItem(
+      "corvus.workspace-preference",
+      JSON.stringify({
+        version: 1,
+        experience: "developer",
+        scope: "personal",
+        runtime: "local",
+        onboardingComplete: true
+      })
+    );
+  });
+
   it("pairs once and reveals the real project workspace", async () => {
     const api = fakeApi([PROJECT]);
     const user = userEvent.setup();
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
 
     await user.type(await screen.findByLabelText("One-time pairing value"), "ephemeral-pairing-value");
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
@@ -104,7 +121,7 @@ describe("Corvus operator console", () => {
     const api = fakeApi([PROJECT]);
     window.history.replaceState(null, "", "/#pair=desktop-ephemeral-token");
 
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
     expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
@@ -122,7 +139,7 @@ describe("Corvus operator console", () => {
       expires_at: "2026-07-15T00:00:00Z"
     });
     const user = userEvent.setup();
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
 
     await user.click(await screen.findByRole("button", { name: "New project" }));
     await user.type(screen.getByLabelText("Project name"), "Launch control");
@@ -157,7 +174,7 @@ describe("Corvus operator console", () => {
       settled_units: 0
     });
     const user = userEvent.setup();
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
 
     await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
     await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
@@ -214,7 +231,7 @@ describe("Corvus operator console", () => {
     }
     vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
 
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
     await screen.findByText("Browser delivery");
     await waitFor(() => expect(streams).toHaveLength(1));
     streams[0].emit("work_item.running");
@@ -236,9 +253,9 @@ describe("Corvus operator console", () => {
       expires_at: "2026-07-15T00:00:00Z"
     });
     const user = userEvent.setup();
-    render(<App api={api} />);
+    render(<App api={api} preferenceStorage={preferenceStorage} />);
 
-    await user.click(await screen.findByRole("button", { name: "Operations" }));
+    await user.click(await screen.findByRole("link", { name: "Skills" }));
     await user.type(screen.getByLabelText("Team name"), "Operators");
     await user.click(screen.getByRole("button", { name: "Create team" }));
     expect(api.createTeam).toHaveBeenCalledWith(PROJECT.id, "Operators");

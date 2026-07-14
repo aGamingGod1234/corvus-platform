@@ -1,19 +1,19 @@
 {
-  "url": "http://127.0.0.1:5173",
+  "url": "http://127.0.0.1:8790",
   "phase": "after",
   "viewports": {
     "desktop": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform\\.antigravity\\website-blueprint\\screenshots\\after\\after-desktop.png",
+      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\after\\after-desktop.png",
       "width": 1440,
       "height": 1000
     },
     "tablet": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform\\.antigravity\\website-blueprint\\screenshots\\after\\after-tablet.png",
+      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\after\\after-tablet.png",
       "width": 1024,
       "height": 900
     },
     "mobile": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform\\.antigravity\\website-blueprint\\screenshots\\after\\after-mobile.png",
+      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\after\\after-mobile.png",
       "width": 390,
       "height": 844
     }
@@ -37,7 +37,13 @@
     }
   },
   "motion": {
-    "animations": [],
+    "animations": [
+      {
+        "playState": "finished",
+        "currentTime": 520,
+        "playbackRate": 1
+      }
+    ],
     "reducedMotionVerified": true
   }
 }

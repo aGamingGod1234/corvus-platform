@@ -104,20 +104,20 @@ The user approved these defaults for implementation:
 
 ### Tasks
 
-- [ ] Write tests first for first-run selection, persistence, switching, keyboard navigation, invalid preference recovery, pairing, reconnect, and permission-driven route hiding.
-- [ ] Add a short onboarding chooser that asks how the person works and whether the workspace is personal or shared; always allow later switching.
-- [ ] Add a runtime step before workspace choice: Local explains same-machine storage; Corvus Cloud explains synchronization and Cloud Preview status.
-- [ ] Add a truthful Cloud Preview plan page and entitlement wall with disabled payment collection and an explicit test-only bypass.
-- [ ] Preserve fragment-only desktop pairing and existing session repair.
-- [ ] Implement shared query/error/loading/offline primitives and route-level error boundaries.
-- [ ] Add semantic navigation landmarks, focus restoration, skip links, reduced-motion behavior, and responsive shell collapse.
-- [ ] Keep all data access behind the typed `CorvusApi` adapter.
+- [x] Write tests first for first-run selection, persistence, switching, keyboard navigation, invalid preference recovery, pairing, reconnect, and capability-gated Team presentation.
+- [x] Add a short onboarding chooser that asks how the person works and whether the workspace is personal or shared; always allow later switching.
+- [x] Add a runtime step before any service connection: Local explains same-machine storage; Corvus Cloud explains synchronization and Cloud Preview status.
+- [x] Add a truthful Cloud Preview plan page with disabled payment collection, no fake sign-in, and an immediate Local fallback.
+- [x] Preserve fragment-only desktop pairing and existing session repair.
+- [x] Implement shared connection/error/loading states and a route-level render error boundary.
+- [x] Add semantic navigation landmarks, focus restoration, skip links, reduced-motion behavior, responsive navigation, and a full-screen mobile inspector.
+- [x] Keep all data access behind the typed `CorvusApi` adapter.
 
 ### Gate
 
-- Existing pairing/project/workflow tests pass.
-- New shell tests pass with all four route compositions.
-- Production web build passes; no console errors at desktop or 390x844.
+- [x] Existing pairing/project/workflow tests pass.
+- [x] New shell tests pass with all four route compositions.
+- [x] Production web and Tauri builds pass; the post-pair console is clean at desktop and 390x844.
 
 ### Commit
 
