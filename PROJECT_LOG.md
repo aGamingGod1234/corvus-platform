@@ -453,3 +453,27 @@
 - Confirm the five decisions in `QUESTIONS.md`.
 - Implement the AI connection flow and typed `AgentRuntimePort` test-first, preserving all authority and secret boundaries.
 - Implement bounded unattended profiles only after their pre-authorization envelope is confirmed.
+
+## 2026-07-15 — Agent Runtime Decision-Ready Contract
+
+### What Was Implemented
+- Converted local CLI probes, current Corvus seams, official provider documentation, and the deep E2E findings into a provider-by-provider implementation contract.
+- Specified a separate typed `AgentRuntimePort`, capability model, authority-bound run request, sequenced redacted events, cancellation contract, progressive AI connection UX, and bounded unattended profiles.
+- Defined seven independently verifiable delivery milestones plus unit, adapter, API/security, browser, Windows Computer Use, and certification gates.
+
+### Files Modified
+- `docs/superpowers/plans/2026-07-15-agent-runtime-implementation-plan.md` — decision-ready architecture, UX, adapter safety profiles, milestones, and verification matrix.
+- `PROJECT_LOG.md` — planning checkpoint and preserved stop boundary.
+
+### Assumptions Made (flag these for review)
+- The five values labeled as recommendations remain proposals, not implementation decisions.
+- Provider-runtime implementation remains paused until `QUESTIONS.md` is confirmed.
+
+### Known Issues / Deferred
+- Cursor runtime conformance cannot be tested until `cursor-agent` is installed.
+- Grok is specified through the xAI Responses API because no supported local Grok CLI is present.
+- Google/E2B sequencing remains an explicit product decision.
+
+### Suggested Next Steps
+- Confirm the recommended defaults in `QUESTIONS.md`.
+- Begin M2A with failing contract/security tests before any live adapter wiring.
