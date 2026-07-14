@@ -28,6 +28,7 @@ class RequestContext(BaseModel):
     authority_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     scope_kind: Literal["workspace", "project", "channel", "thread", "conversation"]
     scope_id: UUID
+    scope_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     audience_policy_snapshot_id: UUID
     audience_policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     requester_id: UUID

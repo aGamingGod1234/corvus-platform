@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from corvus.application.ports import (
     ProjectAuditEvent,
@@ -16,33 +16,60 @@ from corvus.application.ports import (
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
+from corvus.domain.request import RequestContext
 from corvus.infrastructure.repositories.projects import ProjectRepository
 
 
 class CreateProjectCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    request_id: UUID
-    workspace_id: UUID
-    requester_id: UUID
-    acting_agent_id: UUID
-    client_context_id: UUID
+    context: RequestContext
     client_surface: ClientSurface
-    transport_principal_id: UUID
     project: Project
+
+    @model_validator(mode="after")
+    def validate_context_binding(self) -> CreateProjectCommand:
+        if (
+            self.context.workspace_id != self.project.workspace_id
+            or self.context.scope_kind != "project"
+            or self.context.scope_id != self.project.id
+        ):
+            raise ValueError("project_request_context_mismatch")
+        if self.context.transport_principal_id is None:
+            raise ValueError("project_transport_principal_missing")
+        return self
+
+    @property
+    def request_id(self) -> UUID:
+        return self.context.id
+
+    @property
+    def workspace_id(self) -> UUID:
+        return self.context.workspace_id
 
 
 class GetProjectQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    request_id: UUID
-    workspace_id: UUID
-    requester_id: UUID
-    acting_agent_id: UUID
-    client_context_id: UUID
+    context: RequestContext
     client_surface: ClientSurface
-    transport_principal_id: UUID
     project_id: UUID
+
+    @model_validator(mode="after")
+    def validate_context_binding(self) -> GetProjectQuery:
+        if self.context.scope_kind != "project" or self.context.scope_id != self.project_id:
+            raise ValueError("project_request_context_mismatch")
+        if self.context.transport_principal_id is None:
+            raise ValueError("project_transport_principal_missing")
+        return self
+
+    @property
+    def request_id(self) -> UUID:
+        return self.context.id
+
+    @property
+    def workspace_id(self) -> UUID:
+        return self.context.workspace_id
 
 
 class ProjectResponse(BaseModel):
@@ -80,20 +107,9 @@ class ProjectService:
         self.create_lifecycle = create_lifecycle
 
     def create(self, command: CreateProjectCommand) -> ProjectResponse:
-        if command.project.workspace_id != command.workspace_id:
-            return ProjectResponse(
-                request_id=command.request_id,
-                ok=False,
-                reason_code="project_workspace_mismatch",
-            )
         return self._execute(
-            request_id=command.request_id,
-            workspace_id=command.workspace_id,
-            requester_id=command.requester_id,
-            acting_agent_id=command.acting_agent_id,
-            client_context_id=command.client_context_id,
+            context=command.context,
             client_surface=command.client_surface,
-            transport_principal_id=command.transport_principal_id,
             action="project.create",
             project_id=command.project.id,
             project=command.project,
@@ -101,13 +117,8 @@ class ProjectService:
 
     def get(self, query: GetProjectQuery) -> ProjectResponse:
         return self._execute(
-            request_id=query.request_id,
-            workspace_id=query.workspace_id,
-            requester_id=query.requester_id,
-            acting_agent_id=query.acting_agent_id,
-            client_context_id=query.client_context_id,
+            context=query.context,
             client_surface=query.client_surface,
-            transport_principal_id=query.transport_principal_id,
             action="project.read",
             project_id=query.project_id,
             project=None,
@@ -116,25 +127,15 @@ class ProjectService:
     def _execute(
         self,
         *,
-        request_id: UUID,
-        workspace_id: UUID,
-        requester_id: UUID,
-        acting_agent_id: UUID,
-        client_context_id: UUID,
+        context: RequestContext,
         client_surface: ClientSurface,
-        transport_principal_id: UUID,
         action: Literal["project.create", "project.read"],
         project_id: UUID,
         project: Project | None,
     ) -> ProjectResponse:
         request = ProjectAuthorizationRequest(
-            request_id=request_id,
-            workspace_id=workspace_id,
-            requester_id=requester_id,
-            acting_agent_id=acting_agent_id,
-            client_context_id=client_context_id,
+            context=context,
             client_surface=client_surface,
-            transport_principal_id=transport_principal_id,
             action=action,
             project_id=project_id,
         )
@@ -142,18 +143,19 @@ class ProjectService:
             decision = self.authorization.authorize(request)
         except Exception:
             return ProjectResponse(
-                request_id=request_id,
+                request_id=context.id,
                 ok=False,
                 reason_code="authorization_unavailable",
             )
+        if decision.authorization_snapshot_id != context.authorization_snapshot_id:
+            return ProjectResponse(
+                request_id=context.id,
+                ok=False,
+                reason_code="authorization_snapshot_mismatch",
+            )
         audit_event = ProjectAuditEvent(
-            request_id=request_id,
-            workspace_id=workspace_id,
-            requester_id=requester_id,
-            acting_agent_id=acting_agent_id,
-            client_context_id=client_context_id,
+            context=context,
             client_surface=client_surface,
-            transport_principal_id=transport_principal_id,
             authorization_snapshot_id=decision.authorization_snapshot_id,
             action=action,
             project_id=project_id,
@@ -165,26 +167,34 @@ class ProjectService:
                 self.audit.record(audit_event)
             except Exception:
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="audit_persistence_failed",
                 )
             return ProjectResponse(
-                request_id=request_id,
+                request_id=context.id,
                 ok=False,
                 reason_code=decision.reason_code,
             )
         result: Project | None
         if action == "project.create":
-            if project is None:
+            if project is None:  # pragma: no cover - internal invariant
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="project_missing",
                 )
             if self.create_lifecycle is None:
+                try:
+                    self.audit.record(audit_event)
+                except Exception:
+                    return ProjectResponse(
+                        request_id=context.id,
+                        ok=False,
+                        reason_code="audit_persistence_failed",
+                    )
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="project_authority_lifecycle_unavailable",
                 )
@@ -192,13 +202,13 @@ class ProjectService:
                 self.create_lifecycle.create(project, audit_event)
             except ProjectCreateLifecycleError as exc:
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code=exc.reason_code,
                 )
             except Exception:
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="project_persistence_failed",
                 )
@@ -208,26 +218,26 @@ class ProjectService:
                 self.audit.record(audit_event)
             except Exception:
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="audit_persistence_failed",
                 )
             try:
-                result = self.store.get(workspace_id, project_id)
+                result = self.store.get(context.workspace_id, project_id)
             except Exception:
                 return ProjectResponse(
-                    request_id=request_id,
+                    request_id=context.id,
                     ok=False,
                     reason_code="project_persistence_failed",
                 )
         if result is None:
             return ProjectResponse(
-                request_id=request_id,
+                request_id=context.id,
                 ok=False,
                 reason_code="project_not_found",
             )
         return ProjectResponse(
-            request_id=request_id,
+            request_id=context.id,
             ok=True,
             reason_code="project_created" if action == "project.create" else "project_found",
             project=result,

@@ -6,12 +6,11 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tarfile
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +18,10 @@ import docker
 from docker.errors import DockerException
 
 from corvus.models import SandboxPolicy
+from corvus.safe_process import TrustedProcessError, run_trusted_argv
+
+_CONTAINER_WORKSPACE = PurePosixPath("/").joinpath("workspace").as_posix()
+_CONTAINER_TEMP = PurePosixPath("/").joinpath("tmp").as_posix()
 
 
 class SandboxError(RuntimeError):
@@ -386,13 +389,13 @@ class DockerSandbox:
             "nano_cpus": int(self.policy.cpu_limit * 1_000_000_000),
             "pids_limit": self.policy.pids_limit,
             "tmpfs": {
-                "/workspace": "rw,noexec,nosuid,size=1g",
-                "/tmp": "rw,noexec,nosuid,size=256m",  # noqa: S108 - container tmpfs
+                _CONTAINER_WORKSPACE: "rw,noexec,nosuid,size=1g",
+                _CONTAINER_TEMP: "rw,noexec,nosuid,size=256m",
             },
-            "working_dir": "/workspace",
+            "working_dir": _CONTAINER_WORKSPACE,
             "user": "65534:65534",
             "environment": {
-                "HOME": "/tmp",  # noqa: S108 - container tmpfs
+                "HOME": _CONTAINER_TEMP,
                 "PYTHONDONTWRITEBYTECODE": "1",
             },
             "labels": {"io.corvus.sandbox": "true"},
@@ -567,18 +570,16 @@ class PodmanSandbox:
         if executable is None:
             return False, _podman_unavailable_detail()
         try:
-            result = subprocess.run(  # noqa: S603 - executable was resolved with which()
+            result = run_trusted_argv(
                 [executable, "info", "--format", "{{.Version.Version}}"],
-                capture_output=True,
-                check=False,
-                timeout=10,
-                text=True,
+                cwd=Path.cwd(),
+                timeout_seconds=10,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, TrustedProcessError):
             return False, _podman_unavailable_detail()
         if result.returncode != 0:
             return False, _podman_unavailable_detail()
-        return True, result.stdout.strip() or "unknown"
+        return True, result.stdout.decode(errors="replace").strip() or "unknown"
 
     def container_options(self) -> list[str]:
         if self.policy.network_default:
@@ -597,11 +598,11 @@ class PodmanSandbox:
             f"--memory={self.policy.memory_mb}m",
             f"--cpus={self.policy.cpu_limit}",
             f"--pids-limit={self.policy.pids_limit}",
-            "--tmpfs=/workspace:rw,noexec,nosuid,size=1g,uid=65534,gid=65534,mode=0700",
-            "--tmpfs=/tmp:rw,noexec,nosuid,size=256m,uid=65534,gid=65534,mode=0700",
-            "--workdir=/workspace",
+            f"--tmpfs={_CONTAINER_WORKSPACE}:rw,noexec,nosuid,size=1g,uid=65534,gid=65534,mode=0700",
+            f"--tmpfs={_CONTAINER_TEMP}:rw,noexec,nosuid,size=256m,uid=65534,gid=65534,mode=0700",
+            f"--workdir={_CONTAINER_WORKSPACE}",
             "--user=65534:65534",
-            "--env=HOME=/tmp",
+            f"--env=HOME={_CONTAINER_TEMP}",
             "--env=PYTHONDONTWRITEBYTECODE=1",
             "--label=io.corvus.sandbox=true",
         ]

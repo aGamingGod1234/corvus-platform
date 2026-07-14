@@ -18,6 +18,11 @@ from corvus.infrastructure.repositories.projects import ProjectRepository
 from corvus.store import TraceStore
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
+_EXTERNAL_PROOFS = {
+    "audit_anchor_recovery_checkpoints": "d" * 64,
+    "audit_result_bindings": "e" * 64,
+    "authority_registry_freshness_proofs": "f" * 64,
+}
 
 
 def _database(tmp_path: Path) -> Path:
@@ -93,12 +98,38 @@ def test_calculator_is_deterministic_exhaustive_and_workspace_bound(tmp_path: Pa
     calculator = AuthorityRootCalculator(_database(tmp_path))
     workspace_id = uuid4()
 
-    first = calculator.calculate(workspace_id=workspace_id, authority_generation=1)
-    replay = calculator.calculate(workspace_id=workspace_id, authority_generation=1)
-    other = calculator.calculate(workspace_id=uuid4(), authority_generation=1)
+    first = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    replay = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    other = calculator.calculate(
+        workspace_id=uuid4(),
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    substituted_proof = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests={
+            **_EXTERNAL_PROOFS,
+            "authority_registry_freshness_proofs": "e" * 64,
+        },
+    )
 
     assert first == replay
     assert first.root_digest != other.root_digest
+    assert first.root_digest != substituted_proof.root_digest
+    assert first.observed_leaf_digests != substituted_proof.observed_leaf_digests
+    assert (
+        first.observed_leaf_digests["authority_registry_freshness_proofs"]
+        != substituted_proof.observed_leaf_digests["authority_registry_freshness_proofs"]
+    )
     assert first.observed_leaf_digests == other.observed_leaf_digests
     assert set(first.observed_leaf_digests) == M1_AUTHORITY_FAMILY_NAMES
     assert [item.ordinal for item in first.commitments] == list(
@@ -110,6 +141,13 @@ def test_calculator_is_deterministic_exhaustive_and_workspace_bound(tmp_path: Pa
         if item.family_name == "authority_registry_freshness_proofs"
     )
     assert freshness.external_proof_digest is not None
+
+
+def test_calculator_requires_every_manifest_external_proof(tmp_path: Path) -> None:
+    calculator = AuthorityRootCalculator(_database(tmp_path))
+
+    with pytest.raises(AuthorityRootCalculationError, match="authority_external_proof_missing"):
+        calculator.calculate(workspace_id=uuid4(), authority_generation=1)
 
 
 def test_project_projection_is_workspace_isolated_and_matches_persistence(tmp_path: Path) -> None:
@@ -126,17 +164,34 @@ def test_project_projection_is_workspace_isolated_and_matches_persistence(tmp_pa
         created_at=_NOW,
         updated_at=_NOW,
     )
-    before = calculator.calculate(workspace_id=workspace_id, authority_generation=2)
-    other_before = calculator.calculate(workspace_id=other_workspace_id, authority_generation=2)
+    before = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=2,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    other_before = calculator.calculate(
+        workspace_id=other_workspace_id,
+        authority_generation=2,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
     prospective = calculator.calculate(
         workspace_id=workspace_id,
         authority_generation=2,
         prospective_family_rows={"projects": [_project_row(project)]},
+        external_proof_digests=_EXTERNAL_PROOFS,
     )
 
     repository.add(project)
-    persisted = calculator.calculate(workspace_id=workspace_id, authority_generation=2)
-    other_after = calculator.calculate(workspace_id=other_workspace_id, authority_generation=2)
+    persisted = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=2,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    other_after = calculator.calculate(
+        workspace_id=other_workspace_id,
+        authority_generation=2,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
 
     assert prospective == persisted
     assert prospective.root_digest != before.root_digest
@@ -157,6 +212,7 @@ def test_self_referential_root_and_transition_fields_are_normalized(tmp_path: Pa
             "workspace_authorities": [authority],
             "authority_commit_intents": [intent],
         },
+        external_proof_digests=_EXTERNAL_PROOFS,
     )
     changed_authority = dict(authority)
     changed_authority["authority_state_root"] = "c" * 64
@@ -176,6 +232,7 @@ def test_self_referential_root_and_transition_fields_are_normalized(tmp_path: Pa
             "workspace_authorities": [changed_authority],
             "authority_commit_intents": [changed_intent],
         },
+        external_proof_digests=_EXTERNAL_PROOFS,
     )
 
     assert first == replay
@@ -190,12 +247,14 @@ def test_calculator_rejects_partial_or_unknown_projections(tmp_path: Path) -> No
             workspace_id=workspace_id,
             authority_generation=1,
             prospective_family_rows={"projects": [{"id": str(uuid4())}]},
+            external_proof_digests=_EXTERNAL_PROOFS,
         )
     with pytest.raises(AuthorityRootCalculationError, match="projection_family_unknown"):
         calculator.calculate(
             workspace_id=workspace_id,
             authority_generation=1,
-            prospective_family_rows={"audit_result_bindings": []},
+            prospective_family_rows={"not_a_manifest_family": []},
+            external_proof_digests=_EXTERNAL_PROOFS,
         )
     foreign_project = Project(
         workspace_id=uuid4(),
@@ -210,4 +269,5 @@ def test_calculator_rejects_partial_or_unknown_projections(tmp_path: Path) -> No
             workspace_id=workspace_id,
             authority_generation=1,
             prospective_family_rows={"projects": [_project_row(foreign_project)]},
+            external_proof_digests=_EXTERNAL_PROOFS,
         )

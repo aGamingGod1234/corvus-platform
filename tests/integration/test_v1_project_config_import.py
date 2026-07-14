@@ -68,7 +68,8 @@ def test_verified_project_config_import_is_idempotent_and_non_authoritative(
     )
 
     assert first == second
-    assert repository.list_for_workspace(workspace_id) == [project]
+    assert repository.list_for_workspace(workspace_id) == []
+    assert repository.get_staged(workspace_id=workspace_id, project_id=project.id) == project
     assert first.policy_hints.autonomy_level == 3
     assert first.policy_hints.max_runtime_seconds == 120
     assert first.provider_hints[0].name == "fixture"

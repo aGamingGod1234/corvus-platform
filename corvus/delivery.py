@@ -5,7 +5,6 @@ import json
 import os
 import secrets
 import shutil
-import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -17,6 +16,7 @@ from uuid import UUID, uuid4
 from cryptography.fernet import Fernet, InvalidToken
 
 from corvus.models import ApprovalGrant, Artifact, DeliveryBundle
+from corvus.safe_process import TrustedProcessError, run_trusted_argv
 from corvus.security import SecurityError, atomic_write, resolve_under, sha256_bytes, sha256_file
 
 
@@ -732,31 +732,29 @@ class DeliveryManager:
         git = shutil.which("git")
         if git is None or not (bundle.destination / ".git").exists():
             return None
-        status = subprocess.run(  # noqa: S603 - resolved git executable, no shell
-            [git, "status", "--porcelain"],
-            cwd=bundle.destination,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if status.returncode != 0 or status.stdout.strip():
+        try:
+            status = run_trusted_argv(
+                [git, "status", "--porcelain"],
+                cwd=bundle.destination,
+            )
+            if status.returncode != 0 or status.stdout.strip():
+                return None
+            head = run_trusted_argv(
+                [git, "rev-parse", "HEAD"],
+                cwd=bundle.destination,
+            )
+        except TrustedProcessError:
             return None
-        head = subprocess.run(  # noqa: S603 - resolved git executable, no shell
-            [git, "rev-parse", "HEAD"],
-            cwd=bundle.destination,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
         if head.returncode != 0:
             return None
         reference = f"refs/corvus/checkpoints/{bundle.id}"
-        updated = subprocess.run(  # noqa: S603 - resolved git executable, no shell
-            [git, "update-ref", reference, head.stdout.strip()],
-            cwd=bundle.destination,
-            check=False,
-            capture_output=True,
-        )
+        try:
+            updated = run_trusted_argv(
+                [git, "update-ref", reference, head.stdout.decode().strip()],
+                cwd=bundle.destination,
+            )
+        except (TrustedProcessError, UnicodeDecodeError):
+            return None
         return reference if updated.returncode == 0 else None
 
     def load(self, bundle_id: UUID) -> DeliveryBundle:

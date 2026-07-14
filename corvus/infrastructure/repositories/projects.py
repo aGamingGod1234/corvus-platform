@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import Integer, String, create_engine, select
+from sqlalchemy import Integer, String, create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -79,7 +81,7 @@ class ProjectRepository:
             raise ProjectRepositoryError("project_identity_conflict") from exc
 
     def add_idempotent(self, project: Project) -> None:
-        existing = self.get(workspace_id=project.workspace_id, project_id=project.id)
+        existing = self.get_staged(workspace_id=project.workspace_id, project_id=project.id)
         if existing is not None:
             if existing != project:
                 raise ProjectRepositoryError("project_replay_mismatch")
@@ -87,11 +89,11 @@ class ProjectRepository:
         try:
             self.add(project)
         except ProjectRepositoryError:
-            existing = self.get(workspace_id=project.workspace_id, project_id=project.id)
+            existing = self.get_staged(workspace_id=project.workspace_id, project_id=project.id)
             if existing != project:
                 raise
 
-    def get(self, *, workspace_id: UUID, project_id: UUID) -> Project | None:
+    def get_staged(self, *, workspace_id: UUID, project_id: UUID) -> Project | None:
         with Session(self.engine) as session:
             row = session.scalar(
                 select(ProjectRow).where(
@@ -101,6 +103,55 @@ class ProjectRepository:
             )
             return None if row is None else self._to_project(row)
 
+    @staticmethod
+    def _mutation_digest(project: Project) -> str:
+        encoded = json.dumps(
+            project.model_dump(mode="json"),
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _is_finalized(cls, session: Session, project: Project) -> bool:
+        result = session.execute(
+            text(
+                "SELECT 1 FROM audit_anchor_recovery_checkpoints AS checkpoint "
+                "JOIN audit_result_bindings AS binding "
+                "ON binding.id = checkpoint.result_binding_id "
+                "JOIN audit_receipts AS receipt ON receipt.id = binding.audit_receipt_id "
+                "WHERE checkpoint.workspace_id = :workspace_id "
+                "AND checkpoint.prepared_result_digest = :digest "
+                "AND checkpoint.state = 'complete' "
+                "AND binding.workspace_id = :workspace_id "
+                "AND json_extract(binding.payload_json, '$.prepared_result_digest') = :digest "
+                "AND receipt.workspace_id = :workspace_id "
+                "AND json_extract(receipt.payload_json, '$.action') = 'project.create' "
+                "AND json_extract(receipt.payload_json, '$.resource') = :resource LIMIT 1"
+            ),
+            {
+                "workspace_id": str(project.workspace_id),
+                "digest": cls._mutation_digest(project),
+                "resource": f"project:{project.id}",
+            },
+        ).first()
+        return result is not None
+
+    def get(self, *, workspace_id: UUID, project_id: UUID) -> Project | None:
+        with Session(self.engine) as session:
+            row = session.scalar(
+                select(ProjectRow).where(
+                    ProjectRow.id == str(project_id),
+                    ProjectRow.workspace_id == str(workspace_id),
+                )
+            )
+            if row is None:
+                return None
+            project = self._to_project(row)
+            return project if self._is_finalized(session, project) else None
+
     def list_for_workspace(self, workspace_id: UUID) -> list[Project]:
         with Session(self.engine) as session:
             rows = session.scalars(
@@ -108,7 +159,8 @@ class ProjectRepository:
                 .where(ProjectRow.workspace_id == str(workspace_id))
                 .order_by(ProjectRow.created_at, ProjectRow.id)
             ).all()
-            return [self._to_project(row) for row in rows]
+            projects = [self._to_project(row) for row in rows]
+            return [project for project in projects if self._is_finalized(session, project)]
 
     def close(self) -> None:
         self.engine.dispose()

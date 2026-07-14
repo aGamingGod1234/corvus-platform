@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, TypeVar
 from uuid import UUID
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Footer,
@@ -95,6 +97,7 @@ class LiveModelController(Protocol):
 _NO_PROVIDER = "__corvus_no_provider__"
 _NO_MODEL = "__corvus_no_model__"
 _NO_THINKING = "__corvus_no_thinking__"
+_WidgetT = TypeVar("_WidgetT", bound=Widget)
 
 
 class CorvusApp(App[None]):
@@ -102,6 +105,13 @@ class CorvusApp(App[None]):
 
     TITLE = "Corvus"
     SUB_TITLE = "chat immediately | work in background | approve before delivery"
+
+    def query_one_optional(self, selector: str, expect_type: type[_WidgetT]) -> _WidgetT | None:
+        try:
+            return self.query_one(selector, expect_type)
+        except NoMatches:
+            return None
+
     CSS = """
     Screen { layout: vertical; }
     #body { height: 1fr; }
@@ -748,9 +758,9 @@ class CorvusApp(App[None]):
         return options or [("No thinking presets available", _NO_THINKING)]
 
     def _initial_provider_value(self) -> str:
-        if self._provider_option(self.model_state.active_provider) is not None:
-            assert self.model_state.active_provider is not None
-            return self.model_state.active_provider
+        active_provider = self.model_state.active_provider
+        if active_provider is not None and self._provider_option(active_provider) is not None:
+            return active_provider
         return self.model_state.providers[0].name if self.model_state.providers else _NO_PROVIDER
 
     def _initial_model_value(self) -> str:
@@ -766,15 +776,16 @@ class CorvusApp(App[None]):
         if provider is None or not provider.models:
             return _NO_MODEL
         model_ids = {model.id for model in provider.models}
+        active_model = self.model_state.active_model
         if (
             provider_name == self.model_state.active_provider
-            and self.model_state.active_model in model_ids
+            and active_model is not None
+            and active_model in model_ids
         ):
-            assert self.model_state.active_model is not None
-            return self.model_state.active_model
-        if provider.selected_model in model_ids:
-            assert provider.selected_model is not None
-            return provider.selected_model
+            return active_model
+        selected_model = provider.selected_model
+        if selected_model is not None and selected_model in model_ids:
+            return selected_model
         return provider.models[0].id
 
     def _thinking_value_for(self, provider_name: str, model_id: str) -> str:
@@ -783,16 +794,17 @@ class CorvusApp(App[None]):
         if provider is None or model is None or not model.thinking:
             return _NO_THINKING
         thinking_ids = {option.id for option in model.thinking}
+        active_thinking = self.model_state.active_thinking
         if (
             provider_name == self.model_state.active_provider
             and model_id == self.model_state.active_model
-            and self.model_state.active_thinking in thinking_ids
+            and active_thinking is not None
+            and active_thinking in thinking_ids
         ):
-            assert self.model_state.active_thinking is not None
-            return self.model_state.active_thinking
-        if provider.selected_thinking in thinking_ids:
-            assert provider.selected_thinking is not None
-            return provider.selected_thinking
+            return active_thinking
+        selected_thinking = provider.selected_thinking
+        if selected_thinking is not None and selected_thinking in thinking_ids:
+            return selected_thinking
         return model.thinking[0].id
 
     def _provider_option(self, name: str | None) -> LiveProviderOption | None:
@@ -883,26 +895,16 @@ class CorvusApp(App[None]):
         prompt = self.query_one_optional("#prompt", Input)
         thinking_status = self.query_one_optional("#thinking-status", Static)
         status = self.query_one_optional("#model-status", Static)
-        if any(
-            control is None
-            for control in (
-                provider_select,
-                model_select,
-                thinking_select,
-                apply_button,
-                prompt,
-                thinking_status,
-                status,
-            )
+        if (
+            provider_select is None
+            or model_select is None
+            or thinking_select is None
+            or apply_button is None
+            or prompt is None
+            or thinking_status is None
+            or status is None
         ):
             return
-        assert provider_select is not None
-        assert model_select is not None
-        assert thinking_select is not None
-        assert apply_button is not None
-        assert prompt is not None
-        assert thinking_status is not None
-        assert status is not None
         unavailable = self.model_controller is None or not self.model_state.providers
         locked = unavailable or busy or self._model_switching
         provider_select.disabled = locked

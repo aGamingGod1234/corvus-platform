@@ -44,7 +44,7 @@ def test_project_migration_is_repeatable_and_preserves_legacy_schema(tmp_path: P
     reopened.engine.dispose()
 
 
-def test_project_repository_round_trips_and_isolates_workspaces(tmp_path: Path) -> None:
+def test_project_repository_stages_rows_but_hides_unfinalized_authority(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     TraceStore(database).engine.dispose()
     upgrade_database(database)
@@ -60,9 +60,10 @@ def test_project_repository_round_trips_and_isolates_workspaces(tmp_path: Path) 
 
     repository.add(project)
 
-    assert repository.get(workspace_id=workspace_id, project_id=project.id) == project
+    assert repository.get_staged(workspace_id=workspace_id, project_id=project.id) == project
+    assert repository.get(workspace_id=workspace_id, project_id=project.id) is None
     assert repository.get(workspace_id=other_workspace_id, project_id=project.id) is None
-    assert repository.list_for_workspace(workspace_id) == [project]
+    assert repository.list_for_workspace(workspace_id) == []
     assert repository.list_for_workspace(other_workspace_id) == []
 
 
@@ -83,7 +84,10 @@ def test_project_repository_replay_requires_exact_record(tmp_path: Path) -> None
 
     with pytest.raises(ProjectRepositoryError, match="project_replay_mismatch"):
         repository.add_idempotent(project.model_copy(update={"name": "Substituted"}))
-    assert repository.list_for_workspace(project.workspace_id) == [project]
+    assert (
+        repository.get_staged(workspace_id=project.workspace_id, project_id=project.id) == project
+    )
+    assert repository.list_for_workspace(project.workspace_id) == []
 
 
 def test_project_repository_refuses_unmigrated_database(tmp_path: Path) -> None:

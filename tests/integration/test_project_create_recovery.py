@@ -45,6 +45,7 @@ from corvus.domain.deployment import (
     fixed_workspace_lock_name,
 )
 from corvus.domain.identity import Project
+from corvus.domain.request import RequestContext
 from corvus.infrastructure.authority_root import AuthorityRootCalculator
 from corvus.infrastructure.db import upgrade_database
 from corvus.infrastructure.project_audit import SignedProjectAuditAdapter
@@ -206,11 +207,12 @@ class FixedAuthorization:
         self.snapshot = snapshot
 
     def authorize(self, request: ProjectAuthorizationRequest) -> ProjectAuthorizationDecision:
-        assert request.request_id == self.snapshot.request_context_id
+        assert request.context.id == self.snapshot.request_context_id
+        assert request.context.authorization_snapshot_id == self.snapshot.id
         return ProjectAuthorizationDecision(
             allowed=True,
             reason_code="authorized",
-            authorization_snapshot_id=self.snapshot.id,
+            authorization_snapshot_id=request.context.authorization_snapshot_id,
         )
 
 
@@ -319,6 +321,47 @@ class CrashAfterCall:
         return crash_after
 
 
+def _request_context(
+    *,
+    request_id: UUID,
+    project: Project,
+    requester_id: UUID,
+    acting_agent_id: UUID,
+    authority: WorkspaceAuthority,
+    snapshot: AuthorizationDecisionSnapshot,
+    idempotency_key: str,
+) -> RequestContext:
+    return RequestContext(
+        id=request_id,
+        deployment_profile_id=authority.deployment_profile_id,
+        deployment_instance_id=snapshot.deployment_instance_id,
+        workspace_id=project.workspace_id,
+        workspace_authority_epoch=authority.epoch,
+        workspace_authority_generation=snapshot.authority_generation,
+        authority_state_root=snapshot.authority_state_root,
+        authority_epoch_credential_id=snapshot.authority_epoch_credential_id,
+        authority_commit_receipt_id=snapshot.authority_commit_receipt_id,
+        authority_proof_digest=snapshot.authority_proof_digest,
+        scope_kind=snapshot.scope_kind,
+        scope_id=snapshot.scope_id,
+        scope_digest=snapshot.scope_digest,
+        audience_policy_snapshot_id=snapshot.audience_policy_snapshot_id,
+        audience_policy_digest=snapshot.audience_digest,
+        requester_id=requester_id,
+        client_context_id=uuid4(),
+        transport_principal_id=snapshot.transport_principal_id,
+        agent_id=acting_agent_id,
+        agent_grant_id=snapshot.agent_grant_id,
+        access_bundle_id=snapshot.access_bundle_id,
+        policy_digest=snapshot.policy_digest,
+        authorization_snapshot_id=snapshot.id,
+        authorization_snapshot_digest=snapshot.canonical_digest,
+        authorization_signing_key_version_id=snapshot.signing_key_version_id,
+        idempotency_key=idempotency_key,
+        correlation_id=uuid4(),
+    )
+
+
 @dataclass(frozen=True)
 class ProjectCreateScenario:
     database: Path
@@ -361,6 +404,7 @@ def _scenario(tmp_path: Path) -> ProjectCreateScenario:
         authority=authority,
     )
     audit_repository.append_snapshot(snapshot)
+    acting_agent_id = uuid4()
     return ProjectCreateScenario(
         database=database,
         authority_repository=authority_repository,
@@ -370,13 +414,16 @@ def _scenario(tmp_path: Path) -> ProjectCreateScenario:
         project=project,
         authority=authority,
         command=CreateProjectCommand(
-            request_id=request_id,
-            workspace_id=project.workspace_id,
-            requester_id=requester_id,
-            acting_agent_id=uuid4(),
-            client_context_id=uuid4(),
+            context=_request_context(
+                request_id=request_id,
+                project=project,
+                requester_id=requester_id,
+                acting_agent_id=acting_agent_id,
+                authority=authority,
+                snapshot=snapshot,
+                idempotency_key="project-create-recovery",
+            ),
             client_surface=ClientSurface.CLI,
-            transport_principal_id=snapshot.transport_principal_id,
             project=project,
         ),
         anchor=IdempotentAnchor(),
@@ -467,14 +514,18 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         authority=authority,
     )
     audit_repository.append_snapshot(snapshot)
+    acting_agent_id = uuid4()
     command = CreateProjectCommand(
-        request_id=request_id,
-        workspace_id=project.workspace_id,
-        requester_id=requester_id,
-        acting_agent_id=uuid4(),
-        client_context_id=uuid4(),
+        context=_request_context(
+            request_id=request_id,
+            project=project,
+            requester_id=requester_id,
+            acting_agent_id=acting_agent_id,
+            authority=authority,
+            snapshot=snapshot,
+            idempotency_key="recoverable-project-create",
+        ),
         client_surface=ClientSurface.CLI,
-        transport_principal_id=snapshot.transport_principal_id,
         project=project,
     )
     anchor = IdempotentAnchor()
@@ -533,14 +584,22 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
     assert failed.reason_code == "authority_commit_failed"
 
     assert (
-        project_repository.get(workspace_id=project.workspace_id, project_id=project.id) == project
+        project_repository.get(
+            workspace_id=project.workspace_id,
+            project_id=project.id,
+        )
+        is None
+    )
+    assert (
+        project_repository.get_staged(workspace_id=project.workspace_id, project_id=project.id)
+        == project
     )
     assert len(audit_repository.list_receipts(project.workspace_id)) == 1
     planned_commitments = commitment_repository.list_leaf_commitments(
         workspace_id=project.workspace_id,
         authority_generation=authority.authority_generation + 1,
     )
-    assert len(planned_commitments) == 30
+    assert len(planned_commitments) == 32
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
@@ -571,6 +630,9 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
 
     assert recovered.ok is True
     assert replayed.ok is True
+    assert (
+        project_repository.get(workspace_id=project.workspace_id, project_id=project.id) == project
+    )
 
     advanced = authority_repository.get_workspace_authority(project.workspace_id)
     assert advanced is not None
@@ -578,6 +640,11 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
     verified = AuthorityRootCalculator(database).calculate(
         workspace_id=project.workspace_id,
         authority_generation=advanced.authority_generation,
+        external_proof_digests={
+            "audit_anchor_recovery_checkpoints": snapshot.authority_proof_digest,
+            "audit_result_bindings": snapshot.authority_proof_digest,
+            "authority_registry_freshness_proofs": snapshot.authority_proof_digest,
+        },
     )
     assert verified.root_digest == advanced.authority_state_root
     assert list(verified.commitments) == planned_commitments
@@ -731,6 +798,11 @@ def test_project_create_recovers_after_every_durable_crash_point(
     verified = AuthorityRootCalculator(scenario.database).calculate(
         workspace_id=scenario.project.workspace_id,
         authority_generation=advanced.authority_generation,
+        external_proof_digests={
+            "audit_anchor_recovery_checkpoints": scenario.snapshot.authority_proof_digest,
+            "audit_result_bindings": scenario.snapshot.authority_proof_digest,
+            "authority_registry_freshness_proofs": scenario.snapshot.authority_proof_digest,
+        },
     )
     assert verified.root_digest == advanced.authority_state_root
     commitments = scenario.commitment_repository.list_leaf_commitments(
@@ -738,7 +810,7 @@ def test_project_create_recovers_after_every_durable_crash_point(
         authority_generation=advanced.authority_generation,
     )
     assert list(verified.commitments) == commitments
-    assert len(commitments) == 30
+    assert len(commitments) == 32
     assert len(scenario.audit_repository.list_receipts(scenario.project.workspace_id)) == 1
     with sqlite3.connect(scenario.database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (1,)

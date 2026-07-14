@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+from pydantic import ValidationError
+
 from corvus.application.ports import (
     ProjectAuthorizationDecision,
     ProjectCreateLifecycleError,
@@ -16,6 +19,7 @@ from corvus.application.projects import (
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
+from corvus.domain.request import RequestContext
 
 _NOW = datetime(2026, 7, 14, 22, 0, tzinfo=UTC)
 _WORKSPACE_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -67,7 +71,7 @@ class SurfaceAuthorization:
         return ProjectAuthorizationDecision(
             allowed=allowed,
             reason_code=reason,
-            authorization_snapshot_id=UUID("10000000-0000-0000-0000-000000000099"),
+            authorization_snapshot_id=request.context.authorization_snapshot_id,
         )
 
 
@@ -100,6 +104,38 @@ def _project(*, name: str = "Contract Corvus") -> Project:
     )
 
 
+def _context(*, request_id: UUID, project_id: UUID, transport_id: UUID) -> RequestContext:
+    return RequestContext(
+        id=request_id,
+        deployment_profile_id=UUID("10000000-0000-0000-0000-000000000010"),
+        deployment_instance_id=UUID("10000000-0000-0000-0000-000000000011"),
+        workspace_id=_WORKSPACE_ID,
+        workspace_authority_epoch=1,
+        workspace_authority_generation=4,
+        authority_state_root="a" * 64,
+        authority_epoch_credential_id=UUID("10000000-0000-0000-0000-000000000012"),
+        authority_commit_receipt_id=UUID("10000000-0000-0000-0000-000000000013"),
+        authority_proof_digest="b" * 64,
+        scope_kind="project",
+        scope_id=project_id,
+        scope_digest="f" * 64,
+        audience_policy_snapshot_id=UUID("10000000-0000-0000-0000-000000000014"),
+        audience_policy_digest="c" * 64,
+        requester_id=_REQUESTER_ID,
+        client_context_id=_CLIENT_CONTEXT_ID,
+        transport_principal_id=transport_id,
+        agent_id=_AGENT_ID,
+        agent_grant_id=UUID("10000000-0000-0000-0000-000000000015"),
+        access_bundle_id=UUID("10000000-0000-0000-0000-000000000016"),
+        policy_digest="d" * 64,
+        authorization_snapshot_id=UUID("10000000-0000-0000-0000-000000000017"),
+        authorization_snapshot_digest="e" * 64,
+        authorization_signing_key_version_id=UUID("10000000-0000-0000-0000-000000000018"),
+        idempotency_key="project-contract-v1",
+        correlation_id=UUID("10000000-0000-0000-0000-000000000019"),
+    )
+
+
 def _command(
     project: Project,
     *,
@@ -107,13 +143,12 @@ def _command(
     transport_id: UUID = _TRANSPORT_ID,
 ) -> CreateProjectCommand:
     return CreateProjectCommand(
-        request_id=UUID("10000000-0000-0000-0000-000000000007"),
-        workspace_id=_WORKSPACE_ID,
-        requester_id=_REQUESTER_ID,
-        acting_agent_id=_AGENT_ID,
-        client_context_id=_CLIENT_CONTEXT_ID,
+        context=_context(
+            request_id=UUID("10000000-0000-0000-0000-000000000007"),
+            project_id=project.id,
+            transport_id=transport_id,
+        ),
         client_surface=surface,
-        transport_principal_id=transport_id,
         project=project,
     )
 
@@ -124,13 +159,12 @@ def _query(
     transport_id: UUID = _TRANSPORT_ID,
 ) -> GetProjectQuery:
     return GetProjectQuery(
-        request_id=UUID("10000000-0000-0000-0000-000000000008"),
-        workspace_id=_WORKSPACE_ID,
-        requester_id=_REQUESTER_ID,
-        acting_agent_id=_AGENT_ID,
-        client_context_id=_CLIENT_CONTEXT_ID,
+        context=_context(
+            request_id=UUID("10000000-0000-0000-0000-000000000008"),
+            project_id=_PROJECT_ID,
+            transport_id=transport_id,
+        ),
         client_surface=surface,
-        transport_principal_id=transport_id,
         project_id=_PROJECT_ID,
     )
 
@@ -169,24 +203,44 @@ def test_command_query_and_response_envelopes_are_stable_and_secret_free() -> No
     )
 
     assert set(command.model_dump(mode="json")) == {
-        "request_id",
-        "workspace_id",
-        "requester_id",
-        "acting_agent_id",
-        "client_context_id",
+        "context",
         "client_surface",
-        "transport_principal_id",
         "project",
     }
     assert set(query.model_dump(mode="json")) == {
-        "request_id",
-        "workspace_id",
-        "requester_id",
-        "acting_agent_id",
-        "client_context_id",
+        "context",
         "client_surface",
-        "transport_principal_id",
         "project_id",
+    }
+    assert set(command.context.model_dump(mode="json")) == {
+        "id",
+        "deployment_profile_id",
+        "deployment_instance_id",
+        "workspace_id",
+        "workspace_authority_epoch",
+        "workspace_authority_generation",
+        "authority_state_root",
+        "authority_epoch_credential_id",
+        "authority_commit_receipt_id",
+        "authority_proof_digest",
+        "scope_kind",
+        "scope_id",
+        "scope_digest",
+        "audience_policy_snapshot_id",
+        "audience_policy_digest",
+        "requester_id",
+        "client_context_id",
+        "transport_principal_id",
+        "agent_id",
+        "agent_grant_id",
+        "access_bundle_id",
+        "execution_placement_id",
+        "policy_digest",
+        "authorization_snapshot_id",
+        "authorization_snapshot_digest",
+        "authorization_signing_key_version_id",
+        "idempotency_key",
+        "correlation_id",
     }
     assert set(response.model_dump(mode="json")) == {
         "request_id",
@@ -199,7 +253,14 @@ def test_command_query_and_response_envelopes_are_stable_and_secret_free() -> No
     assert CreateProjectCommand.model_validate_json(command.model_dump_json()) == command
     assert ProjectResponse.model_validate_json(response.model_dump_json()) == response
 
-    forbidden = {"secret", "password", "token", "credential", "private_key", "api_key"}
+    forbidden = {
+        "secret_value",
+        "password",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        "api_key",
+    }
     schemas = (
         CreateProjectCommand.model_json_schema(),
         GetProjectQuery.model_json_schema(),
@@ -207,6 +268,22 @@ def test_command_query_and_response_envelopes_are_stable_and_secret_free() -> No
     )
     serialized_schema = " ".join(str(schema).lower() for schema in schemas)
     assert all(field not in serialized_schema for field in forbidden)
+
+
+def test_context_project_substitution_is_rejected_before_service_execution() -> None:
+    project = _project()
+    foreign_context = _context(
+        request_id=UUID("10000000-0000-0000-0000-000000000020"),
+        project_id=project.id,
+        transport_id=_TRANSPORT_ID,
+    ).model_copy(update={"workspace_id": UUID("10000000-0000-0000-0000-000000000021")})
+
+    with pytest.raises(ValidationError, match="project_request_context_mismatch"):
+        CreateProjectCommand(
+            context=foreign_context,
+            client_surface=ClientSurface.CLI,
+            project=project,
+        )
 
 
 def test_currently_authorized_replay_is_idempotent_and_rechecks_revocation() -> None:

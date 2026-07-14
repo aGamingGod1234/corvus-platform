@@ -123,7 +123,7 @@ def import_project_config(
     policy_hints = _policy_hints(config)
     provider_hints = _provider_hints(config)
 
-    existing = repository.get(workspace_id=workspace_id, project_id=project.id)
+    existing = repository.get_staged(workspace_id=workspace_id, project_id=project.id)
     if existing is None:
         repository.add(project)
     elif existing != project:

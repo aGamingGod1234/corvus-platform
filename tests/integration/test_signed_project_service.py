@@ -20,6 +20,7 @@ from corvus.application.projects import (
 from corvus.domain.audit import AuthorizationDecisionSnapshot, authorization_snapshot_digest
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
+from corvus.domain.request import RequestContext
 from corvus.infrastructure.db import upgrade_database
 from corvus.infrastructure.project_audit import (
     ProjectAuditReceiptContext,
@@ -100,11 +101,12 @@ class FixedAuthorization:
         self.snapshot = snapshot
 
     def authorize(self, request: ProjectAuthorizationRequest) -> ProjectAuthorizationDecision:
-        assert request.request_id == self.snapshot.request_context_id
+        assert request.context.id == self.snapshot.request_context_id
+        assert request.context.authorization_snapshot_id == self.snapshot.id
         return ProjectAuthorizationDecision(
             allowed=True,
             reason_code="authorized",
-            authorization_snapshot_id=self.snapshot.id,
+            authorization_snapshot_id=request.context.authorization_snapshot_id,
         )
 
 
@@ -189,13 +191,36 @@ def _service_fixture(tmp_path: Path):
         create_lifecycle=AuditThenStoreLifecycle(audit, project_repository),
     )
     command = CreateProjectCommand(
-        request_id=request_id,
-        workspace_id=project.workspace_id,
-        requester_id=requester_id,
-        acting_agent_id=acting_agent_id,
-        client_context_id=uuid4(),
+        context=RequestContext(
+            id=request_id,
+            deployment_profile_id=uuid4(),
+            deployment_instance_id=snapshot.deployment_instance_id,
+            workspace_id=project.workspace_id,
+            workspace_authority_epoch=context.prior_authority_epoch,
+            workspace_authority_generation=snapshot.authority_generation,
+            authority_state_root=snapshot.authority_state_root,
+            authority_epoch_credential_id=snapshot.authority_epoch_credential_id,
+            authority_commit_receipt_id=snapshot.authority_commit_receipt_id,
+            authority_proof_digest=snapshot.authority_proof_digest,
+            scope_kind=snapshot.scope_kind,
+            scope_id=snapshot.scope_id,
+            scope_digest=snapshot.scope_digest,
+            audience_policy_snapshot_id=snapshot.audience_policy_snapshot_id,
+            audience_policy_digest=snapshot.audience_digest,
+            requester_id=requester_id,
+            client_context_id=uuid4(),
+            transport_principal_id=snapshot.transport_principal_id,
+            agent_id=acting_agent_id,
+            agent_grant_id=snapshot.agent_grant_id,
+            access_bundle_id=snapshot.access_bundle_id,
+            policy_digest=snapshot.policy_digest,
+            authorization_snapshot_id=snapshot.id,
+            authorization_snapshot_digest=snapshot.canonical_digest,
+            authorization_signing_key_version_id=snapshot.signing_key_version_id,
+            idempotency_key="signed-project-create",
+            correlation_id=uuid4(),
+        ),
         client_surface=ClientSurface.CLI,
-        transport_principal_id=snapshot.transport_principal_id,
         project=project,
     )
     return (
@@ -215,8 +240,15 @@ def test_real_project_create_persists_a_verifiable_signed_receipt(tmp_path: Path
 
     assert response.ok is True
     assert (
-        projects.get(workspace_id=command.workspace_id, project_id=command.project.id)
+        projects.get_staged(workspace_id=command.workspace_id, project_id=command.project.id)
         == command.project
+    )
+    assert (
+        projects.get(
+            workspace_id=command.workspace_id,
+            project_id=command.project.id,
+        )
+        is None
     )
     receipts = audit.list_receipts(command.workspace_id)
     assert len(receipts) == 1

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -12,7 +11,6 @@ from corvus.database import M1_AUTHORITY_FAMILY_NAMES
 from corvus.domain.deployment import (
     AuthorityStateRootCalculation,
     AuthorityStateRootLeafCommitment,
-    AuthorityStateRootLeafFamily,
     AuthorityStateRootManifestVersion,
     CoverageKind,
     ManifestStatus,
@@ -41,7 +39,9 @@ _FAMILY_SELECT_ALL = {
     "agent_grants": "SELECT * FROM agent_grants",
     "agent_identities": "SELECT * FROM agent_identities",
     "audience_policy_snapshots": "SELECT * FROM audience_policy_snapshots",
+    "audit_anchor_recovery_checkpoints": "SELECT * FROM audit_anchor_recovery_checkpoints",
     "audit_receipts": "SELECT * FROM audit_receipts",
+    "audit_result_bindings": "SELECT * FROM audit_result_bindings",
     "authority_close_certificates": "SELECT * FROM authority_close_certificates",
     "authority_commit_intents": "SELECT * FROM authority_commit_intents",
     "authority_epoch_credentials": "SELECT * FROM authority_epoch_credentials",
@@ -115,35 +115,47 @@ class AuthorityRootCalculator:
         }
         if set(supplied_proofs) - external_names:
             raise AuthorityRootCalculationError("authority_external_proof_family_unknown")
+        if external_names - set(supplied_proofs):
+            raise AuthorityRootCalculationError("authority_external_proof_missing")
+        if any(
+            len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)
+            for digest in supplied_proofs.values()
+        ):
+            raise AuthorityRootCalculationError("authority_external_proof_digest_invalid")
 
         commitments: list[AuthorityStateRootLeafCommitment] = []
         observed: dict[str, str] = {}
         for family in sorted(families, key=lambda item: item.ordinal):
-            rows = (
-                self._validated_replacement_rows(
-                    workspace_id,
-                    family.family_name,
-                    replacements[family.family_name],
-                )
-                if family.family_name in replacements
-                else self.project_family_rows(
-                    workspace_id=workspace_id,
-                    family_name=family.family_name,
-                )
+            external_proof_digest = (
+                supplied_proofs[family.family_name]
+                if family.coverage_kind is CoverageKind.EXTERNAL_PROOF
+                else None
             )
-            records = self._canonical_records(family.family_name, rows)
+            if external_proof_digest is not None:
+                rows: Sequence[Mapping[str, Any]] = ()
+                records: tuple[Mapping[str, Any], ...] = (
+                    {"external_proof_digest": external_proof_digest},
+                )
+            else:
+                rows = (
+                    self._validated_replacement_rows(
+                        workspace_id,
+                        family.family_name,
+                        replacements[family.family_name],
+                    )
+                    if family.family_name in replacements
+                    else self.project_family_rows(
+                        workspace_id=workspace_id,
+                        family_name=family.family_name,
+                    )
+                )
+                records = self._canonical_records(family.family_name, rows)
             leaf_digest = canonical_authority_leaf_digest(
                 family_name=family.family_name,
                 canonicalization_version=family.canonicalization_version,
                 records=records,
             )
             observed[family.family_name] = leaf_digest
-            external_proof_digest = None
-            if family.coverage_kind is CoverageKind.EXTERNAL_PROOF:
-                external_proof_digest = supplied_proofs.get(
-                    family.family_name,
-                    self._derived_external_proof_digest(family, leaf_digest),
-                )
             commitments.append(
                 AuthorityStateRootLeafCommitment(
                     manifest_version_id=manifest.id,
@@ -318,20 +330,3 @@ class AuthorityRootCalculator:
             and any(marker in key for marker in _VERSION_MARKERS)
         ]
         return max(versions, default=1)
-
-    @staticmethod
-    def _derived_external_proof_digest(
-        family: AuthorityStateRootLeafFamily,
-        leaf_digest: str,
-    ) -> str:
-        encoded = json.dumps(
-            {
-                "external_proof_kind": family.external_proof_kind,
-                "leaf_digest": leaf_digest,
-            },
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()

@@ -33,6 +33,7 @@ M1_AUTHORIZATION_INPUT_REVISION = "m1_005_authorization_inputs"
 M1_HANDOFF_REVISION = "m1_006_handoff_restore"
 M1_IDENTITY_SCOPE_REVISION = "m1_007_identity_scope"
 M1_ROOT_MANIFEST_REVISION = "m1_008_non_circular_root_manifest"
+M1_AUDIT_PROOF_MANIFEST_REVISION = "m1_009_audit_external_proofs"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -147,13 +148,14 @@ M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES = frozenset(
         "workspace_memberships",
     }
 )
-M1_AUTHORITY_FAMILY_NAMES = frozenset(
+M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES = frozenset(
     M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES
     - {
         "audit_anchor_recovery_checkpoints",
         "audit_result_bindings",
     }
 )
+M1_AUTHORITY_FAMILY_NAMES = M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
@@ -914,7 +916,8 @@ def _m1_registry_schema_controls_match(
         2: M1_AUTHORIZATION_INPUT_V2_FAMILY_NAMES,
         3: M1_HANDOFF_V3_FAMILY_NAMES,
         4: M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES,
-        5: M1_AUTHORITY_FAMILY_NAMES,
+        5: M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES,
+        6: M1_AUTHORITY_FAMILY_NAMES,
     }
     for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
         expected_families = family_sets.get(int(schema_version))
@@ -1145,7 +1148,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         expected_revision = M1_HANDOFF_REVISION
                         latest_manifest_schema_version = 3
                     elif tables == m1_identity_scope_current_tables:
-                        if actual_revision == M1_ROOT_MANIFEST_REVISION:
+                        if actual_revision == M1_AUDIT_PROOF_MANIFEST_REVISION:
+                            expected_revision = M1_AUDIT_PROOF_MANIFEST_REVISION
+                            latest_manifest_schema_version = 6
+                        elif actual_revision == M1_ROOT_MANIFEST_REVISION:
                             expected_revision = M1_ROOT_MANIFEST_REVISION
                             latest_manifest_schema_version = 5
                         else:

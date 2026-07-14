@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from corvus.application.ports import (
     ProjectAuthorizationDecision,
@@ -14,6 +14,7 @@ from corvus.application.projects import (
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.identity import Project
+from corvus.domain.request import RequestContext
 
 
 class FakeStore:
@@ -37,7 +38,7 @@ class FakeAuthorization:
         return ProjectAuthorizationDecision(
             allowed=self.allow,
             reason_code="authorized" if self.allow else "no_requester_grant",
-            authorization_snapshot_id=uuid4(),
+            authorization_snapshot_id=request.context.authorization_snapshot_id,
         )
 
 
@@ -65,15 +66,42 @@ class FakeCreateLifecycle:
         self.store.create(project)
 
 
+def _context(project: Project, *, request_id: UUID | None = None) -> RequestContext:
+    return RequestContext(
+        id=request_id or uuid4(),
+        deployment_profile_id=uuid4(),
+        deployment_instance_id=uuid4(),
+        workspace_id=project.workspace_id,
+        workspace_authority_epoch=1,
+        workspace_authority_generation=4,
+        authority_state_root="a" * 64,
+        authority_epoch_credential_id=uuid4(),
+        authority_commit_receipt_id=uuid4(),
+        authority_proof_digest="b" * 64,
+        scope_kind="project",
+        scope_id=project.id,
+        scope_digest="f" * 64,
+        audience_policy_snapshot_id=uuid4(),
+        audience_policy_digest="c" * 64,
+        requester_id=uuid4(),
+        client_context_id=uuid4(),
+        transport_principal_id=uuid4(),
+        agent_id=uuid4(),
+        agent_grant_id=uuid4(),
+        access_bundle_id=uuid4(),
+        policy_digest="d" * 64,
+        authorization_snapshot_id=uuid4(),
+        authorization_snapshot_digest="e" * 64,
+        authorization_signing_key_version_id=uuid4(),
+        idempotency_key="project-authority-slice",
+        correlation_id=uuid4(),
+    )
+
+
 def _command(project: Project) -> CreateProjectCommand:
     return CreateProjectCommand(
-        request_id=uuid4(),
-        workspace_id=project.workspace_id,
-        requester_id=uuid4(),
-        acting_agent_id=uuid4(),
-        client_context_id=uuid4(),
+        context=_context(project),
         client_surface=ClientSurface.CLI,
-        transport_principal_id=uuid4(),
         project=project,
     )
 
@@ -99,13 +127,8 @@ def test_create_and_read_share_one_authorized_audited_path() -> None:
     created = client.create_project(_command(project))
     read = client.get_project(
         GetProjectQuery(
-            request_id=uuid4(),
-            workspace_id=project.workspace_id,
-            requester_id=uuid4(),
-            acting_agent_id=uuid4(),
-            client_context_id=uuid4(),
+            context=_context(project),
             client_surface=ClientSurface.CLI,
-            transport_principal_id=uuid4(),
             project_id=project.id,
         )
     )
@@ -182,4 +205,6 @@ def test_allowed_create_without_authority_lifecycle_fails_closed() -> None:
     assert response.ok is False
     assert response.reason_code == "project_authority_lifecycle_unavailable"
     assert store.create_calls == 0
-    assert audit.events == []
+    assert len(audit.events) == 1
+    assert audit.events[0].decision == "allow"
+    assert audit.events[0].reason_code == "authorized"

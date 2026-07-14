@@ -58,6 +58,11 @@ class ManifestProjectAuthorityMutationPlanner:
             workspace_id=project.workspace_id,
             authority_generation=intent.next_generation,
             prospective_family_rows=replacements,
+            external_proof_digests={
+                "audit_anchor_recovery_checkpoints": event.authority_proof_digest,
+                "audit_result_bindings": event.authority_proof_digest,
+                "authority_registry_freshness_proofs": event.authority_proof_digest,
+            },
         )
         return ProjectAuthorityMutationPlan(
             mutation_digest=project_mutation_digest(project),

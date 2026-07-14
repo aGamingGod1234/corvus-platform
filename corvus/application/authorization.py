@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, Field
 
 from corvus.domain.access import (
@@ -43,6 +47,7 @@ from corvus.domain.deployment import (
     ManifestStatus,
     WorkspaceAuthority,
     WorkspaceAuthorityState,
+    fixed_workspace_lock_name,
     validate_authority_root_manifest,
     validate_registry_freshness_proof,
     validate_registry_trust_transition,
@@ -166,8 +171,6 @@ class AuthorizationSnapshotVerificationProof(BaseModel):
     authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     bound_input_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     signing_key_version_id: UUID
-    signature_verified: bool
-    referential_integrity_verified: bool
     finalized: bool
 
 
@@ -193,9 +196,29 @@ class RegistryVerificationProof(BaseModel):
     freshness_proof_id: UUID
     freshness_response_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     verifier_key_version_id: UUID
-    trust_state_threshold_signatures_verified: bool
-    freshness_signature_verified: bool
+    offline_root_public_keys: tuple[str, ...]
+    trust_state_signatures: tuple[str, ...]
+    signature_threshold: int = Field(ge=1)
     finalized: bool
+
+
+class AuthorityRuntimePossessionProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_context_id: UUID
+    workspace_id: UUID
+    deployment_instance_id: UUID
+    authority_epoch_credential_id: UUID
+    authority_epoch: int = Field(ge=1)
+    authority_generation: int = Field(ge=0)
+    authority_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    device_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lock_name: str = Field(min_length=1, max_length=200)
+    nonce_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    issued_at: datetime
+    expires_at: datetime
+    deployment_instance_signature: str = Field(min_length=1)
+    epoch_credential_signature: str = Field(min_length=1)
 
 
 class CredentialVerificationProof(BaseModel):
@@ -284,9 +307,7 @@ class AuthorityEvaluationContext(BaseModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
-    deployment_instance_key_available: bool
-    epoch_credential_key_available: bool = True
-    os_lock_held: bool
+    runtime_possession_proof: AuthorityRuntimePossessionProof | None
 
 
 def _snapshot_digest(
@@ -322,6 +343,64 @@ def authorization_snapshot_bound_input_digest(
             "snapshot_signature",
         },
     )
+
+
+def _decode_ed25519_public_key(encoded: str) -> Ed25519PublicKey:
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("ed25519_public_key_invalid") from exc
+    if len(raw) != 32:
+        raise ValueError("ed25519_public_key_invalid")
+    return Ed25519PublicKey.from_public_bytes(raw)
+
+
+def _verify_ed25519_signature(*, public_key: str, signature: str, message: bytes) -> bool:
+    try:
+        decoded_signature = base64.b64decode(signature, validate=True)
+        _decode_ed25519_public_key(public_key).verify(decoded_signature, message)
+    except (InvalidSignature, ValueError, binascii.Error):
+        return False
+    return True
+
+
+def authority_public_key_set_digest(values: tuple[str, ...]) -> str:
+    if len(set(values)) != len(values):
+        raise ValueError("duplicate_signature_key")
+    encoded = json.dumps(
+        sorted(values),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def registry_threshold_signature_set_digest(
+    public_keys: tuple[str, ...],
+    signatures: tuple[str, ...],
+) -> str:
+    if len(public_keys) != len(signatures) or len(set(public_keys)) != len(public_keys):
+        raise ValueError("registry_signature_set_invalid")
+    encoded = json.dumps(
+        sorted(zip(public_keys, signatures, strict=True)),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def authority_runtime_possession_digest(proof: AuthorityRuntimePossessionProof) -> str:
+    encoded = json.dumps(
+        proof.model_dump(
+            mode="json",
+            exclude={"deployment_instance_signature", "epoch_credential_signature"},
+        ),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def verify_authorization_decision_snapshot(
@@ -407,15 +486,14 @@ def verify_authorization_decision_snapshot(
             decision=AuthorizationDecision.DENY,
             reason_code="authorization_snapshot_verification_not_finalized",
         )
-    if not verification_proof.signature_verified:
+    if signing_key.algorithm.lower() != "ed25519" or not _verify_ed25519_signature(
+        public_key=signing_key.public_key,
+        signature=snapshot.snapshot_signature,
+        message=bytes.fromhex(record_digest),
+    ):
         return AuthorizationResult(
             decision=AuthorizationDecision.DENY,
             reason_code="authorization_snapshot_signature_invalid",
-        )
-    if not verification_proof.referential_integrity_verified:
-        return AuthorizationResult(
-            decision=AuthorizationDecision.DENY,
-            reason_code="authorization_snapshot_referential_integrity_invalid",
         )
     return AuthorizationResult(
         decision=AuthorizationDecision.ALLOW,
@@ -522,9 +600,37 @@ def _registry_denial_reason(
         or verification.verifier_key_version_id != verifier.id
     ):
         return "registry_verification_proof_mismatch"
-    if not verification.trust_state_threshold_signatures_verified:
+    try:
+        keyset_digest = authority_public_key_set_digest(verification.offline_root_public_keys)
+        if len(verification.offline_root_public_keys) != len(verification.trust_state_signatures):
+            raise ValueError("registry_signature_set_invalid")
+    except ValueError:
+        return "registry_trust_signature_set_invalid"
+    if (
+        keyset_digest != anchor.pinned_registry_root_digest
+        or keyset_digest != trust_state.threshold_signature_set_digest
+        or verification.signature_threshold > len(verification.offline_root_public_keys)
+    ):
+        return "registry_trust_signature_set_invalid"
+    verified_signatures = sum(
+        _verify_ed25519_signature(
+            public_key=public_key,
+            signature=signature,
+            message=bytes.fromhex(trust_state.canonical_digest),
+        )
+        for public_key, signature in zip(
+            verification.offline_root_public_keys,
+            verification.trust_state_signatures,
+            strict=True,
+        )
+    )
+    if verified_signatures < verification.signature_threshold:
         return "registry_trust_signatures_unverified"
-    if not verification.freshness_signature_verified:
+    if verifier.algorithm.lower() != "ed25519" or not _verify_ed25519_signature(
+        public_key=verifier.public_key,
+        signature=freshness.registry_signature,
+        message=bytes.fromhex(freshness.response_digest),
+    ):
         return "registry_freshness_signature_unverified"
     try:
         validate_registry_freshness_proof(
@@ -900,6 +1006,61 @@ def _audience_client_denial_reason(
     return None
 
 
+def _runtime_possession_denial_reason(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext,
+    instance: DeploymentInstance,
+    credential: AuthorityEpochCredential,
+    anchor: AuthorityTrustAnchor,
+) -> str | None:
+    proof = context.runtime_possession_proof
+    if proof is None:
+        return "authority_runtime_possession_proof_missing"
+    expected_lock_name = fixed_workspace_lock_name(
+        request.workspace_id,
+        request.workspace_authority_epoch,
+    )
+    if (
+        proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.deployment_instance_id != instance.id
+        or proof.authority_epoch_credential_id != credential.id
+        or proof.authority_epoch != request.workspace_authority_epoch
+        or proof.authority_generation != request.workspace_authority_generation
+        or proof.authority_state_root != request.authority_state_root
+        or proof.device_binding_digest != instance.device_binding_digest
+    ):
+        return "authority_runtime_possession_proof_mismatch"
+    if proof.lock_name != expected_lock_name:
+        return "workspace_os_lock_not_held"
+    if (
+        anchor.kind is AuthorityTrustAnchorKind.SEALED_LOCAL_GENERATION
+        and anchor.local_lock_name != proof.lock_name
+    ):
+        return "workspace_os_lock_not_held"
+    if (
+        proof.issued_at > request.evaluated_at
+        or proof.expires_at <= request.evaluated_at
+        or proof.expires_at <= proof.issued_at
+        or proof.expires_at - proof.issued_at > timedelta(seconds=30)
+    ):
+        return "authority_runtime_possession_proof_expired"
+    message = bytes.fromhex(authority_runtime_possession_digest(proof))
+    if not _verify_ed25519_signature(
+        public_key=instance.instance_public_key,
+        signature=proof.deployment_instance_signature,
+        message=message,
+    ):
+        return "deployment_instance_key_unavailable"
+    if not _verify_ed25519_signature(
+        public_key=credential.public_key,
+        signature=proof.epoch_credential_signature,
+        message=message,
+    ):
+        return "authority_epoch_key_unavailable"
+    return None
+
+
 def _authority_denial_reason(
     request: AuthorizationRequest,
     context: AuthorityEvaluationContext | None,
@@ -918,8 +1079,6 @@ def _authority_denial_reason(
         return "workspace_authority_inactive"
     if instance.status is not DeploymentInstanceStatus.ACTIVE:
         return "deployment_instance_inactive"
-    if not context.deployment_instance_key_available:
-        return "deployment_instance_key_unavailable"
     if (
         authority.deployment_profile_id != instance.deployment_profile_id
         or authority.deployment_instance_id != instance.id
@@ -945,8 +1104,6 @@ def _authority_denial_reason(
         return "authority_epoch_credential_revoked"
     if credential.status is AuthorityEpochCredentialStatus.DESTROYED:
         return "authority_epoch_credential_destroyed"
-    if not context.epoch_credential_key_available:
-        return "authority_epoch_key_unavailable"
     if (
         credential.id != authority.authority_epoch_credential_id
         or credential.workspace_id != request.workspace_id
@@ -1004,8 +1161,15 @@ def _authority_denial_reason(
     manifest_denial = _manifest_denial_reason(request, context)
     if manifest_denial is not None:
         return manifest_denial
-    if not context.os_lock_held:
-        return "workspace_os_lock_not_held"
+    runtime_denial = _runtime_possession_denial_reason(
+        request,
+        context,
+        instance,
+        credential,
+        anchor,
+    )
+    if runtime_denial is not None:
+        return runtime_denial
     lease = context.active_lease
     if lease is None:
         return "authority_lease_missing"

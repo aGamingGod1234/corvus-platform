@@ -3,10 +3,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from corvus.database import DatabaseState, classify_database
+from corvus.database import (
+    M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES,
+    DatabaseState,
+    classify_database,
+)
 from corvus.infrastructure.db import (
     M1_CURRENT_REVISION,
     M1_IDENTITY_SCOPE_REVISION,
+    M1_ROOT_MANIFEST_REVISION,
     current_revision,
     downgrade_database,
     upgrade_database,
@@ -16,6 +21,7 @@ from corvus.store import TraceStore
 
 _V4_MANIFEST_ID = "00000000-0000-4000-8000-000000000007"
 _V5_MANIFEST_ID = "00000000-0000-4000-8000-000000000008"
+_V6_MANIFEST_ID = "00000000-0000-4000-8000-000000000009"
 _DERIVED_POST_COMMIT_FAMILIES = {
     "audit_anchor_recovery_checkpoints",
     "audit_result_bindings",
@@ -48,17 +54,34 @@ def test_non_circular_manifest_preserves_history_and_excludes_derived_rows(
 
     v4_families = _families(database, _V4_MANIFEST_ID)
     v5_families = _families(database, _V5_MANIFEST_ID)
+    v6_families = _families(database, _V6_MANIFEST_ID)
 
     assert _DERIVED_POST_COMMIT_FAMILIES <= set(v4_families)
-    assert set(v5_families) == M1_AUTHORITY_FAMILY_NAMES
+    assert set(v5_families) == M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES
     assert _DERIVED_POST_COMMIT_FAMILIES.isdisjoint(v5_families)
     assert v5_families == sorted(v5_families)
+    assert set(v6_families) == M1_AUTHORITY_FAMILY_NAMES
+    assert _DERIVED_POST_COMMIT_FAMILIES <= set(v6_families)
+    assert v6_families == sorted(v6_families)
     with sqlite3.connect(database) as connection:
         manifests = connection.execute(
             "SELECT schema_version, canonicalization_version FROM "
             "authority_state_root_manifests ORDER BY schema_version"
         ).fetchall()
-    assert manifests[-2:] == [(4, 1), (5, 1)]
+        audit_external = dict(
+            connection.execute(
+                "SELECT family_name, external_proof_kind FROM "
+                "authority_state_root_leaf_families WHERE manifest_version_id = ? "
+                "AND coverage_kind = 'external_proof'",
+                (_V6_MANIFEST_ID,),
+            ).fetchall()
+        )
+    assert manifests[-3:] == [(4, 1), (5, 1), (6, 1)]
+    assert audit_external == {
+        "audit_anchor_recovery_checkpoints": "sealed_audit_checkpoint_history",
+        "audit_result_bindings": "sealed_audit_result_binding_history",
+        "authority_registry_freshness_proofs": "registry_freshness_proof",
+    }
     assert classify_database(database).state is DatabaseState.CURRENT
     assert current_revision(database) == M1_CURRENT_REVISION
 
@@ -69,12 +92,22 @@ def test_non_circular_manifest_downgrades_and_reapplies_without_history_loss(
     database = _database(tmp_path)
     v4_before = _families(database, _V4_MANIFEST_ID)
 
+    assert downgrade_database(database, M1_ROOT_MANIFEST_REVISION) == M1_ROOT_MANIFEST_REVISION
+    assert classify_database(database).state is DatabaseState.CURRENT
+    assert _families(database, _V5_MANIFEST_ID)
+    assert _families(database, _V6_MANIFEST_ID) == []
+
+    assert upgrade_database(database) == M1_CURRENT_REVISION
+    assert _families(database, _V6_MANIFEST_ID)
+
     assert downgrade_database(database, M1_IDENTITY_SCOPE_REVISION) == M1_IDENTITY_SCOPE_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
     assert _families(database, _V4_MANIFEST_ID) == v4_before
     assert _families(database, _V5_MANIFEST_ID) == []
+    assert _families(database, _V6_MANIFEST_ID) == []
 
     assert upgrade_database(database) == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
     assert _families(database, _V4_MANIFEST_ID) == v4_before
-    assert set(_families(database, _V5_MANIFEST_ID)) == M1_AUTHORITY_FAMILY_NAMES
+    assert set(_families(database, _V5_MANIFEST_ID)) == M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES
+    assert set(_families(database, _V6_MANIFEST_ID)) == M1_AUTHORITY_FAMILY_NAMES

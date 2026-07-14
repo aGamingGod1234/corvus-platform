@@ -8,7 +8,6 @@ import re
 import shutil
 import signal
 import stat
-import subprocess
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +96,7 @@ _CHILD_ENVIRONMENT_ALLOWLIST = frozenset(
     }
 )
 _SAFE_ITEM_TYPES = {"agent_message", "reasoning", "plan", "plan_update"}
+_WINDOWS_CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 
 def _codex_failure_message(returncode: int, stderr: bytes) -> str:
@@ -272,7 +272,7 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
 
 def _process_group_options() -> dict[str, object]:
     if os.name == "nt":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {"creationflags": _WINDOWS_CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 

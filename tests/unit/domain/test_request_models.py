@@ -27,6 +27,7 @@ def _request_context() -> RequestContext:
         authority_proof_digest="b" * 64,
         scope_kind="project",
         scope_id=uuid4(),
+        scope_digest="f" * 64,
         audience_policy_snapshot_id=uuid4(),
         audience_policy_digest="c" * 64,
         requester_id=uuid4(),

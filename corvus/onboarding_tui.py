@@ -455,9 +455,12 @@ class FirstRunApp(App[OnboardingSelection | None]):
         secret: str | None,
         error: Static,
     ) -> bool:
-        assert self.provider_saver is not None
+        provider_saver = self.provider_saver
+        if provider_saver is None:
+            error.update("Provider storage is unavailable.")
+            return False
         try:
-            self.provider_saver(provider, secret)
+            provider_saver(provider, secret)
         except Exception as exc:  # saver boundaries include keyring and filesystem backends
             error.update(f"Provider could not be saved ({type(exc).__name__}).")
             return False
@@ -564,9 +567,12 @@ class FirstRunApp(App[OnboardingSelection | None]):
         )
 
     async def _run_codex_install(self) -> None:
-        assert self.codex_installer is not None
+        installer = self.codex_installer
+        if installer is None:
+            self._finish_codex_install_error(RuntimeError("Codex installer is unavailable"))
+            return
         try:
-            service = await self.codex_installer.install(self._update_codex_install_progress)
+            service = await installer.install(self._update_codex_install_progress)
             service.validate_executable()
         except Exception as exc:
             self._finish_codex_install_error(exc)
@@ -590,13 +596,12 @@ class FirstRunApp(App[OnboardingSelection | None]):
             self.query_one("#codex-status", Static).update(rendered)
 
     async def _run_codex_check(self, *, login: bool) -> None:
-        assert self.codex_service is not None
+        service = self.codex_service
+        if service is None:
+            self._finish_codex_error("CodexUnavailable")
+            return
         try:
-            status = (
-                await self.codex_service.login()
-                if login
-                else await self.codex_service.login_status()
-            )
+            status = await service.login() if login else await service.login_status()
         except Exception as exc:
             self._finish_codex_error(type(exc).__name__)
             return

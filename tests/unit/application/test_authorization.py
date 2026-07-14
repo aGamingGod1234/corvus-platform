@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from corvus.application.authorization import (
     AuthorityCommitProof,
     AuthorityEvaluationContext,
+    AuthorityRuntimePossessionProof,
     AuthorizationDecision,
     AuthorizationRequest,
     AuthorizationResult,
@@ -19,11 +23,14 @@ from corvus.application.authorization import (
     KillSwitchSnapshotEntry,
     KillSwitchVerificationProof,
     RegistryVerificationProof,
+    authority_public_key_set_digest,
+    authority_runtime_possession_digest,
     authorization_snapshot_bound_input_digest,
     authorization_snapshot_record_digest,
     evaluate_capability_intersection,
     verify_authorization_decision_snapshot,
 )
+from corvus.application.ports import ProjectAuthorizationRequest
 from corvus.domain.access import (
     AccessBundle,
     AgentGrant,
@@ -60,7 +67,26 @@ from corvus.domain.deployment import (
     fixed_workspace_lock_name,
 )
 from corvus.domain.execution import ExecutionKind, ExecutionPlacement, ExecutionStatus
+from corvus.domain.request import RequestContext
 from corvus.domain.scope import AudiencePolicySnapshot
+from corvus.infrastructure.project_authorization import (
+    EvaluatingProjectAuthorizationAdapter,
+    ProjectAuthorizationInputs,
+    VerifiedProjectAuthorizationAdapter,
+    VerifiedProjectAuthorizationInputs,
+)
+
+
+def _public_key_b64(private_key: Ed25519PrivateKey) -> str:
+    raw = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _signature_b64(private_key: Ed25519PrivateKey, message: bytes) -> str:
+    return base64.b64encode(private_key.sign(message)).decode("ascii")
 
 
 def _exact_allow_case() -> tuple[
@@ -172,10 +198,12 @@ def _exact_allow_case() -> tuple[
 
 def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluationContext:
     deployment_profile_id = uuid4()
+    instance_private_key = Ed25519PrivateKey.generate()
+    epoch_private_key = Ed25519PrivateKey.generate()
     deployment_instance = DeploymentInstance(
         id=request.deployment_instance_id,
         deployment_profile_id=deployment_profile_id,
-        instance_public_key="instance-public-key",
+        instance_public_key=_public_key_b64(instance_private_key),
         non_exportable_activation_key_ref="keyring://corvus/instance/current",
         device_binding_digest="1" * 64,
         activated_at=request.evaluated_at - timedelta(minutes=5),
@@ -186,7 +214,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         workspace_id=request.workspace_id,
         authority_epoch=epoch,
         deployment_instance_id=deployment_instance.id,
-        public_key="epoch-public-key",
+        public_key=_public_key_b64(epoch_private_key),
         non_exportable_private_key_ref="keyring://corvus/epoch/current",
         device_binding_digest=deployment_instance.device_binding_digest,
         issued_at=request.evaluated_at - timedelta(minutes=4),
@@ -224,6 +252,10 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         finalized=True,
     )
     registry_id = uuid4()
+    offline_root_private_key = Ed25519PrivateKey.generate()
+    registry_verifier_private_key = Ed25519PrivateKey.generate()
+    offline_root_public_keys = (_public_key_b64(offline_root_private_key),)
+    offline_root_keyset_digest = authority_public_key_set_digest(offline_root_public_keys)
     assert request.registry_trust_metadata_version is not None
     assert request.registry_history_head_digest is not None
     assert request.registry_freshness_proof_id is not None
@@ -236,7 +268,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         issued_at=request.evaluated_at - timedelta(minutes=10),
         expires_at=request.evaluated_at + timedelta(hours=1),
         offline_root_version=1,
-        threshold_signature_set_digest="5" * 64,
+        threshold_signature_set_digest=offline_root_keyset_digest,
     )
     registry_trust_state = AuthorityRegistryTrustState(
         registry_id=registry_id,
@@ -246,13 +278,13 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         issued_at=request.evaluated_at - timedelta(minutes=5),
         expires_at=request.evaluated_at + timedelta(hours=1),
         offline_root_version=1,
-        threshold_signature_set_digest="8" * 64,
+        threshold_signature_set_digest=offline_root_keyset_digest,
         previous_metadata_digest=previous_registry_trust_state.canonical_digest,
     )
     registry_verifier_key = AuthorityRegistryVerifierKeyVersion(
         registry_id=registry_id,
         key_version=registry_trust_state.latest_verifier_key_version,
-        public_key="registry-public-key",
+        public_key=_public_key_b64(registry_verifier_private_key),
         status=RegistryVerifierKeyStatus.ACTIVE,
         valid_from=request.evaluated_at - timedelta(days=1),
         threshold_attestation_digest="9" * 64,
@@ -268,7 +300,21 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         issued_at=request.evaluated_at - timedelta(seconds=5),
         expires_at=request.evaluated_at + timedelta(minutes=5),
         verifier_key_version_id=registry_verifier_key.id,
-        registry_signature="verified-registry-signature",
+        registry_signature="pending",
+    )
+    registry_freshness_proof = registry_freshness_proof.model_copy(
+        update={
+            "registry_signature": _signature_b64(
+                registry_verifier_private_key,
+                bytes.fromhex(registry_freshness_proof.response_digest),
+            )
+        }
+    )
+    trust_state_signatures = (
+        _signature_b64(
+            offline_root_private_key,
+            bytes.fromhex(registry_trust_state.canonical_digest),
+        ),
     )
     registry_verification_proof = RegistryVerificationProof(
         registry_id=registry_id,
@@ -276,8 +322,9 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         freshness_proof_id=registry_freshness_proof.id,
         freshness_response_digest=registry_freshness_proof.response_digest,
         verifier_key_version_id=registry_verifier_key.id,
-        trust_state_threshold_signatures_verified=True,
-        freshness_signature_verified=True,
+        offline_root_public_keys=offline_root_public_keys,
+        trust_state_signatures=trust_state_signatures,
+        signature_threshold=1,
         finalized=True,
     )
     trust_anchor = AuthorityTrustAnchor(
@@ -285,7 +332,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         workspace_id=request.workspace_id,
         kind=AuthorityTrustAnchorKind.REGISTRY_GENERATION,
         anchor_registry_id=registry_id,
-        pinned_registry_root_digest="c" * 64,
+        pinned_registry_root_digest=offline_root_keyset_digest,
         policy_digest="d" * 64,
         created_at=request.evaluated_at - timedelta(days=1),
     )
@@ -362,6 +409,35 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         issued_at=request.evaluated_at - timedelta(minutes=1),
         expires_at=request.evaluated_at + timedelta(minutes=5),
     )
+    runtime_possession_proof = AuthorityRuntimePossessionProof(
+        request_context_id=request.request_context_id,
+        workspace_id=request.workspace_id,
+        deployment_instance_id=deployment_instance.id,
+        authority_epoch_credential_id=epoch_credential.id,
+        authority_epoch=epoch,
+        authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
+        device_binding_digest=deployment_instance.device_binding_digest,
+        lock_name=fixed_workspace_lock_name(request.workspace_id, epoch),
+        nonce_digest="f" * 64,
+        issued_at=request.evaluated_at - timedelta(seconds=1),
+        expires_at=request.evaluated_at + timedelta(seconds=15),
+        deployment_instance_signature="pending",
+        epoch_credential_signature="pending",
+    )
+    runtime_message = bytes.fromhex(authority_runtime_possession_digest(runtime_possession_proof))
+    runtime_possession_proof = runtime_possession_proof.model_copy(
+        update={
+            "deployment_instance_signature": _signature_b64(
+                instance_private_key,
+                runtime_message,
+            ),
+            "epoch_credential_signature": _signature_b64(
+                epoch_private_key,
+                runtime_message,
+            ),
+        }
+    )
     return AuthorityEvaluationContext(
         deployment_instance=deployment_instance,
         workspace_authority=authority,
@@ -384,8 +460,7 @@ def _valid_authority_context(request: AuthorizationRequest) -> AuthorityEvaluati
         requester_role_ids=frozenset(),
         client_context=client_context,
         enabled_client_surfaces=frozenset(ClientSurface),
-        deployment_instance_key_available=True,
-        os_lock_held=True,
+        runtime_possession_proof=runtime_possession_proof,
     )
 
 
@@ -408,6 +483,85 @@ def test_exact_requester_and_agent_grants_allow() -> None:
     assert result.decision is AuthorizationDecision.ALLOW
     assert result.reason_code == "exact_capability_intersection"
     assert result.actions == frozenset({"project.read"})
+
+
+def test_project_authorization_adapter_uses_real_intersection_and_rechecks_current_state() -> None:
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = (
+        _exact_allow_case()
+    )
+    authority_context = _valid_authority_context(request)
+    assert authority_context.deployment_instance is not None
+    context = RequestContext(
+        id=request.request_context_id,
+        deployment_profile_id=authority_context.deployment_instance.deployment_profile_id,
+        deployment_instance_id=request.deployment_instance_id,
+        workspace_id=request.workspace_id,
+        workspace_authority_epoch=request.workspace_authority_epoch,
+        workspace_authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
+        authority_epoch_credential_id=request.authority_epoch_credential_id,
+        authority_commit_receipt_id=request.authority_commit_receipt_id,
+        authority_proof_digest=request.authority_proof_digest,
+        scope_kind=request.scope_kind,
+        scope_id=request.scope_id,
+        scope_digest=request.scope_digest,
+        audience_policy_snapshot_id=request.audience_policy_snapshot_id,
+        audience_policy_digest=request.audience_policy_digest,
+        requester_id=request.requester_id,
+        client_context_id=request.client_context_id,
+        transport_principal_id=request.transport_principal_id,
+        agent_id=request.acting_agent_id,
+        agent_grant_id=agent_grant.id,
+        access_bundle_id=requester_bundle.id,
+        policy_digest=requester_bundle.policy_digest,
+        authorization_snapshot_id=uuid4(),
+        authorization_snapshot_digest="1" * 64,
+        authorization_signing_key_version_id=uuid4(),
+        idempotency_key="project-authorization-adapter",
+        correlation_id=uuid4(),
+    )
+    project_request = ProjectAuthorizationRequest(
+        context=context,
+        client_surface=request.client_surface,
+        action="project.read",
+        project_id=request.resource_id,
+    )
+    resolved = ProjectAuthorizationInputs(
+        request=request,
+        authority_context=authority_context,
+        requester_bundle=requester_bundle,
+        requester_grants=(requester_grant,),
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=(agent_capability,),
+    )
+
+    class InputsProvider:
+        def __init__(self, value: ProjectAuthorizationInputs) -> None:
+            self.value = value
+
+        def resolve(self, received: ProjectAuthorizationRequest) -> ProjectAuthorizationInputs:
+            assert received == project_request
+            return self.value
+
+    provider = InputsProvider(resolved)
+    adapter = EvaluatingProjectAuthorizationAdapter(inputs=provider)
+
+    allowed = adapter.authorize(project_request)
+    provider.value = resolved.model_copy(
+        update={
+            "requester_bundle": requester_bundle.model_copy(
+                update={"revoked_at": request.evaluated_at}
+            )
+        }
+    )
+    revoked = adapter.authorize(project_request)
+
+    assert allowed.allowed is True
+    assert allowed.reason_code == "exact_capability_intersection"
+    assert allowed.authorization_snapshot_id == context.authorization_snapshot_id
+    assert revoked.allowed is False
+    assert revoked.reason_code == "requester_grant_revoked"
 
 
 def test_missing_requester_grant_denies_with_reason() -> None:
@@ -1003,9 +1157,12 @@ def test_missing_deployment_instance_fails_closed() -> None:
 
 def test_missing_deployment_instance_key_fails_closed() -> None:
     case = _exact_allow_case()
-    context = _valid_authority_context(case[0]).model_copy(
-        update={"deployment_instance_key_available": False}
+    context = _valid_authority_context(case[0])
+    assert context.runtime_possession_proof is not None
+    proof = context.runtime_possession_proof.model_copy(
+        update={"deployment_instance_signature": "invalid"}
     )
+    context = context.model_copy(update={"runtime_possession_proof": proof})
 
     result = _evaluate_direct_case(case, context)
 
@@ -1015,9 +1172,12 @@ def test_missing_deployment_instance_key_fails_closed() -> None:
 
 def test_missing_epoch_credential_key_binding_fails_closed() -> None:
     case = _exact_allow_case()
-    context = _valid_authority_context(case[0]).model_copy(
-        update={"epoch_credential_key_available": False}
+    context = _valid_authority_context(case[0])
+    assert context.runtime_possession_proof is not None
+    proof = context.runtime_possession_proof.model_copy(
+        update={"epoch_credential_signature": "invalid"}
     )
+    context = context.model_copy(update={"runtime_possession_proof": proof})
 
     result = _evaluate_direct_case(case, context)
 
@@ -1027,12 +1187,27 @@ def test_missing_epoch_credential_key_binding_fails_closed() -> None:
 
 def test_missing_os_lock_fails_closed() -> None:
     case = _exact_allow_case()
-    context = _valid_authority_context(case[0]).model_copy(update={"os_lock_held": False})
+    context = _valid_authority_context(case[0])
+    assert context.runtime_possession_proof is not None
+    proof = context.runtime_possession_proof.model_copy(update={"lock_name": "wrong-lock"})
+    context = context.model_copy(update={"runtime_possession_proof": proof})
 
     result = _evaluate_direct_case(case, context)
 
     assert result.decision is AuthorizationDecision.DENY
     assert result.reason_code == "workspace_os_lock_not_held"
+
+
+def test_missing_runtime_possession_proof_fails_closed() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0]).model_copy(
+        update={"runtime_possession_proof": None}
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "authority_runtime_possession_proof_missing"
 
 
 def test_missing_authority_lease_fails_closed() -> None:
@@ -1347,7 +1522,7 @@ def test_unverified_registry_trust_state_signatures_fail_closed() -> None:
     context = _valid_authority_context(case[0])
     assert context.registry_verification_proof is not None
     proof = context.registry_verification_proof.model_copy(
-        update={"trust_state_threshold_signatures_verified": False}
+        update={"trust_state_signatures": ("invalid",)}
     )
     context = context.model_copy(update={"registry_verification_proof": proof})
 
@@ -1360,11 +1535,11 @@ def test_unverified_registry_trust_state_signatures_fail_closed() -> None:
 def test_unverified_registry_freshness_signature_fails_closed() -> None:
     case = _exact_allow_case()
     context = _valid_authority_context(case[0])
-    assert context.registry_verification_proof is not None
-    proof = context.registry_verification_proof.model_copy(
-        update={"freshness_signature_verified": False}
+    assert context.registry_freshness_proof is not None
+    freshness = context.registry_freshness_proof.model_copy(
+        update={"registry_signature": "invalid"}
     )
-    context = context.model_copy(update={"registry_verification_proof": proof})
+    context = context.model_copy(update={"registry_freshness_proof": freshness})
 
     result = _evaluate_direct_case(case, context)
 
@@ -2355,14 +2530,25 @@ def test_clear_workspace_agent_workflow_run_hierarchy_allows() -> None:
     assert result.reason_code == "exact_capability_intersection"
 
 
-def _authorization_snapshot_case() -> tuple[
+def _authorization_snapshot_case(
+    case: tuple[
+        AuthorizationRequest,
+        AccessBundle,
+        CapabilityGrant,
+        AgentGrant,
+        AccessBundle,
+        CapabilityGrant,
+    ]
+    | None = None,
+) -> tuple[
     AuthorizationDecisionSnapshot,
     AuthorizationSnapshotExpectedInputs,
     WorkspaceSigningKeyVersion,
     AuthorizationSnapshotVerificationProof,
     datetime,
 ]:
-    case = _exact_allow_case()
+    if case is None:
+        case = _exact_allow_case()
     request, requester_bundle, _, agent_grant, _, _ = case
     canonical_inputs = {
         "action": request.action,
@@ -2371,11 +2557,12 @@ def _authorization_snapshot_case() -> tuple[
     }
     source_versions = {"access_bundle": 1, "agent_grant": 1}
     canonical_digest = authorization_snapshot_digest(canonical_inputs, source_versions)
+    signing_private_key = Ed25519PrivateKey.generate()
     signing_key = WorkspaceSigningKeyVersion(
         workspace_id=request.workspace_id,
         key_epoch=1,
         algorithm="ed25519",
-        public_key="workspace-public-key",
+        public_key=_public_key_b64(signing_private_key),
         non_exportable_private_key_ref="keyring://corvus/workspace-signing/current",
         status=SigningKeyStatus.ACTIVE,
         valid_from=request.evaluated_at - timedelta(hours=1),
@@ -2419,10 +2606,18 @@ def _authorization_snapshot_case() -> tuple[
         source_record_version_map=source_versions,
         canonical_digest=canonical_digest,
         signing_key_version_id=signing_key.id,
-        snapshot_signature="verified-snapshot-signature",
+        snapshot_signature="pending",
         created_at=request.evaluated_at - timedelta(seconds=1),
     )
     record_digest = authorization_snapshot_record_digest(snapshot)
+    snapshot = snapshot.model_copy(
+        update={
+            "snapshot_signature": _signature_b64(
+                signing_private_key,
+                bytes.fromhex(record_digest),
+            )
+        }
+    )
     bound_input_digest = authorization_snapshot_bound_input_digest(snapshot)
     expected = AuthorizationSnapshotExpectedInputs(
         authorization_snapshot_id=snapshot.id,
@@ -2436,8 +2631,6 @@ def _authorization_snapshot_case() -> tuple[
         authorization_snapshot_digest=record_digest,
         bound_input_digest=bound_input_digest,
         signing_key_version_id=signing_key.id,
-        signature_verified=True,
-        referential_integrity_verified=True,
         finalized=True,
     )
     return snapshot, expected, signing_key, proof, request.evaluated_at
@@ -2511,9 +2704,9 @@ def test_resigned_stale_snapshot_inputs_fail_closed() -> None:
     assert result.reason_code == "authorization_snapshot_bound_inputs_mismatch"
 
 
-def test_unverified_authorization_snapshot_signature_fails_closed() -> None:
+def test_invalid_authorization_snapshot_signature_fails_closed() -> None:
     snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
-    proof = proof.model_copy(update={"signature_verified": False})
+    snapshot = snapshot.model_copy(update={"snapshot_signature": "invalid"})
 
     result = verify_authorization_decision_snapshot(
         snapshot,
@@ -2527,9 +2720,9 @@ def test_unverified_authorization_snapshot_signature_fails_closed() -> None:
     assert result.reason_code == "authorization_snapshot_signature_invalid"
 
 
-def test_unverified_snapshot_referential_integrity_fails_closed() -> None:
+def test_snapshot_proof_bound_input_substitution_fails_closed() -> None:
     snapshot, expected, signing_key, proof, verified_at = _authorization_snapshot_case()
-    proof = proof.model_copy(update={"referential_integrity_verified": False})
+    proof = proof.model_copy(update={"bound_input_digest": "9" * 64})
 
     result = verify_authorization_decision_snapshot(
         snapshot,
@@ -2540,7 +2733,7 @@ def test_unverified_snapshot_referential_integrity_fails_closed() -> None:
     )
 
     assert result.decision is AuthorizationDecision.DENY
-    assert result.reason_code == "authorization_snapshot_referential_integrity_invalid"
+    assert result.reason_code == "authorization_snapshot_verification_proof_mismatch"
 
 
 def test_unfinalized_authorization_snapshot_proof_fails_closed() -> None:
@@ -2798,3 +2991,98 @@ def test_enabled_client_surfaces_have_identical_audience_denials() -> None:
 
     assert {result.decision for result in results} == {AuthorizationDecision.DENY}
     assert {result.reason_code for result in results} == {"audience_principal_denied"}
+
+
+def test_verified_project_authorization_adapter_requires_persisted_crypto_evidence() -> None:
+    case = _exact_allow_case()
+    request, requester_bundle, requester_grant, agent_grant, agent_bundle, agent_capability = case
+    authority_context = _valid_authority_context(request)
+    snapshot, expected, signing_key, verification, _ = _authorization_snapshot_case(case)
+    assert authority_context.deployment_instance is not None
+    context = RequestContext(
+        id=request.request_context_id,
+        deployment_profile_id=authority_context.deployment_instance.deployment_profile_id,
+        deployment_instance_id=request.deployment_instance_id,
+        workspace_id=request.workspace_id,
+        workspace_authority_epoch=request.workspace_authority_epoch,
+        workspace_authority_generation=request.workspace_authority_generation,
+        authority_state_root=request.authority_state_root,
+        authority_epoch_credential_id=request.authority_epoch_credential_id,
+        authority_commit_receipt_id=request.authority_commit_receipt_id,
+        authority_proof_digest=request.authority_proof_digest,
+        scope_kind=request.scope_kind,
+        scope_id=request.scope_id,
+        scope_digest=request.scope_digest,
+        audience_policy_snapshot_id=request.audience_policy_snapshot_id,
+        audience_policy_digest=request.audience_policy_digest,
+        requester_id=request.requester_id,
+        client_context_id=request.client_context_id,
+        transport_principal_id=request.transport_principal_id,
+        agent_id=request.acting_agent_id,
+        agent_grant_id=agent_grant.id,
+        access_bundle_id=requester_bundle.id,
+        policy_digest=requester_bundle.policy_digest,
+        authorization_snapshot_id=snapshot.id,
+        authorization_snapshot_digest=expected.authorization_snapshot_digest,
+        authorization_signing_key_version_id=signing_key.id,
+        idempotency_key="verified-project-authorization",
+        correlation_id=uuid4(),
+    )
+    project_request = ProjectAuthorizationRequest(
+        context=context,
+        client_surface=request.client_surface,
+        action="project.read",
+        project_id=request.resource_id,
+    )
+    resolved = VerifiedProjectAuthorizationInputs(
+        request=request,
+        authority_context=authority_context,
+        requester_bundle=requester_bundle,
+        requester_grants=(requester_grant,),
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=(agent_capability,),
+        snapshot=snapshot,
+        snapshot_expected=expected,
+        snapshot_verification=verification,
+        signing_key=signing_key,
+    )
+
+    class Inputs:
+        def __init__(self, value: VerifiedProjectAuthorizationInputs) -> None:
+            self.value = value
+
+        def resolve(
+            self, received: ProjectAuthorizationRequest
+        ) -> VerifiedProjectAuthorizationInputs:
+            assert received == project_request
+            return self.value
+
+    class Snapshots:
+        def __init__(self, value: AuthorizationDecisionSnapshot) -> None:
+            self.value = value
+
+        def get_snapshot(
+            self,
+            *,
+            workspace_id: UUID,
+            snapshot_id: UUID,
+        ) -> AuthorizationDecisionSnapshot | None:
+            assert workspace_id == request.workspace_id
+            assert snapshot_id == snapshot.id
+            return self.value
+
+    inputs = Inputs(resolved)
+    snapshots = Snapshots(snapshot)
+    adapter = VerifiedProjectAuthorizationAdapter(inputs=inputs, snapshots=snapshots)
+
+    allowed = adapter.authorize(project_request)
+    tampered = snapshot.model_copy(update={"snapshot_signature": "invalid"})
+    inputs.value = resolved.model_copy(update={"snapshot": tampered})
+    snapshots.value = tampered
+    denied = adapter.authorize(project_request)
+
+    assert allowed.allowed is True
+    assert allowed.reason_code == "exact_capability_intersection"
+    assert denied.allowed is False
+    assert denied.reason_code == "authorization_snapshot_signature_invalid"
