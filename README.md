@@ -50,4 +50,4 @@ env -u PYTHONHOME -u PYTHONPATH uv run corvus --help
 
 On Windows Git Bash, clearing `PYTHONHOME` and `PYTHONPATH` prevents a different Python standard library from contaminating the selected 3.12 interpreter.
 
-The implementation and security migration plan is in [`PLAN.md`](PLAN.md); reviewer evidence and limitations are in [`PLAN-REVIEW-LOG.md`](PLAN-REVIEW-LOG.md).
+The readable Milestones 1–11 delivery outline is in [`ROADMAP.md`](ROADMAP.md). [`PLAN.md`](PLAN.md) remains the authoritative implementation and security specification; reviewer evidence and limitations are in [`PLAN-REVIEW-LOG.md`](PLAN-REVIEW-LOG.md).
