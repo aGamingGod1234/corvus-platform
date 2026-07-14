@@ -17,7 +17,7 @@ from corvus.infrastructure.repositories.projects import ProjectRepository
 from corvus.quarantine import capture_v1_quarantine
 from corvus.store import TraceStore
 
-_FIXTURE = Path(__file__).parents[1] / "fixtures" / "v1" / "quarantine" / "source"
+_FIXTURE = Path(__file__).parents[1] / "fixtures" / "v1" / "legacy"
 
 
 def _capture(tmp_path: Path) -> Path:
@@ -26,6 +26,7 @@ def _capture(tmp_path: Path) -> Path:
     receipt = capture_v1_quarantine(
         database=source / "corvus.db",
         config_root=source / "config",
+        project_root=source / "project",
         artifact_root=source / "artifacts",
         bundle_root=source / "bundles",
         backup_root=source / "backups",
@@ -70,8 +71,8 @@ def test_verified_project_config_import_is_idempotent_and_non_authoritative(
     assert first == second
     assert repository.list_for_workspace(workspace_id) == []
     assert repository.get_staged(workspace_id=workspace_id, project_id=project.id) == project
-    assert first.policy_hints.autonomy_level == 3
-    assert first.policy_hints.max_runtime_seconds == 120
+    assert first.policy_hints.autonomy_level == 2
+    assert first.policy_hints.max_runtime_seconds == 60
     assert first.provider_hints[0].name == "fixture"
     assert first.credentials_imported is False
     assert first.authority_imported is False
@@ -92,7 +93,7 @@ def test_tampered_capture_fails_before_destination_mutation(tmp_path: Path) -> N
         privacy="private",
     )
     records = json.loads((capture / "records.json").read_text(encoding="utf-8"))
-    records["config"]["policy.yaml"]["autonomy"] = 99
+    records["project_policy"]["policy.yaml"]["autonomy"] = 99
     (capture / "records.json").write_text(json.dumps(records), encoding="utf-8")
 
     with pytest.raises(ProjectConfigImportError, match="quarantine_capture_verification_failed"):

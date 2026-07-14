@@ -53,7 +53,16 @@ def _load_capture(capture: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         records = json.loads((capture / "records.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProjectConfigImportError("quarantine_capture_read_failed") from exc
-    if records.get("schema_version") != 2 or not isinstance(records.get("config"), dict):
+    schema_version = records.get("schema_version")
+    if schema_version == 2:
+        if not isinstance(records.get("config"), dict):
+            raise ProjectConfigImportError("quarantine_capture_schema_unsupported")
+    elif schema_version == 3:
+        if not isinstance(records.get("user_config"), dict) or not isinstance(
+            records.get("project_policy"), dict
+        ):
+            raise ProjectConfigImportError("quarantine_capture_schema_unsupported")
+    else:
         raise ProjectConfigImportError("quarantine_capture_schema_unsupported")
     return manifest, records
 
@@ -119,9 +128,14 @@ def import_project_config(
     if project.workspace_id != workspace_id:
         raise ProjectConfigImportError("project_workspace_mismatch")
     manifest, records = _load_capture(capture)
-    config = records["config"]
-    policy_hints = _policy_hints(config)
-    provider_hints = _provider_hints(config)
+    if records["schema_version"] == 2:
+        user_config = records["config"]
+        project_policy: dict[str, Any] = {}
+    else:
+        user_config = records["user_config"]
+        project_policy = records["project_policy"]
+    policy_hints = _policy_hints(project_policy or user_config)
+    provider_hints = _provider_hints(user_config)
 
     existing = repository.get_staged(workspace_id=workspace_id, project_id=project.id)
     if existing is None:
