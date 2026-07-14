@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import base64
 import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from corvus.application.ports import (
@@ -243,6 +247,23 @@ class FailCommitmentOnce:
         self.repository.append_leaf_commitments(**kwargs)
 
 
+class CorruptCommitmentRead:
+    def __init__(self, repository: RegistryManifestRepository) -> None:
+        self.repository = repository
+
+    def list_leaf_commitments(self, *, workspace_id: UUID, authority_generation: int):
+        commitments = self.repository.list_leaf_commitments(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
+        )
+        if commitments:
+            commitments[0] = commitments[0].model_copy(update={"leaf_digest": "0" * 64})
+        return commitments
+
+    def append_leaf_commitments(self, **kwargs) -> None:
+        self.repository.append_leaf_commitments(**kwargs)
+
+
 class FailDbCommitOnce:
     def __init__(self, repository: AuthorityRepository) -> None:
         self.repository = repository
@@ -267,6 +288,123 @@ class FailDbCommitOnce:
             self.failed = True
             raise RuntimeError("injected authority DB commit failure")
         self.repository.advance_commit(intent, expected_state=expected_state)
+
+
+class CrashAfterCall:
+    def __init__(
+        self,
+        target: object,
+        method_name: str,
+        predicate: Callable[[tuple[object, ...], dict[str, object]], bool] | None = None,
+    ) -> None:
+        self.target = target
+        self.method_name = method_name
+        self.predicate = predicate
+        self.failed = False
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self.target, name)
+        if name != self.method_name or not callable(attribute):
+            return attribute
+
+        def crash_after(*args: object, **kwargs: object) -> object:
+            result = attribute(*args, **kwargs)
+            matches = self.predicate is None or self.predicate(args, kwargs)
+            if matches and not self.failed:
+                self.failed = True
+                raise RuntimeError(f"injected crash after {self.method_name}")
+            return result
+
+        return crash_after
+
+
+@dataclass(frozen=True)
+class ProjectCreateScenario:
+    database: Path
+    authority_repository: AuthorityRepository
+    commitment_repository: RegistryManifestRepository
+    audit_repository: AuditRepository
+    project_repository: ProjectRepository
+    project: Project
+    authority: WorkspaceAuthority
+    command: CreateProjectCommand
+    anchor: IdempotentAnchor
+    signer: Ed25519Signer
+    snapshot: AuthorizationDecisionSnapshot
+
+
+def _scenario(tmp_path: Path) -> ProjectCreateScenario:
+    database = _database(tmp_path)
+    authority_repository = AuthorityRepository(database)
+    commitment_repository = RegistryManifestRepository(database)
+    audit_repository = AuditRepository(database)
+    project_repository = ProjectRepository(database)
+    project = Project(
+        workspace_id=uuid4(),
+        name="Crash-point Corvus",
+        root_locator="workspace://crash-point-corvus",
+        privacy="private",
+    )
+    authority = _authority(authority_repository, project.workspace_id)
+    request_id = uuid4()
+    requester_id = uuid4()
+    signing_key_id = uuid4()
+    private_key = Ed25519PrivateKey.generate()
+    signer = Ed25519Signer(signing_key_id, private_key)
+    snapshot = _snapshot(
+        request_id=request_id,
+        project=project,
+        requester_id=requester_id,
+        signing_key_id=signing_key_id,
+        private_key=private_key,
+        authority=authority,
+    )
+    audit_repository.append_snapshot(snapshot)
+    return ProjectCreateScenario(
+        database=database,
+        authority_repository=authority_repository,
+        commitment_repository=commitment_repository,
+        audit_repository=audit_repository,
+        project_repository=project_repository,
+        project=project,
+        authority=authority,
+        command=CreateProjectCommand(
+            request_id=request_id,
+            workspace_id=project.workspace_id,
+            requester_id=requester_id,
+            acting_agent_id=uuid4(),
+            project=project,
+        ),
+        anchor=IdempotentAnchor(),
+        signer=signer,
+        snapshot=snapshot,
+    )
+
+
+def _service(
+    scenario: ProjectCreateScenario,
+    *,
+    authority_repository: object | None = None,
+    commitment_repository: object | None = None,
+    audit_repository: object | None = None,
+    project_repository: object | None = None,
+    anchor: object | None = None,
+) -> ProjectService:
+    lifecycle = _lifecycle(
+        database=scenario.database,
+        authority=authority_repository or scenario.authority_repository,
+        commitment_repository=commitment_repository or scenario.commitment_repository,
+        audit_repository=audit_repository or scenario.audit_repository,
+        project_repository=project_repository or scenario.project_repository,
+        anchor=anchor or scenario.anchor,
+        signer=scenario.signer,
+    )
+    return ProjectService(
+        store=ProjectRepositoryAdapter(scenario.project_repository),
+        authorization=FixedAuthorization(scenario.snapshot),
+        audit=lifecycle.audit_adapter,
+        create_lifecycle=lifecycle,
+    )
 
 
 def _lifecycle(
@@ -460,3 +598,236 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
     )
     assert len(anchor.reserved) == 1
     assert len(anchor.finalized) == 1
+
+
+def _state_is(expected: str) -> Callable[[tuple[object, ...], dict[str, object]], bool]:
+    def matches(args: tuple[object, ...], _kwargs: dict[str, object]) -> bool:
+        state = getattr(args[0], "state", None)
+        return getattr(state, "value", None) == expected
+
+    return matches
+
+
+@pytest.mark.parametrize(
+    ("component", "method_name", "persisted_state", "reason_code"),
+    [
+        ("audit", "append_receipt", None, "audit_persistence_failed"),
+        ("authority", "prepare_commit", None, "authority_prepare_failed"),
+        ("anchor", "reserve", None, "authority_reservation_failed"),
+        (
+            "authority",
+            "advance_commit",
+            AuthorityCommitState.ANCHOR_RESERVED.value,
+            "authority_reservation_failed",
+        ),
+        ("audit", "prepare_recovery", None, "audit_recovery_prepare_failed"),
+        ("project", "add_idempotent", None, "project_persistence_failed"),
+        (
+            "commitment",
+            "append_leaf_commitments",
+            None,
+            "authority_commitment_persistence_failed",
+        ),
+        (
+            "authority",
+            "advance_commit",
+            AuthorityCommitState.DB_COMMITTED.value,
+            "authority_commit_failed",
+        ),
+        ("anchor", "finalize", None, "authority_finalize_failed"),
+        (
+            "authority",
+            "advance_commit",
+            AuthorityCommitState.ANCHOR_FINALIZED.value,
+            "authority_finalize_failed",
+        ),
+        (
+            "audit",
+            "advance_recovery",
+            "authority_finalized",
+            "audit_recovery_finalize_failed",
+        ),
+        ("audit", "append_result_binding", None, "audit_result_binding_failed"),
+        (
+            "audit",
+            "advance_recovery",
+            "binding_persisted",
+            "audit_binding_checkpoint_failed",
+        ),
+        ("audit", "advance_recovery", "complete", "audit_completion_failed"),
+    ],
+    ids=[
+        "receipt",
+        "prepared-intent",
+        "external-reservation",
+        "reserved-intent",
+        "recovery-checkpoint",
+        "project",
+        "commitments",
+        "database-authority",
+        "external-finalization",
+        "finalized-intent",
+        "finalized-checkpoint",
+        "result-binding",
+        "binding-checkpoint",
+        "complete-checkpoint",
+    ],
+)
+def test_project_create_recovers_after_every_durable_crash_point(
+    tmp_path: Path,
+    component: str,
+    method_name: str,
+    persisted_state: str | None,
+    reason_code: str,
+) -> None:
+    scenario = _scenario(tmp_path)
+    target_by_component = {
+        "authority": scenario.authority_repository,
+        "commitment": scenario.commitment_repository,
+        "audit": scenario.audit_repository,
+        "project": scenario.project_repository,
+        "anchor": scenario.anchor,
+    }
+    predicate = None if persisted_state is None else _state_is(persisted_state)
+    crashing = CrashAfterCall(
+        target_by_component[component],
+        method_name,
+        predicate,
+    )
+    service_kwargs: dict[str, object] = {}
+    if component == "authority":
+        service_kwargs["authority_repository"] = crashing
+    elif component == "commitment":
+        service_kwargs["commitment_repository"] = crashing
+    elif component == "audit":
+        service_kwargs["audit_repository"] = crashing
+    elif component == "project":
+        service_kwargs["project_repository"] = crashing
+    else:
+        service_kwargs["anchor"] = crashing
+
+    failed = _service(scenario, **service_kwargs).create(scenario.command)
+
+    assert failed.ok is False
+    assert failed.reason_code == reason_code
+    assert crashing.failed is True
+
+    service = _service(scenario)
+    recovered = service.create(scenario.command)
+    replayed = service.create(scenario.command)
+
+    assert recovered.ok is True
+    assert replayed.ok is True
+    advanced = scenario.authority_repository.get_workspace_authority(scenario.project.workspace_id)
+    assert advanced is not None
+    assert advanced.authority_generation == scenario.authority.authority_generation + 1
+    verified = AuthorityRootCalculator(scenario.database).calculate(
+        workspace_id=scenario.project.workspace_id,
+        authority_generation=advanced.authority_generation,
+    )
+    assert verified.root_digest == advanced.authority_state_root
+    commitments = scenario.commitment_repository.list_leaf_commitments(
+        workspace_id=scenario.project.workspace_id,
+        authority_generation=advanced.authority_generation,
+    )
+    assert list(verified.commitments) == commitments
+    assert len(commitments) == 30
+    assert len(scenario.audit_repository.list_receipts(scenario.project.workspace_id)) == 1
+    with sqlite3.connect(scenario.database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (1,)
+        assert connection.execute(
+            "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == (AuthorityCommitState.ANCHOR_FINALIZED.value,)
+        assert connection.execute(
+            "SELECT state FROM audit_anchor_recovery_checkpoints WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == ("complete",)
+        assert connection.execute("SELECT COUNT(*) FROM audit_result_bindings").fetchone() == (1,)
+    assert len(scenario.anchor.reserved) == 1
+    assert len(scenario.anchor.finalized) == 1
+
+
+def test_commitment_replay_mismatch_quarantines_inflight_authority(
+    tmp_path: Path,
+) -> None:
+    scenario = _scenario(tmp_path)
+    failed = _service(
+        scenario,
+        authority_repository=FailDbCommitOnce(scenario.authority_repository),
+    ).create(scenario.command)
+    assert failed.reason_code == "authority_commit_failed"
+
+    quarantined = _service(
+        scenario,
+        commitment_repository=CorruptCommitmentRead(scenario.commitment_repository),
+    ).create(scenario.command)
+    blocked = _service(scenario).create(scenario.command)
+
+    assert quarantined.ok is False
+    assert quarantined.reason_code == "authority_commitment_replay_mismatch"
+    assert blocked.ok is False
+    assert blocked.reason_code == "authority_commit_quarantined"
+    assert (
+        scenario.authority_repository.get_workspace_authority(scenario.project.workspace_id)
+        == scenario.authority
+    )
+    with sqlite3.connect(scenario.database) as connection:
+        assert connection.execute(
+            "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == (AuthorityCommitState.QUARANTINED.value,)
+        assert connection.execute(
+            "SELECT state FROM audit_anchor_recovery_checkpoints WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == ("quarantined",)
+        assert connection.execute("SELECT COUNT(*) FROM audit_result_bindings").fetchone() == (0,)
+
+
+def test_post_commitment_mismatch_quarantines_advanced_workspace(
+    tmp_path: Path,
+) -> None:
+    scenario = _scenario(tmp_path)
+    crash_after_database_commit = CrashAfterCall(
+        scenario.authority_repository,
+        "advance_commit",
+        _state_is(AuthorityCommitState.DB_COMMITTED.value),
+    )
+    failed = _service(
+        scenario,
+        authority_repository=crash_after_database_commit,
+    ).create(scenario.command)
+    assert failed.reason_code == "authority_commit_failed"
+
+    advanced = scenario.authority_repository.get_workspace_authority(scenario.project.workspace_id)
+    assert advanced is not None
+    assert advanced.authority_generation == scenario.authority.authority_generation + 1
+    assert advanced.state is WorkspaceAuthorityState.ACTIVE
+
+    quarantined = _service(
+        scenario,
+        commitment_repository=CorruptCommitmentRead(scenario.commitment_repository),
+    ).create(scenario.command)
+    blocked = _service(scenario).create(scenario.command)
+
+    assert quarantined.ok is False
+    assert quarantined.reason_code == "authority_commitment_replay_mismatch"
+    assert blocked.ok is False
+    assert blocked.reason_code == "workspace_authority_quarantined"
+    quarantined_authority = scenario.authority_repository.get_workspace_authority(
+        scenario.project.workspace_id
+    )
+    assert quarantined_authority is not None
+    assert quarantined_authority.authority_generation == advanced.authority_generation
+    assert quarantined_authority.authority_state_root == advanced.authority_state_root
+    assert quarantined_authority.state is WorkspaceAuthorityState.RESTORE_QUARANTINE
+    with sqlite3.connect(scenario.database) as connection:
+        assert connection.execute(
+            "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == (AuthorityCommitState.QUARANTINED.value,)
+        assert connection.execute(
+            "SELECT state FROM audit_anchor_recovery_checkpoints WHERE workspace_id = ?",
+            (str(scenario.project.workspace_id),),
+        ).fetchone() == ("quarantined",)
+        assert connection.execute("SELECT COUNT(*) FROM audit_result_bindings").fetchone() == (0,)

@@ -27,6 +27,7 @@ from corvus.domain.deployment import (
     AuthorityStateRootLeafCommitment,
     AuthorityStateRootManifestVersion,
     WorkspaceAuthority,
+    WorkspaceAuthorityState,
 )
 from corvus.domain.identity import Project
 from corvus.infrastructure.project_audit import (
@@ -70,6 +71,14 @@ class ProjectAuthorityRepositoryPort(Protocol):
         intent: AuthorityCommitIntent,
         *,
         expected_state: AuthorityCommitState,
+    ) -> None: ...
+
+    def quarantine_workspace_authority(
+        self,
+        *,
+        workspace_id: UUID,
+        expected_generation: int,
+        expected_state_root: str,
     ) -> None: ...
 
 
@@ -189,7 +198,12 @@ class RecoverableProjectCreateLifecycle:
         except Exception as exc:
             raise ProjectCreateRecoveryError("project_persistence_failed") from exc
 
-        self._persist_or_validate_commitments(event.workspace_id, plan)
+        try:
+            self._persist_or_validate_commitments(event.workspace_id, plan)
+        except ProjectCreateRecoveryError as exc:
+            if exc.reason_code == "authority_commitment_replay_mismatch":
+                self._quarantine_inflight(intent, checkpoint)
+            raise
         intent = self._commit_authority(intent)
         evidence, intent = self._finalize_authority(intent)
         checkpoint = self._mark_authority_finalized(checkpoint)
@@ -225,11 +239,13 @@ class RecoverableProjectCreateLifecycle:
         )
         if existing is not None and existing.mutation_digest != mutation_digest:
             raise ProjectCreateRecoveryError("project_replay_mismatch")
-        if existing is not None and existing.state is AuthorityCommitState.QUARANTINED:
-            raise ProjectCreateRecoveryError("authority_commit_quarantined")
         authority = self.authority_repository.get_workspace_authority(event.workspace_id)
         if authority is None:
             raise ProjectCreateRecoveryError("workspace_authority_missing")
+        if authority.state is WorkspaceAuthorityState.RESTORE_QUARANTINE:
+            raise ProjectCreateRecoveryError("workspace_authority_quarantined")
+        if existing is not None and existing.state is AuthorityCommitState.QUARANTINED:
+            raise ProjectCreateRecoveryError("authority_commit_quarantined")
         intent = existing
         if intent is None:
             intent = AuthorityCommitIntent(
@@ -386,6 +402,49 @@ class RecoverableProjectCreateLifecycle:
             )
         except Exception as exc:
             raise ProjectCreateRecoveryError("authority_commitment_persistence_failed") from exc
+
+    def _quarantine_inflight(
+        self,
+        intent: AuthorityCommitIntent,
+        checkpoint: AuditAnchorRecoveryCheckpoint,
+    ) -> None:
+        try:
+            if intent.state in {
+                AuthorityCommitState.DB_COMMITTED,
+                AuthorityCommitState.ANCHOR_FINALIZED,
+            }:
+                self.authority_repository.quarantine_workspace_authority(
+                    workspace_id=intent.workspace_id,
+                    expected_generation=intent.next_generation,
+                    expected_state_root=intent.proposed_state_root,
+                )
+            if checkpoint.state not in {
+                AuditAnchorBindingState.COMPLETE,
+                AuditAnchorBindingState.QUARANTINED,
+            }:
+                quarantined_checkpoint = checkpoint.model_copy(
+                    update={
+                        "state": AuditAnchorBindingState.QUARANTINED,
+                        "updated_at": self.clock(),
+                    }
+                )
+                self.audit_repository.advance_recovery(
+                    quarantined_checkpoint,
+                    expected_state=checkpoint.state,
+                )
+            if intent.state not in {
+                AuthorityCommitState.ANCHOR_FINALIZED,
+                AuthorityCommitState.QUARANTINED,
+            }:
+                quarantined_intent = intent.model_copy(
+                    update={"state": AuthorityCommitState.QUARANTINED}
+                )
+                self.authority_repository.advance_commit(
+                    quarantined_intent,
+                    expected_state=intent.state,
+                )
+        except Exception as exc:
+            raise ProjectCreateRecoveryError("authority_quarantine_failed") from exc
 
     def _commit_authority(self, intent: AuthorityCommitIntent) -> AuthorityCommitIntent:
         if intent.state is not AuthorityCommitState.ANCHOR_RESERVED:

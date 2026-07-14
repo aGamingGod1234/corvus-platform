@@ -19,6 +19,7 @@ from corvus.domain.deployment import (
     DeploymentInstanceStatus,
     DeploymentProfile,
     WorkspaceAuthority,
+    WorkspaceAuthorityState,
 )
 from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
@@ -335,6 +336,48 @@ class AuthorityRepository:
                 (str(workspace_id),),
             ).fetchone()
         return None if row is None else WorkspaceAuthority.model_validate_json(row[0])
+
+    def quarantine_workspace_authority(
+        self,
+        *,
+        workspace_id: UUID,
+        expected_generation: int,
+        expected_state_root: str,
+    ) -> None:
+        with self._transaction() as connection:
+            authority = self._workspace_authority(connection, workspace_id)
+            if authority is None or (
+                authority.authority_generation,
+                authority.authority_state_root,
+            ) != (expected_generation, expected_state_root):
+                raise AuthorityRepositoryError("workspace_authority_quarantine_state_mismatch")
+            if authority.state is WorkspaceAuthorityState.RESTORE_QUARANTINE:
+                return
+            if authority.state is not WorkspaceAuthorityState.ACTIVE:
+                raise AuthorityRepositoryError("workspace_authority_quarantine_state_invalid")
+            quarantined = authority.model_copy(
+                update={
+                    "state": WorkspaceAuthorityState.RESTORE_QUARANTINE,
+                    "version": authority.version + 1,
+                }
+            )
+            cursor = connection.execute(
+                "UPDATE workspace_authorities SET state = ?, version = ?, payload_json = ? "
+                "WHERE workspace_id = ? AND authority_generation = ? "
+                "AND authority_state_root = ? AND state = ? AND version = ?",
+                (
+                    quarantined.state.value,
+                    quarantined.version,
+                    quarantined.model_dump_json(),
+                    str(workspace_id),
+                    expected_generation,
+                    expected_state_root,
+                    authority.state.value,
+                    authority.version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AuthorityRepositoryError("workspace_authority_quarantine_state_conflict")
 
     def prepare_commit(self, intent: AuthorityCommitIntent) -> None:
         if intent.state is not AuthorityCommitState.PREPARED:
