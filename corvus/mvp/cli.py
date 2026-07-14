@@ -45,6 +45,8 @@ def build_server_app(
     database: Path,
     pairing_ref: str,
     signing_ref: str,
+    static_web_dir: Path | None = None,
+    allowed_origins: frozenset[str] | None = None,
 ) -> FastAPI:
     """Build the loopback API without retaining plaintext credentials in configuration."""
     broker = LocalSecretBroker()
@@ -56,6 +58,8 @@ def build_server_app(
         database=database.expanduser().resolve(),
         bootstrap_token=bootstrap_token,
         session_secret=session_secret,
+        static_web_dir=static_web_dir,
+        allowed_origins=allowed_origins,
     )
 
 
@@ -346,13 +350,26 @@ def server(
         str,
         typer.Option("--session-secret-ref", help="env:// or keyring:// reference"),
     ] = DEFAULT_SIGNING_REFERENCE,
+    static_web_dir: Annotated[
+        Path | None,
+        typer.Option("--static-web-dir", help="Built Vite directory served at the root path"),
+    ] = None,
 ) -> None:
-    """Serve the authenticated local HTTP API and SSE event stream."""
+    """Serve the authenticated local API, SSE stream, and optional operator console."""
     try:
         server_app = build_server_app(
             database=database,
             pairing_ref=pairing_ref,
             signing_ref=signing_ref,
+            static_web_dir=static_web_dir,
+            allowed_origins=frozenset(
+                {
+                    f"http://127.0.0.1:{port}",
+                    f"http://localhost:{port}",
+                    "http://127.0.0.1:5173",
+                    "http://localhost:5173",
+                }
+            ),
         )
     except (DomainNotFound, ValueError) as error:
         _fail(error)

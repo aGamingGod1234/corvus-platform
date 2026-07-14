@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
@@ -254,9 +255,24 @@ def create_app(
     bootstrap_token: str,
     session_secret: bytes,
     replay_limit: int = 500,
+    static_web_dir: Path | None = None,
+    allowed_origins: frozenset[str] | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
+    static_root = _validated_static_root(static_web_dir)
+    trusted_origins = (
+        allowed_origins
+        if allowed_origins is not None
+        else frozenset(
+            {
+                "http://127.0.0.1:8080",
+                "http://localhost:8080",
+                "http://127.0.0.1:5173",
+                "http://localhost:5173",
+            }
+        )
+    )
     service = CorvusService.open(database)
     governance = GovernanceService(service.store)
     offline = OfflineConnectorService(
@@ -294,12 +310,7 @@ def create_app(
         if csrf_token is None or not secrets.compare_digest(csrf_token, principal.csrf_token):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="csrf_invalid")
         origin = request.headers.get("origin")
-        if origin is not None and origin not in {
-            "http://127.0.0.1:8080",
-            "http://localhost:8080",
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-        }:
+        if origin is not None and origin not in trusted_origins:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin_forbidden")
         return principal
 
@@ -832,7 +843,20 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    if static_root is not None:
+        app.mount("/", StaticFiles(directory=static_root, html=True), name="operator-console")
+
     return app
+
+
+def _validated_static_root(static_web_dir: Path | None) -> Path | None:
+    if static_web_dir is None:
+        return None
+    root = static_web_dir.expanduser().resolve()
+    index = root / "index.html"
+    if not root.is_dir() or not index.is_file() or not index.resolve().is_relative_to(root):
+        raise ValueError("static_web_index_missing")
+    return root
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:

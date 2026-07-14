@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.pytest-tmp
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.antigravity
+apps/web/node_modules
+apps/web/dist
+dist
+build
+output
+*.pyc
+__pycache__
+corvus-mvp.sqlite3

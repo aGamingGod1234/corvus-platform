@@ -206,3 +206,30 @@
 ### Suggested Next Steps
 - Commit and safely integrate the verified M5 milestone onto GitHub main.
 - Add the container runtime and Tauri sidecar shell, then run the final restart-safe acceptance path.
+
+## 2026-07-14 - M10 Self-Host and Static-Web Packaging
+
+### What Was Implemented
+- Added validated optional static-web serving so the compiled React client, authenticated API, health, readiness, and SSE share one origin.
+- Added a multi-stage, non-root container build, read-only Compose service, persistent SQLite volume, health check, and environment template.
+- Built the Python wheel and extended provenance generation to bind named build artifacts plus a deterministic static asset manifest.
+- Exercised the production-style source-tree server through readiness, compiled web delivery, pairing, and clean listener shutdown.
+
+### Files Modified
+- `corvus/mvp/api.py` and `corvus/mvp/cli.py` - validated static root, configurable trusted origins, and server option.
+- `Dockerfile`, `compose.yaml`, `.dockerignore`, and `.env.example` - reproducible self-host packaging.
+- `scripts/generate_supply_chain.py` - worktree-safe commit discovery, static manifest, and artifact-bound provenance.
+- `tests/mvp/test_packaging.py` and `tests/mvp/test_supply_chain.py` - static/API coexistence, traversal, packaging, and provenance coverage.
+- `HACKATHON_STATUS.md` and `PROJECT_LOG.md` - exact startup, verification, and limitation record.
+
+### Assumptions Made (flag these for review)
+- The hackathon container uses SQLite at `/data/corvus.sqlite3` and serves the prebuilt web client from `/app/web` on port 8080.
+- PostgreSQL remains a recognized production configuration contract; adding a second persistence implementation is outside the coherent local-demo path.
+
+### Known Issues / Deferred
+- Docker and Podman are not installed on this workstation, so the image definition could not be built locally; the equivalent wheel/web/server path was exercised directly.
+- External OIDC registration and production TLS termination remain deployment integrations, as required by the hackathon scope boundary.
+
+### Suggested Next Steps
+- Commit and fast-forward M10 to GitHub main.
+- Add the real Tauri shell, sidecar supervision, readiness/reconnect flow, graceful shutdown, and current-OS build check.
