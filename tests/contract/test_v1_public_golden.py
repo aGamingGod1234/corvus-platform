@@ -320,7 +320,7 @@ def _build_delivery_subject(corvus_home: Path) -> DeliveryBundle:
     destination = corvus_home / "delivery-project"
     target = destination / "src" / "app.py"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("print('old')\n", encoding="utf-8")
+    target.write_bytes(b"print('old')\r\n")
     manager = DeliveryManager(paths.bundles, paths.backups, backup_key=_FIXED_BACKUP_KEY)
     return manager.package(
         uuid4(),

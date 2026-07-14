@@ -173,6 +173,32 @@ def test_complete_unstamped_v1_refuses_ordinary_open_without_mutation(tmp_path: 
         assert _source_snapshot(database) == before
 
 
+def test_classification_retries_when_wal_disappears_during_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "corvus.db"
+    TraceStore(database).engine.dispose()
+    wal = Path(f"{database}-wal")
+    wal.write_bytes(b"transient WAL placeholder")
+    real_copyfile = database_module.shutil.copyfile
+    removed_wal = False
+
+    def copyfile_with_wal_race(source: Path, destination: Path) -> str:
+        nonlocal removed_wal
+        if Path(source) == wal and not removed_wal:
+            removed_wal = True
+            wal.unlink()
+            raise FileNotFoundError(wal)
+        return real_copyfile(source, destination)
+
+    monkeypatch.setattr(database_module.shutil, "copyfile", copyfile_with_wal_race)
+
+    status = classify_database(database)
+
+    assert removed_wal is True
+    assert status.state is DatabaseState.CURRENT
+
+
 def test_partial_v1_schema_fails_closed_without_mutation(tmp_path: Path) -> None:
     database = tmp_path / "partial.db"
     _create_legacy_schema(database)

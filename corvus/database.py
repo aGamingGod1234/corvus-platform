@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 LEGACY_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = 2
+CLASSIFICATION_SNAPSHOT_ATTEMPTS = 3
 M005_001_MIGRATION = "M005-001"
 M1_PROJECT_REVISION = "m1_001_projects"
 M1_AUDIT_REVISION = "m1_002_scoped_audit"
@@ -998,22 +999,26 @@ def _classification_path(path: Path) -> Iterator[Path]:
 
     wal = Path(f"{path}-wal")
     shm = Path(f"{path}-shm")
-    if not wal.exists() and not shm.exists():
-        yield path
-        return
-    tracked = tuple(candidate for candidate in (path, wal) if candidate.exists())
-    before = {candidate.name: _file_identity(candidate) for candidate in tracked}
-    with tempfile.TemporaryDirectory(prefix="corvus-db-classify-") as temporary_root:
-        snapshot = Path(temporary_root) / path.name
-        shutil.copyfile(path, snapshot)
-        if wal.exists():
-            shutil.copyfile(wal, Path(f"{snapshot}-wal"))
-        after = {candidate.name: _file_identity(candidate) for candidate in tracked}
-        if after != before:
-            raise sqlite3.OperationalError(
-                "database changed while its read-only snapshot was copied"
-            )
-        yield snapshot
+    for _ in range(CLASSIFICATION_SNAPSHOT_ATTEMPTS):
+        if not wal.exists() and not shm.exists():
+            yield path
+            return
+        tracked = tuple(candidate for candidate in (path, wal) if candidate.exists())
+        try:
+            before = {candidate.name: _file_identity(candidate) for candidate in tracked}
+            with tempfile.TemporaryDirectory(prefix="corvus-db-classify-") as temporary_root:
+                snapshot = Path(temporary_root) / path.name
+                shutil.copyfile(path, snapshot)
+                if wal.exists():
+                    shutil.copyfile(wal, Path(f"{snapshot}-wal"))
+                after = {candidate.name: _file_identity(candidate) for candidate in tracked}
+                if after != before:
+                    continue
+                yield snapshot
+                return
+        except FileNotFoundError:
+            continue
+    raise sqlite3.OperationalError("database changed while its read-only snapshot was copied")
 
 
 def classify_database(path: Path) -> DatabaseStatus:

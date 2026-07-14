@@ -310,3 +310,26 @@
 
 ### Suggested Next Steps
 - Confirm the complete GitHub Actions operating-system/Python matrix is green.
+
+## 2026-07-14 - Certification Race and Byte-Stability Repair
+
+### What Was Implemented
+- Made the frozen delivery-review fixture byte-identical on every operating system by writing its CRLF input explicitly.
+- Split the public-contract assertion by scenario so cross-platform failures identify the exact frozen command without relaxing command order or payload equality.
+- Made read-only SQLite classification retry a bounded number of times when a WAL disappears during snapshot creation, covering the Windows close/checkpoint race.
+- Added a deterministic WAL-disappearance regression and exercised the affected migration test repeatedly.
+
+### Files Modified
+- `tests/contract/test_v1_public_golden.py` - byte-stable delivery input and strict scenario-level diagnostics.
+- `corvus/database.py` - bounded retry for a changing read-only SQLite snapshot.
+- `tests/integration/test_database_bootstrap.py` - WAL-disappearance regression coverage.
+- `PROJECT_LOG.md` - certification repair record.
+
+### Assumptions Made (flag these for review)
+- None.
+
+### Known Issues / Deferred
+- None for this certification repair.
+
+### Suggested Next Steps
+- Confirm the complete GitHub Actions operating-system/Python matrix is green for the final `main` commit.
