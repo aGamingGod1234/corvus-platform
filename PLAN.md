@@ -62,11 +62,11 @@ The authoritative backend resolves deployment, workspace, client, execution, mod
 - V1 version is `0.1.0`; it has no package metadata, lockfile, tests, migrations, README, API, web client, or desktop client.
 
 ### Current implementation status
-- Branch: `feat/corvus-v2-foundation`.
-- Corvus V2 package baseline is `0.2.0a1` with `pyproject.toml`, `uv.lock`, README, Python 3.12 selection, and retained CLI behavior.
-- Security characterization and the empty-trace verification fix are committed.
-- Latest full gate: 14 tests passed; one Windows symlink test skipped because this host cannot create symlinks; Ruff lint/format and Git diff validation passed.
-- No Task 1.1 schema/domain, FastAPI, React, channel, connector, or desktop code exists yet.
+- Certification branch: `repair/m05-certification`, based on pre-Milestone-1 commit `407c981`.
+- Corvus V2 package baseline is `0.2.0a1` with locked Python 3.12 dependencies and retained CLI behavior.
+- The Milestone 0.5 repair now includes one byte-exact exhaustive V1 fixture corpus, populated legacy domains, distinct project policy evidence, sealed quarantine capture, canonical `legacy_run` context ownership, and aggregate-bounded/redacted provider streaming.
+- Latest local repair gate before candidate freeze: 114 tests passed; Ruff lint/format, strict mypy, compile, and Git diff checks passed. Docker/Podman integration remains environment-dependent and must be proven in CI.
+- Milestone 0.5 remains under certification until all CI gates and two independent exact-commit reviews pass. No Task 1.1 schema/domain, FastAPI, React, channel, connector, or desktop code is permitted on this branch.
 
 ### Verified V1 evidence
 - Intended runtime: Python 3.12.

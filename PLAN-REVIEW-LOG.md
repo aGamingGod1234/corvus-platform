@@ -165,3 +165,18 @@ Accepted both security findings without changing the passing product topology. E
 
 ### Remaining gate
 Validate, commit and hash this plan-only revision, then rerun both exact-commit scopes. Continue until both return `VERDICT: PASS` on the same immutable commit; implementation remains blocked.
+
+## Milestone 0.5 serial repair candidate
+The prior implementation advanced into Milestone 1 without recorded Milestone 0.5 acceptance. The certification repair therefore restarted from pre-Milestone-1 commit `407c981` on branch `repair/m05-certification`; the later Milestone 1 tree remains preserved separately as an audit reference.
+
+Implemented repair slices:
+- one byte-exact exhaustive V1 fixture manifest and populated legacy-domain corpus;
+- distinct project-local policy/autonomy evidence and source-bound quarantine capture;
+- canonical `legacy_run` ownership for new retained V1 model-call provenance;
+- aggregate character/byte/chunk/emission/persistence limits with cross-chunk secret redaction and fail-closed provider cancellation;
+- cross-platform certification workflow definitions and strict typing dependencies.
+
+Pre-freeze local evidence: 114 tests passed; Ruff lint/format, strict mypy, compile, and Git diff checks passed. Bandit retains documented legacy low-severity findings while container `/tmp` false positives are explicitly scoped. Docker/Podman integration is not claimed from this workstation and is assigned to Linux CI.
+
+### Remaining Milestone 0.5 gate
+Freeze one candidate commit/tree, run the complete local and cross-platform certification matrix, and obtain independent security/migration plus V1 compatibility/product `VERDICT: PASS` reports against those exact bytes. Until both pass, Milestone 0.5 is under certification and Milestone 1 remains blocked.

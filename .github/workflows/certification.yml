@@ -1,0 +1,80 @@
+name: certification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "repair/**"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --locked --python ${{ matrix.python }}
+      - name: Verify fixtures and tests
+        run: uv run --python ${{ matrix.python }} pytest -q --junitxml=.pytest-tmp/full.xml
+      - name: Lint
+        run: uv run --python ${{ matrix.python }} ruff check .
+      - name: Check formatting
+        run: uv run --python ${{ matrix.python }} ruff format --check .
+      - name: Type check
+        run: uv run --python ${{ matrix.python }} mypy corvus
+      - name: Security scan
+        run: uv run --python ${{ matrix.python }} bandit -r corvus -q -ll
+      - name: Compile package
+        run: uv run --python ${{ matrix.python }} python -m compileall -q corvus
+      - name: Build wheel
+        run: uv build --wheel
+      - name: CLI smoke
+        run: uv run --python ${{ matrix.python }} corvus --help
+      - name: Doctor smoke
+        run: uv run --python ${{ matrix.python }} corvus doctor --json
+      - name: Dependency audit
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: uv run --python ${{ matrix.python }} pip-audit
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-${{ matrix.os }}-${{ matrix.python }}
+          path: .pytest-tmp/full.xml
+          if-no-files-found: error
+
+  docker-sandbox:
+    name: Docker sandbox / Python 3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --locked --python 3.12
+      - name: Pull pinned sandbox image
+        run: docker pull python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
+      - name: Run sandbox security tests
+        run: uv run --python 3.12 pytest -q tests/security/test_sandbox_options.py

@@ -13,7 +13,9 @@ Credentials are referenced through the OS keyring or a scoped cloud vault; plain
 
 ## Current status
 
-This repository is an early V2 migration from Corvus CLI V1. The CLI remains available while security boundaries, durable state, team authorization, and shared client protocols are introduced incrementally. Web, desktop, and channel clients must remain thin adapters over the same core.
+This branch is the serial Milestone 0.5 certification candidate. It preserves the retained Corvus CLI V1 surface while closing the release-blocking V1 safety gate: byte-exact migration fixtures, sealed quarantine capture, context provenance, bounded/redacted provider output, trusted verification, atomic delivery, and hardened provider/sandbox boundaries.
+
+Milestone 0.5 is not accepted until the complete cross-platform gate and two independent exact-commit reviews pass. Milestone 1 and all web, desktop, daemon, connector, channel, self-hosted, and cloud surfaces remain unsupported on this branch.
 
 Corvus build execution is fail-closed. If Docker or Podman is unavailable, ordinary chat may remain available but isolated builds do not fall back to host execution.
 
