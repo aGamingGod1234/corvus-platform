@@ -96,3 +96,32 @@
 
 ### Suggested Next Steps
 - Complete the authenticated API/web runtime, then wire it into container and Tauri shells.
+
+## 2026-07-14 — Extended Local Capabilities and Supply Chain
+
+### What Was Implemented
+- Added simulated provider device flow with owner approval and expiry-aware polling.
+- Added idempotent restore quarantine and explicit reviewed import-candidate promotion without replacing workspace authority.
+- Added CLI inspection for durable workflows and a capabilities demo spanning teams, providers, autonomy, memory, skills, routines, offline intents, channel ingress, and restore quarantine.
+- Added deterministic CycloneDX SBOM and SLSA/in-toto-style provenance generation.
+
+### Files Modified
+- `corvus/mvp/store.py` — additive device-flow and restore-quarantine migration.
+- `corvus/mvp/governance.py` — device-flow and quarantine services.
+- `corvus/mvp/cli.py` — workflow inspection and governed capabilities demo.
+- `scripts/generate_supply_chain.py` — deterministic SBOM/provenance generator.
+- `tests/mvp/test_cli_adapter.py` — CLI coverage for durable inspection and capability paths.
+- `tests/mvp/test_governance.py` — device-flow and quarantine tests.
+- `tests/mvp/test_supply_chain.py` — SBOM/provenance tests.
+- `PROJECT_LOG.md` — implementation record.
+
+### Assumptions Made (flag these for review)
+- Quarantined restores may become reviewed import candidates but never authority-bearing replacements.
+- Local SBOM/provenance generation binds committed source inputs; external transparency-log publication is outside the local-only scope.
+
+### Known Issues / Deferred
+- HTTP/web/desktop adapters remain dependency-gated.
+- Container startup is deferred until the FastAPI server command exists.
+
+### Suggested Next Steps
+- Install the approved API/web/desktop dependencies and complete the remaining connected adapters.

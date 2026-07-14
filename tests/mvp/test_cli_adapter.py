@@ -25,6 +25,24 @@ def test_mvp_demo_runs_complete_restart_safe_path(tmp_path: Path) -> None:
     assert payload["budget"] == {"available": 6, "reserved": 0, "settled": 4}
     assert payload["restart_verified"] is True
     assert database.is_file()
+    inspected = runner.invoke(
+        app,
+        [
+            "mvp",
+            "workflow",
+            "inspect",
+            payload["workflow_id"],
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+    assert inspected.exit_code == 0, inspected.output
+    inspection = json.loads(inspected.stdout)
+    assert len(inspection["work_items"]) == 2
+    assert len(inspection["artifacts"]) == 2
+    assert inspection["events"]
+    assert inspection["conversation"]
 
 
 def test_mvp_project_create_uses_same_sqlite_core(tmp_path: Path) -> None:
@@ -84,3 +102,21 @@ def test_mvp_cli_manages_outcome_and_workflow_through_application_service(
     assert json.loads(second.stdout)["key"] == "second"
     status = runner.invoke(app, ["mvp", "workflow", "status", workflow_id, *common])
     assert json.loads(status.stdout)["status"] == "succeeded"
+
+
+def test_mvp_capabilities_demo_exercises_governed_local_adapters(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.sqlite3"
+    result = runner.invoke(
+        app,
+        ["mvp", "capabilities-demo", "--database", str(database), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["provider_status"] == "connected"
+    assert payload["autonomy_mode"] == "supervised"
+    assert payload["memory_trusted"] is False
+    assert payload["routine_status"] == "succeeded"
+    assert payload["offline_intent_status"] == "applied"
+    assert payload["channel_event_status"] == "step_up_required"
+    assert payload["restore_status"] == "reviewed_import_candidate"

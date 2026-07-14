@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -89,6 +90,26 @@ class OAuthFlow(MvpModel):
     code_verifier: str = Field(repr=False)
     status: str
     created_at: datetime
+
+
+class DeviceFlow(MvpModel):
+    device_code: str = Field(repr=False)
+    user_code: str
+    provider_connection_id: str
+    status: Literal["pending", "approved", "connected", "expired"]
+    expires_at: datetime
+    polling_interval_seconds: int
+
+
+class RestoreQuarantineRecord(MvpModel):
+    id: str
+    project_id: str
+    source_digest: str
+    status: Literal["quarantined", "reviewed_import_candidate"]
+    reason: str
+    created_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
 
 
 class AutonomyDecision(MvpModel):
@@ -333,6 +354,94 @@ class GovernanceService:
             )
             provider = self._require_provider(connection, flow["provider_connection_id"])
             return self._provider(provider)
+
+    def begin_device_flow(self, provider_connection_id: str) -> DeviceFlow:
+        now = _now_utc()
+        expires_at = now + timedelta(minutes=10)
+        device_code = secrets.token_urlsafe(32)
+        user_code = secrets.token_hex(4).upper()
+        with self.store.transaction() as connection:
+            self._require_provider(connection, provider_connection_id)
+            connection.execute(
+                "INSERT INTO mvp_device_flows(device_code, user_code, provider_connection_id, "
+                "status, expires_at, polling_interval_seconds, created_at) "
+                "VALUES (?, ?, ?, 'pending', ?, 5, ?)",
+                (
+                    device_code,
+                    user_code,
+                    provider_connection_id,
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        return DeviceFlow(
+            device_code=device_code,
+            user_code=user_code,
+            provider_connection_id=provider_connection_id,
+            status="pending",
+            expires_at=expires_at,
+            polling_interval_seconds=5,
+        )
+
+    def approve_device_flow(self, user_code: str, *, actor_id: str) -> DeviceFlow:
+        now = _now_utc()
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT f.*, p.project_id FROM mvp_device_flows f "
+                "JOIN mvp_provider_connections p ON p.id = f.provider_connection_id "
+                "WHERE f.user_code = ?",
+                (user_code,),
+            ).fetchone()
+            if row is None:
+                raise DomainNotFound("device_flow_not_found")
+            self._require_project_owner(connection, row["project_id"], actor_id)
+            if datetime.fromisoformat(row["expires_at"]) <= now:
+                connection.execute(
+                    "UPDATE mvp_device_flows SET status = 'expired' WHERE device_code = ?",
+                    (row["device_code"],),
+                )
+                raise DomainConflict("device_flow_expired")
+            if row["status"] not in {"pending", "approved"}:
+                raise DomainConflict("device_flow_not_pending")
+            connection.execute(
+                "UPDATE mvp_device_flows SET status = 'approved', approved_by = ? "
+                "WHERE device_code = ?",
+                (actor_id, row["device_code"]),
+            )
+            values = dict(row)
+            values["status"] = "approved"
+            return self._device_flow(values)
+
+    def poll_device_flow(self, device_code: str) -> DeviceFlow:
+        now = _now_utc()
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_device_flows WHERE device_code = ?", (device_code,)
+            ).fetchone()
+            if row is None:
+                raise DomainNotFound("device_flow_not_found")
+            if datetime.fromisoformat(row["expires_at"]) <= now:
+                connection.execute(
+                    "UPDATE mvp_device_flows SET status = 'expired' WHERE device_code = ?",
+                    (device_code,),
+                )
+                values = dict(row)
+                values["status"] = "expired"
+                return self._device_flow(values)
+            if row["status"] == "approved":
+                connection.execute(
+                    "UPDATE mvp_device_flows SET status = 'connected', completed_at = ? "
+                    "WHERE device_code = ?",
+                    (now.isoformat(), device_code),
+                )
+                connection.execute(
+                    "UPDATE mvp_provider_connections SET status = 'connected' WHERE id = ?",
+                    (row["provider_connection_id"],),
+                )
+                values = dict(row)
+                values["status"] = "connected"
+                return self._device_flow(values)
+            return self._device_flow(row)
 
     def evaluate_autonomy(
         self,
@@ -588,6 +697,75 @@ class GovernanceService:
             )
             return run
 
+    def quarantine_restore(
+        self,
+        *,
+        project_id: str,
+        payload: dict[str, Any],
+    ) -> RestoreQuarantineRecord:
+        now = _now_utc()
+        payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.store.transaction() as connection:
+            self._require_project(connection, project_id)
+            existing = connection.execute(
+                "SELECT * FROM mvp_restore_quarantine WHERE source_digest = ?", (digest,)
+            ).fetchone()
+            if existing is not None:
+                return self._restore(existing)
+            record_id = str(uuid4())
+            connection.execute(
+                "INSERT INTO mvp_restore_quarantine(id, project_id, source_digest, payload_json, "
+                "status, reason, created_at) VALUES (?, ?, ?, ?, 'quarantined', ?, ?)",
+                (
+                    record_id,
+                    project_id,
+                    digest,
+                    payload_json,
+                    "restore_cannot_replace_authority",
+                    now.isoformat(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM mvp_restore_quarantine WHERE id = ?", (record_id,)
+            ).fetchone()
+            if row is None:  # pragma: no cover - insert invariant
+                raise DomainNotFound("restore_quarantine_not_found")
+            return self._restore(row)
+
+    def promote_quarantined_restore(
+        self,
+        restore_id: str,
+        *,
+        actor_id: str,
+    ) -> RestoreQuarantineRecord:
+        now = _now_utc()
+        with self.store.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_restore_quarantine WHERE id = ?", (restore_id,)
+            ).fetchone()
+            if row is None:
+                raise DomainNotFound("restore_quarantine_not_found")
+            self._require_project_owner(connection, row["project_id"], actor_id)
+            connection.execute(
+                "UPDATE mvp_restore_quarantine SET status = 'reviewed_import_candidate', "
+                "reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+                (now.isoformat(), actor_id, restore_id),
+            )
+            values = dict(row)
+            values.update(
+                status="reviewed_import_candidate",
+                reviewed_at=now.isoformat(),
+                reviewed_by=actor_id,
+            )
+            return self._restore(values)
+
     @staticmethod
     def _valid_credential_ref(value: str) -> bool:
         return value.startswith("env://") or value.startswith("keyring://")
@@ -663,4 +841,30 @@ class GovernanceService:
             content=row["content"],
             status=row["status"],
             created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _device_flow(row: sqlite3.Row | dict[str, Any]) -> DeviceFlow:
+        return DeviceFlow(
+            device_code=row["device_code"],
+            user_code=row["user_code"],
+            provider_connection_id=row["provider_connection_id"],
+            status=row["status"],
+            expires_at=datetime.fromisoformat(row["expires_at"]),
+            polling_interval_seconds=int(row["polling_interval_seconds"]),
+        )
+
+    @staticmethod
+    def _restore(row: sqlite3.Row | dict[str, Any]) -> RestoreQuarantineRecord:
+        return RestoreQuarantineRecord(
+            id=row["id"],
+            project_id=row["project_id"],
+            source_digest=row["source_digest"],
+            status=row["status"],
+            reason=row["reason"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            reviewed_at=datetime.fromisoformat(row["reviewed_at"])
+            if row["reviewed_at"]
+            else None,
+            reviewed_by=row["reviewed_by"],
         )

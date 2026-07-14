@@ -54,6 +54,11 @@ def test_team_provider_autonomy_memory_skill_and_routine_vertical_slice(
     )
     assert completed.status == "connected"
 
+    device = governance.begin_device_flow(provider.id)
+    assert governance.poll_device_flow(device.device_code).status == "pending"
+    governance.approve_device_flow(device.user_code, actor_id="alice")
+    assert governance.poll_device_flow(device.device_code).status == "connected"
+
     shadow = governance.evaluate_autonomy(
         project_id=project.id,
         principal_id="bob",
@@ -97,3 +102,19 @@ def test_team_provider_autonomy_memory_skill_and_routine_vertical_slice(
     run = governance.run_routine(routine.id, actor_id="bob")
     assert run.status == "succeeded"
     assert run.skill_version_id == skill.id
+
+    quarantined = governance.quarantine_restore(
+        project_id=project.id,
+        payload={"project_name": "Untrusted replacement", "authority_generation": 999_999},
+    )
+    replay = governance.quarantine_restore(
+        project_id=project.id,
+        payload={"project_name": "Untrusted replacement", "authority_generation": 999_999},
+    )
+    assert replay.id == quarantined.id
+    promoted_restore = governance.promote_quarantined_restore(
+        quarantined.id,
+        actor_id="alice",
+    )
+    assert promoted_restore.status == "reviewed_import_candidate"
+    assert core.get_budget(project.id).project_id == project.id

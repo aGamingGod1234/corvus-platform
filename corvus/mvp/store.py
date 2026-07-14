@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -296,6 +296,31 @@ CREATE TABLE mvp_channel_events (
 );
 """
 
+_MIGRATION_003 = """
+CREATE TABLE mvp_device_flows (
+    device_code TEXT PRIMARY KEY,
+    user_code TEXT NOT NULL UNIQUE,
+    provider_connection_id TEXT NOT NULL REFERENCES mvp_provider_connections(id),
+    status TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    polling_interval_seconds INTEGER NOT NULL,
+    approved_by TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE mvp_restore_quarantine (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    source_digest TEXT NOT NULL UNIQUE,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    reviewed_by TEXT
+);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -351,4 +376,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(2)
+            if 3 not in versions:
+                connection.executescript(_MIGRATION_003)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )
