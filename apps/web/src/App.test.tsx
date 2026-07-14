@@ -100,6 +100,18 @@ describe("Corvus operator console", () => {
     expect(screen.getByText("Define the next durable outcome.")).toBeVisible();
   });
 
+  it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
+    const api = fakeApi([PROJECT]);
+    window.history.replaceState(null, "", "/#pair=desktop-ephemeral-token");
+
+    render(<App api={api} />);
+
+    await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
+    expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
+    expect(screen.queryByDisplayValue("desktop-ephemeral-token")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("");
+  });
+
   it("creates a project through the injected application adapter", async () => {
     const api = fakeApi();
     api.session = vi.fn().mockResolvedValue({

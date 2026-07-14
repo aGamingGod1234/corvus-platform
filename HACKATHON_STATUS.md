@@ -74,6 +74,31 @@ uv build --wheel
 uv run python -m scripts.generate_supply_chain --artifact dist/corvus-0.2.0a1-py3-none-any.whl --static-dir apps/web/dist
 ```
 
+Build and launch the Windows desktop shell from a Visual Studio Developer PowerShell:
+
+```powershell
+$env:PATH = "C:\Users\lucas\.cargo\bin;$env:PATH"
+$env:CORVUS_SIDECAR_EXECUTABLE = (Resolve-Path .venv\Scripts\corvus-mvp.exe).Path
+pnpm --dir apps/desktop install --frozen-lockfile
+pnpm --dir apps/desktop tauri build --no-bundle
+& apps\desktop\src-tauri\target\release\corvus-desktop.exe
+```
+
+## Concise end-to-end demo
+
+The CLI demos use the same SQLite core as HTTP, web, and desktop and emit identifiers for inspection:
+
+```powershell
+$db = Join-Path $env:TEMP "corvus-acceptance.sqlite3"
+Remove-Item $db -ErrorAction SilentlyContinue
+$run = uv run corvus-mvp demo --database $db --json | ConvertFrom-Json
+uv run corvus-mvp workflow inspect $run.workflow_id --database $db --json
+uv run corvus-mvp capabilities-demo --database $db --json
+pnpm --dir apps/web build
+```
+
+`demo` creates the project, versioned outcome, dependency graph, attempts, leases, checkpoints, artifacts/lineage, conversation/events, approval replay, and settled budget, then reopens SQLite before reporting success. `capabilities-demo` exercises team/provider references, shadow autonomy, governed memory, an active versioned skill and routine, offline queue/reconciliation, signed channel identity/step-up, and duplicate-safe replay. Start the documented single-origin server to inspect the same durable run through CLI and web/SSE; launch the desktop command above to use that same client in Tauri.
+
 ## Milestone status
 
 ### Implemented and locally verified
@@ -87,7 +112,7 @@ uv run python -m scripts.generate_supply_chain --artifact dist/corvus-0.2.0a1-py
 - **M8:** Ed25519-signed offline intents, disconnect/queue/reconcile, duplicate-safe application, and restore quarantine.
 - **M9:** Ed25519-signed channel envelopes, expiry/digest/signature checks, identity mapping, deduplication, persisted results, step-up state, and real HTTP ingress.
 - **M10:** validated local/self-host configuration, tenant isolation queries, simulated OIDC mapping, compiled React assets served by FastAPI on the API origin, non-root multi-stage container/Compose configuration, wheel build, deterministic CycloneDX SBOM, static asset inventory, and artifact-bound provenance.
-- **M11 contracts:** sidecar lifecycle state and expiring, rollback-protected, threshold-signed update metadata using explicitly non-production ephemeral test keys.
+- **M11:** Tauri v2 Windows shell; validated fixed-argv sidecar launch; starting/ready/reconnecting/failed/stopped supervision; launch-instance-authenticated readiness checks; restart-safe ephemeral session repair; fragment-only one-time pairing; effective HTTP CSP; bounded redacted diagnostics; real compiled web client; graceful window/stdin shutdown with kill fallback; restricted loopback navigation with no remote Tauri IPC; unsigned current-user NSIS packaging; and expiring, rollback-protected, threshold-signed update metadata using explicitly non-production test keys.
 
 ### Implemented but not externally exercised
 
@@ -95,7 +120,7 @@ uv run python -m scripts.generate_supply_chain --artifact dist/corvus-0.2.0a1-py
 
 ### Scaffolded or partial
 
-- **M11:** a real Tauri shell, sidecar process wiring, and current-OS packaging check remain to be added.
+- No M2-M11 feature surface is placeholder-only. Production integrations listed below remain outside the hackathon local path.
 
 ### Blocked
 
@@ -107,6 +132,7 @@ uv run python -m scripts.generate_supply_chain --artifact dist/corvus-0.2.0a1-py
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
 - Web: `5 passed`; Vite production build passed (35 modules, 230.86 kB JS / 70.44 kB gzip); `pnpm audit` reported no known vulnerabilities.
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
+- M11 desktop: Python subprocess two-launch start/instance-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, decoy-readiness, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; the real second-launch WebView was visually confirmed paired; closing the real window stopped both desktop and sidecar processes; unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` built.
 - Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
 - Design blueprint: packet, provenance, source evidence, fixed viewport captures, and responsive visual inspection exist. Its automated gate still fails because the installed auditor unconditionally requires a restaurant `dish-selector`, requires packet approval after edits, and statically scans one React source file at a time; no fake restaurant artifact was added.
 
@@ -114,4 +140,5 @@ uv run python -m scripts.generate_supply_chain --artifact dist/corvus-0.2.0a1-py
 
 - The deterministic local effect adapter returns digest-bound results and does not perform privileged host writes or real provider calls.
 - No production cloud, PostgreSQL server, external OAuth registration, notarization, production signing, or multi-OS installer certification was attempted.
-- The container definition is authored but not locally exercised because no container engine is installed. Tauri remains the executable objective work.
+- The container definition is authored but not locally exercised because no container engine is installed.
+- The NSIS installer is unsigned and does not yet bundle a standalone Python sidecar; local execution uses the validated `CORVUS_SIDECAR_EXECUTABLE` path. No production signing, notarization, or multi-OS certification is claimed.

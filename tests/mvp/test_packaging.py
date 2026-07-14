@@ -31,7 +31,11 @@ def test_static_web_and_api_share_one_origin(tmp_path: Path) -> None:
 
     client = _static_app(tmp_path, static_web_dir)
 
-    assert client.get("/").text == "<main>Corvus operator</main>"
+    root_response = client.get("/")
+    assert root_response.text == "<main>Corvus operator</main>"
+    assert "default-src 'self'" in root_response.headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in root_response.headers["Content-Security-Policy"]
+    assert root_response.headers["X-Content-Type-Options"] == "nosniff"
     assert client.get("/assets/app.js").text == "window.corvus = true;"
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/ready").json() == {"status": "ready"}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,6 +41,9 @@ def test_pairing_session_authorization_and_csrf(tmp_path: Path) -> None:
     assert client.post("/api/auth/pair", json={"token": "wrong"}).status_code == 403
 
     csrf = _pair(client, bootstrap_token)
+    replay = client.post("/api/auth/pair", json={"token": bootstrap_token})
+    assert replay.status_code == 403
+    assert replay.json()["detail"] == "pairing_token_consumed"
     assert client.post("/api/projects", json={"name": "No CSRF"}).status_code == 403
     created = client.post(
         "/api/projects",
@@ -49,6 +54,43 @@ def test_pairing_session_authorization_and_csrf(tmp_path: Path) -> None:
     assert created.json()["tenant_id"] == "local"
     assert client.get("/api/projects").json()[0]["name"] == "API project"
     assert client.get("/openapi.json").status_code == 200
+
+
+def test_readiness_can_prove_the_desktop_sidecar_instance(tmp_path: Path) -> None:
+    instance_token = secrets.token_urlsafe(32)
+    challenge = secrets.token_hex(16)
+    app = create_app(
+        database=tmp_path / "corvus.sqlite3",
+        bootstrap_token=secrets.token_urlsafe(32),
+        session_secret=secrets.token_bytes(32),
+        instance_token=instance_token,
+    )
+
+    client = TestClient(app)
+    public_response = client.get("/ready")
+    response = client.get("/ready", headers={"X-Corvus-Challenge": challenge})
+
+    assert public_response.json() == {"status": "ready"}
+    assert "X-Corvus-Instance-Proof" not in public_response.headers
+    assert response.json() == {"status": "ready"}
+    expected_proof = hmac.new(
+        instance_token.encode(), challenge.encode(), hashlib.sha256
+    ).hexdigest()
+    assert response.headers["X-Corvus-Instance-Proof"] == expected_proof
+    assert instance_token not in str(response.headers)
+    assert instance_token not in response.text
+
+
+def test_standard_server_does_not_repair_an_existing_pairing(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.sqlite3"
+    first_client, first_token = _client(database)
+    _pair(first_client, first_token)
+    second_client, second_token = _client(database)
+
+    response = second_client.post("/api/auth/pair", json={"token": second_token})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "pairing_already_completed"
 
 
 def test_http_workflow_execution_and_sse_replay(tmp_path: Path) -> None:

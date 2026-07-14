@@ -60,6 +60,14 @@ interface AppProps {
   api?: CorvusApi;
 }
 
+function takeDesktopPairingValue(): string | null {
+  const parameters = new URLSearchParams(window.location.hash.slice(1));
+  const value = parameters.get("pair");
+  if (value === null) return null;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  return value.length >= 16 && value.length <= 512 ? value : null;
+}
+
 interface WorkflowDetail {
   items: WorkItem[];
   effects: Effect[];
@@ -102,6 +110,7 @@ const EMPTY_OPERATIONS: OperationsDetail = {
 };
 
 export function App({ api = browserApi }: AppProps) {
+  const desktopPairingAttempt = useRef<Promise<void> | null>(null);
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -129,7 +138,24 @@ export function App({ api = browserApi }: AppProps) {
       .session()
       .then(loadProjects)
       .then(() => active && setPhase("ready"))
-      .catch(() => active && setPhase("pairing"));
+      .catch(async () => {
+        if (!active) return;
+        const pairingValue = takeDesktopPairingValue();
+        if (pairingValue === null) {
+          setPhase("pairing");
+          return;
+        }
+        try {
+          desktopPairingAttempt.current ??= api.pair(pairingValue);
+          await desktopPairingAttempt.current;
+          await loadProjects();
+          if (active) setPhase("ready");
+        } catch (reason: unknown) {
+          if (!active) return;
+          setError(messageFor(reason));
+          setPhase("pairing");
+        }
+      });
     return () => {
       active = false;
     };

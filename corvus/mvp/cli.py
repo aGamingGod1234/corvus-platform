@@ -33,6 +33,7 @@ DEFAULT_SERVER_HOST = "127.0.0.1"
 DEFAULT_SERVER_PORT = 8080
 DEFAULT_PAIRING_REFERENCE = "env://CORVUS_BOOTSTRAP_TOKEN"
 DEFAULT_SIGNING_REFERENCE = "env://CORVUS_SESSION_SECRET"
+DEFAULT_INSTANCE_REFERENCE = "env://CORVUS_INSTANCE_TOKEN"
 MINIMUM_SESSION_SECRET_BYTES = 32
 
 
@@ -47,6 +48,8 @@ def build_server_app(
     signing_ref: str,
     static_web_dir: Path | None = None,
     allowed_origins: frozenset[str] | None = None,
+    allow_existing_user_pairing: bool = False,
+    instance_ref: str | None = None,
 ) -> FastAPI:
     """Build the loopback API without retaining plaintext credentials in configuration."""
     broker = LocalSecretBroker()
@@ -54,12 +57,15 @@ def build_server_app(
     session_secret = broker.resolve(signing_ref).reveal().encode("utf-8")
     if len(session_secret) < MINIMUM_SESSION_SECRET_BYTES:
         raise ValueError("session_secret_too_short")
+    instance_token = broker.resolve(instance_ref).reveal() if instance_ref is not None else None
     return create_app(
         database=database.expanduser().resolve(),
         bootstrap_token=bootstrap_token,
         session_secret=session_secret,
         static_web_dir=static_web_dir,
         allowed_origins=allowed_origins,
+        allow_existing_user_pairing=allow_existing_user_pairing,
+        instance_token=instance_token,
     )
 
 
@@ -375,6 +381,40 @@ def server(
         _fail(error)
         return
     uvicorn.run(server_app, host=host, port=port, access_log=False)
+
+
+@mvp_app.command("desktop-sidecar")
+def desktop_sidecar(
+    database: DatabaseOption = Path("corvus-desktop.sqlite3"),
+    host: Annotated[str, typer.Option("--host")] = DEFAULT_SERVER_HOST,
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = DEFAULT_SERVER_PORT,
+    static_web_dir: Annotated[
+        Path,
+        typer.Option("--static-web-dir", help="Built Vite directory served to Tauri"),
+    ] = Path("apps/web/dist"),
+    pairing_ref: Annotated[
+        str,
+        typer.Option("--bootstrap-token-ref", help="env:// or keyring:// reference"),
+    ] = DEFAULT_PAIRING_REFERENCE,
+    signing_ref: Annotated[
+        str,
+        typer.Option("--session-secret-ref", help="env:// or keyring:// reference"),
+    ] = DEFAULT_SIGNING_REFERENCE,
+) -> None:
+    """Run the loopback sidecar until its supervising desktop process requests shutdown."""
+    from corvus.mvp.desktop_runtime import run_desktop_sidecar
+
+    try:
+        run_desktop_sidecar(
+            database=database.expanduser().resolve(),
+            host=host,
+            port=port,
+            static_web_dir=static_web_dir.expanduser().resolve(),
+            pairing_ref=pairing_ref,
+            signing_ref=signing_ref,
+        )
+    except (DomainNotFound, ValueError) as error:
+        _fail(error)
 
 
 @mvp_app.command("capabilities-demo")

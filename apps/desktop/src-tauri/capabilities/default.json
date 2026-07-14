@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "No Tauri IPC is exposed to the remote loopback operator console.",
+  "windows": ["main"],
+  "permissions": []
+}

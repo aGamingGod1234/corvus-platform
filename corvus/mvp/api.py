@@ -4,9 +4,10 @@ import hashlib
 import hmac
 import json
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -52,6 +53,15 @@ from corvus.mvp.models import (
 
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
+_INSTANCE_CHALLENGE_HEADER = "X-Corvus-Challenge"
+_INSTANCE_PROOF_HEADER = "X-Corvus-Instance-Proof"
+_MINIMUM_INSTANCE_CHALLENGE_LENGTH = 16
+_MAXIMUM_INSTANCE_CHALLENGE_LENGTH = 512
+_WEB_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "font-src 'self' data:; img-src 'self' data:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
 
 
 class ApiModel(BaseModel):
@@ -161,12 +171,16 @@ class _AuthManager:
         service: CorvusService,
         bootstrap_token: str,
         session_secret: bytes,
+        allow_existing_user_pairing: bool,
     ) -> None:
         if len(session_secret) < 32:
             raise ValueError("session_secret_must_be_at_least_32_bytes")
         self.service = service
         self.bootstrap_digest = hashlib.sha256(bootstrap_token.encode("utf-8")).digest()
         self.session_secret = session_secret
+        self.allow_existing_user_pairing = allow_existing_user_pairing
+        self._bootstrap_lock = Lock()
+        self._bootstrap_used = False
 
     def pair(self, token: str) -> tuple[SessionPrincipal, str]:
         candidate = hashlib.sha256(token.encode("utf-8")).digest()
@@ -174,24 +188,38 @@ class _AuthManager:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="pairing_token_invalid"
             )
-        now = datetime.now(UTC)
-        with self.service.store.transaction() as connection:
-            existing = connection.execute("SELECT * FROM mvp_local_users LIMIT 1").fetchone()
-            if existing is not None:
+        with self._bootstrap_lock:
+            if self._bootstrap_used:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="pairing_already_completed",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="pairing_token_consumed",
                 )
-            user_id = str(uuid4())
-            connection.execute(
-                "INSERT INTO mvp_local_users(id, tenant_id, username, paired_at) "
-                "VALUES (?, 'local', 'local-user', ?)",
-                (user_id, now.isoformat()),
-            )
+            self._bootstrap_used = True
+            now = datetime.now(UTC)
+            with self.service.store.transaction() as connection:
+                existing = connection.execute("SELECT * FROM mvp_local_users LIMIT 1").fetchone()
+                if existing is not None and not self.allow_existing_user_pairing:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="pairing_already_completed",
+                    )
+                if existing is None:
+                    user_id = str(uuid4())
+                    tenant_id = "local"
+                    username = "local-user"
+                    connection.execute(
+                        "INSERT INTO mvp_local_users(id, tenant_id, username, paired_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (user_id, tenant_id, username, now.isoformat()),
+                    )
+                else:
+                    user_id = existing["id"]
+                    tenant_id = existing["tenant_id"]
+                    username = existing["username"]
         principal = SessionPrincipal(
             user_id=user_id,
-            username="local-user",
-            tenant_id="local",
+            username=username,
+            tenant_id=tenant_id,
             csrf_token=secrets.token_urlsafe(24),
             expires_at=now + _SESSION_LIFETIME,
         )
@@ -249,6 +277,16 @@ def _pad_base64(value: str) -> bytes:
     return (value + "=" * (-len(value) % 4)).encode("ascii")
 
 
+async def _security_headers(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _WEB_CONTENT_SECURITY_POLICY
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 def create_app(
     *,
     database: Path,
@@ -257,9 +295,13 @@ def create_app(
     replay_limit: int = 500,
     static_web_dir: Path | None = None,
     allowed_origins: frozenset[str] | None = None,
+    allow_existing_user_pairing: bool = False,
+    instance_token: str | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
+    if instance_token is not None and not 16 <= len(instance_token) <= 512:
+        raise ValueError("instance_token_length_invalid")
     static_root = _validated_static_root(static_web_dir)
     trusted_origins = (
         allowed_origins
@@ -284,8 +326,10 @@ def create_app(
         service=service,
         bootstrap_token=bootstrap_token,
         session_secret=session_secret,
+        allow_existing_user_pairing=allow_existing_user_pairing,
     )
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
+    app.middleware("http")(_security_headers)
 
     @app.exception_handler(DomainNotFound)
     async def not_found_handler(_request: Request, error: DomainNotFound) -> JSONResponse:
@@ -319,9 +363,29 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/ready")
-    def ready() -> dict[str, str]:
+    def ready(
+        response: Response,
+        instance_challenge: Annotated[
+            str | None, Header(alias=_INSTANCE_CHALLENGE_HEADER)
+        ] = None,
+    ) -> dict[str, str]:
         with service.store.connect() as connection:
             connection.execute("SELECT 1").fetchone()
+        if instance_token is not None and instance_challenge is not None:
+            if not (
+                _MINIMUM_INSTANCE_CHALLENGE_LENGTH
+                <= len(instance_challenge)
+                <= _MAXIMUM_INSTANCE_CHALLENGE_LENGTH
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="instance_challenge_length_invalid",
+                )
+            response.headers[_INSTANCE_PROOF_HEADER] = hmac.new(
+                instance_token.encode("utf-8"),
+                instance_challenge.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
         return {"status": "ready"}
 
     @app.post("/api/auth/pair", response_model=PairResponse)
