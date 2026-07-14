@@ -46,3 +46,29 @@
 
 ### Suggested Next Steps
 - Add secure local authentication, CSRF protection, typed API routes, and replayable SSE after dependency approval.
+
+## 2026-07-14 — M6–M9 Governed Local Domain Slices
+
+### What Was Implemented
+- Added tenant/project teams, owner-controlled membership, provider references, capability grants, an effect-boundary secret broker, simulated OAuth PKCE, stored autonomy evidence, and policy-driven shadow promotion.
+- Added governed memory retrieval through an explicit untrusted-data context firewall, versioned skills, active-skill routines, and authorized routine runs.
+- Added Ed25519-signed offline intent queue/reconciliation and signed channel ingress with expiry, digest verification, identity mapping, deduplication, and sensitive-action step-up state.
+
+### Files Modified
+- `corvus/mvp/store.py` — additive schema migration for M6–M9 state.
+- `corvus/mvp/governance.py` — teams, providers, broker, autonomy, memory, skills, and routines.
+- `corvus/mvp/ingress.py` — signed offline and channel envelope services.
+- `tests/mvp/test_governance.py` — governed collaboration/autonomy/memory tests.
+- `tests/mvp/test_ingress.py` — signature, reconciliation, dedupe, identity, and step-up tests.
+- `PROJECT_LOG.md` — implementation record.
+
+### Assumptions Made (flag these for review)
+- Ed25519 local actor keys are suitable test/demo credentials; only public keys are persisted.
+- The simulated OAuth authorization code is a local adapter, while PKCE state/verifier binding uses the real contract and stores only the verifier digest.
+
+### Known Issues / Deferred
+- Device-flow demonstration, restore quarantine, HTTP channel ingress, and CLI/web access remain for adapter lanes.
+- No real provider registration or credential value is persisted or externally exercised.
+
+### Suggested Next Steps
+- Expose these services through authenticated API/CLI/web surfaces after dependency approval.

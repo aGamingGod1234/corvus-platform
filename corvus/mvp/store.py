@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -154,6 +154,148 @@ CREATE INDEX mvp_work_items_ready_idx ON mvp_work_items(workflow_id, status, ite
 CREATE INDEX mvp_events_workflow_idx ON mvp_events(workflow_id, id);
 """
 
+_MIGRATION_002 = """
+CREATE TABLE mvp_teams (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_team_members (
+    team_id TEXT NOT NULL REFERENCES mvp_teams(id),
+    principal_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(team_id, principal_id)
+);
+CREATE TABLE mvp_provider_connections (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    provider TEXT NOT NULL,
+    credential_ref TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_credential_grants (
+    id TEXT PRIMARY KEY,
+    provider_connection_id TEXT NOT NULL REFERENCES mvp_provider_connections(id),
+    principal_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    credential_ref TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(provider_connection_id, principal_id, capability)
+);
+CREATE TABLE mvp_oauth_flows (
+    state TEXT PRIMARY KEY,
+    provider_connection_id TEXT NOT NULL REFERENCES mvp_provider_connections(id),
+    redirect_uri TEXT NOT NULL,
+    verifier_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE mvp_autonomy_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    principal_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    requested_execution INTEGER NOT NULL,
+    executed INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_autonomy_evidence (
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES mvp_autonomy_decisions(id),
+    successful INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_autonomy_policies (
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    principal_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    evidence_count INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, principal_id, capability)
+);
+CREATE TABLE mvp_memory_entries (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    scope TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, id, version)
+);
+CREATE TABLE mvp_skill_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, name, version)
+);
+CREATE TABLE mvp_routines (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES mvp_projects(id),
+    name TEXT NOT NULL,
+    skill_version_id TEXT NOT NULL REFERENCES mvp_skill_versions(id),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_routine_runs (
+    id TEXT PRIMARY KEY,
+    routine_id TEXT NOT NULL REFERENCES mvp_routines(id),
+    skill_version_id TEXT NOT NULL REFERENCES mvp_skill_versions(id),
+    actor_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE TABLE mvp_envelope_actor_keys (
+    actor_id TEXT PRIMARY KEY,
+    public_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE mvp_offline_intents (
+    id TEXT PRIMARY KEY,
+    actor_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    envelope_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    application_count INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE mvp_channel_identities (
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(provider, external_id)
+);
+CREATE TABLE mvp_channel_events (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    external_event_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    principal_id TEXT,
+    envelope_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    processing_count INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(provider, external_event_id)
+);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -202,4 +344,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(1)
+            if 2 not in versions:
+                connection.executescript(_MIGRATION_002)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )
