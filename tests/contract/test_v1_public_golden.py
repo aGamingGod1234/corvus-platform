@@ -150,7 +150,10 @@ def _normalize_payload(value: object, root: Path) -> object:
 
 def _canonicalize_rich_presentation(value: object) -> object:
     if isinstance(value, dict):
-        return {key: _canonicalize_rich_presentation(item) for key, item in value.items()}
+        canonical = {key: _canonicalize_rich_presentation(item) for key, item in value.items()}
+        if "scenario" in value and isinstance(canonical.get("output"), str):
+            canonical["output"] = " ".join(canonical["output"].split())
+        return canonical
     if isinstance(value, list):
         return [_canonicalize_rich_presentation(item) for item in value]
     if isinstance(value, str) and any("\u2500" <= character <= "\u257f" for character in value):
@@ -643,3 +646,7 @@ def test_rich_help_layout_is_canonical_across_platforms() -> None:
     square = {"help": "┌────────┐\n│  option   value  │\n└────────┘"}
 
     assert _canonicalize_rich_presentation(rounded) == _canonicalize_rich_presentation(square)
+
+    wrapped = {"scenario": "error", "output": "Unable to load\nconfigured provider"}
+    unwrapped = {"scenario": "error", "output": "Unable to load configured provider"}
+    assert _canonicalize_rich_presentation(wrapped) == _canonicalize_rich_presentation(unwrapped)

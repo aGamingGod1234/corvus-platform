@@ -291,7 +291,7 @@
 ## 2026-07-14 - Cross-Platform Certification Fixture Stabilization
 
 ### What Was Implemented
-- Canonicalized Rich's equivalent rounded/square borders and platform-dependent panel wrapping before comparing help presentation, while retaining the exact frozen fixture hash and command/schema checks.
+- Canonicalized Rich's equivalent rounded/square borders, help-panel wrapping, and non-JSON command-output line wrapping before comparison, while retaining the exact frozen fixture hash, output wording, exit codes, and command/schema checks.
 - Fixed the MVP server-help assertion to use an explicit wide, no-color terminal on every CI operating system.
 - Applied the repository's configured Ruff formatter to every file reported by the certification formatting gate; changes were mechanical only.
 
