@@ -1532,6 +1532,47 @@ def test_unverified_registry_trust_state_signatures_fail_closed() -> None:
     assert result.reason_code == "registry_trust_signatures_unverified"
 
 
+def test_registry_threshold_cannot_be_lowered_by_the_proof() -> None:
+    case = _exact_allow_case()
+    context = _valid_authority_context(case[0])
+    assert context.registry_verification_proof is not None
+    assert context.registry_trust_state is not None
+    assert context.trust_anchor is not None
+    private_keys = tuple(Ed25519PrivateKey.generate() for _ in range(3))
+    public_keys = tuple(_public_key_b64(key) for key in private_keys)
+    keyset_digest = authority_public_key_set_digest(public_keys)
+    trust_state = context.registry_trust_state.model_copy(
+        update={"threshold_signature_set_digest": keyset_digest}
+    )
+    invalid_signature = base64.b64encode(b"x" * 64).decode("ascii")
+    proof = context.registry_verification_proof.model_copy(
+        update={
+            "trust_state_digest": trust_state.canonical_digest,
+            "offline_root_public_keys": public_keys,
+            "trust_state_signatures": (
+                _signature_b64(private_keys[0], bytes.fromhex(trust_state.canonical_digest)),
+                invalid_signature,
+                invalid_signature,
+            ),
+            "signature_threshold": 1,
+        }
+    )
+    context = context.model_copy(
+        update={
+            "registry_trust_state": trust_state,
+            "registry_verification_proof": proof,
+            "trust_anchor": context.trust_anchor.model_copy(
+                update={"pinned_registry_root_digest": keyset_digest}
+            ),
+        }
+    )
+
+    result = _evaluate_direct_case(case, context)
+
+    assert result.decision is AuthorizationDecision.DENY
+    assert result.reason_code == "registry_trust_signature_set_invalid"
+
+
 def test_unverified_registry_freshness_signature_fails_closed() -> None:
     case = _exact_allow_case()
     context = _valid_authority_context(case[0])

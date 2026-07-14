@@ -606,10 +606,11 @@ def _registry_denial_reason(
             raise ValueError("registry_signature_set_invalid")
     except ValueError:
         return "registry_trust_signature_set_invalid"
+    required_threshold = len(verification.offline_root_public_keys) // 2 + 1
     if (
         keyset_digest != anchor.pinned_registry_root_digest
         or keyset_digest != trust_state.threshold_signature_set_digest
-        or verification.signature_threshold > len(verification.offline_root_public_keys)
+        or verification.signature_threshold != required_threshold
     ):
         return "registry_trust_signature_set_invalid"
     verified_signatures = sum(
