@@ -77,8 +77,7 @@ def build_provenance(
     artifacts: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     materials: list[dict[str, Any]] = [
-        {"uri": name, "digest": {"sha256": _sha256_file(root / name)}}
-        for name in _MATERIALS
+        {"uri": name, "digest": {"sha256": _sha256_file(root / name)}} for name in _MATERIALS
     ]
     source_digest = hashlib.sha256(
         "".join(item["digest"]["sha256"] for item in materials).encode("ascii")
@@ -91,9 +90,7 @@ def build_provenance(
         if artifact.name in artifact_names:
             raise ValueError(f"artifact_name_duplicate:{artifact.name}")
         artifact_names.add(artifact.name)
-        subjects.append(
-            {"name": artifact.name, "digest": {"sha256": _sha256_file(artifact)}}
-        )
+        subjects.append({"name": artifact.name, "digest": {"sha256": _sha256_file(artifact)}})
     return {
         "_type": "https://in-toto.io/Statement/v1",
         "subject": subjects,
@@ -141,7 +138,9 @@ def _git_commit(root: Path) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate deterministic Corvus SBOM and provenance")
+    parser = argparse.ArgumentParser(
+        description="Generate deterministic Corvus SBOM and provenance"
+    )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--output-dir", type=Path, default=Path("dist/supply-chain"))
     parser.add_argument("--commit")

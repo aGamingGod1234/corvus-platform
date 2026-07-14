@@ -148,6 +148,19 @@ def _normalize_payload(value: object, root: Path) -> object:
     return str(value)
 
 
+def _canonicalize_rich_presentation(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _canonicalize_rich_presentation(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonicalize_rich_presentation(item) for item in value]
+    if isinstance(value, str) and any("\u2500" <= character <= "\u257f" for character in value):
+        without_borders = "".join(
+            " " if "\u2500" <= character <= "\u257f" else character for character in value
+        )
+        return " ".join(without_borders.split())
+    return value
+
+
 def _normalize_command_payload(value: object, root: Path, argv: tuple[str, ...]) -> object:
     normalized = _normalize_payload(value, root)
     if argv == ("doctor", "--json") and isinstance(normalized, dict):
@@ -622,4 +635,11 @@ def test_v1_public_contract_matches_hashed_golden(tmp_path: Path) -> None:
         and golden["unhandled_exception"] is None
         for golden in actual["command_goldens"]  # type: ignore[index]
     )
-    assert actual == expected
+    assert _canonicalize_rich_presentation(actual) == _canonicalize_rich_presentation(expected)
+
+
+def test_rich_help_layout_is_canonical_across_platforms() -> None:
+    rounded = {"help": "╭────╮\n│ option value │\n╰────╯"}
+    square = {"help": "┌────────┐\n│  option   value  │\n└────────┘"}
+
+    assert _canonicalize_rich_presentation(rounded) == _canonicalize_rich_presentation(square)

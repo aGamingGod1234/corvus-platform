@@ -215,7 +215,9 @@ class _SignedEnvelopeService:
             public_key = Ed25519PublicKey.from_public_bytes(
                 base64.urlsafe_b64decode(row["public_key"].encode("ascii"))
             )
-            public_key.verify(base64.urlsafe_b64decode(signature.encode("ascii")), _canonical(envelope))
+            public_key.verify(
+                base64.urlsafe_b64decode(signature.encode("ascii")), _canonical(envelope)
+            )
         except (InvalidSignature, ValueError, TypeError) as error:
             raise DomainConflict("envelope_signature_invalid") from error
 
@@ -400,11 +402,7 @@ class ChannelIngressService(_SignedEnvelopeService):
                 principal_id = None
             else:
                 principal_id = identity["principal_id"]
-                status = (
-                    "step_up_required"
-                    if envelope.action in _SENSITIVE_ACTIONS
-                    else "accepted"
-                )
+                status = "step_up_required" if envelope.action in _SENSITIVE_ACTIONS else "accepted"
             result = {
                 "trusted_action": envelope.action,
                 "untrusted_payload_digest": envelope.payload_digest,

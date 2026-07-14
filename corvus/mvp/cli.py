@@ -207,8 +207,7 @@ def workflow_inspect(
             ],
             "attempts": service.list_attempts(workflow_id),
             "artifacts": [
-                artifact.model_dump(mode="json")
-                for artifact in service.list_artifacts(workflow_id)
+                artifact.model_dump(mode="json") for artifact in service.list_artifacts(workflow_id)
             ],
             "checkpoints": [
                 checkpoint.model_dump(mode="json")
@@ -321,9 +320,7 @@ def demo(
 @mvp_app.command("config-check")
 def config_check(
     mode: Annotated[str, typer.Option("--mode")] = "local",
-    database_url: Annotated[
-        str, typer.Option("--database-url")
-    ] = "sqlite:///corvus-mvp.sqlite3",
+    database_url: Annotated[str, typer.Option("--database-url")] = "sqlite:///corvus-mvp.sqlite3",
     public_url: Annotated[str, typer.Option("--public-url")] = "http://127.0.0.1:8080",
     oidc_issuer: Annotated[str | None, typer.Option("--oidc-issuer")] = None,
     json_output: JsonOption = False,

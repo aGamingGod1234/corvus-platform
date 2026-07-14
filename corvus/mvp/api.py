@@ -365,9 +365,7 @@ def create_app(
     @app.get("/ready")
     def ready(
         response: Response,
-        instance_challenge: Annotated[
-            str | None, Header(alias=_INSTANCE_CHALLENGE_HEADER)
-        ] = None,
+        instance_challenge: Annotated[str | None, Header(alias=_INSTANCE_CHALLENGE_HEADER)] = None,
     ) -> dict[str, str]:
         with service.store.connect() as connection:
             connection.execute("SELECT 1").fetchone()
@@ -743,9 +741,7 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> list[dict[str, Any]]:
         TenantScopedQueries(service.store).get_project(principal.tenant_id, project_id)
-        return [
-            item.model_dump(mode="json") for item in governance.list_memory_entries(project_id)
-        ]
+        return [item.model_dump(mode="json") for item in governance.list_memory_entries(project_id)]
 
     @app.post(
         "/api/projects/{project_id}/memories",
@@ -846,7 +842,9 @@ def create_app(
     ) -> dict[str, Any]:
         routine = governance.get_routine(routine_id)
         TenantScopedQueries(service.store).get_project(principal.tenant_id, routine.project_id)
-        return governance.run_routine(routine_id, actor_id=principal.user_id).model_dump(mode="json")
+        return governance.run_routine(routine_id, actor_id=principal.user_id).model_dump(
+            mode="json"
+        )
 
     @app.get("/api/offline-intents", response_model=list[OfflineIntentRecord])
     def offline_intents(

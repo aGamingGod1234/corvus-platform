@@ -129,10 +129,13 @@ def test_desktop_sidecar_restarts_repairs_session_and_preserves_state(tmp_path: 
     try:
         with httpx.Client(base_url=first_url) as client:
             assert client.get("/").text == "<main>Desktop Corvus</main>"
-            assert client.post(
-                "/api/auth/pair",
-                json={"token": first_bootstrap},
-            ).json()["status"] == "paired"
+            assert (
+                client.post(
+                    "/api/auth/pair",
+                    json={"token": first_bootstrap},
+                ).json()["status"]
+                == "paired"
+            )
             csrf = client.get("/api/auth/session").json()["csrf_token"]
             created = client.post(
                 "/api/projects",

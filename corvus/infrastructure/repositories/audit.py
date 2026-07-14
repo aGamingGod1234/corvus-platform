@@ -347,8 +347,7 @@ class AuditRepository:
                 (str(workspace_id),),
             ).fetchall()
             bindings = connection.execute(
-                "SELECT binding_hash FROM audit_result_bindings "
-                "WHERE workspace_id = ? ORDER BY id",
+                "SELECT binding_hash FROM audit_result_bindings WHERE workspace_id = ? ORDER BY id",
                 (str(workspace_id),),
             ).fetchall()
         for (payload_json,) in checkpoints:

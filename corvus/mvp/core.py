@@ -274,9 +274,7 @@ class CorvusService:
         ordered: list[WorkItem] = []
         while remaining:
             ready_keys = sorted(
-                key
-                for key, item in remaining.items()
-                if set(item.depends_on).issubset(resolved)
+                key for key, item in remaining.items() if set(item.depends_on).issubset(resolved)
             )
             if not ready_keys:
                 raise DomainConflict("persisted_workflow_dependency_cycle")
@@ -669,9 +667,7 @@ class CorvusService:
                 "UPDATE mvp_work_items SET status = ?, error = NULL, updated_at = ? WHERE id = ?",
                 (status.value, now.isoformat(), row["id"]),
             )
-            self._append_event(
-                connection, workflow_id, "work_item.retried", {"key": key}
-            )
+            self._append_event(connection, workflow_id, "work_item.retried", {"key": key})
         return self.get_work_item(workflow_id, key)
 
     def list_attempts(self, workflow_id: str) -> tuple[dict[str, Any], ...]:
@@ -929,9 +925,7 @@ class CorvusService:
             (item.cost_units, project_row["project_id"]),
         )
 
-    def _settle_budget(
-        self, connection: sqlite3.Connection, effect_id: str, now: datetime
-    ) -> None:
+    def _settle_budget(self, connection: sqlite3.Connection, effect_id: str, now: datetime) -> None:
         row = connection.execute(
             "SELECT * FROM mvp_budget_reservations WHERE effect_id = ?", (effect_id,)
         ).fetchone()
@@ -1044,14 +1038,18 @@ class CorvusService:
 
     @staticmethod
     def _require_project(connection: sqlite3.Connection, project_id: str) -> sqlite3.Row:
-        row = connection.execute("SELECT * FROM mvp_projects WHERE id = ?", (project_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM mvp_projects WHERE id = ?", (project_id,)
+        ).fetchone()
         if row is None:
             raise DomainNotFound("project_not_found")
         return cast(sqlite3.Row, row)
 
     @staticmethod
     def _require_outcome(connection: sqlite3.Connection, outcome_id: str) -> sqlite3.Row:
-        row = connection.execute("SELECT * FROM mvp_outcomes WHERE id = ?", (outcome_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM mvp_outcomes WHERE id = ?", (outcome_id,)
+        ).fetchone()
         if row is None:
             raise DomainNotFound("outcome_not_found")
         return cast(sqlite3.Row, row)

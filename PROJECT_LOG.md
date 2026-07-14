@@ -291,12 +291,15 @@
 ## 2026-07-14 - Cross-Platform Certification Fixture Stabilization
 
 ### What Was Implemented
-- Canonicalized Rich's equivalent rounded and square help-panel borders before comparing the frozen V1 CLI contract.
+- Canonicalized Rich's equivalent rounded/square borders and platform-dependent panel wrapping before comparing help presentation, while retaining the exact frozen fixture hash and command/schema checks.
 - Fixed the MVP server-help assertion to use an explicit wide, no-color terminal on every CI operating system.
+- Applied the repository's configured Ruff formatter to every file reported by the certification formatting gate; changes were mechanical only.
 
 ### Files Modified
 - `tests/contract/test_v1_public_golden.py` - platform-neutral presentation normalization without changing the frozen command/schema contract.
 - `tests/mvp/test_cli_adapter.py` - deterministic help rendering width and color environment.
+- `corvus/infrastructure/repositories/audit.py`, `corvus/mvp/api.py`, `corvus/mvp/cli.py`, `corvus/mvp/core.py`, `corvus/mvp/governance.py`, and `corvus/mvp/ingress.py` - configured Ruff formatting only.
+- `scripts/generate_supply_chain.py`, `tests/mvp/test_api.py`, `tests/mvp/test_desktop_runtime.py`, and `tests/mvp/test_execution_core.py` - configured Ruff formatting only.
 - `PROJECT_LOG.md` - CI portability record.
 
 ### Assumptions Made (flag these for review)

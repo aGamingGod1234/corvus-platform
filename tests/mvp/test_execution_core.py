@@ -173,5 +173,7 @@ def test_kill_switch_heartbeat_failure_and_retry_are_durable(tmp_path: Path) -> 
     retried = service.retry_work_item(workflow.id, "controlled")
     assert retried.status is WorkItemStatus.READY
     assert service.run_next(workflow.id, worker_id="worker-b").status is WorkItemStatus.SUCCEEDED
-    assert any(event["event_type"] == "work_item.retried" for event in service.list_events(workflow.id))
+    assert any(
+        event["event_type"] == "work_item.retried" for event in service.list_events(workflow.id)
+    )
     assert service.list_lineage(workflow.id)

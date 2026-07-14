@@ -195,9 +195,7 @@ class GovernanceService:
 
     def create_team(self, *, project_id: str, name: str, owner_id: str) -> Team:
         now = _now_utc()
-        team = Team(
-            id=str(uuid4()), project_id=project_id, name=name.strip(), created_at=now
-        )
+        team = Team(id=str(uuid4()), project_id=project_id, name=name.strip(), created_at=now)
         with self.store.transaction() as connection:
             self._require_project(connection, project_id)
             connection.execute(
@@ -230,9 +228,7 @@ class GovernanceService:
 
     def get_team(self, team_id: str) -> Team:
         with self.store.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM mvp_teams WHERE id = ?", (team_id,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM mvp_teams WHERE id = ?", (team_id,)).fetchone()
         if row is None:
             raise DomainNotFound("team_not_found")
         return Team(
@@ -588,7 +584,7 @@ class GovernanceService:
             mode: AutonomyMode = "supervised"
             connection.execute(
                 "INSERT INTO mvp_autonomy_policies(project_id, principal_id, capability, mode, "
-                "evidence_count, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(" 
+                "evidence_count, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT("
                 "project_id, principal_id, capability) DO UPDATE SET mode = excluded.mode, "
                 "evidence_count = excluded.evidence_count, updated_at = excluded.updated_at",
                 (project_id, principal_id, capability, mode, successes, now.isoformat()),
@@ -729,8 +725,7 @@ class GovernanceService:
         with self.store.connect() as connection:
             self._require_project(connection, project_id)
             rows = connection.execute(
-                "SELECT * FROM mvp_skill_versions WHERE project_id = ? "
-                "ORDER BY name, version",
+                "SELECT * FROM mvp_skill_versions WHERE project_id = ? ORDER BY name, version",
                 (project_id,),
             ).fetchall()
         return tuple(self._skill(row) for row in rows)
@@ -890,14 +885,14 @@ class GovernanceService:
 
     @staticmethod
     def _require_project(connection: sqlite3.Connection, project_id: str) -> None:
-        row = connection.execute("SELECT id FROM mvp_projects WHERE id = ?", (project_id,)).fetchone()
+        row = connection.execute(
+            "SELECT id FROM mvp_projects WHERE id = ?", (project_id,)
+        ).fetchone()
         if row is None:
             raise DomainNotFound("project_not_found")
 
     @staticmethod
-    def _require_provider(
-        connection: sqlite3.Connection, provider_id: str
-    ) -> sqlite3.Row:
+    def _require_provider(connection: sqlite3.Connection, provider_id: str) -> sqlite3.Row:
         row = connection.execute(
             "SELECT * FROM mvp_provider_connections WHERE id = ?", (provider_id,)
         ).fetchone()
@@ -991,8 +986,6 @@ class GovernanceService:
             status=row["status"],
             reason=row["reason"],
             created_at=datetime.fromisoformat(row["created_at"]),
-            reviewed_at=datetime.fromisoformat(row["reviewed_at"])
-            if row["reviewed_at"]
-            else None,
+            reviewed_at=datetime.fromisoformat(row["reviewed_at"]) if row["reviewed_at"] else None,
             reviewed_by=row["reviewed_by"],
         )

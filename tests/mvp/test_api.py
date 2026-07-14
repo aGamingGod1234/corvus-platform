@@ -275,12 +275,14 @@ def test_http_workflow_controls_rejection_and_kill_switch(tmp_path: Path) -> Non
     ).json()
     controlled_id = controlled["id"]
     client.post(f"/api/workflows/{controlled_id}/start", headers=headers)
-    assert client.post(f"/api/workflows/{controlled_id}/pause", headers=headers).json()[
-        "status"
-    ] == "paused"
-    assert client.post(f"/api/workflows/{controlled_id}/resume", headers=headers).json()[
-        "status"
-    ] == "running"
+    assert (
+        client.post(f"/api/workflows/{controlled_id}/pause", headers=headers).json()["status"]
+        == "paused"
+    )
+    assert (
+        client.post(f"/api/workflows/{controlled_id}/resume", headers=headers).json()["status"]
+        == "running"
+    )
     assert client.put(
         f"/api/workflows/{controlled_id}/kill-switch",
         json={"enabled": True},
@@ -289,9 +291,10 @@ def test_http_workflow_controls_rejection_and_kill_switch(tmp_path: Path) -> Non
     blocked = client.post(f"/api/workflows/{controlled_id}/run-next", headers=headers)
     assert blocked.status_code == 409
     assert "kill_switch_enabled" in blocked.text
-    assert client.post(f"/api/workflows/{controlled_id}/cancel", headers=headers).json()[
-        "status"
-    ] == "cancelled"
+    assert (
+        client.post(f"/api/workflows/{controlled_id}/cancel", headers=headers).json()["status"]
+        == "cancelled"
+    )
 
 
 def test_http_governance_and_ingress_operator_surfaces(tmp_path: Path) -> None:
@@ -354,20 +357,26 @@ def test_http_governance_and_ingress_operator_surfaces(tmp_path: Path) -> None:
     assert client.get("/api/offline-intents").json() == []
 
     signer = LocalEnvelopeSigner.generate(actor_id="channel:operator")
-    assert client.post(
-        "/api/channel/actors",
-        json={"actor_id": "channel:operator", "public_key": signer.public_key},
-        headers=headers,
-    ).status_code == 200
-    assert client.post(
-        "/api/channel/identities",
-        json={
-            "provider": "local-channel",
-            "external_id": "operator",
-            "principal_id": session["user_id"],
-        },
-        headers=headers,
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/channel/actors",
+            json={"actor_id": "channel:operator", "public_key": signer.public_key},
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/channel/identities",
+            json={
+                "provider": "local-channel",
+                "external_id": "operator",
+                "principal_id": session["user_id"],
+            },
+            headers=headers,
+        ).status_code
+        == 200
+    )
     envelope = signer.sign_channel_event(
         provider="local-channel",
         external_event_id="event-1",
