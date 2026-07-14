@@ -337,3 +337,27 @@
 
 ### Suggested Next Steps
 - Confirm the complete GitHub Actions operating-system/Python matrix is green for the final `main` commit.
+
+## 2026-07-14 — Persona and Team Desktop Implementation Plan
+
+### What Was Implemented
+- Audited the existing connected React console, generated API adapter, FastAPI domain surface, team primitives, and supervised Tauri shell.
+- Defined a two-axis product architecture for Everyday/Developer and Personal/Team workspaces without duplicating authoritative business logic.
+- Added one design milestone plus five implementation milestones covering the blueprint packet, shared shell, personal workspaces, governed collaboration core, team workspaces, desktop hardening, verification gates, and per-milestone GitHub main commits.
+
+### Files Modified
+- `docs/superpowers/plans/2026-07-14-persona-team-desktop-implementation-plan.md` — detailed implementation plan, decision gates, verification matrix, and stop boundaries.
+- `PROJECT_LOG.md` — planning milestone record.
+
+### Assumptions Made (flag these for review)
+- The recommended product model is one binary composed along two axes: Everyday/Developer experience and Personal/Team workspace.
+- Team means remote-capable, tenant-scoped multi-user collaboration; SQLite remains the local/demo path.
+- In-app notifications plus SSE are sufficient for the first complete Team release; external notification delivery is deferred.
+
+### Known Issues / Deferred
+- Product code was intentionally not changed; the mandatory pre-coding confirmation gate remains active.
+- Team hosting, production identity provider registration, external notification channels, billing, and live presence require later product/deployment decisions.
+
+### Suggested Next Steps
+- Review and approve the implementation plan and its seven recommended kickoff decisions.
+- Execute Milestone 0 to produce and approve the four-workspace design-blueprint packet before changing application code.
