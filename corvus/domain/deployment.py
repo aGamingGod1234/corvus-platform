@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -492,6 +493,122 @@ class AuthorityStateRootLeafCommitment(BaseModel):
     record_version: int = Field(ge=1)
     leaf_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     external_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+def canonical_authority_leaf_digest(
+    *,
+    family_name: str,
+    canonicalization_version: int,
+    records: Sequence[Mapping[str, Any]],
+) -> str:
+    payload = {
+        "canonicalization_version": canonicalization_version,
+        "family_name": family_name,
+        "records": list(records),
+    }
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_authority_root_digest(
+    *,
+    workspace_id: UUID,
+    manifest: AuthorityStateRootManifestVersion,
+    authority_generation: int,
+    commitments: Sequence[AuthorityStateRootLeafCommitment],
+) -> str:
+    ordered = sorted(commitments, key=lambda item: item.ordinal)
+    if authority_generation < 0:
+        raise ValueError("authority_generation must be non-negative")
+    if (
+        not ordered
+        or len({item.family_name for item in ordered}) != len(ordered)
+        or [item.ordinal for item in ordered] != list(range(1, len(ordered) + 1))
+        or any(
+            item.manifest_version_id != manifest.id
+            or item.authority_generation != authority_generation
+            for item in ordered
+        )
+    ):
+        raise ValueError("authority commitments do not form one exhaustive ordered generation")
+    payload = {
+        "authority_generation": authority_generation,
+        "commitments": [
+            {
+                "external_proof_digest": item.external_proof_digest,
+                "family_name": item.family_name,
+                "leaf_digest": item.leaf_digest,
+                "ordinal": item.ordinal,
+                "record_version": item.record_version,
+            }
+            for item in ordered
+        ],
+        "manifest_digest": manifest.manifest_digest,
+        "manifest_version_id": str(manifest.id),
+        "workspace_id": str(workspace_id),
+    }
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class AuthorityStateRootCalculation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workspace_id: UUID
+    manifest: AuthorityStateRootManifestVersion
+    authority_generation: int = Field(ge=0)
+    commitments: tuple[AuthorityStateRootLeafCommitment, ...]
+    observed_leaf_digests: dict[str, str]
+    root_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_calculation(self) -> AuthorityStateRootCalculation:
+        commitment_by_name = {item.family_name: item for item in self.commitments}
+        if (
+            len(commitment_by_name) != len(self.commitments)
+            or set(commitment_by_name) != set(self.observed_leaf_digests)
+            or any(
+                self.observed_leaf_digests[name] != commitment.leaf_digest
+                for name, commitment in commitment_by_name.items()
+            )
+        ):
+            raise PydanticCustomError(
+                "authority_root_leaf_mismatch",
+                "reason_code={reason_code}",
+                {"reason_code": "authority_root_leaf_mismatch"},
+            )
+        try:
+            expected = canonical_authority_root_digest(
+                workspace_id=self.workspace_id,
+                manifest=self.manifest,
+                authority_generation=self.authority_generation,
+                commitments=self.commitments,
+            )
+        except ValueError as exc:
+            raise PydanticCustomError(
+                "authority_root_commitment_set_invalid",
+                "reason_code={reason_code}",
+                {"reason_code": "authority_root_commitment_set_invalid"},
+            ) from exc
+        if self.root_digest != expected:
+            raise PydanticCustomError(
+                "authority_root_digest_mismatch",
+                "reason_code={reason_code}",
+                {"reason_code": "authority_root_digest_mismatch"},
+            )
+        return self
 
 
 class AuthorityRegistryFreshnessProof(BaseModel):
