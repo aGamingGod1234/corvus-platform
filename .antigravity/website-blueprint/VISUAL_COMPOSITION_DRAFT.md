@@ -1,36 +1,30 @@
 # Visual Composition Draft
 
 ## First Viewport Composition
-- Layer 1: Existing PageOpening owns any orange split/opening animation.
-- Layer 2: Hero waits for `site:opening-complete` or equivalent completed state.
-- Layer 3: Cinematic preview theatre space inherits coral/orange warmth without recreating the split.
-- Layer 4: Desktop client preview is the main object.
-- Layer 5: Mobile preview overlaps the desktop preview.
-- Layer 6: Locked payment card sits behind the preview.
-- Layer 7: Business preview selector and rotating Singapore business examples resolve.
-- Layer 8: WhatsApp cue, CTA, and trust strip complete the conversion path.
+
+The shell uses three stable zones: a 240px navigation rail with wordmark, workspace switcher, and profile-specific routes; a flexible content surface with a compact context/status header; and an optional 360px contextual inspector. A thin flight-path line can connect active progress or activity, but it must represent real state. The primary work surface changes composition by profile rather than filling the screen with interchangeable cards.
+
+On first run, replace the shell with a centered, max-width setup field: step count and “Change anytime” eyebrow, one serif heading, one supporting sentence, two large semantic radio choices, and restrained Back/Continue actions. Runtime step uses full text labels beside local/computer and sourced cloud iconography.
 
 ## Spacing And Typography
-- Use a wide stage composition on desktop with a constrained copy column.
-- Keep hero copy direct and large without viewport-width font scaling.
-- Preserve enough lower-edge hint that the next section exists.
+
+Use existing Corvus tokens. Everyday surfaces use more vertical breathing room, sentence-case headings, and Fraunces for a few high-value page moments. Developer surfaces tighten row density and use IBM Plex Mono for repository, ID, branch, log, diff, and environment metadata. Inter Tight remains the primary UI face.
+
+## Profile Differences
+
+- Everyday Personal: cobalt accent, Today-led narrative, progress and outcomes.
+- Developer Personal: cobalt accent, repository-led split pane, change/check density.
+- Everyday Team: teal accent plus owner labels, assigned work and approval flow.
+- Developer Team: teal accent plus explicit policy/audit context, queue and review density.
 
 ## Motion Timeline
-1. Wait for PageOpening completion event.
-2. 120ms: theatre light settles.
-3. 260ms: desktop preview enters focus.
-4. 420ms: mobile preview overlaps into position.
-5. 560ms: locked payment card appears behind preview.
-6. 720ms: selector and Singapore examples resolve.
-7. After intro: premium idle motion only.
+
+At setup, the selected card settles in 160ms; Continue replaces the step in 160ms and focuses the next heading. In the shell, route selection and affected live rows tint in 160ms. Inspector enters in 280ms and restores focus on close. Reduced motion removes translation and cross-fade.
 
 ## Mobile Simplification
-- Mobile preview becomes dominant.
-- Desktop preview becomes a compact supporting frame.
-- Selector becomes horizontal chips.
-- Locked payment card remains visible behind preview.
+
+At 390x844, navigation becomes a compact top bar plus four primary bottom items and More. Workspace/project context opens as a drawer. Inspector becomes a full-screen dialog with a persistent close control and Escape support. Keep runtime status beside the workspace name; never place the entire desktop rail above content.
 
 ## Failure Conditions
-- Hero recreates the orange split.
-- Settled screenshot looks like a normal website mockup, generic SaaS dashboard, or checklist card section.
-- Motion evidence is missing.
+
+Avoid glassmorphism, decorative dashboards, fake data, color-only role meaning, dense engineering controls in Everyday views, hidden Local/Cloud truth, or layout shifts during connection updates.

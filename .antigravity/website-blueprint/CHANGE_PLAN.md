@@ -2,27 +2,28 @@
 
 ## Allowed Files
 - apps/web/**
-- .gitignore
-- corvus/mvp/api.py
-- corvus/mvp/core.py
-- corvus/mvp/governance.py
-- corvus/mvp/ingress.py
+- apps/desktop/**
+- corvus/mvp/**
 - openapi/**
-- tests/mvp/test_api.py
-- tests/mvp/test_openapi_export.py
+- tests/**
+- docs/**
+- scripts/**
 - .antigravity/website-blueprint/**
+- pyproject.toml
+- uv.lock
+- README.md
+- HACKATHON_STATUS.md
+- PROJECT_LOG.md
+- .env.example
 
 ## Forbidden Files
 - corvus/core/**
 
 ## Expected Edits
-- Add the connected React operator console and generated API contract.
-- Add authenticated API list endpoints and response schemas needed by the console.
-- Preserve dependency order when returning workflow work items.
-- Add backend and frontend regression tests.
+- Describe the exact implementation edits before approval.
 
 ## Dependency Changes
-- Approved React, Vite, TypeScript, generated-client, icon, and test tooling only
+- Add e2b>=2.3,<3 for E2B sandbox lifecycle and Authlib>=1.3,<2 for Google/OIDC authorization-code flows.
 
 ## Test Commands
 - ag design verify-packet --require-approval

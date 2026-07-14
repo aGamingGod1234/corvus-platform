@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn the existing Corvus operator console into one desktop product with genuinely tailored Everyday/Developer and Personal/Team workspaces, backed by real collaboration capabilities rather than cosmetic mode changes.
+**Goal:** Turn the existing Corvus operator console into one web-and-desktop product with genuinely tailored Everyday/Developer and Personal/Team workspaces, a same-machine Local runtime, an E2B-backed Corvus Cloud runtime, shared Google identity, and real collaboration capabilities rather than cosmetic mode changes.
 
-**Architecture:** Keep one authoritative Python domain/application core and one React client loaded by the existing Tauri shell. Model the product on two independent axes—experience (`everyday` or `developer`) and workspace (`personal` or `team`)—then compose shared primitives into four purpose-built information architectures. Introduce remote-team capabilities as tenant-scoped domain services and API ports; never duplicate authorization, approval, budget, effect, or workflow rules in the UI.
+**Architecture:** Keep one authoritative Python domain/application core and one React client loaded by the existing Tauri shell or served by FastAPI. Model the product on two independent axes—experience (`everyday` or `developer`) and workspace (`personal` or `team`)—then compose shared primitives into four purpose-built information architectures. Add an independent runtime profile (`local` or `corvus_cloud`): Local supervises the loopback sidecar and SQLite on one machine, while Corvus Cloud provisions and reconnects to a secure, persistent E2B sandbox through server-side control-plane ports. Introduce identity, synchronization, and team capabilities as tenant-scoped domain services; never duplicate authority rules in clients.
 
-**Tech Stack:** Python 3.12+, FastAPI, SQLite local mode, PostgreSQL-compatible deployment path, generated OpenAPI TypeScript types, React 19, TypeScript, Vite, Vitest/Testing Library, Tauri v2/Rust, SSE, Playwright/browser verification, Antigravity Website Design Blueprint.
+**Tech Stack:** Python 3.12+, FastAPI, SQLite local mode, PostgreSQL-compatible deployment path, E2B Python SDK 2.x, Authlib 1.x, generated OpenAPI TypeScript types, React 19, TypeScript, Vite, Vitest/Testing Library, Tauri v2/Rust, SSE, Playwright/browser verification, Antigravity Website Design Blueprint.
 
 ## Global Constraints
 
@@ -14,6 +14,9 @@
 - Do not create four applications or four copies of business logic; build four workspace compositions over shared domain capabilities.
 - Call the non-technical experience **Everyday** in product copy; do not label people “normal users.”
 - Treat Team as shared multi-user workspaces with membership lifecycle, ownership, assignments, discussion, notifications, policy, and audit—not multiple local profiles.
+- Treat Local as same-machine only. Do not automatically expose a user's machine to the LAN or public internet.
+- Keep `E2B_API_KEY`, Google client secrets, refresh tokens, sandbox control credentials, and traffic-access tokens server-side or in approved secret references; never ship them in React/Tauri bundles.
+- Corvus Cloud must use pinned E2B templates, secure access, pause-on-idle, auto-resume, reconnectable sandbox IDs, health checks, and explicit lifecycle/error states.
 - Keep secrets as broker references; never expose credential material in UI state, logs, events, fixtures, or API responses.
 - Use source repositories only for interaction-pattern research. Do not copy their branding, layouts, source code, or developer density into Everyday experiences.
 - No new dependency may be installed until it is listed at the milestone preflight. The user has granted approval, but the dependency and reason must still be recorded before installation.
@@ -36,17 +39,29 @@
 
 Shared data must survive switching workspace presentation. A project, run, approval, artifact, or conversation is one record with different views—not duplicated persona data.
 
-## Decisions Required Before Product Code
+## Confirmed Runtime Model
 
-The following defaults are recommended but must be confirmed at the implementation kickoff:
+| Runtime | Host and reachability | Persistence | Identity and synchronization | Availability |
+|---|---|---|---|---|
+| Local | Tauri-supervised loopback sidecar; browser may open the same local Corvus URL on that machine | SQLite and local filesystem | Local pairing/session; no automatic cross-device synchronization | Fully usable offline on one machine |
+| Corvus Cloud | Corvus control plane provisions a secure E2B sandbox and returns an authenticated workspace endpoint | E2B pause/resume state plus tenant-scoped durable records; sandbox ID is reconnectable | Google OIDC maps the stable provider subject to one Corvus principal used by web and desktop | Cloud Preview entitlement until billing is implemented |
+
+Device-local repository paths never become cloud paths implicitly. Cloud workspaces use explicit cloud repository registrations, uploaded artifacts, or provider references.
+
+## Confirmed Product Decisions
+
+The user approved these defaults for implementation:
 
 1. **Product packaging:** one Corvus desktop binary with onboarding and a persistent workspace switcher, not separate editions.
-2. **Team deployment:** host-agnostic remote Corvus server using PostgreSQL-compatible configuration; SQLite remains single-user/local demo mode.
-3. **Identity:** local simulated identity for development plus existing OIDC contracts; production IdP registration remains deployment work.
-4. **Collaboration transport:** durable API records plus SSE invalidation/notifications. Presence indicators are deferred until multi-user correctness is proven.
-5. **Notifications:** in-app inbox in scope; email, Slack, and Teams delivery adapters deferred.
-6. **Mobile:** responsive companion/browser verification only; no separate mobile application in this plan.
-7. **Billing:** workspace budget and usage policy are in scope; subscription billing is not.
+2. **Runtime choice:** onboarding and settings offer same-machine Local or Corvus Cloud on E2B. Local is never auto-exposed to other devices.
+3. **Team deployment:** E2B is the first Corvus Cloud runtime provider behind a provider-neutral application port; SQLite remains the local path.
+4. **Identity:** Google OIDC is the first shared-account provider. The stable issuer/subject pair maps to the Corvus principal; email is display/contact data, not identity.
+5. **Collaboration transport:** durable API records plus SSE invalidation/notifications. Presence indicators are deferred until multi-user correctness is proven.
+6. **Notifications:** in-app inbox in scope; email, Slack, and Teams delivery adapters deferred.
+7. **Mobile:** responsive companion/browser verification only; no separate mobile application in this plan.
+8. **Billing:** Cloud Preview plan/paywall pages and entitlement contracts are in scope; payment collection and subscription billing are not.
+9. **Entitlement truthfulness:** preview pages never claim a payment succeeded. Development/test environments may use an explicit preview entitlement bypass.
+10. **Account continuity:** cloud projects, threads/conversations, workflows, artifacts, preferences, memberships, and notifications are available to the same account on web and desktop; local filesystem paths remain device-local.
 
 ## Milestone 0 — Approved UX Architecture and Blueprint Packet
 
@@ -54,13 +69,14 @@ The following defaults are recommended but must be confirmed at the implementati
 
 ### Tasks
 
-- [ ] Run the required blueprint sequence from the repository root: intake, research, target, section plan, compose, change plan, snapshot, verification packet, approval, build, and audit using the exact CLI command names supported by the installed blueprint.
-- [ ] Produce `.antigravity/website-blueprint/SOURCE_MANIFEST.json`, `SECTION_PLAN.json`, `FRONTEND_CRAFT_BRIEF.md`, `EXPERIENCE_STORYBOARD.json`, `INTERACTION_SPEC.json`, `COMPONENT_ADOPTION_MAP.json`, and `DESIGN_AUDIT_REPORT.md`.
-- [ ] Document journeys for all four workspaces: first run, resume work, create work, observe progress, approve/reject, recover from failure, switch workspace, invite/join team, and lose/recover connectivity.
-- [ ] Define shared design tokens and four density/copy/navigation profiles without changing Corvus’s core identity.
-- [ ] Specify truthful progressive disclosure: Everyday uses goals, impact, owner, next step, and deliverable; Developer exposes IDs, branches, diffs, logs, policies, autonomy, budget, and environment.
-- [ ] Record T3Code and Hermes patterns adopted, adapted, and rejected with source provenance.
-- [ ] Review the packet for placeholders, contradictory navigation, fake controls, and inaccessible interactions.
+- [x] Run the required blueprint sequence from the repository root through approved build-gate validation: intake, research, target, section plan, compose, change plan, snapshot, packet verification, approval, and build. Run the visual audit after the Milestone 1 UI exists.
+- [x] Produce `.antigravity/website-blueprint/SOURCE_MANIFEST.json`, `SECTION_PLAN.json`, `FRONTEND_CRAFT_BRIEF.md`, `EXPERIENCE_STORYBOARD.json`, `INTERACTION_SPEC.json`, `COMPONENT_ADOPTION_MAP.json`, and baseline screenshots.
+- [x] Document journeys for all four workspaces: first run, resume work, create work, observe progress, approve/reject, recover from failure, switch workspace, invite/join team, and lose/recover connectivity.
+- [x] Document Local and Corvus Cloud selection, Google sign-in, E2B provisioning/resume/failure, cloud-preview entitlement, and switching-runtime journeys without implying automatic data migration.
+- [x] Define shared design tokens and four density/copy/navigation profiles without changing Corvus’s core identity.
+- [x] Specify truthful progressive disclosure: Everyday uses goals, impact, owner, next step, and deliverable; Developer exposes IDs, branches, diffs, logs, policies, autonomy, budget, and environment.
+- [x] Record T3Code and Hermes patterns adopted, adapted, and rejected with source provenance.
+- [x] Review the packet for placeholders, contradictory navigation, fake controls, and inaccessible interactions.
 
 ### Gate
 
@@ -81,6 +97,7 @@ The following defaults are recommended but must be confirmed at the implementati
 - `apps/web/src/app/AppShell.tsx` — title bar, workspace switcher, command/search entry, connection status, account menu.
 - `apps/web/src/app/WorkspaceRouter.tsx` — selects the approved workspace composition.
 - `apps/web/src/app/preferences.ts` — typed experience/workspace preference model and migration-safe persistence.
+- `apps/web/src/app/runtime.ts` — typed Local/Corvus Cloud selection, connection state, and safe persisted non-secret profile.
 - `apps/web/src/components/` — shared navigation, status, composer, approval, empty-state, and error-boundary primitives.
 - `apps/web/src/styles/` — tokens, shared shell, density, motion, and responsive rules.
 - `apps/web/src/App.test.tsx` plus focused component tests.
@@ -89,6 +106,8 @@ The following defaults are recommended but must be confirmed at the implementati
 
 - [ ] Write tests first for first-run selection, persistence, switching, keyboard navigation, invalid preference recovery, pairing, reconnect, and permission-driven route hiding.
 - [ ] Add a short onboarding chooser that asks how the person works and whether the workspace is personal or shared; always allow later switching.
+- [ ] Add a runtime step before workspace choice: Local explains same-machine storage; Corvus Cloud explains synchronization and Cloud Preview status.
+- [ ] Add a truthful Cloud Preview plan page and entitlement wall with disabled payment collection and an explicit test-only bypass.
 - [ ] Preserve fragment-only desktop pairing and existing session repair.
 - [ ] Implement shared query/error/loading/offline primitives and route-level error boundaries.
 - [ ] Add semantic navigation landmarks, focus restoration, skip links, reduced-motion behavior, and responsive shell collapse.
@@ -143,7 +162,46 @@ The following defaults are recommended but must be confirmed at the implementati
 
 - `feat(ui): deliver tailored personal workspaces`
 
-## Milestone 3 — Real Team Collaboration Core
+## Milestone 3 — Shared Identity and E2B Cloud Runtime
+
+**Purpose:** Make web and desktop use one account and one cloud workspace while preserving a complete same-machine Local path.
+
+### Identity and session tasks
+
+- [ ] Add `Authlib >=1.3,<2` and implement provider-neutral OIDC authorization-code ports with state, nonce, PKCE, discovery/JWKS caching, issuer/audience/expiry validation, and one-time callback consumption.
+- [ ] Add Google configuration through secret references and environment validation; never accept client secrets or refresh tokens from the React/Tauri clients.
+- [ ] Persist external identity links by `(issuer, subject)` and map them to existing principals, tenants, and workspace memberships. Do not key identity by email.
+- [ ] Issue Corvus sessions after server-side OIDC validation and support account/session revocation across web and desktop.
+- [ ] Keep simulated OIDC and local pairing as fully functional test/development paths.
+
+### E2B control-plane tasks
+
+- [ ] Add `e2b >=2.3,<3` behind a `CloudRuntimePort`; the domain layer must not import the SDK.
+- [ ] Define cloud workspace and runtime records: provider, template/build pin, sandbox ID, endpoint reference, lifecycle, health, owner tenant, last activity, and version.
+- [ ] Build a pinned Corvus E2B template with the real FastAPI/static client, start/readiness commands, non-root execution, secure access, and no embedded customer secrets.
+- [ ] Provision with server-side `E2B_API_KEY`, restricted network/public traffic policy, pause-on-timeout, auto-resume, metadata, and tenant-scoped environment references.
+- [ ] Implement create, inspect, connect, resume, pause, replace-after-terminal-failure, and revoke operations with idempotency and audit events.
+- [ ] Treat the E2B endpoint as untrusted until authenticated Corvus readiness succeeds; never expose sandbox controller credentials to clients.
+
+### Synchronization and client tasks
+
+- [ ] Make the hosted FastAPI service authoritative for cloud records; web and desktop use the same typed API and SSE cursor.
+- [ ] Persist only non-secret runtime selection and workspace identifiers in clients. Sessions use secure cookies or an OS credential reference.
+- [ ] Reconcile offline cloud intents with idempotency keys and conflict/version responses; show conflicts instead of silently overwriting.
+- [ ] Keep Local projects local. Runtime switching does not migrate data unless a later explicit export/import flow is invoked.
+
+### Gate
+
+- A simulated Google identity opens the same tenant/project from web and desktop clients.
+- An E2B adapter contract test provisions/reconnects/pauses/resumes idempotently; a live E2B smoke runs when `E2B_API_KEY` is available.
+- Local mode continues to launch, operate offline, restart, and preserve SQLite state without cloud credentials.
+- Cross-tenant, callback replay, state/nonce/PKCE, token-validation, credential-redaction, and sandbox-endpoint substitution tests pass.
+
+### Commit
+
+- `feat(cloud): add shared identity and E2B runtime`
+
+## Milestone 4 — Real Team Collaboration Core
 
 **Purpose:** Make Team a correct multi-user product surface before building team dashboards.
 
@@ -182,7 +240,7 @@ The following defaults are recommended but must be confirmed at the implementati
 
 - `feat(teams): add governed multi-user collaboration core`
 
-## Milestone 4 — Team Workspaces
+## Milestone 5 — Team Workspaces
 
 **Purpose:** Build two team experiences over Milestone 3’s real collaboration services.
 
@@ -219,7 +277,7 @@ The following defaults are recommended but must be confirmed at the implementati
 
 - `feat(ui): deliver everyday and developer team workspaces`
 
-## Milestone 5 — Desktop Integration and Operational Hardening
+## Milestone 6 — Desktop Integration and Operational Hardening
 
 **Purpose:** Make the adaptive product feel native and remain safe under real desktop lifecycle conditions.
 
@@ -251,6 +309,9 @@ The following defaults are recommended but must be confirmed at the implementati
 | Persona composition | Vitest route/copy/action tests | Four desktop screenshots |
 | Team isolation | Cross-tenant API and persistence tests | Two-browser/principal scenario |
 | Collaboration recovery | SSE cursor, stale write, notification tests | Disconnect/reconnect scenario |
+| Runtime selection | preference, entitlement, and connection-state tests | Switch Local/Cloud without leaking or migrating local state |
+| Shared account | OIDC callback/replay/revocation and tenant tests | Same cloud workspace in browser and desktop |
+| E2B lifecycle | fake adapter contract and optional live smoke | Provision, pause, auto-resume, reconnect, revoke |
 | Accessibility | semantic queries and automated audit | keyboard, focus, reduced motion, high contrast |
 | Desktop lifecycle | Rust unit/integration tests | launch, sidecar restart, close/process check |
 | Responsive behavior | layout tests where useful | 390x844 screenshots for all core routes |
@@ -269,18 +330,20 @@ The following defaults are recommended but must be confirmed at the implementati
 
 ## Explicit Stop Boundaries
 
-1. **Current stop:** this plan is delivered for review; no product code is changed.
-2. **After Milestone 0:** stop for approval of the four workspace storyboards and visual system.
-3. **After Milestone 2:** stop for hands-on review of both Personal experiences before adding collaboration migrations.
-4. **After Milestone 3:** stop for a security/correctness review of multi-user behavior before Team UI implementation.
-5. **After Milestone 5:** stop after release evidence; production hosting, external IdP registration, email/chat notification delivery, subscription billing, notarization, and multi-OS certification require separate authorization.
+1. **Current execution state:** Milestone 0 is approved; Milestone 1 implementation is authorized and in progress.
+2. **After Milestone 1:** stop for hands-on review of the adaptive shell, runtime chooser, and four workspace compositions before identity or database migrations.
+3. **After Milestone 2:** stop for hands-on review of both Personal experiences before cloud/identity implementation.
+4. **After Milestone 3:** stop for a security/correctness review of Google identity and E2B lifecycle before collaboration migrations.
+5. **After Milestone 4:** stop for a security/correctness review of multi-user behavior before Team UI implementation.
+6. **After Milestone 6:** stop after release evidence; production payment collection, email/chat notification delivery, notarization, and multi-OS certification require separate authorization.
 
 ## Planning Assumptions to Review
 
 - One binary and one account can access multiple workspace experiences.
 - Experience selection changes information architecture and defaults, never permissions or stored truth.
 - Existing projects remain valid and default to Everyday Personal until a user chooses otherwise.
-- Team collaboration is remote-capable and tenant-scoped; SQLite remains a local/demo mode rather than the shared production database.
+- Local is same-machine only; Corvus Cloud on E2B is the synchronized remote path.
+- Google credentials and an E2B API key may be absent during development, so simulated adapters are required and live external smoke tests are conditional on those secrets.
 - In-app notifications and SSE are sufficient for the first complete Team solution.
 - Repository/Git capabilities are required for Developer workspaces but remain behind typed trusted adapters.
 - The current React/Vite/Tauri/Python stack remains; no framework rewrite is planned.
@@ -288,9 +351,9 @@ The following defaults are recommended but must be confirmed at the implementati
 ## Known Scope Deferred by This Plan
 
 - Production cloud provisioning and managed service operations.
-- External OIDC application registration and enterprise directory provisioning.
+- Production Google OAuth application registration, consent-screen verification, and enterprise directory provisioning.
 - Email, Slack, Microsoft Teams, or push-notification delivery adapters.
-- Subscription billing and marketplace flows.
+- Payment collection, subscription billing, invoices, and marketplace flows; only truthful Cloud Preview entitlement pages/contracts are included.
 - Live cursors/presence, voice/video, and full chat replacement.
 - macOS signing/notarization and unsupported multi-platform installer certification.
 - A separate mobile application.

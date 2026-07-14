@@ -2,34 +2,24 @@
   "version": 1,
   "components": [
     {
-      "sourceId": "shadcn-button",
+      "sourceId": "shadcn-tabs",
       "implementationStatus": "applied",
-      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
-      "evidenceHash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
-      "adoptedPatterns": ["disabled state", "visible focus treatment", "primary and quiet variants"],
-      "customizationBoundaries": ["Native buttons and local semantic CSS only", "No Radix or shadcn runtime dependency"],
-      "implementationSelectors": ["[data-component-source=\"shadcn-button\"]", ".button--primary"],
-      "visibleSections": ["execution-canvas", "detail-inspector", "operations-canvas"]
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-tabs.json",
+      "evidenceHash": "4cc6a1de2c60051b9a80ef5934b4229f26a38d98895a167d283b9c1ac4437f04",
+      "adoptedPatterns": ["roving keyboard selection", "explicit selected state", "focus-visible treatment"],
+      "customizationBoundaries": ["Use native typed React controls", "Do not add Radix for the adaptive shell milestone", "Labels and routes come from the Corvus workspace profile"],
+      "implementationSelectors": ["[data-component-source=\"shadcn-tabs\"]", "[role=\"tablist\"]"],
+      "visibleSections": ["onboarding", "adaptive-shell"]
     },
     {
-      "sourceId": "lucide-activity",
+      "sourceId": "lucide-cloud",
       "implementationStatus": "applied",
-      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-activity.json",
-      "evidenceHash": "61fd0ac133b0df215bedaab7101da6084ca0bd1aa00c73381084869f95ad8087",
-      "adoptedPatterns": ["activity SVG path"],
-      "customizationBoundaries": ["Stroke inherits currentColor", "Icon remains decorative beside a text label"],
-      "implementationSelectors": ["[data-component-source=\"lucide-activity\"]"],
-      "visibleSections": ["detail-inspector"]
-    },
-    {
-      "sourceId": "lucide-play",
-      "implementationStatus": "applied",
-      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-play.json",
-      "evidenceHash": "dbcf7c869683d0ece02b88566af9337db6d8fe1d12193fd8bad0cecb80ea1a6e",
-      "adoptedPatterns": ["play SVG path"],
-      "customizationBoundaries": ["Stroke inherits currentColor", "Icon remains decorative beside a text label"],
-      "implementationSelectors": ["[data-component-source=\"lucide-play\"]"],
-      "visibleSections": ["execution-canvas"]
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-cloud.json",
+      "evidenceHash": "33f3c171c87c68b476fdac96651c0ba8f144eeec4b147f0ff28a7e15089cb326",
+      "adoptedPatterns": ["cloud SVG path"],
+      "customizationBoundaries": ["Stroke inherits currentColor", "Always pair with Local or Cloud text", "Never use the icon alone to imply synchronized state"],
+      "implementationSelectors": ["[data-component-source=\"lucide-cloud\"]"],
+      "visibleSections": ["runtime-gate"]
     }
   ]
 }

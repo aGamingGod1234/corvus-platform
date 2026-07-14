@@ -361,3 +361,34 @@
 ### Suggested Next Steps
 - Review and approve the implementation plan and its seven recommended kickoff decisions.
 - Execute Milestone 0 to produce and approve the four-workspace design-blueprint packet before changing application code.
+
+## 2026-07-15 — Adaptive Workspace and Runtime Design Approval
+
+### What Was Implemented
+- Expanded the approved plan to include same-machine Local operation, E2B-backed Corvus Cloud, Google account continuity, truthful Cloud Preview entitlements, real Team collaboration foundations, and distinct web/desktop verification.
+- Completed and approved the source-backed design-blueprint packet for one adaptive shell with Everyday/Developer and Personal/Team compositions.
+- Defined exact onboarding, runtime, navigation, responsive, accessibility, identity, session, E2B lifecycle, security, capability-gating, and verification contracts.
+- Captured baseline desktop, tablet, and mobile screenshots before application changes.
+- Verified the packet, recorded Lucas's approval, and passed the blueprint build gate.
+
+### Files Modified
+- `docs/superpowers/plans/2026-07-14-persona-team-desktop-implementation-plan.md` — expanded milestones, runtime/account architecture, release gates, and stop boundaries.
+- `docs/superpowers/specs/2026-07-15-corvus-adaptive-runtime-design.md` — implementation-level product, UX, security, runtime, and test specification.
+- `.antigravity/website-blueprint/` — refreshed project context, research provenance, approved section plan, craft brief, storyboard, interaction contract, component adoption, visual target/composition, change plan, and before screenshots.
+- `PROJECT_LOG.md` — design approval milestone record.
+
+### Assumptions Made (flag these for review)
+- Local means the current machine only; the local desktop sidecar and a browser on that machine may share the loopback service.
+- Corvus Cloud will use one authoritative E2B sandbox per workspace behind a Corvus control plane; Local and Cloud will not silently dual-write or merge.
+- Google identities will be linked by validated issuer and subject, while Corvus memberships remain authoritative for access.
+- The first adaptive-shell milestone adds no dependency and presents Cloud as Preview until real identity and runtime capabilities exist.
+
+### Known Issues / Deferred
+- The current Tauri shell starts its Local sidecar before React loads; real pre-launch Cloud selection requires the later native runtime milestone.
+- Live Google and E2B verification requires OAuth credentials, an E2B API key/template, and a control-plane endpoint.
+- Payment collection, automatic Local/Cloud migration, external notifications, and multi-user Team UI remain deferred to their planned milestones.
+- Final blueprint visual audit runs after Milestone 1 creates the approved shell.
+
+### Suggested Next Steps
+- Implement Milestone 1 test-first: versioned preferences, three-step onboarding, four navigation compositions, Local runtime gate, truthful Cloud Preview, responsive shell, and accessibility states.
+- Stop after the tested Milestone 1 commit is pushed to `main` for hands-on review before identity or database migrations.
