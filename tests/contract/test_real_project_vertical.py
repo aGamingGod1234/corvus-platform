@@ -59,6 +59,7 @@ from corvus.domain.deployment import (
 from corvus.domain.identity import Project
 from corvus.domain.request import RequestContext
 from corvus.domain.scope import AudiencePolicySnapshot
+from corvus.infrastructure.authority_root import AuthorityRootCalculator
 from corvus.infrastructure.db import upgrade_database
 from corvus.infrastructure.local_authority import SealedLocalAuthorityAnchor
 from corvus.infrastructure.project_audit import SignedProjectAuditAdapter
@@ -95,6 +96,31 @@ class StaticVerifiedInputs:
 
     def resolve(self, _request) -> VerifiedProjectAuthorizationInputs:
         return self.value
+
+
+class BootstrapAwareLiveRootVerifier:
+    def __init__(self, database: Path, bootstrap_generation: int) -> None:
+        self.calculator = AuthorityRootCalculator(database)
+        self.bootstrap_generation = bootstrap_generation
+
+    def verify_live_root(
+        self,
+        *,
+        workspace_id: UUID,
+        authority_generation: int,
+        expected_root: str,
+    ) -> object:
+        commitments = self.calculator.registry.list_leaf_commitments(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
+        )
+        if not commitments and authority_generation == self.bootstrap_generation:
+            return object()
+        return self.calculator.verify_live_root(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
+            expected_root=expected_root,
+        )
 
 
 class WorkspaceSigner:
@@ -231,7 +257,9 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
         deployment_instance=instance,
         epoch_credential=credential,
         secret_store=secrets,
-        lock_root=tmp_path / "authority-locks",
+        live_root_verifier=BootstrapAwareLiveRootVerifier(
+            database, authority.authority_generation
+        ),
     )
     anchor.bootstrap()
 

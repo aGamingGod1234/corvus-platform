@@ -167,6 +167,14 @@ def test_same_epoch_clone_cannot_hold_fixed_workspace_lock() -> None:
     assert exc_info.value.reason_code == "same_epoch_instance_lease_conflict"
 
 
+def test_workspace_lock_name_is_stable_across_authority_epochs() -> None:
+    workspace_id = uuid4()
+
+    assert fixed_workspace_lock_name(workspace_id, 1) == fixed_workspace_lock_name(
+        workspace_id, 999
+    )
+
+
 def test_deployment_instance_cannot_persist_private_activation_capability() -> None:
     with pytest.raises(ValidationError) as exc_info:
         DeploymentInstance.model_validate(

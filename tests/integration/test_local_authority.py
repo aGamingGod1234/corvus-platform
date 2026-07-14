@@ -52,6 +52,18 @@ class MemorySecretStore:
         self.values[reference] = value
 
 
+class AcceptingLiveRootVerifier:
+    def verify_live_root(
+        self,
+        *,
+        workspace_id,
+        authority_generation: int,
+        expected_root: str,
+    ) -> object:
+        del workspace_id, authority_generation, expected_root
+        return object()
+
+
 def _private_key_value(key: Ed25519PrivateKey) -> str:
     raw = key.private_bytes(
         encoding=serialization.Encoding.Raw,
@@ -124,7 +136,7 @@ def _anchor(tmp_path: Path):
         deployment_instance=instance,
         epoch_credential=credential,
         secret_store=secrets,
-        lock_root=tmp_path / "authority-locks",
+        live_root_verifier=AcceptingLiveRootVerifier(),
     )
     return anchor, authority, instance, credential, instance_key, epoch_key, secrets
 

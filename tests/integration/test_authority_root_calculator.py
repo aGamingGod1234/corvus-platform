@@ -150,6 +150,52 @@ def test_calculator_requires_every_manifest_external_proof(tmp_path: Path) -> No
         calculator.calculate(workspace_id=uuid4(), authority_generation=1)
 
 
+def test_live_root_verification_rejects_uncommitted_family_changes(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    calculator = AuthorityRootCalculator(database)
+    workspace_id = uuid4()
+    calculation = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    calculator.registry.append_leaf_commitments(
+        workspace_id=workspace_id,
+        manifest=calculation.manifest,
+        commitments=list(calculation.commitments),
+        observed_leaf_digests=calculation.observed_leaf_digests,
+    )
+
+    assert (
+        calculator.verify_live_root(
+            workspace_id=workspace_id,
+            authority_generation=1,
+            expected_root=calculation.root_digest,
+        )
+        == calculation
+    )
+
+    ProjectRepository(database).add(
+        Project(
+            workspace_id=workspace_id,
+            name="Uncommitted Project",
+            root_locator="workspace://uncommitted-project",
+            privacy="private",
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    with pytest.raises(
+        AuthorityRootCalculationError,
+        match="authority_live_family_rollback_detected",
+    ):
+        calculator.verify_live_root(
+            workspace_id=workspace_id,
+            authority_generation=1,
+            expected_root=calculation.root_digest,
+        )
+
+
 def test_project_projection_is_workspace_isolated_and_matches_persistence(tmp_path: Path) -> None:
     database = _database(tmp_path)
     calculator = AuthorityRootCalculator(database)

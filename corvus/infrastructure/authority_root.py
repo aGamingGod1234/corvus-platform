@@ -189,6 +189,41 @@ class AuthorityRootCalculator:
             root_digest=root_digest,
         )
 
+    def verify_live_root(
+        self,
+        *,
+        workspace_id: UUID,
+        authority_generation: int,
+        expected_root: str,
+    ) -> AuthorityStateRootCalculation:
+        stored = self.registry.list_leaf_commitments(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
+        )
+        if not stored:
+            raise AuthorityRootCalculationError("authority_commitments_missing")
+        external_proofs = {
+            commitment.family_name: commitment.external_proof_digest
+            for commitment in stored
+            if commitment.external_proof_digest is not None
+        }
+        calculation = self.calculate(
+            workspace_id=workspace_id,
+            authority_generation=authority_generation,
+            external_proof_digests=external_proofs,
+        )
+        stored_by_family = {item.family_name: item for item in stored}
+        if set(stored_by_family) != set(calculation.observed_leaf_digests):
+            raise AuthorityRootCalculationError("authority_commitment_family_set_mismatch")
+        if any(
+            stored_by_family[family].leaf_digest != digest
+            for family, digest in calculation.observed_leaf_digests.items()
+        ):
+            raise AuthorityRootCalculationError("authority_live_family_rollback_detected")
+        if calculation.root_digest != expected_root:
+            raise AuthorityRootCalculationError("authority_live_root_mismatch")
+        return calculation
+
     def project_family_rows(
         self,
         *,

@@ -263,7 +263,7 @@ def fixed_workspace_lock_name(workspace_id: UUID, authority_epoch: int) -> str:
             "invalid_authority_epoch",
             "the authority epoch must be positive",
         )
-    material = f"corvus-workspace-lock-v1:{workspace_id}:{authority_epoch}".encode()
+    material = f"corvus-workspace-lock-v1:{workspace_id}".encode()
     return f"corvus-workspace-{hashlib.sha256(material).hexdigest()}"
 
 

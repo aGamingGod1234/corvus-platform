@@ -16,6 +16,7 @@ from uuid import UUID, uuid5
 import keyring
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from keyring.errors import KeyringError
+from platformdirs import user_runtime_path
 from pydantic import BaseModel, ConfigDict, Field
 
 from corvus.application.authorization import (
@@ -47,6 +48,16 @@ class AuthoritySecretStore(Protocol):
     def get(self, reference: str) -> str | None: ...
 
     def set(self, reference: str, value: str) -> None: ...
+
+
+class LiveAuthorityRootVerifier(Protocol):
+    def verify_live_root(
+        self,
+        *,
+        workspace_id: UUID,
+        authority_generation: int,
+        expected_root: str,
+    ) -> object: ...
 
 
 class KeyringAuthoritySecretStore:
@@ -161,6 +172,10 @@ class FixedWorkspaceFileLock:
             handle.close()
 
 
+def _authority_lock_root() -> Path:
+    return user_runtime_path("corvus", ensure_exists=True) / "authority-locks"
+
+
 class SealedLocalAuthorityAnchor:
     def __init__(
         self,
@@ -170,7 +185,7 @@ class SealedLocalAuthorityAnchor:
         deployment_instance: DeploymentInstance,
         epoch_credential: AuthorityEpochCredential,
         secret_store: AuthoritySecretStore,
-        lock_root: Path,
+        live_root_verifier: LiveAuthorityRootVerifier,
     ) -> None:
         expected_lock = fixed_workspace_lock_name(authority.workspace_id, authority.epoch)
         if (
@@ -193,7 +208,8 @@ class SealedLocalAuthorityAnchor:
         self.deployment_instance = deployment_instance
         self.epoch_credential = epoch_credential
         self.secret_store = secret_store
-        self.lock = FixedWorkspaceFileLock(root=lock_root, lock_name=expected_lock)
+        self.live_root_verifier = live_root_verifier
+        self.lock = FixedWorkspaceFileLock(root=_authority_lock_root(), lock_name=expected_lock)
 
     def bootstrap(self, *, audit_history_heads: AuditHistoryHeads | None = None) -> None:
         with self.lock.held():
@@ -471,6 +487,14 @@ class SealedLocalAuthorityAnchor:
                 or request.authority_state_root != state.state_root
             ):
                 raise LocalAuthorityError("sealed_authority_runtime_request_mismatch")
+            try:
+                self.live_root_verifier.verify_live_root(
+                    workspace_id=state.workspace_id,
+                    authority_generation=state.generation,
+                    expected_root=state.state_root,
+                )
+            except Exception as exc:
+                raise LocalAuthorityError("authority_live_root_verification_failed") from exc
             proof = AuthorityRuntimePossessionProof(
                 request_context_id=request.request_context_id,
                 workspace_id=request.workspace_id,
