@@ -638,7 +638,24 @@ def test_v1_public_contract_matches_hashed_golden(tmp_path: Path) -> None:
         and golden["unhandled_exception"] is None
         for golden in actual["command_goldens"]  # type: ignore[index]
     )
-    assert _canonicalize_rich_presentation(actual) == _canonicalize_rich_presentation(expected)
+    canonical_actual = _canonicalize_rich_presentation(actual)
+    canonical_expected = _canonicalize_rich_presentation(expected)
+    assert isinstance(canonical_actual, dict)
+    assert isinstance(canonical_expected, dict)
+    assert canonical_actual.keys() == canonical_expected.keys()
+
+    for key in canonical_actual.keys() - {"command_goldens"}:
+        assert canonical_actual[key] == canonical_expected[key], key
+
+    actual_goldens = canonical_actual["command_goldens"]
+    expected_goldens = canonical_expected["command_goldens"]
+    assert isinstance(actual_goldens, list)
+    assert isinstance(expected_goldens, list)
+    assert [item["scenario"] for item in actual_goldens] == [
+        item["scenario"] for item in expected_goldens
+    ]
+    for actual_golden, expected_golden in zip(actual_goldens, expected_goldens, strict=True):
+        assert actual_golden == expected_golden, actual_golden["scenario"]
 
 
 def test_rich_help_layout_is_canonical_across_platforms() -> None:
