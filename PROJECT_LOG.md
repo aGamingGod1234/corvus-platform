@@ -23,3 +23,26 @@
 
 ### Suggested Next Steps
 - Expose the application service through thin CLI and FastAPI adapters with local pairing, CSRF, and replayable SSE.
+
+## 2026-07-14 — M3 Thin CLI Adapter
+
+### What Was Implemented
+- Added `corvus mvp` project, outcome, and workflow commands that call the authoritative application service.
+- Added a single-command durable demo covering dependency execution, approval, budget settlement, and restart verification.
+- Added CLI adapter tests that exercise real SQLite state rather than mocks.
+
+### Files Modified
+- `corvus/cli.py` — registers the additive MVP command group without altering retained commands.
+- `corvus/mvp/cli.py` — thin Typer adapter and demo orchestration.
+- `tests/mvp/test_cli_adapter.py` — CLI integration tests.
+- `PROJECT_LOG.md` — implementation record.
+
+### Assumptions Made (flag these for review)
+- The additive `corvus mvp` namespace preserves retained M0.5/M1 CLI compatibility while the hackathon surfaces are built.
+
+### Known Issues / Deferred
+- FastAPI/uvicorn are not installed and require dependency approval before the M4 adapter can be executed.
+- Additional inspection commands will be added alongside the remaining domain surfaces.
+
+### Suggested Next Steps
+- Add secure local authentication, CSRF protection, typed API routes, and replayable SSE after dependency approval.

@@ -27,6 +27,7 @@ from corvus.delivery import DeliveryError, DeliveryManager
 from corvus.evals import run_eval
 from corvus.memory import MemoryManager
 from corvus.models import MemoryRecord, ModelProvider, RunPhase
+from corvus.mvp.cli import mvp_app
 from corvus.onboarding import OnboardingChoices, OnboardingError, OnboardingManager
 from corvus.onboarding_tui import FirstRunApp
 from corvus.orchestration import AgentOrchestrator
@@ -52,6 +53,7 @@ skills_app = typer.Typer(help="Inspect and control versioned skills")
 app.add_typer(model_app, name="model")
 app.add_typer(memory_app, name="memory")
 app.add_typer(skills_app, name="skills")
+app.add_typer(mvp_app, name="mvp")
 console = Console(stderr=False)
 
 
