@@ -116,17 +116,15 @@ def test_v1_legacy_corpus_is_complete_unstamped_and_semantically_representative(
             "SELECT status, bundle_json, approval_json, checkpoint_json FROM deliveries"
         ).fetchone() == (
             "approved",
-            '{"changed_files":["README.md"],"manifest_digest":"'
-            + "3" * 64
-            + '"}',
+            '{"changed_files":["README.md"],"manifest_digest":"' + "3" * 64 + '"}',
             '{"approved_files":["README.md"]}',
-            '{"backup_digest":"'
-            + "4" * 64
-            + '"}',
+            '{"backup_digest":"' + "4" * 64 + '"}',
         )
-    assert (FIXTURE_SOURCE / "project" / ".corvus" / "policy.yaml").read_text(
-        encoding="utf-8"
-    ).startswith("autonomy: 2\n")
+    assert (
+        (FIXTURE_SOURCE / "project" / ".corvus" / "policy.yaml")
+        .read_text(encoding="utf-8")
+        .startswith("autonomy: 2\n")
+    )
 
 
 def test_v1_quarantine_capture_is_sealed_redacted_and_idempotent(tmp_path: Path) -> None:

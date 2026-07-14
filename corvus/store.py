@@ -13,7 +13,7 @@ from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.orm import Session as DbSession
 
-from corvus.context import ContextEnvelope, ContextOwner, ExternalContent
+from corvus.context import ContextEnvelope, ContextOwner, ContextOwnerKind, ExternalContent
 from corvus.database import bootstrap_database
 from corvus.models import RunEvent, RunPhase
 from corvus.security import (
@@ -185,7 +185,20 @@ class TraceStore:
                 created_at=created_at,
             )
 
+    @staticmethod
+    def _require_new_context_owner(owner: ContextOwner) -> None:
+        """Keep new V1 provenance writes under the canonical legacy run owner.
+
+        Query methods intentionally do not call this guard: rows written by older
+        versions under the retired owner kinds remain readable for migration and
+        forensic review.
+        """
+
+        if owner.kind is not ContextOwnerKind.LEGACY_RUN:
+            raise SecurityError("new context writes require a legacy_run owner")
+
     def _external_row(self, owner: ContextOwner, content: ExternalContent) -> ExternalContentRow:
+        self._require_new_context_owner(owner)
         content_json = self.redactor.redact_json(content.data)
         content_digest = sha256_bytes(content_json.encode("utf-8"))
         source = self.redactor.redact(content.source)
@@ -211,6 +224,7 @@ class TraceStore:
         )
 
     def append_context_envelope(self, envelope: ContextEnvelope) -> UUID:
+        self._require_new_context_owner(envelope.owner)
         envelope_id = uuid4()
         with self._write_lock, DbSession(self.engine) as session:
             for content in (*envelope.trusted, *envelope.external):
@@ -237,6 +251,7 @@ class TraceStore:
         return envelope_id
 
     def append_external_content(self, owner: ContextOwner, content: ExternalContent) -> None:
+        self._require_new_context_owner(owner)
         with self._write_lock, DbSession(self.engine) as session:
             if session.get(ExternalContentRow, str(content.id)) is None:
                 session.add(self._external_row(owner, content))

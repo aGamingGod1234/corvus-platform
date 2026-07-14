@@ -15,7 +15,13 @@ from corvus.context import (
     ExternalContent,
 )
 from corvus.models import ModelMessage, ModelRequest
-from corvus.providers import ModelProviderClient, ProviderError
+from corvus.providers import (
+    ModelProviderClient,
+    ProviderError,
+    ProviderStreamLimits,
+    collect_provider_stream,
+)
+from corvus.security import SecretRedactor
 
 
 @dataclass(frozen=True)
@@ -62,13 +68,42 @@ simple questions. Never exceed the requested maximum. Do not include host action
         provenance: ContextProvenanceSink,
         max_subagents: int = 2,
         max_history_messages: int = 40,
+        provider_stream_limits: ProviderStreamLimits | None = None,
+        delegation_stream_limits: ProviderStreamLimits | None = None,
+        subagent_stream_limits: ProviderStreamLimits | None = None,
+        redactor: SecretRedactor | None = None,
     ) -> None:
         if max_subagents < 1 or max_subagents > 8:
             raise ValueError("max_subagents must be between 1 and 8")
         self.provider = provider
         self.provenance = provenance
+        inherited_redactor = getattr(provenance, "redactor", None)
+        self.redactor = redactor or (
+            inherited_redactor
+            if isinstance(inherited_redactor, SecretRedactor)
+            else SecretRedactor()
+        )
         self.max_subagents = max_subagents
         self.max_history_messages = max_history_messages
+        self.provider_stream_limits = provider_stream_limits or ProviderStreamLimits()
+        self.delegation_stream_limits = delegation_stream_limits or ProviderStreamLimits(
+            max_chunks=64,
+            max_characters=8_000,
+            max_bytes=32_000,
+            max_emitted_characters=8_000,
+            max_emitted_bytes=32_000,
+            max_persisted_characters=8_000,
+            max_persisted_bytes=32_000,
+        )
+        self.subagent_stream_limits = subagent_stream_limits or ProviderStreamLimits(
+            max_chunks=128,
+            max_characters=16_000,
+            max_bytes=64_000,
+            max_emitted_characters=16_000,
+            max_emitted_bytes=64_000,
+            max_persisted_characters=16_000,
+            max_persisted_bytes=64_000,
+        )
 
     async def respond(
         self,
@@ -80,6 +115,9 @@ simple questions. Never exceed the requested maximum. Do not include host action
         allow_subagents: bool = False,
         spawn_subagent: SpawnSubagent | None = None,
     ) -> str:
+        # Retained V1 root and delegated calls share the legacy run owner. New
+        # owner classes remain readable for history but are not V1 write targets.
+        owner = ContextOwner.legacy_run(owner.id)
         await emit(AgentEvent(type="agent.started"))
         await emit(
             AgentEvent(
@@ -170,7 +208,12 @@ simple questions. Never exceed the requested maximum. Do not include host action
             ),
         )
         request = self._request(envelope, temperature=0, max_output_tokens=512)
-        raw = await self._collect(request, owner, source="delegation-plan")
+        raw = await self._collect(
+            request,
+            owner,
+            source="delegation-plan",
+            limits=self.delegation_stream_limits,
+        )
         try:
             plan = SubagentPlan.model_validate_json(self._strip_fence(raw))
         except ValidationError:
@@ -226,6 +269,7 @@ simple questions. Never exceed the requested maximum. Do not include host action
                         request,
                         owner,
                         source=f"subagent-response:{subagent_id}",
+                        limits=self.subagent_stream_limits,
                         on_delta=lambda text: emit(
                             AgentEvent(
                                 type="subagent.delta",
@@ -269,16 +313,17 @@ simple questions. Never exceed the requested maximum. Do not include host action
         owner: ContextOwner,
         *,
         source: str,
+        limits: ProviderStreamLimits | None = None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
-        chunks: list[str] = []
-        async for chunk in self.provider.stream(request):
-            if chunk.type != "text" or not chunk.text:
-                continue
-            chunks.append(chunk.text)
-            if on_delta is not None:
-                await on_delta(chunk.text)
-        response = "".join(chunks).strip()
+        result = await collect_provider_stream(
+            self.provider,
+            request,
+            redactor=self.redactor,
+            limits=limits or self.provider_stream_limits,
+            on_text=on_delta,
+        )
+        response = result.text.strip()
         if response:
             self.provenance.append_external_content(
                 owner,

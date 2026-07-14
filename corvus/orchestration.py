@@ -8,13 +8,19 @@ from corvus.context import ContextEnvelope, ContextOwner, ExternalContent
 from corvus.models import (
     AcceptanceCriterion,
     ExecutionPlan,
+    ModelChunk,
     ModelMessage,
     ModelRequest,
     PlanStep,
     RunEvent,
     RunPhase,
 )
-from corvus.providers import ModelProviderClient, ProviderError
+from corvus.providers import (
+    ModelProviderClient,
+    ProviderError,
+    ProviderStreamLimits,
+    collect_provider_stream,
+)
 from corvus.store import TraceStore
 
 
@@ -23,9 +29,16 @@ class AgentOrchestrator:
 Return a concise plan and never claim a tool ran unless its result is provided by Corvus.
 Do not request host writes; delivery requires a separate manifest-bound approval."""
 
-    def __init__(self, store: TraceStore, provider: ModelProviderClient | None = None) -> None:
+    def __init__(
+        self,
+        store: TraceStore,
+        provider: ModelProviderClient | None = None,
+        *,
+        provider_stream_limits: ProviderStreamLimits | None = None,
+    ) -> None:
         self.store = store
         self.provider = provider
+        self.provider_stream_limits = provider_stream_limits or ProviderStreamLimits()
 
     async def begin(self, prompt: str, project: Path) -> AsyncIterator[RunEvent]:
         run_id = uuid4()
@@ -99,22 +112,34 @@ Do not request host writes; delivery requires a separate manifest-bound approval
                 for message in envelope.messages()
             ]
         )
-        chunks: list[str] = []
-        try:
-            async for chunk in self.provider.stream(request):
-                if chunk.type == "text":
-                    chunks.append(chunk.text or "")
-                yield self.store.append(
+        chunk_events: list[RunEvent] = []
+
+        async def record_chunk(chunk: ModelChunk) -> None:
+            # The collector only exposes incrementally redacted, aggregate-
+            # bounded chunks. Keep the retained V1 event envelope unchanged.
+            chunk_events.append(
+                self.store.append(
                     run_id,
                     "model.chunk",
                     RunPhase.PLAN,
                     chunk.model_dump(mode="json"),
                 )
-            response = "".join(chunks)
-            if response:
+            )
+
+        try:
+            result = await collect_provider_stream(
+                self.provider,
+                request,
+                redactor=self.store.redactor,
+                limits=self.provider_stream_limits,
+                on_chunk=record_chunk,
+            )
+            for event in chunk_events:
+                yield event
+            if result.text:
                 self.store.append_external_content(
                     owner,
-                    ExternalContent.model(response, source="orchestrator-model-output"),
+                    ExternalContent.model(result.text, source="orchestrator-model-output"),
                 )
         except ProviderError as exc:
             yield self.store.append(

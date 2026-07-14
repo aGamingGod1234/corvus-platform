@@ -150,6 +150,34 @@ class SecretRedactor:
             sort_keys=True,
         )
 
+    def streaming_buffer_characters(self, *, maximum: int | None = None) -> int:
+        """Return bounded lookbehind needed to redact secrets split across chunks."""
+
+        if maximum is not None and maximum <= 0:
+            raise ValueError("maximum must be positive")
+        longest_registered = max((len(secret) for secret in self._secrets), default=0)
+        # Keep full registered values available until they can be redacted. The
+        # caller's aggregate input bound caps this buffer even for a malformed
+        # configuration containing an unusually long registered secret.
+        required = max(512, longest_registered + 64)
+        return required if maximum is None else min(required, maximum)
+
+    def streaming_safe_prefix_length(self, text: str, *, maximum_buffer: int) -> int:
+        """Return a safe-to-redact prefix length without leaking partial tokens."""
+
+        if maximum_buffer <= 0:
+            raise ValueError("maximum_buffer must be positive")
+        cut = len(text) - self.streaming_buffer_characters(maximum=maximum_buffer)
+        if cut <= 0:
+            return 0
+        # A token assignment ending at the chunk boundary can continue in the
+        # next chunk. Retain it even when its key precedes the normal suffix.
+        for pattern in self._TOKEN_PATTERNS:
+            for match in pattern.finditer(text):
+                if match.end() == len(text):
+                    cut = min(cut, match.start())
+        return max(cut, 0)
+
     def bound_text(self, text: str, *, max_characters: int) -> BoundedRedactedText:
         if max_characters <= 0:
             raise ValueError("max_characters must be positive")

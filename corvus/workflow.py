@@ -20,7 +20,12 @@ from corvus.models import (
     RunEvent,
     RunPhase,
 )
-from corvus.providers import ModelProviderClient, ProviderError
+from corvus.providers import (
+    ModelProviderClient,
+    ProviderError,
+    ProviderStreamLimits,
+    collect_provider_stream,
+)
 from corvus.sandbox import CommandResult, DockerSandbox, SandboxError
 from corvus.security import SecurityError, atomic_write, resolve_under
 from corvus.snapshot import (
@@ -68,6 +73,7 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
         sandbox_name: str = "docker",
         verification_policy: VerificationPolicy | None = None,
         snapshot_policy: SnapshotPolicy | None = None,
+        provider_stream_limits: ProviderStreamLimits | None = None,
         max_output_characters: int = 32_000,
         max_context_characters: int = 64_000,
         max_model_response_characters: int = 1_000_000,
@@ -90,6 +96,15 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
         self.max_output_characters = max_output_characters
         self.max_context_characters = max_context_characters
         self.max_model_response_characters = max_model_response_characters
+        self.provider_stream_limits = provider_stream_limits or ProviderStreamLimits(
+            max_chunks=1024,
+            max_characters=max_model_response_characters,
+            max_bytes=max_model_response_characters * 4,
+            max_emitted_characters=max_model_response_characters,
+            max_emitted_bytes=max_model_response_characters * 4,
+            max_persisted_characters=max_model_response_characters,
+            max_persisted_bytes=max_model_response_characters * 4,
+        )
         self.redactor = store.redactor
 
     async def execute(self, prompt: str, project: Path) -> tuple[UUID, DeliveryBundle | None]:
@@ -370,15 +385,13 @@ Never claim tests were run. Trusted required and smoke checks are selected outsi
             ],
             temperature=0,
         )
-        chunks: list[str] = []
-        response_characters = 0
-        async for chunk in self.provider.stream(request):
-            if chunk.type == "text":
-                response_characters += len(chunk.text)
-                if response_characters > self.max_model_response_characters:
-                    raise ValueError("model candidate response exceeds character limit")
-                chunks.append(chunk.text)
-        raw = self.redactor.redact_registered("".join(chunks).strip())
+        result = await collect_provider_stream(
+            self.provider,
+            request,
+            redactor=self.redactor,
+            limits=self.provider_stream_limits,
+        )
+        raw = result.text.strip()
         self.store.append_external_content(
             owner,
             ExternalContent.model(raw, source="coding-candidate-output"),

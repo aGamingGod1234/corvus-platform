@@ -4,7 +4,8 @@ import ipaddress
 import json
 import socket
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -12,12 +13,207 @@ import httpcore
 import httpx
 
 from corvus.models import ModelChunk, ModelProvider, ModelRequest
+from corvus.security import BoundedRedactedText, SecretRedactor
 
 
 class ProviderError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+class ProviderOutputLimitError(ProviderError):
+    """Stable, non-retryable failure used for every provider-output limit."""
+
+    code = "output_limit_exceeded"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
+@dataclass(frozen=True)
+class ProviderStreamLimits:
+    """Aggregate limits for untrusted output from one provider request."""
+
+    max_chunks: int = 256
+    max_characters: int = 32_000
+    max_bytes: int = 128_000
+    max_emitted_characters: int = 32_000
+    max_emitted_bytes: int = 128_000
+    max_persisted_characters: int = 32_000
+    max_persisted_bytes: int = 128_000
+
+    def __post_init__(self) -> None:
+        if any(
+            value <= 0
+            for value in (
+                self.max_chunks,
+                self.max_characters,
+                self.max_bytes,
+                self.max_emitted_characters,
+                self.max_emitted_bytes,
+                self.max_persisted_characters,
+                self.max_persisted_bytes,
+            )
+        ):
+            raise ValueError("provider stream limits must be positive")
+
+
+@dataclass(frozen=True)
+class ProviderStreamResult:
+    text: str
+    metadata: dict[str, int | str | bool]
+
+
+class _IncrementalRedactor:
+    """Delay a bounded suffix so registered secrets spanning chunks never emit."""
+
+    def __init__(self, redactor: SecretRedactor, *, maximum_buffer: int) -> None:
+        self._redactor = redactor
+        self._pending = ""
+        self._maximum_buffer = maximum_buffer
+
+    def push(self, text: str) -> str:
+        self._pending += text
+        cut = self._redactor.streaming_safe_prefix_length(
+            self._pending,
+            maximum_buffer=self._maximum_buffer,
+        )
+        if cut <= 0:
+            return ""
+        safe, self._pending = self._pending[:cut], self._pending[cut:]
+        return self._redactor.redact(safe)
+
+    def finish(self) -> str:
+        safe, self._pending = self._pending, ""
+        return self._redactor.redact(safe)
+
+
+def _bounded_metadata(bounded: BoundedRedactedText) -> dict[str, int | str | bool]:
+    return {
+        "captured_bytes": bounded.captured_bytes,
+        "captured_characters": bounded.captured_chars,
+        "captured_sha256": bounded.captured_sha256,
+        "original_bytes": bounded.original_bytes,
+        "original_characters": bounded.original_chars,
+        "original_sha256": bounded.original_sha256,
+        "truncated": bounded.truncated,
+    }
+
+
+async def _cancel_provider_stream(stream: AsyncIterator[ModelChunk]) -> None:
+    close = getattr(stream, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except BaseException:
+        # Overflow remains a deterministic limit failure even when a provider
+        # ignores cancellation or its cleanup path is itself defective.
+        return
+
+
+async def collect_provider_stream(
+    provider: ModelProviderClient,
+    request: ModelRequest,
+    *,
+    redactor: SecretRedactor,
+    limits: ProviderStreamLimits,
+    on_text: Callable[[str], Awaitable[None]] | None = None,
+    on_chunk: Callable[[ModelChunk], Awaitable[None]] | None = None,
+) -> ProviderStreamResult:
+    """Collect provider text with aggregate limits and cross-chunk redaction.
+
+    A limit is fail-closed: the stream is closed immediately, no later chunk is
+    accepted, and callers receive the stable ``output_limit_exceeded`` error.
+    The returned text has already passed through ``SecretRedactor.bound_text``
+    so its metadata matches other persisted bounded output.
+    """
+
+    stream = provider.stream(request)
+    incremental = _IncrementalRedactor(redactor, maximum_buffer=limits.max_characters)
+    persisted_parts: list[str] = []
+    emitted_characters = emitted_bytes = 0
+    persisted_characters = persisted_bytes = 0
+    received_characters = received_bytes = received_chunks = 0
+
+    async def emit_text(text: str) -> None:
+        nonlocal emitted_characters, emitted_bytes, persisted_characters, persisted_bytes
+        if not text:
+            return
+        text_bytes = len(text.encode("utf-8"))
+        emitted_characters += len(text)
+        emitted_bytes += text_bytes
+        persisted_characters += len(text)
+        persisted_bytes += text_bytes
+        if (
+            emitted_characters > limits.max_emitted_characters
+            or emitted_bytes > limits.max_emitted_bytes
+            or persisted_characters > limits.max_persisted_characters
+            or persisted_bytes > limits.max_persisted_bytes
+        ):
+            raise ProviderOutputLimitError()
+        persisted_parts.append(text)
+        safe_chunk = ModelChunk(type="text", text=text)
+        if on_chunk is not None:
+            await on_chunk(safe_chunk)
+        if on_text is not None:
+            await on_text(text)
+
+    try:
+        async for chunk in stream:
+            received_chunks += 1
+            if received_chunks > limits.max_chunks:
+                raise ProviderOutputLimitError()
+            if chunk.type == "text":
+                received_characters += len(chunk.text)
+                received_bytes += len(chunk.text.encode("utf-8"))
+                if received_characters > limits.max_characters or received_bytes > limits.max_bytes:
+                    raise ProviderOutputLimitError()
+                await emit_text(incremental.push(chunk.text))
+                continue
+
+            # A non-text event forms a text-stream boundary. Flush the delayed
+            # suffix before exposing the event so successful streams retain the
+            # provider's text-before-event ordering.
+            await emit_text(incremental.finish())
+            # A non-text provider event can be just as large as a text delta.
+            # Measure the redacted JSON form whether or not the caller exposes
+            # event callbacks, so an ignored tool/usage event cannot evade the
+            # aggregate request limit.
+            safe_data = redactor.redact_value(chunk.data)
+            serialized = redactor.redact_json(safe_data)
+            received_characters += len(serialized)
+            received_bytes += len(serialized.encode("utf-8"))
+            if received_characters > limits.max_characters or received_bytes > limits.max_bytes:
+                raise ProviderOutputLimitError()
+            if on_chunk is not None:
+                await on_chunk(ModelChunk(type=chunk.type, text="", data=safe_data))
+        await emit_text(incremental.finish())
+    except ProviderOutputLimitError:
+        await _cancel_provider_stream(stream)
+        raise
+    except BaseException:
+        await _cancel_provider_stream(stream)
+        raise
+
+    bounded = redactor.bound_text(
+        "".join(persisted_parts),
+        max_characters=limits.max_persisted_characters,
+    )
+    if bounded.truncated or bounded.captured_bytes > limits.max_persisted_bytes:
+        raise ProviderOutputLimitError()
+    metadata = _bounded_metadata(bounded)
+    metadata.update(
+        {
+            "chunk_count": received_chunks,
+            "emitted_bytes": emitted_bytes,
+            "emitted_characters": emitted_characters,
+            "persisted_bytes": persisted_bytes,
+            "persisted_characters": persisted_characters,
+        }
+    )
+    return ProviderStreamResult(text=bounded.text, metadata=metadata)
 
 
 def _validated_provider_destination(
