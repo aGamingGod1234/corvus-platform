@@ -427,3 +427,29 @@
 ### Suggested Next Steps
 - Perform hands-on review of the pushed adaptive shell.
 - At the next authorized boundary, implement the native Local/Cloud chooser, Google continuity, and E2B sandbox lifecycle before multi-user collaboration migrations.
+
+## 2026-07-15 — Provider Runtime and Deep E2E Audit
+
+### What Was Implemented
+- Completed a deeper read-only web/API/runtime audit and live end-to-end pass without changing production code.
+- Verified the complete workflow approval boundary: preparation succeeded, delivery stopped for approval, and the workflow completed only after explicit approval.
+- Verified team creation, credential-reference-only provider setup, shadow evaluation, untrusted memory retrieval, skill/routine creation and execution, reload persistence, and mobile overflow behavior.
+- Audited installed local AI tools and documented the provider/unattended-mode decision boundary in `QUESTIONS.md`.
+
+### Files Modified
+- `QUESTIONS.md` — mandatory autonomous-work stop record with verified state, assumptions, decisions, recommended UX contract, and explicit boundary.
+- `PROJECT_LOG.md` — verification evidence and deferred implementation record.
+
+### Assumptions Made (flag these for review)
+- No implementation assumptions were applied; ambiguous provider routing and unattended authority were recorded for confirmation.
+
+### Known Issues / Deferred
+- A hard offline browser reload reaches the browser network error page; offline startup is not supported.
+- Four visible mobile controls measured 30 px high, below the preferred 40–44 px touch target.
+- The Skills route remains overloaded with collaboration, providers, memory, skills, routines, and ingress.
+- Claude and Gemini are installed but have no Corvus runtime adapters; Cursor and Grok/xAI CLIs are absent.
+
+### Suggested Next Steps
+- Confirm the five decisions in `QUESTIONS.md`.
+- Implement the AI connection flow and typed `AgentRuntimePort` test-first, preserving all authority and secret boundaries.
+- Implement bounded unattended profiles only after their pre-authorization envelope is confirmed.
