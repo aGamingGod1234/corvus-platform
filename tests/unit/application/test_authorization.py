@@ -3449,6 +3449,32 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     adapter = VerifiedAgentRunAuthorizationAdapter(inputs=inputs, snapshots=snapshots)
 
     allowed = adapter.authorize(agent_request)
+    expired_deadline_request = run_request.model_copy(
+        update={"deadline": authorization_request.evaluated_at}
+    )
+    inputs.expected = agent_request.model_copy(
+        update={
+            "request": expired_deadline_request,
+            "canonical_request_digest": compute_agent_run_request_digest(expired_deadline_request),
+        }
+    )
+    expired_deadline = adapter.authorize(inputs.expected)
+    future_issued_autonomy = autonomy.model_copy(
+        update={"issued_at": authorization_request.evaluated_at + timedelta(seconds=1)}
+    )
+    future_issued_request = run_request.model_copy(
+        update={"autonomy_grant_digest": compute_autonomy_grant_digest(future_issued_autonomy)}
+    )
+    inputs.value = resolved.model_copy(update={"autonomy_grant": future_issued_autonomy})
+    inputs.expected = agent_request.model_copy(
+        update={
+            "request": future_issued_request,
+            "canonical_request_digest": compute_agent_run_request_digest(future_issued_request),
+        }
+    )
+    future_issued_grant = adapter.authorize(inputs.expected)
+    inputs.value = resolved
+    inputs.expected = agent_request
     inputs.value = resolved.model_copy(
         update={
             "autonomy_grant": autonomy.model_copy(
@@ -3734,6 +3760,10 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     assert allowed.allowed is True
     assert allowed.reason_code == "exact_capability_intersection"
     assert allowed.immutable_request_digest == run_request.immutable_request_digest
+    assert expired_deadline.allowed is False
+    assert expired_deadline.reason_code == "stale_autonomy_grant"
+    assert future_issued_grant.allowed is False
+    assert future_issued_grant.reason_code == "stale_autonomy_grant"
     assert stale_autonomy.allowed is False
     assert stale_autonomy.reason_code == "stale_autonomy_grant"
     assert stale_provider.allowed is False

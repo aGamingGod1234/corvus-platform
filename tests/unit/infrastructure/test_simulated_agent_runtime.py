@@ -23,6 +23,7 @@ from corvus.domain.agent_runtime import (
     ProviderStatus,
     ProviderTransport,
     compute_provider_binding_digest,
+    validate_agent_run_event_chain,
 )
 from corvus.infrastructure.agent_runtimes import (
     AgentRuntimeError,
@@ -168,6 +169,20 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_start_rejects_same_run_with_new_idempotency_key(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    request = _request(binding)
+    first = await runtime.start(request)
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(request.model_copy(update={"idempotency_key": "run:002"}))
+
+    assert exc_info.value.reason_code == "agent_run_idempotency_mismatch"
+    assert [event async for event in runtime.events(first.handle)]
+
+
+@pytest.mark.asyncio
 async def test_cancel_is_idempotent_and_records_one_terminal_event(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     runtime = _runtime(
@@ -216,6 +231,55 @@ async def test_empty_template_cancel_preserves_started_then_cancelled_lifecycle(
         AgentRunEventType.STARTED,
         AgentRunEventType.CANCELLED,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_started", "closing_event_type"),
+    [
+        (False, AgentRunEventType.TOOL_BLOCKED),
+        (True, AgentRunEventType.TOOL_RESULT),
+    ],
+)
+async def test_cancel_closes_open_tool_calls_before_terminal_event(
+    tmp_path: Path,
+    tool_started: bool,
+    closing_event_type: AgentRunEventType,
+) -> None:
+    binding = _binding(tmp_path)
+    decision_id = uuid4()
+    decision_digest = "d" * 64
+    templates = [
+        SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),
+        SimulatedEventTemplate(
+            AgentRunEventType.TOOL_REQUESTED,
+            {"tool": "repository.search"},
+            tool_call_id="tool-1",
+            effect_authorization_decision_id=decision_id,
+            effect_authorization_decision_digest=decision_digest,
+        ),
+    ]
+    if tool_started:
+        templates.append(
+            SimulatedEventTemplate(
+                AgentRunEventType.TOOL_STARTED,
+                {"tool": "repository.search"},
+                tool_call_id="tool-1",
+                effect_authorization_decision_id=decision_id,
+                effect_authorization_decision_digest=decision_digest,
+            )
+        )
+    runtime = _runtime((binding,), {binding.id: tuple(templates)})
+    handle = (await runtime.start(_request(binding))).handle
+
+    await runtime.cancel(handle, uuid4())
+    events = [event async for event in runtime.events(handle)]
+
+    assert events[-2].event_type is closing_event_type
+    assert events[-2].tool_call_id == "tool-1"
+    assert events[-2].effect_authorization_decision_id == decision_id
+    assert events[-1].event_type is AgentRunEventType.CANCELLED
+    assert validate_agent_run_event_chain(events) is AgentRunState.CANCELLED
 
 
 @pytest.mark.asyncio

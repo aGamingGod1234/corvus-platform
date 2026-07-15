@@ -89,6 +89,7 @@ class SimulatedAgentRuntime:
             for binding_id, templates in event_templates.items()
         }
         self._runs: dict[UUID, _RunRecord] = {}
+        self._run_handle_ids: dict[tuple[UUID, UUID], UUID] = {}
 
     def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         return tuple(
@@ -121,7 +122,9 @@ class SimulatedAgentRuntime:
             _SIMULATED_HANDLE_NAMESPACE,
             f"{request.run_id}:{request.provider_binding_id}:{request.idempotency_key}",
         )
-        existing = self._runs.get(handle_id)
+        run_identity = (request.run_id, binding.id)
+        existing_handle_id = self._run_handle_ids.get(run_identity)
+        existing = self._runs.get(existing_handle_id) if existing_handle_id is not None else None
         if existing is not None:
             if existing.request_digest != request_digest:
                 raise AgentRuntimeError(
@@ -149,6 +152,7 @@ class SimulatedAgentRuntime:
             request_digest=request_digest,
             immutable_request_digest=request.immutable_request_digest,
         )
+        self._run_handle_ids[run_identity] = handle.id
         return AgentRunStartResult(handle=handle, replayed=False)
 
     async def events(
@@ -189,6 +193,7 @@ class SimulatedAgentRuntime:
             timestamp = self._next_event_timestamp(record)
             result = CancellationResult(
                 handle_id=record.handle.id,
+                handle=record.handle,
                 accepted=False,
                 terminal=True,
                 reason_code="agent_run_already_terminal",
@@ -197,44 +202,117 @@ class SimulatedAgentRuntime:
             record.cancellation_result = result
             return result
 
-        sequence = len(record.events) + 1
-        timestamp = self._next_event_timestamp(record)
-        previous_digest = record.events[-1].event_digest if record.events else GENESIS_EVENT_DIGEST
+        self._close_open_tool_calls(record, current_kill_switch_proof_id)
         payload: dict[str, JsonValue] = {
             "current_kill_switch_proof_id": str(current_kill_switch_proof_id)
         }
+        cancelled_event = self._append_event(
+            record,
+            event_type=AgentRunEventType.CANCELLED,
+            payload=payload,
+        )
+        record.handle = record.handle.model_copy(update={"state": AgentRunState.CANCELLED})
+        result = CancellationResult(
+            handle_id=record.handle.id,
+            handle=record.handle,
+            accepted=True,
+            terminal=True,
+            reason_code="agent_run_cancelled",
+            timestamp=cancelled_event.timestamp,
+        )
+        record.cancellation_result = result
+        return result
+
+    def _close_open_tool_calls(
+        self,
+        record: _RunRecord,
+        current_kill_switch_proof_id: UUID,
+    ) -> None:
+        open_tools: dict[str, tuple[UUID, str, bool]] = {}
+        for event in record.events:
+            tool_call_id = event.tool_call_id
+            if event.event_type is AgentRunEventType.TOOL_REQUESTED and tool_call_id is not None:
+                decision_id = event.effect_authorization_decision_id
+                decision_digest = event.effect_authorization_decision_digest
+                if decision_id is None or decision_digest is None:
+                    raise AgentRuntimeError(
+                        "effect_authorization_decision_required",
+                        "open tool call lacks its authorization decision",
+                    )
+                open_tools[tool_call_id] = (decision_id, decision_digest, False)
+            elif event.event_type is AgentRunEventType.TOOL_STARTED and tool_call_id is not None:
+                open_tool = open_tools.get(tool_call_id)
+                if open_tool is not None:
+                    open_tools[tool_call_id] = (*open_tool[:2], True)
+            elif (
+                event.event_type
+                in {
+                    AgentRunEventType.TOOL_BLOCKED,
+                    AgentRunEventType.TOOL_RESULT,
+                }
+                and tool_call_id is not None
+            ):
+                open_tools.pop(tool_call_id, None)
+        for tool_call_id in sorted(open_tools):
+            decision_id, decision_digest, tool_started = open_tools[tool_call_id]
+            self._append_event(
+                record,
+                event_type=(
+                    AgentRunEventType.TOOL_RESULT
+                    if tool_started
+                    else AgentRunEventType.TOOL_BLOCKED
+                ),
+                payload={
+                    "current_kill_switch_proof_id": str(current_kill_switch_proof_id),
+                    "reason": "agent_run_cancelled",
+                    "status": "cancelled" if tool_started else "blocked",
+                },
+                tool_call_id=tool_call_id,
+                effect_authorization_decision_id=decision_id,
+                effect_authorization_decision_digest=decision_digest,
+            )
+
+    def _append_event(
+        self,
+        record: _RunRecord,
+        *,
+        event_type: AgentRunEventType,
+        payload: dict[str, JsonValue],
+        tool_call_id: str | None = None,
+        effect_authorization_decision_id: UUID | None = None,
+        effect_authorization_decision_digest: str | None = None,
+    ) -> AgentRunEvent:
+        sequence = len(record.events) + 1
+        timestamp = self._next_event_timestamp(record)
+        previous_digest = record.events[-1].event_digest if record.events else GENESIS_EVENT_DIGEST
         event_digest = compute_agent_run_event_digest(
             run_id=record.handle.run_id,
             handle_id=record.handle.id,
             sequence=sequence,
             timestamp=timestamp,
-            event_type=AgentRunEventType.CANCELLED,
+            event_type=event_type,
             redacted_payload=payload,
             provider_event_id=None,
             previous_event_digest=previous_digest,
+            tool_call_id=tool_call_id,
+            effect_authorization_decision_id=effect_authorization_decision_id,
+            effect_authorization_decision_digest=effect_authorization_decision_digest,
         )
-        record.events.append(
-            AgentRunEvent(
-                run_id=record.handle.run_id,
-                handle_id=record.handle.id,
-                sequence=sequence,
-                timestamp=timestamp,
-                event_type=AgentRunEventType.CANCELLED,
-                redacted_payload=payload,
-                previous_event_digest=previous_digest,
-                event_digest=event_digest,
-            )
-        )
-        record.handle = record.handle.model_copy(update={"state": AgentRunState.CANCELLED})
-        result = CancellationResult(
+        event = AgentRunEvent(
+            run_id=record.handle.run_id,
             handle_id=record.handle.id,
-            accepted=True,
-            terminal=True,
-            reason_code="agent_run_cancelled",
+            sequence=sequence,
             timestamp=timestamp,
+            event_type=event_type,
+            redacted_payload=payload,
+            tool_call_id=tool_call_id,
+            effect_authorization_decision_id=effect_authorization_decision_id,
+            effect_authorization_decision_digest=effect_authorization_decision_digest,
+            previous_event_digest=previous_digest,
+            event_digest=event_digest,
         )
-        record.cancellation_result = result
-        return result
+        record.events.append(event)
+        return event
 
     async def resume(
         self,

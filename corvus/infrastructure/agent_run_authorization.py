@@ -279,7 +279,9 @@ class VerifiedAgentRunAuthorizationAdapter:
             or autonomy.project_id != run_request.project_id
             or compute_autonomy_grant_digest(autonomy) != run_request.autonomy_grant_digest
             or autonomy.revoked_at is not None
+            or autonomy.issued_at > request.evaluated_at
             or autonomy.expires_at <= request.evaluated_at
+            or run_request.deadline <= request.evaluated_at
             or autonomy.wall_clock_deadline < run_request.deadline
             or autonomy.expires_at < run_request.deadline
             or autonomy.credential_grant_ids != run_request.credential_grant_ids

@@ -27,7 +27,9 @@ from corvus.domain.agent_runtime import (
     AgentRunHandle,
     AgentRunRequest,
     AgentRunStartResult,
+    AgentRunState,
     CancellationResult,
+    CapabilitySupport,
     ExecutableIdentity,
     ProviderBinding,
     ProviderCandidate,
@@ -65,7 +67,11 @@ def _binding(
             sha256_digest="a" * 64,
         ),
         model="gpt-5.6-sol",
-        capabilities=AgentCapabilities(),
+        capabilities=AgentCapabilities(
+            repository_read=CapabilitySupport.SUPPORTED,
+            session_resume=CapabilitySupport.SUPPORTED,
+            provider_side_cancellation=CapabilitySupport.SUPPORTED,
+        ),
         health_checked_at=_NOW,
         version=1,
         data_egress_disclosure="Prompts leave the local process.",
@@ -295,6 +301,11 @@ class _RecordingRuntime:
         resume_handle_updates: dict[str, object] | None = None,
         cancellation_handle_id: UUID | None = None,
         cancellation_reason_code: str | None = None,
+        cancellation_result_override: CancellationResult | None = None,
+        health_status: ProviderStatus | None = None,
+        capabilities_override: AgentCapabilities | None = None,
+        discover_error: Exception | None = None,
+        capabilities_error: Exception | None = None,
     ) -> None:
         self.runtime = runtime
         self.order = order
@@ -303,17 +314,32 @@ class _RecordingRuntime:
         self.resume_handle_updates = resume_handle_updates or {}
         self.cancellation_handle_id = cancellation_handle_id
         self.cancellation_reason_code = cancellation_reason_code
+        self.cancellation_result_override = cancellation_result_override
+        self.health_status = health_status
+        self.capabilities_override = capabilities_override
+        self.discover_error = discover_error
+        self.capabilities_error = capabilities_error
 
     def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         self.order.append("runtime:discover")
+        if self.discover_error is not None:
+            raise self.discover_error
         return self.runtime.discover(query)
 
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities:
+        self.order.append("runtime:capabilities")
+        if self.capabilities_error is not None:
+            raise self.capabilities_error
+        if self.capabilities_override is not None:
+            return self.capabilities_override
         return self.runtime.capabilities(binding)
 
     def health(self, binding: ProviderBinding) -> ProviderHealth:
         self.order.append("runtime:health")
-        return self.runtime.health(binding)
+        result = self.runtime.health(binding)
+        if self.health_status is None:
+            return result
+        return result.model_copy(update={"status": self.health_status})
 
     async def start(self, request: AgentRunRequest) -> AgentRunStartResult:
         self.order.append("runtime:start")
@@ -339,6 +365,8 @@ class _RecordingRuntime:
     ) -> CancellationResult:
         self.order.append("runtime:cancel")
         self._raise_if_failed("cancel")
+        if self.cancellation_result_override is not None:
+            return self.cancellation_result_override
         result = await self.runtime.cancel(handle, current_kill_switch_proof_id)
         if self.cancellation_handle_id is None and self.cancellation_reason_code is None:
             return result
@@ -430,6 +458,7 @@ async def test_start_authorizes_audits_executes_and_audits_outcome(tmp_path: Pat
         "authorization",
         "audit:authorization",
         "runtime:discover",
+        "runtime:capabilities",
         "runtime:health",
         "runtime:start",
         "audit:outcome",
@@ -485,17 +514,20 @@ def test_authorization_request_enforces_workspace_scope_without_project_smugglin
     )
 
 
-def test_authorization_request_allows_channel_scope_with_workspace_binding(
+@pytest.mark.parametrize("scope_kind", ["channel", "thread", "conversation"])
+def test_authorization_request_rejects_scope_without_project_ancestry_resolver(
     tmp_path: Path,
+    scope_kind: str,
 ) -> None:
     workspace_id = uuid4()
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
-    context = _context(request, scope_kind="channel", scope_id=uuid4())
+    context = _context(request, scope_kind=scope_kind, scope_id=uuid4())
 
-    validated = _authorization_request(context, request)
+    with pytest.raises(ValidationError) as exc_info:
+        _authorization_request(context, request)
 
-    assert validated.context.scope_kind == "channel"
+    assert exc_info.value.errors()[0]["ctx"]["reason_code"] == ("agent_run_scope_kind_unsupported")
 
 
 @pytest.mark.parametrize(
@@ -982,6 +1014,132 @@ async def test_provider_preflight_rejects_missing_candidate(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_provider_preflight_rejects_unverified_requested_tool_capability(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding, tool_envelope=("repository.search",))
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_capability_unavailable"
+    assert "runtime:capabilities" in order
+    assert "runtime:start" not in order
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_provider_preflight_rejects_runtime_capability_downgrade(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    supported = binding.capabilities.model_copy(update={"tools": CapabilitySupport.SUPPORTED})
+    binding = binding.model_copy(update={"capabilities": supported})
+    request = _request(binding, tool_envelope=("repository.search",))
+    reported = supported.model_copy(update={"tools": CapabilitySupport.UNSUPPORTED})
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+        capabilities_override=reported,
+    )
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_capability_unavailable"
+    assert "runtime:start" not in order
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_updates", "capability_updates"),
+    [
+        ({}, {"repository_read": CapabilitySupport.UNVERIFIED}),
+        (
+            {"requested_effect_classes": frozenset({"repository.write"})},
+            {"repository_write": CapabilitySupport.UNVERIFIED},
+        ),
+        (
+            {"requested_effect_classes": frozenset({"shell.execute"})},
+            {"shell": CapabilitySupport.UNVERIFIED},
+        ),
+        (
+            {"tool_envelope": ("mcp.invoke",)},
+            {
+                "tools": CapabilitySupport.SUPPORTED,
+                "mcp": CapabilitySupport.UNVERIFIED,
+            },
+        ),
+        (
+            {"provider_spend_limit": 1},
+            {"provider_side_budget": CapabilitySupport.UNVERIFIED},
+        ),
+    ],
+)
+async def test_provider_preflight_maps_requested_envelopes_to_verified_capabilities(
+    tmp_path: Path,
+    request_updates: dict[str, object],
+    capability_updates: dict[str, CapabilitySupport],
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    binding = binding.model_copy(
+        update={"capabilities": binding.capabilities.model_copy(update=capability_updates)}
+    )
+    request = _request(binding, **request_updates)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_capability_unavailable"
+    assert "runtime:start" not in order
+
+
+@pytest.mark.asyncio
+async def test_provider_preflight_requires_verified_resume_capability(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    binding = binding.model_copy(
+        update={
+            "capabilities": binding.capabilities.model_copy(
+                update={"session_resume": CapabilitySupport.UNVERIFIED}
+            )
+        }
+    )
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    resumed = request.model_copy(update={"resume_handle_id": handle.id})
+    order: list[str] = []
+    coordinator, _, _ = _coordinator(
+        runtime=_RecordingRuntime(simulator, order),
+        order=order,
+    )
+
+    result = await coordinator.resume(
+        _context(resumed),
+        ClientSurface.CLI,
+        handle,
+        resumed,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_capability_unavailable"
+    assert "runtime:resume" not in order
+
+
+@pytest.mark.asyncio
 async def test_provider_preflight_audit_failure_returns_pending_result(tmp_path: Path) -> None:
     binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
     request = _request(binding).model_copy(update={"provider_binding_digest": "f" * 64})
@@ -1088,6 +1246,7 @@ async def test_resume_requires_bound_receipt_for_matching_fresh_request(tmp_path
         "authorization",
         "audit:authorization",
         "runtime:discover",
+        "runtime:capabilities",
         "runtime:health",
         "runtime:resume",
         "audit:outcome",
@@ -1128,6 +1287,8 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
 
     assert first.ok and second.ok
     assert first.cancellation_result == second.cancellation_result
+    assert first.handle is not None and first.handle.state is AgentRunState.CANCELLED
+    assert second.handle is not None and second.handle.state is AgentRunState.CANCELLED
     assert all(
         item.current_kill_switch_proof_id == current_proof_id
         and item.current_kill_switch_proof_digest == current_proof_digest
@@ -1136,6 +1297,171 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
     assert all(event.kill_switch_proof_id == current_proof_id for event in audit.events)
     assert all(event.kill_switch_proof_digest == current_proof_digest for event in audit.events)
     assert all(event.handle_id == handle.id for event in audit.events)
+
+
+@pytest.mark.asyncio
+async def test_cancel_reaches_runtime_when_provider_health_is_unhealthy(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(simulator, order, health_status=ProviderStatus.UNHEALTHY)
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert result.ok
+    assert "runtime:cancel" in order
+    assert "runtime:health" not in order
+
+
+@pytest.mark.asyncio
+async def test_cancel_requires_only_verified_cancellation_capability(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    binding = binding.model_copy(
+        update={
+            "capabilities": AgentCapabilities(
+                provider_side_cancellation=CapabilitySupport.SUPPORTED
+            )
+        }
+    )
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    coordinator, _, _ = _coordinator(
+        runtime=_RecordingRuntime(simulator, order),
+        order=order,
+    )
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert result.ok
+    assert "runtime:cancel" in order
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_probe", ["discover", "capabilities"])
+async def test_cancel_bypasses_fallible_provider_introspection(
+    tmp_path: Path,
+    failing_probe: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        discover_error=(
+            RuntimeError("discovery unavailable") if failing_probe == "discover" else None
+        ),
+        capabilities_error=(
+            RuntimeError("capabilities unavailable") if failing_probe == "capabilities" else None
+        ),
+    )
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert result.ok
+    assert "runtime:cancel" in order
+    assert "runtime:discover" not in order
+    assert "runtime:capabilities" not in order
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejected_nonterminal_result_records_failure(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    rejected = CancellationResult(
+        handle_id=handle.id,
+        accepted=False,
+        terminal=False,
+        reason_code="provider_cancel_rejected",
+        timestamp=_NOW,
+    )
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_result_override=rejected,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "provider_cancel_rejected"
+    assert result.handle == handle
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_cancel_terminal_result_requires_canonical_terminal_handle(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    terminal_without_handle = CancellationResult(
+        handle_id=handle.id,
+        accepted=False,
+        terminal=True,
+        reason_code="agent_run_already_terminal",
+        timestamp=_NOW,
+    )
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_result_override=terminal_without_handle,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_cancellation_handle_missing"
+    assert audit.events[-1].outcome == "failure"
 
 
 @pytest.mark.asyncio

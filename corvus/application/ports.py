@@ -176,6 +176,8 @@ class AgentRunAuthorizationRequest(BaseModel):
                 or self.request.project_id is not None
             ):
                 _raise_agent_run_contract_error("agent_run_workspace_scope_mismatch")
+        else:
+            _raise_agent_run_contract_error("agent_run_scope_kind_unsupported")
         if self.context.idempotency_key != self.request.idempotency_key:
             _raise_agent_run_contract_error("agent_run_idempotency_key_mismatch")
         if (

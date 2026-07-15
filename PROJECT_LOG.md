@@ -756,3 +756,36 @@
 ### Suggested Next Steps
 - Commit and push the verified repair to `codex/main-integration`, reply to and resolve the three Gemini review threads, and recheck every GitHub certification job.
 - Keep pull request #1 open and unmerged until the user's review gate is satisfied.
+
+## 2026-07-15 — PR #1 Full Review Repair Pass
+
+### What Was Implemented
+- Closed all 12 unique Codex review findings, including the 10 duplicated follow-up comments: usage token counters no longer trigger secret-key rejection, while nested secret-shaped values remain fail-closed.
+- Preserved event-chain integrity by recomputing every event digest and deterministically closing open tool calls before cancellation.
+- Made cancellation independent of volatile provider health, rejected non-terminal provider refusals as failures, and returned a canonical cancelled handle after accepted terminal cancellation.
+- Enforced logical run identity across changed idempotency keys, required verified provider capabilities for requested execution envelopes and resume, and rejected unsupported nested scopes until an ancestry resolver exists.
+- Removed volatile provider health observations from the binding authorization digest and rechecked queued deadlines plus autonomy issue times at authorization time.
+- Added RED/GREEN regressions for every repaired boundary and independently reproduced every review finding before implementation.
+
+### Files Modified
+- `corvus/security.py` — safe usage-counter classification without weakening secret-name detection.
+- `corvus/domain/agent_runtime.py` — stable binding digests, secret-value rejection, and event-chain digest verification.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — logical run uniqueness and cancellation-safe tool lifecycle closure.
+- `corvus/application/agent_runtime.py` — capability-honest preflight and correct cancellation semantics.
+- `corvus/application/ports.py` — fail-closed unsupported nested agent-run scopes.
+- `corvus/infrastructure/agent_run_authorization.py` — authorization-time deadline and grant-issuance checks.
+- `tests/unit/` — focused contract, simulator, coordinator, and authorization regressions.
+- `HACKATHON_STATUS.md` — exact current verification counts.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user approved the complete unresolved review pass; capability downgrade, scope, cancellation, digest, time-window, redaction, idempotency, PR-only push, and no-merge behavior were validated against the existing plan and contracts.
+
+### Known Issues / Deferred
+- The provider-binding digest intentionally changed to exclude only `status` and `health_checked_at`; in-flight pre-repair binding proofs must be regenerated rather than silently accepted.
+- GitHub certification must rerun on the repair commit before the remote macOS, Linux, Windows, and Docker gates are considered current.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push this verified repair to `codex/main-integration`, respond to every duplicated review thread with evidence, and resolve only the findings demonstrably closed by the pushed commit.
+- Keep pull request #1 open and unmerged until the user's review agents approve it.

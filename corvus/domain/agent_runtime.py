@@ -23,7 +23,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from corvus.security import is_sensitive_field_name
+from corvus.security import SecretRedactor, is_sensitive_field_name
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _GENESIS_EVENT_DIGEST = "0" * 64
@@ -177,7 +177,7 @@ class ProviderBinding(BaseModel):
 
 def compute_provider_binding_digest(binding: ProviderBinding) -> str:
     encoded = json.dumps(
-        binding.model_dump(mode="json"),
+        binding.model_dump(mode="json", exclude={"health_checked_at", "status"}),
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
@@ -576,6 +576,11 @@ def _contains_secret_payload_key(value: object) -> bool:
     return False
 
 
+def _contains_secret_payload_value(value: object) -> bool:
+    thawed = _thaw_json(value)
+    return bool(SecretRedactor().redact_value(thawed) != thawed)
+
+
 def _freeze_json(value: JsonValue) -> JsonValue:
     if isinstance(value, dict):
         frozen = MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
@@ -675,6 +680,8 @@ class AgentRunEvent(BaseModel):
             raise ValueError("agent_run_event_timestamp_must_be_timezone_aware")
         if _contains_secret_payload_key(self.redacted_payload):
             raise ValueError("agent_run_event_payload_contains_secret_key")
+        if _contains_secret_payload_value(self.redacted_payload):
+            raise ValueError("agent_run_event_payload_contains_secret_value")
         tool_events = {
             AgentRunEventType.TOOL_REQUESTED,
             AgentRunEventType.TOOL_BLOCKED,
@@ -741,6 +748,21 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
     for expected_sequence, event in enumerate(events, start=1):
         if terminal_seen:
             raise AgentRunEventChainError("event_after_terminal")
+        expected_digest = compute_agent_run_event_digest(
+            run_id=event.run_id,
+            handle_id=event.handle_id,
+            sequence=event.sequence,
+            timestamp=event.timestamp,
+            event_type=event.event_type,
+            redacted_payload=event.redacted_payload,
+            provider_event_id=event.provider_event_id,
+            previous_event_digest=event.previous_event_digest,
+            tool_call_id=event.tool_call_id,
+            effect_authorization_decision_id=event.effect_authorization_decision_id,
+            effect_authorization_decision_digest=event.effect_authorization_decision_digest,
+        )
+        if event.event_digest != expected_digest:
+            raise AgentRunEventChainError("agent_run_event_digest_mismatch")
         if (
             event.sequence != expected_sequence
             or event.run_id != run_id
@@ -818,6 +840,7 @@ class CancellationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     handle_id: UUID
+    handle: AgentRunHandle | None = None
     accepted: bool
     terminal: bool
     reason_code: str = Field(min_length=1, max_length=200)
@@ -829,6 +852,21 @@ class CancellationResult(BaseModel):
         if not _is_timezone_aware(value):
             raise ValueError("cancellation_timestamp_must_be_timezone_aware")
         return value
+
+    @model_validator(mode="after")
+    def validate_handle_state(self) -> CancellationResult:
+        if self.handle is None:
+            return self
+        if self.handle.id != self.handle_id:
+            raise ValueError("cancellation_handle_id_mismatch")
+        terminal_states = {
+            AgentRunState.CANCELLED,
+            AgentRunState.COMPLETED,
+            AgentRunState.FAILED,
+        }
+        if self.terminal != (self.handle.state in terminal_states):
+            raise ValueError("cancellation_handle_state_mismatch")
+        return self
 
 
 GENESIS_EVENT_DIGEST = _GENESIS_EVENT_DIGEST

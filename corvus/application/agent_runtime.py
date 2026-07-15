@@ -26,6 +26,7 @@ from corvus.domain.agent_runtime import (
     AgentRunHandle,
     AgentRunRequest,
     CancellationResult,
+    CapabilitySupport,
     ProviderDiscoveryQuery,
     ProviderStatus,
     compute_agent_run_request_digest,
@@ -35,6 +36,14 @@ from corvus.domain.request import RequestContext
 
 _REASON_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _INVALID_CANCELLATION_REASON = "agent_run_cancellation_reason_invalid"
+_MISSING_CANCELLATION_HANDLE = "agent_run_cancellation_handle_missing"
+_CAPABILITY_UNAVAILABLE_REASON = "agent_run_capability_unavailable"
+_EFFECT_CAPABILITY_PREFIXES = (
+    ("mcp", "mcp"),
+    ("repository.read", "repository_read"),
+    ("repository.write", "repository_write"),
+    ("shell", "shell"),
+)
 
 
 @dataclass(frozen=True)
@@ -92,7 +101,10 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization.request)
+            preflight_reason = self._provider_preflight(
+                authorization.request,
+                operation=AgentRunOperation.START,
+            )
             if preflight_reason is not None:
                 return self._post_authorization_failure(
                     authorization,
@@ -161,7 +173,10 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization.request)
+            preflight_reason = self._provider_preflight(
+                authorization.request,
+                operation=AgentRunOperation.RESUME,
+            )
             if preflight_reason is not None:
                 return self._post_authorization_failure(
                     authorization,
@@ -233,13 +248,6 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization.request)
-            if preflight_reason is not None:
-                return self._post_authorization_failure(
-                    authorization,
-                    reason_code=preflight_reason,
-                    handle=handle,
-                )
             cancellation_result = await self._runtime.cancel(
                 handle,
                 current_kill_switch_proof_id,
@@ -257,7 +265,6 @@ class AgentRuntimeCoordinator:
                 authorization,
                 reason_code=reason_code,
                 handle=handle,
-                cancellation_result=cancellation_result,
             )
         if _REASON_CODE_PATTERN.fullmatch(cancellation_result.reason_code) is None:
             return self._post_authorization_failure(
@@ -266,16 +273,41 @@ class AgentRuntimeCoordinator:
                 handle=handle,
                 cancellation_result=cancellation_result,
             )
+        if not cancellation_result.accepted and not cancellation_result.terminal:
+            return self._post_authorization_failure(
+                authorization,
+                reason_code=cancellation_result.reason_code,
+                handle=handle,
+                cancellation_result=cancellation_result,
+            )
+        if cancellation_result.terminal and cancellation_result.handle is None:
+            return self._post_authorization_failure(
+                authorization,
+                reason_code=_MISSING_CANCELLATION_HANDLE,
+                handle=handle,
+                cancellation_result=cancellation_result,
+            )
+        result_handle = cancellation_result.handle or handle
+        if (
+            result_handle.run_id != handle.run_id
+            or result_handle.provider_binding_id != handle.provider_binding_id
+        ):
+            return self._post_authorization_failure(
+                authorization,
+                reason_code="agent_run_cancellation_handle_mismatch",
+                handle=handle,
+                cancellation_result=cancellation_result,
+            )
         if not self._record_outcome(
             authorization,
             outcome="success",
             reason_code=cancellation_result.reason_code,
-            handle=handle,
+            handle=result_handle,
         ):
             return self._audit_pending(
                 context,
                 AgentRunOperation.CANCEL,
-                handle=handle,
+                handle=result_handle,
                 cancellation_result=cancellation_result,
                 primary_reason_code=cancellation_result.reason_code,
                 primary_outcome="success",
@@ -285,7 +317,7 @@ class AgentRuntimeCoordinator:
             operation=AgentRunOperation.CANCEL,
             ok=True,
             reason_code=cancellation_result.reason_code,
-            handle=handle,
+            handle=result_handle,
             cancellation_result=cancellation_result,
         )
 
@@ -408,6 +440,8 @@ class AgentRuntimeCoordinator:
     def _provider_preflight(
         self,
         request: AgentRunAuthorizationRequest,
+        *,
+        operation: AgentRunOperation,
     ) -> str | None:
         run_request = request.request
         try:
@@ -428,6 +462,17 @@ class AgentRuntimeCoordinator:
                 or candidate.binding_digest != run_request.provider_binding_digest
             ):
                 return "provider_binding_digest_mismatch"
+            runtime_capabilities = self._runtime.capabilities(candidate.binding)
+            required_capabilities = self._required_capabilities(run_request, operation)
+            if any(
+                getattr(candidate.binding.capabilities, capability)
+                is not CapabilitySupport.SUPPORTED
+                or getattr(runtime_capabilities, capability) is not CapabilitySupport.SUPPORTED
+                for capability in required_capabilities
+            ):
+                return _CAPABILITY_UNAVAILABLE_REASON
+            if operation is AgentRunOperation.CANCEL:
+                return None
             health = self._runtime.health(candidate.binding)
             if (
                 health.binding_id != run_request.provider_binding_id
@@ -440,6 +485,29 @@ class AgentRuntimeCoordinator:
         except Exception:
             return "agent_run_provider_unavailable"
         return None
+
+    @staticmethod
+    def _required_capabilities(
+        request: AgentRunRequest,
+        operation: AgentRunOperation,
+    ) -> frozenset[str]:
+        if operation is AgentRunOperation.CANCEL:
+            return frozenset({"provider_side_cancellation"})
+        required = {"text"}
+        if request.filesystem_envelope:
+            required.add("repository_read")
+        if request.tool_envelope:
+            required.add("tools")
+        effect_names = (*request.requested_effect_classes, *request.tool_envelope)
+        for effect_name in effect_names:
+            for prefix, capability in _EFFECT_CAPABILITY_PREFIXES:
+                if effect_name == prefix or effect_name.startswith(f"{prefix}."):
+                    required.add(capability)
+        if request.provider_spend_limit > 0:
+            required.add("provider_side_budget")
+        if operation is AgentRunOperation.RESUME:
+            required.add("session_resume")
+        return frozenset(required)
 
     def _post_authorization_failure(
         self,

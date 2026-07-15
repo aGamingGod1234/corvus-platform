@@ -24,12 +24,26 @@ _SENSITIVE_FIELD_TOKENS = (
     "signingkey",
     "passphrase",
 )
+_SAFE_TOKEN_COUNTER_FIELDS = frozenset(
+    {
+        "cachedinputtokens",
+        "completiontokens",
+        "inputtokens",
+        "maxoutputtokens",
+        "outputtokens",
+        "prompttokens",
+        "reasoningtokens",
+        "totaltokens",
+    }
+)
 
 
 def is_sensitive_field_name(key: str) -> bool:
     """Return whether a structured field name may carry sensitive data."""
 
     normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+    if normalized in _SAFE_TOKEN_COUNTER_FIELDS:
+        return False
     return any(token in normalized for token in _SENSITIVE_FIELD_TOKENS)
 
 
@@ -51,7 +65,13 @@ class BoundedRedactedText:
 
 class SecretRedactor:
     _TOKEN_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
-        re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?([^\s'\"]+)"),
+        re.compile(
+            r"(?i)(authorization)\s*[:=]\s*['\"]?(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})"
+        ),
+        re.compile(
+            r"(?i)(api[_-]?key|token|secret|password|cookie|credential|passphrase|"
+            r"private[_-]?key|signing[_-]?key)\s*[:=]\s*['\"]?([^\s'\"]+)"
+        ),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
         re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     ]

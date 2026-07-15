@@ -343,6 +343,20 @@ def test_provider_binding_digest_covers_version_executable_and_credential_identi
     )
 
 
+def test_provider_binding_digest_ignores_volatile_health_observations(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    refreshed_health = binding.model_copy(
+        update={
+            "status": ProviderStatus.UNHEALTHY,
+            "health_checked_at": binding.health_checked_at + timedelta(minutes=5),
+        }
+    )
+
+    assert compute_provider_binding_digest(binding) == compute_provider_binding_digest(
+        refreshed_health
+    )
+
+
 def test_immutable_request_digest_allows_only_explicit_proof_refresh() -> None:
     request = _request()
     refreshed = request.model_copy(
@@ -471,6 +485,37 @@ def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> Non
         AgentRunEvent(**{**event.model_dump(), "event_digest": "f" * 64})
     with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
         _event(redacted_payload={"nested": {"access_token": "redacted"}})
+
+
+def test_event_allows_numeric_token_usage_fields_without_classifying_as_secret() -> None:
+    event = _event(
+        event_type=AgentRunEventType.USAGE,
+        redacted_payload={
+            "input_tokens": 12,
+            "output_tokens": 8,
+            "max_output_tokens": 100,
+        },
+    )
+
+    assert event.redacted_payload["input_tokens"] == 12
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"message": "api_key=sk-1234567890abcdef"},
+        {"nested": {"items": ["safe", "token=secret-shaped-value"]}},
+        {"message": "Authorization: Bearer abcdefghijklmnop"},
+        {"message": "cookie=session_id=abcdefghijklmnop"},
+        {"message": "credential=abcdefghijklmnop"},
+        {"message": "passphrase=abcdefghijklmnop"},
+    ],
+)
+def test_event_rejects_secret_bearing_values_under_benign_keys(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_value"):
+        _event(redacted_payload=payload)
 
 
 @pytest.mark.parametrize(
@@ -748,3 +793,28 @@ def test_event_payload_serialization_and_digest_replay_are_stable() -> None:
     assert serialized == dumped
     assert replayed.event_digest == event.event_digest
     assert replayed == event
+
+
+def test_event_chain_recomputes_digests_before_trusting_links() -> None:
+    started = _event()
+    completed = _event(
+        run_id=started.run_id,
+        handle_id=started.handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(seconds=1),
+        event_type=AgentRunEventType.COMPLETED,
+        previous_event_digest=started.event_digest,
+    )
+    forged_digest = "f" * 64
+    tampered_started = started.model_copy(
+        update={
+            "redacted_payload": {"message": "tampered"},
+            "event_digest": forged_digest,
+        }
+    )
+    relinked_completed = completed.model_copy(update={"previous_event_digest": forged_digest})
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((tampered_started, relinked_completed))
+
+    assert exc_info.value.reason_code == "agent_run_event_digest_mismatch"
