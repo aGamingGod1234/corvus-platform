@@ -856,6 +856,7 @@
 - Migrated agent-runtime discovery and health checks to asynchronous port operations so future database, local-process, and network adapters cannot block the coordinator event loop.
 - Removed the redundant payload thaw/copy from secret-value inspection and retained fail-closed scalar validation plus distinct secret-key and secret-value reason codes.
 - Added test-first regressions for all three review findings and observed each fail before the production repair.
+- Reproduced the post-push Ubuntu/macOS failure as a Ruff formatting-only mismatch in the new security test and normalized that file; all remote Python tests had already passed.
 
 ### Files Modified
 - `corvus/security.py` — fail-closed multi-word secret assignment redaction.

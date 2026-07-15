@@ -30,9 +30,7 @@ def test_secret_redactor_removes_registered_keyed_and_bare_secret_values() -> No
 
 
 def test_secret_redactor_removes_unquoted_multiword_credentials() -> None:
-    redacted = SecretRedactor().redact(
-        "passphrase: my secret passphrase\nstatus: ready"
-    )
+    redacted = SecretRedactor().redact("passphrase: my secret passphrase\nstatus: ready")
 
     assert redacted == "passphrase=[REDACTED]\nstatus: ready"
 
