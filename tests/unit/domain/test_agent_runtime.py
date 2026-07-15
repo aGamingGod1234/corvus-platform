@@ -158,6 +158,9 @@ def _event(**updates: object) -> AgentRunEvent:
         redacted_payload=values["redacted_payload"],
         provider_event_id=values.get("provider_event_id"),
         previous_event_digest=values["previous_event_digest"],
+        tool_call_id=values.get("tool_call_id"),
+        effect_authorization_decision_id=values.get("effect_authorization_decision_id"),
+        effect_authorization_decision_digest=values.get("effect_authorization_decision_digest"),
     )
     return AgentRunEvent(**values)
 
@@ -415,6 +418,42 @@ def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> Non
         AgentRunEvent(**{**event.model_dump(), "event_digest": "f" * 64})
     with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
         _event(redacted_payload={"nested": {"access_token": "redacted"}})
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        AgentRunEventType.TOOL_REQUESTED,
+        AgentRunEventType.TOOL_BLOCKED,
+        AgentRunEventType.TOOL_STARTED,
+        AgentRunEventType.TOOL_RESULT,
+        AgentRunEventType.APPROVAL_REQUIRED,
+    ],
+)
+def test_effect_events_require_digest_bound_authorization_decision(
+    event_type: AgentRunEventType,
+) -> None:
+    tool_call_id = None if event_type is AgentRunEventType.APPROVAL_REQUIRED else "tool-1"
+    with pytest.raises(ValidationError, match="effect_authorization_decision_required"):
+        _event(event_type=event_type, tool_call_id=tool_call_id)
+
+    decision_id = uuid4()
+    decision_digest = "d" * 64
+    event = _event(
+        event_type=event_type,
+        tool_call_id=tool_call_id,
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest=decision_digest,
+    )
+    assert event.effect_authorization_decision_id == decision_id
+
+    with pytest.raises(ValidationError, match="agent_run_event_digest_mismatch"):
+        AgentRunEvent.model_validate(
+            {
+                **event.model_dump(),
+                "effect_authorization_decision_digest": "e" * 64,
+            }
+        )
 
 
 @pytest.mark.parametrize(

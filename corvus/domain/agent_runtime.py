@@ -555,10 +555,18 @@ def compute_agent_run_event_digest(
     provider_event_id: str | None,
     previous_event_digest: str,
     tool_call_id: str | None = None,
+    effect_authorization_decision_id: UUID | None = None,
+    effect_authorization_decision_digest: str | None = None,
 ) -> str:
     encoded = json.dumps(
         {
             "event_type": event_type.value,
+            "effect_authorization_decision_digest": effect_authorization_decision_digest,
+            "effect_authorization_decision_id": (
+                str(effect_authorization_decision_id)
+                if effect_authorization_decision_id is not None
+                else None
+            ),
             "handle_id": str(handle_id),
             "previous_event_digest": previous_event_digest,
             "provider_event_id": provider_event_id,
@@ -587,6 +595,11 @@ class AgentRunEvent(BaseModel):
     redacted_payload: Mapping[str, JsonValue]
     provider_event_id: str | None = Field(default=None, min_length=1, max_length=512)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=512)
+    effect_authorization_decision_id: UUID | None = None
+    effect_authorization_decision_digest: str | None = Field(
+        default=None,
+        pattern=_SHA256_PATTERN,
+    )
     previous_event_digest: str = Field(pattern=_SHA256_PATTERN)
     event_digest: str = Field(pattern=_SHA256_PATTERN)
 
@@ -621,6 +634,17 @@ class AgentRunEvent(BaseModel):
         }
         if self.event_type in tool_events and self.tool_call_id is None:
             raise ValueError("agent_run_tool_call_id_required")
+        effect_events = tool_events | {AgentRunEventType.APPROVAL_REQUIRED}
+        if self.event_type in effect_events and (
+            self.effect_authorization_decision_id is None
+            or self.effect_authorization_decision_digest is None
+        ):
+            raise ValueError("effect_authorization_decision_required")
+        if self.event_type not in effect_events and (
+            self.effect_authorization_decision_id is not None
+            or self.effect_authorization_decision_digest is not None
+        ):
+            raise ValueError("effect_authorization_decision_unsolicited")
         expected = compute_agent_run_event_digest(
             run_id=self.run_id,
             handle_id=self.handle_id,
@@ -631,6 +655,8 @@ class AgentRunEvent(BaseModel):
             provider_event_id=self.provider_event_id,
             previous_event_digest=self.previous_event_digest,
             tool_call_id=self.tool_call_id,
+            effect_authorization_decision_id=self.effect_authorization_decision_id,
+            effect_authorization_decision_digest=self.effect_authorization_decision_digest,
         )
         if self.event_digest != expected:
             raise ValueError("agent_run_event_digest_mismatch")

@@ -48,6 +48,8 @@ class SimulatedEventTemplate:
     redacted_payload: Mapping[str, JsonValue]
     provider_event_id: str | None = None
     tool_call_id: str | None = None
+    effect_authorization_decision_id: UUID | None = None
+    effect_authorization_decision_digest: str | None = None
 
 
 @dataclass
@@ -290,6 +292,8 @@ class SimulatedAgentRuntime:
             redacted_payload=deepcopy(dict(template.redacted_payload)),
             provider_event_id=template.provider_event_id,
             tool_call_id=template.tool_call_id,
+            effect_authorization_decision_id=(template.effect_authorization_decision_id),
+            effect_authorization_decision_digest=(template.effect_authorization_decision_digest),
         )
 
     def _binding_for_start(self, request: AgentRunRequest) -> ProviderBinding:
@@ -350,6 +354,13 @@ class SimulatedAgentRuntime:
         started_tools: set[str] = set()
         finished_tools: set[str] = set()
         templates = self._event_templates.get(binding.id, ())
+        if not templates:
+            templates = (
+                SimulatedEventTemplate(
+                    event_type=AgentRunEventType.STARTED,
+                    redacted_payload={"state": "running"},
+                ),
+            )
         for sequence, template in enumerate(templates, start=1):
             if terminal_seen:
                 raise AgentRuntimeError(
@@ -393,6 +404,10 @@ class SimulatedAgentRuntime:
                 provider_event_id=template.provider_event_id,
                 previous_event_digest=previous_digest,
                 tool_call_id=template.tool_call_id,
+                effect_authorization_decision_id=(template.effect_authorization_decision_id),
+                effect_authorization_decision_digest=(
+                    template.effect_authorization_decision_digest
+                ),
             )
             event = AgentRunEvent(
                 run_id=request.run_id,
@@ -403,6 +418,10 @@ class SimulatedAgentRuntime:
                 redacted_payload=payload,
                 provider_event_id=template.provider_event_id,
                 tool_call_id=template.tool_call_id,
+                effect_authorization_decision_id=(template.effect_authorization_decision_id),
+                effect_authorization_decision_digest=(
+                    template.effect_authorization_decision_digest
+                ),
                 previous_event_digest=previous_digest,
                 event_digest=event_digest,
             )

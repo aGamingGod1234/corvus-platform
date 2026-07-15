@@ -198,6 +198,25 @@ async def test_cancel_requires_current_kill_switch_proof(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_empty_template_cancel_preserves_started_then_cancelled_lifecycle(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    handle = (await runtime.start(_request(binding))).handle
+
+    before_cancel = [event async for event in runtime.events(handle)]
+    await runtime.cancel(handle, uuid4())
+    after_cancel = [event async for event in runtime.events(handle)]
+
+    assert [event.event_type for event in before_cancel] == [AgentRunEventType.STARTED]
+    assert [event.event_type for event in after_cancel] == [
+        AgentRunEventType.STARTED,
+        AgentRunEventType.CANCELLED,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_simulator_snapshots_mutable_event_templates(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     payload = {"state": "original"}
@@ -447,6 +466,47 @@ async def test_event_lifecycle_rejects_replay_cursor_and_tool_prerequisite_error
     with pytest.raises(AgentRuntimeError) as cursor_exc:
         _ = [event async for event in runtime.events(handle, after_sequence=2)]
     assert cursor_exc.value.reason_code == "invalid_event_sequence_cursor"
+
+
+@pytest.mark.asyncio
+async def test_effect_authorization_receipt_is_preserved_in_event_chain(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path)
+    decision_id = uuid4()
+    decision_digest = "d" * 64
+    runtime = _runtime(
+        (binding,),
+        {
+            binding.id: (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_REQUESTED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=decision_id,
+                    effect_authorization_decision_digest=decision_digest,
+                ),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_BLOCKED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=decision_id,
+                    effect_authorization_decision_digest=decision_digest,
+                ),
+            )
+        },
+    )
+
+    handle = (await runtime.start(_request(binding))).handle
+    events = [event async for event in runtime.events(handle)]
+
+    assert all(
+        event.effect_authorization_decision_id == decision_id
+        and event.effect_authorization_decision_digest == decision_digest
+        for event in events[1:]
+    )
+    assert events[2].previous_event_digest == events[1].event_digest
 
 
 @pytest.mark.asyncio
