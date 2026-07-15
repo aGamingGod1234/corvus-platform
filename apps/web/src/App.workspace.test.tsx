@@ -111,6 +111,29 @@ describe("adaptive Corvus bootstrap", () => {
     expect(await screen.findByLabelText("One-time pairing value")).toBeVisible();
   });
 
+  it("hands hosted users to the same-origin loopback workspace", async () => {
+    const api = bootstrapApi();
+    seedPreference(preferenceStorage, "everyday", "personal");
+
+    render(
+      <App
+        api={api}
+        locationHostname="corvus-platform.vercel.app"
+        preferenceStorage={preferenceStorage}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Open Corvus on this computer." })
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open local Corvus" })).toHaveAttribute(
+      "href",
+      "http://127.0.0.1:8080/"
+    );
+    expect(screen.getByText(/same-origin local page/i)).toBeVisible();
+    expect(api.session).not.toHaveBeenCalled();
+  });
+
   it("renders profile-specific navigation and preserves the active project while switching", async () => {
     const api = readyApi();
     const user = userEvent.setup();

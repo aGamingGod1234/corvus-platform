@@ -16,8 +16,11 @@ vite.config.d.ts
 .playwright-cli/
 output/
 target/
+*.spec
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/
 *.egg-info/
 .env
 .env.*
 !.env.example
+.vercel/

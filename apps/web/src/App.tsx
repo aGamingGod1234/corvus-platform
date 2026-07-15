@@ -35,6 +35,8 @@ import {
 } from "./app/preferences";
 import { getWorkspaceProfile } from "./app/workspaceProfiles";
 import { CloudPreview } from "./runtime/CloudPreview";
+import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
+import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -70,6 +72,7 @@ const DEFAULT_WORK_ITEMS: WorkItemDefinition[] = [
 
 interface AppProps {
   api?: CorvusApi;
+  locationHostname?: string;
   preferenceStorage?: Storage;
 }
 
@@ -122,7 +125,11 @@ const EMPTY_OPERATIONS: OperationsDetail = {
   channelEvents: []
 };
 
-export function App({ api = browserApi, preferenceStorage = window.localStorage }: AppProps) {
+export function App({
+  api = browserApi,
+  locationHostname = window.location.hostname,
+  preferenceStorage = window.localStorage
+}: AppProps) {
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
   const initialPreference = useMemo(
     () => loadWorkspacePreference(preferenceStorage),
@@ -152,6 +159,8 @@ export function App({ api = browserApi, preferenceStorage = window.localStorage 
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const hostedLocalHandoff =
+    preference?.runtime === "local" && !isLoopbackRuntimeHost(locationHostname);
 
   const loadProjects = useCallback(async () => {
     const loaded = await api.listProjects();
@@ -160,7 +169,7 @@ export function App({ api = browserApi, preferenceStorage = window.localStorage 
   }, [api]);
 
   useEffect(() => {
-    if (preference?.runtime !== "local") return;
+    if (preference?.runtime !== "local" || hostedLocalHandoff) return;
     let active = true;
     api
       .session()
@@ -187,7 +196,7 @@ export function App({ api = browserApi, preferenceStorage = window.localStorage 
     return () => {
       active = false;
     };
-  }, [api, loadProjects, preference]);
+  }, [api, hostedLocalHandoff, loadProjects, preference]);
 
   useEffect(() => {
     if (profile === null) return;
@@ -514,6 +523,14 @@ export function App({ api = browserApi, preferenceStorage = window.localStorage 
         authAvailable={false}
         onChangeSetup={changeWorkspaceSetup}
         onUseLocal={useLocalWorkspace}
+        preference={preference}
+      />
+    );
+  }
+  if (hostedLocalHandoff) {
+    return (
+      <LocalRuntimeLauncher
+        onChangeSetup={changeWorkspaceSetup}
         preference={preference}
       />
     );

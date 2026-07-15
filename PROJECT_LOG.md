@@ -1011,3 +1011,41 @@
 
 ### Suggested Next Steps
 - Commit and push the verified integration merge, request exact-head reviewers, and merge PR #1 only after protected-branch requirements are satisfied.
+
+## 2026-07-15 — Alpha Installers and Vercel Release Path
+
+### What Was Implemented
+- Added a release-only Tauri packaging config that bundles the compiled React client and a standalone PyInstaller `corvus-mvp` sidecar without weakening the existing local sidecar override.
+- Added a GitHub Actions desktop-release workflow for unsigned Windows NSIS, macOS universal DMG, Linux AppImage, and Linux `.deb` artifacts, with tag-gated GitHub prerelease publishing and SHA256 checksums.
+- Added the hosted-web Local handoff so Vercel never receives same-machine pairing secrets or local session cookies.
+- Linked Vercel project `corvus-platform` to `aGamingGod1234/corvus-platform`, connected GitHub integration, set Git root to `apps/web`, and deployed the current web app to `https://corvus-platform-tau.vercel.app`.
+- Confirmed GitHub `main` protection is already enabled with strict required checks, one code-owner approval, stale-review dismissal, admin enforcement, and force/delete disabled.
+
+### Files Modified
+- `.github/workflows/desktop-release.yml` — cross-platform unsigned installer build and tag-gated prerelease publishing.
+- `.gitignore` — ignores local Vercel project metadata.
+- `apps/desktop/src-tauri/src/lib.rs` — packaged sidecar lookup now checks both resource and installed executable directories.
+- `apps/desktop/src-tauri/tauri.conf.json` — declares desktop icons for release bundling.
+- `apps/desktop/src-tauri/tauri.release.conf.json` — release-only sidecar and resource packaging config.
+- `apps/desktop/src-tauri/icons/icon.icns` — generated macOS desktop icon from the existing app SVG.
+- `apps/desktop/README.md` — documents the standalone unsigned alpha installer build.
+- `apps/web/src/App.tsx`, `apps/web/src/runtime/*`, `apps/web/src/styles/onboarding.css`, `apps/web/src/App.workspace.test.tsx` — hosted Local handoff and tests.
+- `apps/web/vercel.json` — Vercel Vite build, SPA rewrite, and security headers.
+- `scripts/corvus_mvp_entry.py` — PyInstaller entrypoint for the MVP sidecar.
+- `README.md`, `HACKATHON_STATUS.md`, `PROJECT_LOG.md` — release/deployment status and limitations.
+
+### Assumptions Made (flag these for review)
+- Unsigned alpha artifacts are acceptable for this milestone; production signing, notarization, and update channels are intentionally deferred.
+- GitHub Releases should be created only from reviewed `main` tags, not directly from this feature branch.
+- Hosted Vercel Local mode should remain a launcher/handoff for same-machine runtime until a real cloud runtime and browser-safe local bridge are designed.
+
+### Known Issues / Deferred
+- GitHub Release assets for macOS and Linux require the PR workflow to pass on hosted runners and a reviewed tag push from `main`.
+- The Computer Use control surface was not exposed in this resumed tool set, so current Windows installer validation used process-level smoke testing instead of GUI automation.
+- Vercel direct deployment briefly required clearing `rootDirectory`; it was restored to `apps/web` after deployment for GitHub `main` auto-deploys.
+- Real E2B Cloud, Google-backed continuity, payments, production signing, notarization, live provider adapters, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Push this branch and open a ready PR targeting `main` for review.
+- After review and merge, tag `v0.2.0-alpha.1` on `main` so the release workflow publishes installer assets and checksums.
+- Verify the GitHub Actions macOS and Linux installer artifacts before treating them as downloadable alpha builds.

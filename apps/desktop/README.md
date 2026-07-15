@@ -27,7 +27,13 @@ The shell allocates a loopback port, creates ephemeral pairing/session secrets, 
 Build the unsigned current-user NSIS package with:
 
 ```powershell
-pnpm --dir apps/desktop tauri build
+$pyinstallerArgs = @("--clean", "--noconfirm", "--onefile", "--name", "corvus-mvp", "scripts/corvus_mvp_entry.py")
+uv run --python 3.12 --with pyinstaller==6.21.0 pyinstaller @pyinstallerArgs
+New-Item -ItemType Directory -Force -Path apps/desktop/src-tauri/binaries | Out-Null
+Copy-Item dist/corvus-mvp.exe apps/desktop/src-tauri/binaries/corvus-mvp-x86_64-pc-windows-msvc.exe
+Copy-Item dist/corvus-mvp.exe apps/desktop/src-tauri/binaries/corvus-mvp.exe
+Copy-Item dist/corvus-mvp.exe apps/desktop/src-tauri/binaries/corvus-mvp
+pnpm --dir apps/desktop tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
 ```
 
-The local installer is a hackathon artifact. It is not signed or notarized, and it expects `CORVUS_SIDECAR_EXECUTABLE` to resolve to a local Corvus CLI unless a future distribution bundles a standalone sidecar at the resource path.
+The local installer is an unsigned alpha artifact. It bundles the standalone `corvus-mvp` sidecar and no longer requires `CORVUS_SIDECAR_EXECUTABLE` for packaged runs. Production signing, notarization, and update-channel signing remain later work.

@@ -470,10 +470,33 @@ fn sidecar_executable(app: &tauri::App) -> Result<PathBuf, String> {
     } else {
         "corvus-mvp"
     };
-    canonical_file(
-        &resource_dir.join(executable_name),
-        "sidecar_executable_missing",
-    )
+    let app_executable = env::current_exe()
+        .map_err(|error| format!("desktop_executable_directory_failed:{error}"))?;
+    let app_executable_dir = app_executable
+        .parent()
+        .ok_or_else(|| "desktop_executable_directory_failed:missing_parent".to_owned())?;
+    for candidate in
+        packaged_sidecar_candidates(&resource_dir, app_executable_dir, executable_name)
+    {
+        if candidate.exists() {
+            return canonical_file(&candidate, "sidecar_executable_invalid");
+        }
+    }
+    Err(format!(
+        "sidecar_executable_missing:{}",
+        resource_dir.join(executable_name).display()
+    ))
+}
+
+fn packaged_sidecar_candidates(
+    resource_dir: &Path,
+    executable_dir: &Path,
+    executable_name: &str,
+) -> Vec<PathBuf> {
+    vec![
+        resource_dir.join(executable_name),
+        executable_dir.join(executable_name),
+    ]
 }
 
 fn canonical_file(path: &Path, code: &str) -> Result<PathBuf, String> {
@@ -644,12 +667,12 @@ mod tests {
     use std::collections::HashMap;
     use std::io::Write;
     use std::net::TcpListener;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::thread;
 
     use super::{
         SidecarLaunch, SidecarLifecycle, SidecarState, build_desktop_url, capture_bounded_stderr,
-        readiness_probe, sanitize_diagnostics,
+        packaged_sidecar_candidates, readiness_probe, sanitize_diagnostics,
     };
 
     #[test]
@@ -764,6 +787,23 @@ mod tests {
         assert_eq!(
             url.as_str().split('#').next(),
             Some("http://127.0.0.1:8123/")
+        );
+    }
+
+    #[test]
+    fn packaged_sidecar_lookup_checks_resources_and_executable_directory() {
+        let candidates = packaged_sidecar_candidates(
+            Path::new("C:/Corvus/resources"),
+            Path::new("C:/Corvus/bin"),
+            "corvus-mvp.exe",
+        );
+
+        assert_eq!(
+            candidates,
+            [
+                PathBuf::from("C:/Corvus/resources/corvus-mvp.exe"),
+                PathBuf::from("C:/Corvus/bin/corvus-mvp.exe"),
+            ]
         );
     }
 }
