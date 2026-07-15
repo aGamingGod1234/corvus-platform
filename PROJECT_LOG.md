@@ -534,3 +534,34 @@
 ### Suggested Next Steps
 - Run the controller-owned milestone-wide suite and complete whole-milestone self-review.
 - Submit the combined M2A branch through the ready PR review gate before merge.
+
+## 2026-07-15 — M2A Whole-Milestone Runtime Integrity Repairs
+
+### What Was Implemented
+- Added executable/credential-aware provider binding receipts, immutable resume-request digests, typed scoped discovery/health/start receipts, and fail-closed pre-runtime provider verification.
+- Enforced sequenced event lifecycle, provider-event deduplication, tool-call transitions, cursor bounds, and one shared recursive sensitive-field predicate for validation and redaction.
+- Added acknowledged tamper-evident audit receipts; authorization audit acknowledgment is mandatory, while a post-effect audit failure returns explicit `agent_run_audit_pending` state with no provider output.
+- Added a concrete repository-injectable verified agent-run authorization adapter that reuses the canonical capability evaluator and cryptographic snapshot verifier, then binds current autonomy, provider, credential, budget, and kill-switch receipts.
+- Validated runtime-returned start, resume, and cancellation identities and exposed durable start replay metadata.
+
+### Files Modified
+- `corvus/security.py` — shared public sensitive-field predicate used by redaction and runtime-event validation.
+- `corvus/domain/agent_runtime.py` — provider/autonomy digests, immutable request identity, typed discovery/health/start models, and event lifecycle fields.
+- `corvus/application/ports.py` — authorization, audit-receipt, and runtime port receipt contracts.
+- `corvus/application/agent_runtime.py` — audit acknowledgment, provider preflight, runtime receipt validation, and audit-pending behavior.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — scoped typed discovery, provider binding verification, replay metadata, immutable resume checks, and lifecycle enforcement.
+- `corvus/infrastructure/agent_run_authorization.py` — verified agent-run authorization adapter over the existing canonical authorization stack.
+- `tests/unit/` — focused RED/GREEN coverage for all repaired boundaries.
+- `.superpowers/sdd/task-2-report.md` — refreshed repair and verification evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. The provider receipt, proof refresh, event lifecycle, audit acknowledgment, adapter reuse, and stop boundaries were explicitly confirmed before repair work.
+
+### Known Issues / Deferred
+- Durable repositories for autonomy grants, credential/budget/kill-switch receipts, provider bindings, and audit-pending reconciliation remain later infrastructure work; this task provides repository-injectable contracts and pure verification behavior.
+- No live provider/API/UI wiring, database migration, new dependency, Cloud/Team scope, README change, push, merge, or history rewrite was performed.
+
+### Suggested Next Steps
+- Have the controller perform the final whole-milestone review against commits `7cf85ca`, `80d2490`, and `493142f` plus the final verification-record commit.
+- Keep M2A unmerged until the ready PR review gate is complete.

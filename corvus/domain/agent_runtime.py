@@ -392,7 +392,7 @@ class AgentRunRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
     resume_handle_id: UUID | None = None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def immutable_request_digest(self) -> str:
         return compute_agent_run_immutable_digest(self)
@@ -457,7 +457,7 @@ def compute_agent_run_immutable_digest(request: AgentRunRequest) -> str:
     encoded = json.dumps(
         request.model_dump(
             mode="json",
-            exclude=_REFRESHABLE_AGENT_RUN_FIELDS,
+            exclude=set(_REFRESHABLE_AGENT_RUN_FIELDS),
             exclude_computed_fields=True,
         ),
         allow_nan=False,
