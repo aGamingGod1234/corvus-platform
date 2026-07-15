@@ -357,6 +357,17 @@ class AgentRunRequest(BaseModel):
         return value
 
 
+def compute_agent_run_request_digest(request: AgentRunRequest) -> str:
+    encoded = json.dumps(
+        request.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class AgentRunHandle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 

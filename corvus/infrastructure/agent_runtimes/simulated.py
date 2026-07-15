@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import AsyncIterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -22,6 +20,7 @@ from corvus.domain.agent_runtime import (
     ProviderBinding,
     ProviderStatus,
     compute_agent_run_event_digest,
+    compute_agent_run_request_digest,
 )
 
 _SIMULATED_HANDLE_NAMESPACE = UUID("895c0f76-81a2-4f35-bd94-df91f86d266e")
@@ -51,17 +50,6 @@ class _RunRecord:
     events: list[AgentRunEvent]
     request_digest: str
     cancellation_result: CancellationResult | None = None
-
-
-def _agent_run_request_digest(request: AgentRunRequest) -> str:
-    encoded = json.dumps(
-        request.model_dump(mode="json"),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 class SimulatedAgentRuntime:
@@ -102,7 +90,7 @@ class SimulatedAgentRuntime:
 
     async def start(self, request: AgentRunRequest) -> AgentRunHandle:
         binding = self._binding_for_start(request)
-        request_digest = _agent_run_request_digest(request)
+        request_digest = compute_agent_run_request_digest(request)
         handle_id = uuid5(
             _SIMULATED_HANDLE_NAMESPACE,
             f"{request.run_id}:{request.provider_binding_id}:{request.idempotency_key}",

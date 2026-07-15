@@ -505,3 +505,32 @@
 ### Suggested Next Steps
 - Submit the Task 1 commit in a ready pull request for external review.
 - Implement Task 2 authority-bound orchestration only after Task 1 review is accepted.
+
+## 2026-07-15 — M2A Task 2 Authority-Bound Agent Runtime Coordinator
+
+### What Was Implemented
+- Added strict frozen agent-run authorization request/decision and redacted audit contracts with workspace/project, idempotency, authorization snapshot, handle, request digest, and current kill-switch proof binding.
+- Added an authority-gated application coordinator for start, resume, and cancel with exact authorization receipt checks, authorization-before-runtime audit ordering, stable failures, and best-effort outcome audit.
+- Exported one canonical agent-run request digest helper and reused it in both the coordinator and deterministic Task 1 simulator.
+- Added deterministic application tests covering substitution rejection, stale/over-budget/kill-switch denials, stable start replay, fresh resume proofs, current cancel proofs, runtime errors, audit redaction, and structural protocols.
+- Completed M2A Task 2 code, which remains unmerged pending whole-milestone review and the ready PR review gate.
+
+### Files Modified
+- `corvus/application/ports.py` — agent-run authorization and redacted audit contracts and protocols.
+- `corvus/application/agent_runtime.py` — authority-bound start/resume/cancel coordinator and operation result.
+- `corvus/domain/agent_runtime.py` — shared canonical agent-run request digest helper.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — reuse of the shared digest helper without changing simulator semantics.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — Task 2 RED/GREEN coordinator, contract, audit, and proof-binding coverage.
+- `PROJECT_LOG.md` — Task 2 implementation and verification record.
+
+### Assumptions Made (flag these for review)
+- None. Scope semantics, reason-code vocabulary, audit shape, and replay metadata behavior were confirmed before implementation.
+
+### Known Issues / Deferred
+- No live provider adapter, API/UI wiring, database persistence, Cloud authority, or Team authority is included in Task 2.
+- `identical_start_replayed` remains `None` because the Task 1 runtime port exposes stable handle equality but no durable replay metadata.
+- M2A remains unmerged until the controller completes whole-milestone verification and the ready PR review gate.
+
+### Suggested Next Steps
+- Run the controller-owned milestone-wide suite and complete whole-milestone self-review.
+- Submit the combined M2A branch through the ready PR review gate before merge.
