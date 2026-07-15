@@ -69,7 +69,7 @@ class SecretRedactor:
         re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"),
         re.compile(
             r"(?i)(api[_-]?key|token|secret|password|cookie|credential|passphrase|"
-            r"private[_-]?key|signing[_-]?key)\s*[:=]\s*['\"]?([^\s'\"]+)"
+            r"private[_-]?key|signing[_-]?key)\s*[:=]\s*['\"]?([^\r\n'\"]+)"
         ),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
         re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),

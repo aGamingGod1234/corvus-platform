@@ -29,6 +29,14 @@ def test_secret_redactor_removes_registered_keyed_and_bare_secret_values() -> No
     }
 
 
+def test_secret_redactor_removes_unquoted_multiword_credentials() -> None:
+    redacted = SecretRedactor().redact(
+        "passphrase: my secret passphrase\nstatus: ready"
+    )
+
+    assert redacted == "passphrase=[REDACTED]\nstatus: ready"
+
+
 def test_sensitive_field_classification_preserves_token_usage_counters() -> None:
     assert not is_sensitive_field_name("input_tokens")
     assert not is_sensitive_field_name("max_output_tokens")

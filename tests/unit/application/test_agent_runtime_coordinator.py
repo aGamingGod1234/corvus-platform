@@ -320,11 +320,11 @@ class _RecordingRuntime:
         self.discover_error = discover_error
         self.capabilities_error = capabilities_error
 
-    def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
+    async def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         self.order.append("runtime:discover")
         if self.discover_error is not None:
             raise self.discover_error
-        return self.runtime.discover(query)
+        return await self.runtime.discover(query)
 
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities:
         self.order.append("runtime:capabilities")
@@ -334,9 +334,9 @@ class _RecordingRuntime:
             return self.capabilities_override
         return self.runtime.capabilities(binding)
 
-    def health(self, binding: ProviderBinding) -> ProviderHealth:
+    async def health(self, binding: ProviderBinding) -> ProviderHealth:
         self.order.append("runtime:health")
-        result = self.runtime.health(binding)
+        result = await self.runtime.health(binding)
         if self.health_status is None:
             return result
         return result.model_copy(update={"status": self.health_status})

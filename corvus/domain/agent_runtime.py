@@ -628,8 +628,16 @@ def _contains_secret_payload_key(value: object) -> bool:
 
 
 def _contains_secret_payload_value(value: object) -> bool:
-    thawed = _thaw_json(value)
-    return bool(SecretRedactor().redact_value(thawed) != thawed)
+    redactor = SecretRedactor()
+
+    def contains_secret(item: object) -> bool:
+        if isinstance(item, Mapping):
+            return any(contains_secret(child) for child in item.values())
+        if isinstance(item, (list, tuple)):
+            return any(contains_secret(child) for child in item)
+        return bool(redactor.redact_value(item) != item)
+
+    return contains_secret(value)
 
 
 def _freeze_json(value: JsonValue) -> JsonValue:

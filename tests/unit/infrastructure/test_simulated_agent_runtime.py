@@ -136,7 +136,7 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
 
     assert isinstance(runtime, AgentRuntimePort)
     query = ProviderDiscoveryQuery(workspace_id=workspace_id, project_id=project_id)
-    assert runtime.discover(query) == tuple(
+    assert await runtime.discover(query) == tuple(
         ProviderCandidate(
             binding=item,
             binding_version=item.version,
@@ -145,7 +145,7 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
         for item in sorted((first, second), key=lambda item: str(item.id))
     )
     assert runtime.capabilities(first) == first.capabilities
-    assert runtime.health(first) == ProviderHealth(
+    assert await runtime.health(first) == ProviderHealth(
         binding_id=first.id,
         binding_version=first.version,
         binding_digest=compute_provider_binding_digest(first),

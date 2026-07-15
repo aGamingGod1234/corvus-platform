@@ -626,6 +626,20 @@ def test_event_rejects_secret_bearing_values_under_benign_keys(
         _event(redacted_payload=payload)
 
 
+def test_secret_payload_value_scan_does_not_thaw_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(value: object) -> object:
+        raise AssertionError(f"unexpected payload thaw: {value!r}")
+
+    monkeypatch.setattr(agent_runtime, "_thaw_json", fail_if_called)
+
+    assert not agent_runtime._contains_secret_payload_value({"message": "safe"})
+    assert agent_runtime._contains_secret_payload_value(
+        {"message": "passphrase=my secret passphrase"}
+    )
+
+
 @pytest.mark.parametrize(
     "event_type",
     [

@@ -91,7 +91,7 @@ class SimulatedAgentRuntime:
         self._runs: dict[UUID, _RunRecord] = {}
         self._run_handle_ids: dict[tuple[UUID, UUID], UUID] = {}
 
-    def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
+    async def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         return tuple(
             ProviderCandidate(
                 binding=binding,
@@ -105,7 +105,7 @@ class SimulatedAgentRuntime:
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities:
         return self._known_binding(binding).capabilities
 
-    def health(self, binding: ProviderBinding) -> ProviderHealth:
+    async def health(self, binding: ProviderBinding) -> ProviderHealth:
         known = self._known_binding(binding)
         return ProviderHealth(
             binding_id=known.id,

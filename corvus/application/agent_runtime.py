@@ -101,7 +101,7 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(
+            preflight_reason = await self._provider_preflight(
                 authorization.request,
                 operation=AgentRunOperation.START,
             )
@@ -173,7 +173,7 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(
+            preflight_reason = await self._provider_preflight(
                 authorization.request,
                 operation=AgentRunOperation.RESUME,
             )
@@ -446,7 +446,7 @@ class AgentRuntimeCoordinator:
         )
         return next((reason_code for matches, reason_code in checks if not matches), None)
 
-    def _provider_preflight(
+    async def _provider_preflight(
         self,
         request: AgentRunAuthorizationRequest,
         *,
@@ -454,7 +454,7 @@ class AgentRuntimeCoordinator:
     ) -> str | None:
         run_request = request.request
         try:
-            candidates = self._runtime.discover(
+            candidates = await self._runtime.discover(
                 ProviderDiscoveryQuery(
                     workspace_id=run_request.workspace_id,
                     project_id=run_request.project_id,
@@ -482,7 +482,7 @@ class AgentRuntimeCoordinator:
                 return _CAPABILITY_UNAVAILABLE_REASON
             if operation is AgentRunOperation.CANCEL:
                 return None
-            health = self._runtime.health(candidate.binding)
+            health = await self._runtime.health(candidate.binding)
             if (
                 health.binding_id != run_request.provider_binding_id
                 or health.binding_version != run_request.provider_binding_version

@@ -848,3 +848,36 @@
 ### Suggested Next Steps
 - Commit and push the verified follow-up to `codex/main-integration`, reply to Asif with evidence for all three items, and monitor the newly required certification checks.
 - Keep pull request #1 open and unmerged until Asif approves the latest head.
+
+## 2026-07-15 — Final Automated Review Repairs
+
+### What Was Implemented
+- Closed Gemini's multi-word credential leak by redacting unquoted sensitive assignments through the line boundary while preserving following lines.
+- Migrated agent-runtime discovery and health checks to asynchronous port operations so future database, local-process, and network adapters cannot block the coordinator event loop.
+- Removed the redundant payload thaw/copy from secret-value inspection and retained fail-closed scalar validation plus distinct secret-key and secret-value reason codes.
+- Added test-first regressions for all three review findings and observed each fail before the production repair.
+
+### Files Modified
+- `corvus/security.py` — fail-closed multi-word secret assignment redaction.
+- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection.
+- `corvus/application/ports.py` — asynchronous discovery and health contracts.
+- `corvus/application/agent_runtime.py` — awaited provider preflight operations.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity.
+- `tests/unit/test_security.py` — multi-word credential regression.
+- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload-scan regression.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract regression.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — asynchronous tracing test adapter.
+- `HACKATHON_STATUS.md` — current verification evidence.
+- `PROJECT_LOG.md` — this review-repair record.
+
+### Assumptions Made (flag these for review)
+- Unquoted sensitive assignments are intentionally redacted through end-of-line; safe over-redaction is preferred to leaking a multi-word credential.
+- `capabilities()` remains synchronous because the reviewed blocking-I/O concern was limited to discovery and health, and current capability reports are immutable binding metadata.
+
+### Known Issues / Deferred
+- CodeRabbit accepted the final review request but its hosted reviewer was rate-limited; the existing CodeRabbit status on the reviewed head remained successful.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified repairs, reply to and resolve all three Gemini threads, and re-request the final automated reviews on the new head.
+- Merge pull request #1 only after the new cross-platform certification matrix, conversation-resolution gate, and required code-owner approval are current.
