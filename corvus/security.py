@@ -12,6 +12,53 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+_SENSITIVE_FIELD_TOKENS = (
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+    "credential",
+    "privatekey",
+    "signingkey",
+    "passphrase",
+)
+_SAFE_TOKEN_COUNTER_FIELDS = frozenset(
+    {
+        "acceptedpredictiontokens",
+        "audiotokens",
+        "cachedtokens",
+        "cachedinputtokens",
+        "cachedcontenttokencount",
+        "candidatestokencount",
+        "completiontokensdetails",
+        "completiontokens",
+        "inputtokens",
+        "maxoutputtokens",
+        "outputtokens",
+        "prompttokensdetails",
+        "prompttokens",
+        "prompttokencount",
+        "reasoningtokens",
+        "rejectedpredictiontokens",
+        "thoughtstokencount",
+        "totaltokens",
+        "totaltokencount",
+        "tooluseprompttokencount",
+        "tokensused",
+    }
+)
+
+
+def is_sensitive_field_name(key: str) -> bool:
+    """Return whether a structured field name may carry sensitive data."""
+
+    normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+    if normalized in _SAFE_TOKEN_COUNTER_FIELDS:
+        return False
+    return any(token in normalized for token in _SENSITIVE_FIELD_TOKENS)
+
 
 class SecurityError(RuntimeError):
     pass
@@ -30,16 +77,27 @@ class BoundedRedactedText:
 
 
 class SecretRedactor:
-    _SECRET_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = (
-        "apikey",
-        "token",
-        "secret",
-        "password",
-        "authorization",
-        "cookie",
-    )
     _TOKEN_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
-        re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?([^\s'\"]+)"),
+        re.compile(
+            r"(?i)['\"](authorization)['\"]\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
+        re.compile(
+            r"(?i)(authorization)\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
+        re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"),
+        re.compile(
+            r"(?i)['\"](api[_-]?key|token|secret|password|cookie|credential|passphrase|"
+            r"private[_-]?key|signing[_-]?key)['\"]\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
+        re.compile(
+            r"(?i)(api[_-]?key|token|secret|password|cookie|credential|"
+            r"passphrase|private[_-]?key|signing[_-]?key)\s*[:=]\s*"
+            r"(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
         re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     ]
@@ -73,8 +131,7 @@ class SecretRedactor:
 
     @classmethod
     def _is_secret_key(cls, key: str) -> bool:
-        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
-        return any(normalized.endswith(suffix) for suffix in cls._SECRET_KEY_SUFFIXES)
+        return is_sensitive_field_name(key)
 
     def redact_value(self, value: Any) -> Any:
         return self._redact_value(value, active=set())

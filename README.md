@@ -1,55 +1,103 @@
-# Corvus V2
+# Corvus
 
-Corvus is a configuration-driven, proof-carrying AI development platform. One authoritative Python core supports multiple interaction surfaces and deployment profiles without duplicating policy or run state.
+Corvus is a local-first AI workspace for turning outcomes into governed, auditable work. One authoritative Python core powers the CLI, API, web client, and Windows desktop shell so approvals, budgets, credentials, audit, and kill switches behave the same everywhere.
 
-## Product modes
+## A workspace that fits the user
 
-- **Interaction:** CLI, browser web, cross-platform desktop, or approved third-party channels.
-- **Collaboration:** Individual or Team.
-- **Hosting:** Local/self-hosted or Corvus Cloud.
-- **Models:** User-provided local endpoints, API credentials, or provider-owned OAuth such as Codex/ChatGPT.
+Corvus adapts its language and navigation without creating separate products or separate security rules.
 
-Credentials are referenced through the OS keyring or a scoped cloud vault; plaintext secrets do not belong in runtime configuration or sandboxes.
+| Work style | Personal workspace | Team workspace preview |
+| --- | --- | --- |
+| Everyday | Home, My Work, Automations, Files | Team Home, Assigned Work, Approvals, Knowledge, People |
+| Developer | Repositories, Threads, Changes, Runs, Skills | Repositories, Work Queue, Reviews, Environments, Policies |
 
-## Current status
+The Team profile currently previews the shared-work information architecture. It does not manufacture members, permissions, or authority before the real collaboration capability is connected.
 
-This branch is the serial Milestone 0.5 certification candidate. It preserves the retained Corvus CLI V1 surface while closing the release-blocking V1 safety gate: byte-exact migration fixtures, sealed quarantine capture, context provenance, bounded/redacted provider output, trusted verification, atomic delivery, and hardened provider/sandbox boundaries.
+## Choose where Corvus runs
 
-Milestone 0.5 is not accepted until the complete cross-platform gate and two independent exact-commit reviews pass. Milestone 1 and all web, desktop, daemon, connector, channel, self-hosted, and cloud surfaces remain unsupported on this branch.
+- **On this computer:** operational today. The desktop app supervises the same-machine sidecar, and the browser client can connect to the same local service.
+- **Corvus Cloud (E2B):** clearly labeled **Preview**. The current build does not create a cloud sandbox, perform Google sign-in, collect payment, or imply that those paths are available.
 
-Corvus build execution is fail-closed. If Docker or Podman is unavailable, ordinary chat may remain available but isolated builds do not fall back to host execution.
+Local and future Cloud runtimes share contracts; clients never grant themselves workspace authority.
 
-## Sandbox image
+## What works today
 
-Production builds default to the supported digest-pinned image:
+- Durable outcomes, dependency-linked workflows, attempts, leases, checkpoints, artifacts, lineage, conversations, and resumable event streams.
+- One-time approvals, deterministic effect idempotency, budget reservation and settlement, kill switches, and restart recovery.
+- Connected CLI, FastAPI, generated TypeScript client, React web app, and Tauri Windows shell over the same application services.
+- Local/demo collaboration, governed memory, versioned skills and routines, signed offline intents, and signed channel ingress.
+- Adaptive Everyday/Developer and Personal/Team workspace profiles with responsive desktop and mobile navigation.
+- A security-focused agent-runtime foundation with immutable requests, provider-binding digests, verified authority receipts, bounded autonomy proofs, fail-closed capability discovery, redacted hash-chained events, replay resistance, and explicit audit-pending results.
 
-```text
-python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
-```
+The agent-runtime foundation currently uses a deterministic simulator and verified input adapters. Live Codex, Claude, Gemini, Cursor, and xAI/Grok CLI or API adapters are the next integration milestone; no README claim treats them as connected today. Credentials remain references resolved only at the effect boundary and are never stored in prompts, events, runtime configuration, or audit output.
 
-Existing installations that set `CORVUS_SANDBOX_IMAGE=python:3.12-slim` must either unset the variable to adopt this default or replace it with a verified `name@sha256:<digest>` reference. Tag-only production overrides are rejected before a container starts. Podman uses `--pull=never`, so pre-pull the exact reference during deployment; Docker deployments may also pre-pull it to make startup deterministic.
-
-```bash
-export CORVUS_SANDBOX_IMAGE='python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf'
-docker pull "$CORVUS_SANDBOX_IMAGE"   # or: podman pull "$CORVUS_SANDBOX_IMAGE"
-```
-
-Unpinned `python:3.12-slim` remains available only when code explicitly selects non-production mode for local development or tests.
-
-## Development
+## Quick start
 
 Requirements:
 
 - Python 3.12
 - `uv`
+- Node.js and `pnpm`
+- Rust/Cargo only when building the desktop shell
 
-```bash
-env -u PYTHONHOME -u PYTHONPATH uv sync --all-groups --locked
-env -u PYTHONHOME -u PYTHONPATH uv run pytest -q
-env -u PYTHONHOME -u PYTHONPATH uv run ruff check .
-env -u PYTHONHOME -u PYTHONPATH uv run corvus --help
+Install and build from PowerShell:
+
+```powershell
+uv sync --all-groups --locked
+pnpm --dir apps/web install --frozen-lockfile
+pnpm --dir apps/web build
 ```
 
-On Windows Git Bash, clearing `PYTHONHOME` and `PYTHONPATH` prevents a different Python standard library from contaminating the selected 3.12 interpreter.
+Start the same-machine API and compiled web client:
 
-The readable Milestones 1–11 delivery outline is in [`ROADMAP.md`](ROADMAP.md). [`PLAN.md`](PLAN.md) remains the authoritative implementation and security specification; reviewer evidence and limitations are in [`PLAN-REVIEW-LOG.md`](PLAN-REVIEW-LOG.md).
+```powershell
+$env:CORVUS_BOOTSTRAP_TOKEN = '<one-time-pairing-value>'
+$env:CORVUS_SESSION_SECRET = '<at-least-32-byte-signing-value>'
+uv run corvus-mvp server --database corvus-mvp.sqlite3 --static-web-dir apps/web/dist
+```
+
+Then open `http://127.0.0.1:8000` and pair once. A durable CLI-only demo is also available:
+
+```powershell
+uv run corvus-mvp demo --database corvus-mvp.sqlite3 --json
+uv run corvus-mvp capabilities-demo --database corvus-mvp.sqlite3 --json
+```
+
+Build and run the Windows desktop shell:
+
+```powershell
+$env:PATH = "C:\Users\lucas\.cargo\bin;$env:PATH"
+$env:CORVUS_SIDECAR_EXECUTABLE = (Resolve-Path .venv\Scripts\corvus-mvp.exe).Path
+pnpm --dir apps/desktop install --frozen-lockfile
+pnpm --dir apps/desktop tauri build --no-bundle
+& apps\desktop\src-tauri\target\release\corvus-desktop.exe
+```
+
+## Development and verification
+
+```powershell
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+pnpm --dir apps/web test
+pnpm --dir apps/web build
+& "$HOME\.cargo\bin\cargo.exe" check --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+Corvus build execution is fail-closed. Production sandbox images must be digest-pinned, and unavailable container isolation never falls back to privileged host execution. The supported default image is:
+
+```text
+python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
+```
+
+## Status and scope
+
+This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell and the in-review M2A agent-runtime foundation. It is not formal certification. Real E2B lifecycle management, Google-backed continuity, live provider adapters, durable provider/autonomy/credential/budget/kill repositories, and production signing remain explicit later milestones.
+
+See [HACKATHON_STATUS.md](HACKATHON_STATUS.md) for verified commands and limitations, [ROADMAP.md](ROADMAP.md) for the readable delivery outline, and [PLAN.md](PLAN.md) for the authoritative security specification.
+
+Changes target `main` through ready pull requests. Review findings are fixed on the feature branch before merge; new milestone work is not pushed directly to `main`.
+
+## Attribution
+
+Corvus is developed by Lucas with AI-assisted engineering from **OpenAI Codex**. This is honest tool attribution, not a fabricated GitHub account or identity.

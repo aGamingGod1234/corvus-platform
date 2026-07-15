@@ -478,6 +478,472 @@
 - Confirm the recommended defaults in `QUESTIONS.md`.
 - Begin M2A with failing contract/security tests before any live adapter wiring.
 
+## 2026-07-15 — M2A Task 1 Agent Runtime Contracts and Simulator
+
+### What Was Implemented
+- Added strict immutable provider, capability, autonomy, request, handle, event, and cancellation contracts for the agent-runtime boundary.
+- Added an infrastructure-independent application protocol and deterministic simulator with digest-chained replay, idempotent cancellation, and substitution-safe start/resume behavior.
+- Hardened event payloads with deep immutability while preserving JSON serialization and deterministic digest replay.
+- Added focused red-green coverage for transport identity, authority inputs, payload safety, replay idempotency, model binding, cancellation, resume, and typed stable errors.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — typed immutable agent-runtime contracts and event digest behavior.
+- `corvus/application/ports.py` — `AgentRuntimePort` protocol.
+- `corvus/infrastructure/agent_runtimes/` — deterministic simulator and package exports.
+- `tests/unit/domain/test_agent_runtime.py` — domain contract and deep-immutability coverage.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — simulator replay, cancellation, resume, and substitution coverage.
+- `PROJECT_LOG.md` — Task 1 implementation record.
+
+### Assumptions Made (flag these for review)
+- `agent_run_idempotency_mismatch` and `provider_binding_model_mismatch` are the stable reason codes for the reviewed simulator substitution failures.
+- Serialized payloads may be returned as fresh mutable JSON containers while the validated event's stored payload remains deeply immutable.
+
+### Known Issues / Deferred
+- Authority-bound orchestration, proof verification, context-firewall integration, and live provider adapters remain deferred to M2A Task 2 and later tasks.
+- This Task 1 simulator proves boundary behavior only and does not grant provider, filesystem, network, credential, budget, or autonomy authority.
+
+### Suggested Next Steps
+- Submit the Task 1 commit in a ready pull request for external review.
+- Implement Task 2 authority-bound orchestration only after Task 1 review is accepted.
+
+## 2026-07-15 — M2A Task 2 Authority-Bound Agent Runtime Coordinator
+
+### What Was Implemented
+- Added strict frozen agent-run authorization request/decision and redacted audit contracts with workspace/project, idempotency, authorization snapshot, handle, request digest, and current kill-switch proof binding.
+- Added an authority-gated application coordinator for start, resume, and cancel with exact authorization receipt checks, authorization-before-runtime audit ordering, stable failures, and best-effort outcome audit.
+- Exported one canonical agent-run request digest helper and reused it in both the coordinator and deterministic Task 1 simulator.
+- Added deterministic application tests covering substitution rejection, stale/over-budget/kill-switch denials, stable start replay, fresh resume proofs, current cancel proofs, runtime errors, audit redaction, and structural protocols.
+- Completed M2A Task 2 code, which remains unmerged pending whole-milestone review and the ready PR review gate.
+
+### Files Modified
+- `corvus/application/ports.py` — agent-run authorization and redacted audit contracts and protocols.
+- `corvus/application/agent_runtime.py` — authority-bound start/resume/cancel coordinator and operation result.
+- `corvus/domain/agent_runtime.py` — shared canonical agent-run request digest helper.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — reuse of the shared digest helper without changing simulator semantics.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — Task 2 RED/GREEN coordinator, contract, audit, and proof-binding coverage.
+- `PROJECT_LOG.md` — Task 2 implementation and verification record.
+
+### Assumptions Made (flag these for review)
+- None. Scope semantics, reason-code vocabulary, audit shape, and replay metadata behavior were confirmed before implementation.
+
+### Known Issues / Deferred
+- No live provider adapter, API/UI wiring, database persistence, Cloud authority, or Team authority is included in Task 2.
+- `identical_start_replayed` remains `None` because the Task 1 runtime port exposes stable handle equality but no durable replay metadata.
+- M2A remains unmerged until the controller completes whole-milestone verification and the ready PR review gate.
+
+### Suggested Next Steps
+- Run the controller-owned milestone-wide suite and complete whole-milestone self-review.
+- Submit the combined M2A branch through the ready PR review gate before merge.
+
+## 2026-07-15 — M2A Whole-Milestone Repair, UX Verification, and Documentation
+
+### What Was Implemented
+- Repaired all seven Important and three Minor whole-milestone review findings across concrete authorization, provider-binding identity, resume immutability, runtime receipts, event lifecycle and deduplication, secret-field rejection, audit acknowledgements, typed discovery/health, replay metadata, and fail-closed capabilities.
+- Reused the canonical capability-intersection and authorization-snapshot verification core through a repository-injectable verified agent-run adapter without adding a second policy engine or a database migration.
+- Exercised the real Windows desktop shell through onboarding, Everyday/Developer and Personal/Team profiles, the Cloud Preview boundary, Local connection, and graceful shutdown.
+- Replaced the stale README with verified product modes, runtime truth, quick-start commands, security boundaries, review workflow, and honest OpenAI Codex AI-assistance attribution.
+
+### Files Modified
+- `README.md` — current product, runtime, setup, verification, scope, PR workflow, and attribution.
+- `HACKATHON_STATUS.md` — M2A scope, current automated and Windows UI verification, and explicit durable/runtime limitations.
+- `PROJECT_LOG.md` — final repair and verification record.
+- M2A runtime, authorization, security, simulator, and tests — review-driven integrity repairs recorded in the preceding M2A entries and commits.
+
+### Assumptions Made (flag these for review)
+- OpenAI Codex is credited as an AI-assisted engineering tool only; no GitHub identity or account linkage is fabricated.
+- The current feature branch remains unmerged until both the independent internal re-review and the user's external review agents approve the ready PR.
+
+### Known Issues / Deferred
+- Live vendor adapters, durable current-state repositories for agent runtime authority families, E2B lifecycle, Google continuity, billing, and production signing remain outside M2A.
+- Post-effect audit reconciliation is fail-visible and retryable but does not claim a durable database outbox in this milestone.
+
+### Suggested Next Steps
+- Complete the exact-commit whole-M2A re-review and address every finding.
+- Push only the feature branch, open a ready PR targeting `main`, and wait for review-agent feedback before merge.
+
+## 2026-07-15 — M2A Whole-Milestone Runtime Integrity Repairs
+
+### What Was Implemented
+- Added executable/credential-aware provider binding receipts, immutable resume-request digests, typed scoped discovery/health/start receipts, and fail-closed pre-runtime provider verification.
+- Enforced sequenced event lifecycle, provider-event deduplication, tool-call transitions, cursor bounds, and one shared recursive sensitive-field predicate for validation and redaction.
+- Added acknowledged tamper-evident audit receipts; authorization audit acknowledgment is mandatory, while a post-effect audit failure returns explicit `agent_run_audit_pending` state with no provider output.
+- Added a concrete repository-injectable verified agent-run authorization adapter that reuses the canonical capability evaluator and cryptographic snapshot verifier, then binds current autonomy, provider, credential, budget, and kill-switch receipts.
+- Validated runtime-returned start, resume, and cancellation identities and exposed deterministic in-memory simulator replay metadata.
+
+### Files Modified
+- `corvus/security.py` — shared public sensitive-field predicate used by redaction and runtime-event validation.
+- `corvus/domain/agent_runtime.py` — provider/autonomy digests, immutable request identity, typed discovery/health/start models, and event lifecycle fields.
+- `corvus/application/ports.py` — authorization, audit-receipt, and runtime port receipt contracts.
+- `corvus/application/agent_runtime.py` — audit acknowledgment, provider preflight, runtime receipt validation, and audit-pending behavior.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — scoped typed discovery, provider binding verification, replay metadata, immutable resume checks, and lifecycle enforcement.
+- `corvus/infrastructure/agent_run_authorization.py` — verified agent-run authorization adapter over the existing canonical authorization stack.
+- `tests/unit/` — focused RED/GREEN coverage for all repaired boundaries.
+- `.superpowers/sdd/task-2-report.md` — refreshed repair and verification evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. The provider receipt, proof refresh, event lifecycle, audit acknowledgment, adapter reuse, and stop boundaries were explicitly confirmed before repair work.
+
+### Known Issues / Deferred
+- Durable repositories for autonomy grants, credential/budget/kill-switch receipts, provider bindings, and audit-pending reconciliation remain later infrastructure work; this task provides repository-injectable contracts and pure verification behavior.
+- No live provider/API/UI wiring, database migration, new dependency, Cloud/Team scope, README change, push, merge, or history rewrite was performed.
+
+### Suggested Next Steps
+- Have the controller perform the final whole-milestone review against commits `7cf85ca`, `80d2490`, and `493142f` plus the final verification-record commit.
+- Keep M2A unmerged until the ready PR review gate is complete.
+
+## 2026-07-15 — M2A Exact-Commit Re-Review Repairs
+
+### What Was Implemented
+- Bound audit acknowledgement into the tamper-evident receipt digest and made every post-authorization exit explicitly audit-pending when its outcome audit is missing or unacknowledged, while retaining the primary reason and opaque handle/cancellation result.
+- Expanded autonomy and run contracts with explicit sandbox, tool, effect, provider-spend, Corvus-budget, approval, retry, and turn limits; verified canonical filesystem roots and every approved ceiling before evaluation.
+- Replaced arbitrary credential/budget wrapper assertions with optional paired receipts derived deterministically from canonical authorization claims and full authoritative verification evidence; absent claims require absent wrappers.
+- Added distinct per-effect authorization decision receipts to tool/approval events and included them in event digests and simulator chain materialization.
+- Made empty simulator templates synthesize a deterministic `STARTED` event so cancellation preserves `STARTED → CANCELLED` lifecycle ordering.
+
+### Files Modified
+- `corvus/application/ports.py` — acknowledgement-bound audit receipts and optional canonical proof receipts.
+- `corvus/application/agent_runtime.py` — primary failure retention and audit-pending behavior for every post-authorization exit.
+- `corvus/domain/agent_runtime.py` — explicit autonomy/run limits, optional proof pairs, and per-effect authorization references.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical evidence receipt derivation and complete autonomy-envelope enforcement.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — effect receipt propagation and deterministic empty-template start lifecycle.
+- `tests/unit/` — RED/GREEN regressions for receipt tampering, pending outcomes, autonomy/evidence binding, effect receipts, and empty-template cancellation.
+- `.superpowers/sdd/task-2-report.md` — exact-commit repair evidence.
+- `PROJECT_LOG.md` — corrected simulator durability wording and this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Result fields, autonomy/request shapes, canonical evidence behavior, effect receipt fields, empty-template behavior, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Replay metadata remains deterministic and in-memory in the simulator; durable replay persistence remains later infrastructure work.
+- Durable authority/evidence repositories and audit-pending reconciliation remain deferred infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, or unrelated refactor work was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `9f7c57d`, `3759837`, and `f2eaf5a` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Receipt and Tool-Chain Re-Review Repairs
+
+### What Was Implemented
+- Added one coordinator receipt verifier that independently recomputes every returned audit receipt digest and uses constant-time comparisons for both event and receipt digests before accepting authorization or outcome acknowledgement.
+- Added adversarial start, resume, and cancel coverage for forged authorization and forged outcome receipts created by bypassing Pydantic validation with `model_copy`.
+- Added a public, typed, side-effect-free `validate_agent_run_event_chain` domain validator for stream identity, sequencing, digest linkage, terminal state, provider-event deduplication, tool prerequisites, and effect-authorization consistency.
+- Enforced one effect authorization decision reference across each tool call lifecycle; standalone approvals remain valid, while tool-bound approvals must follow a request and match its decision reference.
+- Made the simulator consume the shared chain validator and preserve the stable `tool_effect_authorization_mismatch` failure reason.
+
+### Files Modified
+- `corvus/application/agent_runtime.py` — constant-time independent verification of authorization and outcome audit receipts.
+- `corvus/domain/agent_runtime.py` — public event-chain validator and typed chain error.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — shared validator integration.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — six forged-receipt operation/phase regressions.
+- `tests/unit/domain/test_agent_runtime.py` — tool lifecycle decision-substitution and approval relationship coverage.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — shared-validator integration regression.
+- `.superpowers/sdd/task-2-report.md` — third bounded repair evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Constant-time receipt verification, all six adversarial cases, standalone versus tool-bound approval behavior, shared domain validator placement, reason code, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable audit persistence/reconciliation and live-adapter consumption of the public chain validator remain later infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, or unrelated refactor work was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `f340447` and `1479d59` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Final Quality Review Repairs
+
+### What Was Implemented
+- Bound verified HTTP runs to the exact canonical credential reference and singleton credential grant, while preserving credentialless local CLI runs.
+- Added required budget unit/requested amount fields, a public runtime-limit digest over both spend ceilings and the complete runtime envelope, mandatory canonical budget evidence for every verified run, and a required autonomy output-byte ceiling.
+- Required outcome audit receipts to continue the authorization receipt exactly, made malformed receipts fail closed, and mapped unsafe runtime cancellation reasons to `agent_run_cancellation_reason_invalid` without losing the opaque cancellation result.
+- Rejected terminal event chains with unresolved tool calls and reuse of one effect decision across different tool calls; expanded nested sensitive-field detection and made only text capability default to supported.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — budget/runtime digest contracts, output-byte grant ceiling, capability default, and event-chain invariants.
+- `corvus/infrastructure/agent_run_authorization.py` — exact credential, mandatory budget, runtime-digest, and byte-ceiling enforcement.
+- `corvus/application/agent_runtime.py` — audit receipt continuity, malformed-receipt handling, and safe cancellation-reason mapping.
+- `corvus/security.py` — additional credential/private-key/signing-key/passphrase field variants.
+- `tests/unit/` — RED/GREEN regressions for every repaired boundary.
+- `HACKATHON_STATUS.md` — exact rerun count/result correction only.
+- `.superpowers/sdd/task-2-report.md` — fourth bounded repair evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Credential topology, budget semantics, receipt continuity, cancellation behavior, event-chain rules, sensitive variants, capability default, documentation limits, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable authority/evidence repositories and audit-pending reconciliation remain later infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, history rewrite, or unrelated refactor was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `415920a`, `224f65a`, and `5c81932` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Credentialless Local Placement Repair
+
+### What Was Implemented
+- Corrected canonical credential evidence presence detection so a valid execution placement alone does not create a credential claim for a credentialless local CLI run.
+- Preserved exact placement binding whenever real provider/credential/grant claims exist, including fail-closed partial claim handling and mandatory HTTP credential evidence.
+- Added a verified-adapter regression covering canonical budget evidence, a valid execution placement, no credential reference/grant/proof, and an allowed local CLI result.
+
+### Files Modified
+- `corvus/infrastructure/agent_run_authorization.py` — distinguish actual credential claims from the placement that binds them.
+- `tests/unit/application/test_authorization.py` — local CLI placement regression while retaining HTTP and partial-claim coverage.
+- `.superpowers/sdd/task-2-report.md` — final bounded repair RED/GREEN and verification evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Credential-presence semantics, retained HTTP/partial-claim behavior, verification scope, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable authority/evidence repositories and audit-pending reconciliation remain later infrastructure work.
+- No push, merge, README, HACKATHON status, dependency, migration, live provider/API/UI/database, Cloud/Team, history rewrite, or unrelated refactor was performed.
+
+### Suggested Next Steps
+- Re-review the final credential-presence repair commit together with `415920a`, `224f65a`, `5c81932`, and `cd19279`.
+- Keep M2A unmerged until the controller-owned final repository/web/desktop gates and ready PR review complete.
+
+## 2026-07-15 — M2A Review-Gated Pull Request Handoff
+
+### What Was Implemented
+- Re-ran the complete local release matrix after the final credentialless-placement repair: 604 Python tests, 23 web tests plus production build, and Windows desktop `cargo check` all passed.
+- Obtained an independent final READY review with no Critical, Important, or Minor findings.
+- Published `codex/main-integration` and opened ready, non-draft pull request #1 against `main` for the user's code-review agents.
+- Preserved the explicit review gate: the pull request was not merged and `main` remained at `f95a814`.
+
+### Files Modified
+- `PROJECT_LOG.md` — record the verified, review-gated GitHub handoff.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly requested a ready pull request targeting `main`, no automatic merge, and follow-up repairs after review-agent findings.
+
+### Known Issues / Deferred
+- GitHub certification checks were still running when the pull request was opened.
+- Live provider adapters, Google identity, E2B Cloud lifecycle, payments, database migrations, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Allow the user's review agents and GitHub certification to complete on pull request #1.
+- Address confirmed review findings on `codex/main-integration`, reverify, and update the pull request before any merge decision.
+
+## 2026-07-15 — PR #1 Cross-Platform and Deterministic-Digest Repairs
+
+### What Was Implemented
+- Replaced the Windows-only root in the canonical-current-state authorization test with pytest's resolved cross-platform temporary root, fixing the shared Ubuntu and macOS certification failure without weakening production absolute-root validation.
+- After the first remote rerun exposed two later Windows-only adversarial path values in the same test, derived both the outside-root substitution and local executable identity from the resolved pytest root; no `Path("C:/...")` literals remain in that file.
+- Added JSON-only sorted serialization for every digest-bearing `AutonomyGrant` frozenset and `AgentRunRequest.requested_effect_classes`, eliminating cross-process hash-seed digest drift while preserving Python-mode frozensets.
+- Replaced exception-driven missing-provider lookup with explicit `None` handling that returns the existing fail-closed `agent_run_provider_unavailable` reason.
+- Added RED/GREEN regressions for deterministic serialization, Python-mode preservation, and missing-provider audit behavior.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — deterministic JSON serializers for digest-bearing frozensets.
+- `corvus/application/agent_runtime.py` — explicit missing-provider preflight handling.
+- `tests/unit/domain/test_agent_runtime.py` — deterministic serialization and Python-mode preservation coverage.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — missing-provider preflight and audit regression.
+- `tests/unit/application/test_authorization.py` — cross-platform canonical-root fixture.
+- `HACKATHON_STATUS.md` — current full and expanded verification counts.
+- `PROJECT_LOG.md` — this review-repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly approved all four repairs and the Linux/macOS CI fix; the production absolute-root rule, failure reason, PR-only push, and no-merge boundary remain unchanged.
+
+### Known Issues / Deferred
+- GitHub certification must rerun on the pushed repair commit before the cross-platform failures are considered remotely closed.
+- CodeRabbit and Copilot reviews remain quota-limited; live providers, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified repair to `codex/main-integration`, reply to and resolve the three Gemini review threads, and recheck every GitHub certification job.
+- Keep pull request #1 open and unmerged until the user's review gate is satisfied.
+
+## 2026-07-15 — PR #1 Full Review Repair Pass
+
+### What Was Implemented
+- Closed all 12 unique Codex review findings, including the 10 duplicated follow-up comments: usage token counters no longer trigger secret-key rejection, while nested secret-shaped values remain fail-closed.
+- Preserved event-chain integrity by recomputing every event digest and deterministically closing open tool calls before cancellation.
+- Made cancellation independent of volatile provider health, rejected non-terminal provider refusals as failures, and returned a canonical cancelled handle after accepted terminal cancellation.
+- Enforced logical run identity across changed idempotency keys, required verified provider capabilities for requested execution envelopes and resume, and rejected unsupported nested scopes until an ancestry resolver exists.
+- Removed volatile provider health observations from the binding authorization digest and rechecked queued deadlines plus autonomy issue times at authorization time.
+- Added RED/GREEN regressions for every repaired boundary and independently reproduced every review finding before implementation.
+
+### Files Modified
+- `corvus/security.py` — safe usage-counter classification without weakening secret-name detection.
+- `corvus/domain/agent_runtime.py` — stable binding digests, secret-value rejection, and event-chain digest verification.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — logical run uniqueness and cancellation-safe tool lifecycle closure.
+- `corvus/application/agent_runtime.py` — capability-honest preflight and correct cancellation semantics.
+- `corvus/application/ports.py` — fail-closed unsupported nested agent-run scopes.
+- `corvus/infrastructure/agent_run_authorization.py` — authorization-time deadline and grant-issuance checks.
+- `tests/unit/` — focused contract, simulator, coordinator, and authorization regressions.
+- `HACKATHON_STATUS.md` — exact current verification counts.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user approved the complete unresolved review pass; capability downgrade, scope, cancellation, digest, time-window, redaction, idempotency, PR-only push, and no-merge behavior were validated against the existing plan and contracts.
+
+### Known Issues / Deferred
+- The provider-binding digest intentionally changed to exclude only `status` and `health_checked_at`; in-flight pre-repair binding proofs must be regenerated rather than silently accepted.
+- GitHub certification must rerun on the repair commit before the remote macOS, Linux, Windows, and Docker gates are considered current.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push this verified repair to `codex/main-integration`, respond to every duplicated review thread with evidence, and resolve only the findings demonstrably closed by the pushed commit.
+- Keep pull request #1 open and unmerged until the user's review agents approve it.
+
+## 2026-07-15 — PR #1 Post-Review Quality Sweep
+
+### What Was Implemented
+- Rechecked the live pull request after the prior repair commit and confirmed there were no new GitHub comments or unresolved threads, then completed two independent read-only security and portability reviews.
+- Closed seven additional reproduced defects: Digest and bare Bearer/Basic credentials are rejected from event payloads; authorization decisions fail closed when evaluated in the future or at/after the run deadline; operation-specific authorization fields cannot be smuggled into START, RESUME, or CANCEL.
+- Canonicalized semantically equal Decimal and timezone-offset values before hashing without mutable Decimal-context rounding, kept extreme exponents compact, rejected blank or oversized message inputs, and prevented `TOOL_BLOCKED` from closing an already-started tool call in both shared and simulator lifecycle validation.
+- Added RED/GREEN regressions for every repaired boundary and reran Python, web, dependency, lint, type, patch, and desktop compilation checks.
+
+### Files Modified
+- `corvus/security.py` — conservative Authorization plus bare Bearer/Basic credential redaction.
+- `corvus/application/agent_runtime.py` — coordinator-clock and run-deadline validation for authorization decisions.
+- `corvus/application/ports.py` — operation-specific authorization request field hygiene.
+- `corvus/domain/agent_runtime.py` — canonical proof digests, bounded message input, and valid tool lifecycle transitions.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — simulator template parity for started-tool closure.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — decision-time, clock-failure, and field-smuggling regressions.
+- `tests/unit/domain/test_agent_runtime.py` — credential, digest, message-bound, and shared lifecycle regressions.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — simulator lifecycle regression.
+- `HACKATHON_STATUS.md` — current verification counts.
+- `PROJECT_LOG.md` — this post-review repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly authorized all remaining evidence-backed repairs while preserving the PR-only push and no-merge review boundary.
+
+### Known Issues / Deferred
+- Canonical agent-runtime proof digests intentionally changed for semantically equal Decimal scales and timezone offsets; any in-flight pre-repair proofs must be regenerated instead of silently accepted.
+- GitHub certification must rerun on the pushed commit before the remote macOS, Linux, Windows, and Docker gates are current.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified sweep to `codex/main-integration`, leave evidence on pull request #1, and monitor every remote certification job.
+- Keep pull request #1 open and unmerged until the user's review agents approve it.
+
+## 2026-07-15 — Asif Security-Owner Review Follow-Up
+
+### What Was Implemented
+- Validated Asif's three mandatory PR follow-ups against the current head instead of applying a stale change mechanically.
+- Confirmed the differing-idempotency-key scenario is already fail-closed: the simulator indexes logical `(run_id, binding_id)`, raises `agent_run_idempotency_mismatch`, creates no second handle, and the exact existing regression passes.
+- Added a dedicated `tests/unit/test_security.py` module covering registered, keyed, and bare secret redaction; token-usage safe-list classification; and absolute/parent path-traversal rejection.
+- Added `.github/CODEOWNERS` routing security-critical authority, runtime, redaction, sandbox, and certification-test surfaces to `@asifdotpy`.
+- Enabled `main` branch protection with strict required certification checks, admin enforcement, one approving review, code-owner review, stale-review dismissal, conversation resolution, and force-push/deletion denial.
+
+### Files Modified
+- `.github/CODEOWNERS` — security-owner routing for critical implementation and test paths.
+- `tests/unit/test_security.py` — direct security-core unit coverage requested by the reviewer.
+- `HACKATHON_STATUS.md` — current full and dedicated-security verification counts.
+- `PROJECT_LOG.md` — this security-owner review follow-up record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly requested that Asif's review be inspected and fixed; the idempotency behavior was preserved because live code and an exact regression disproved that stale finding.
+
+### Known Issues / Deferred
+- The CODEOWNERS file is part of pull request #1 and becomes base-branch ownership policy only after this reviewed PR is merged; branch protection is already active and requires an approval now.
+- Asif must re-review the latest pushed commit before the existing `CHANGES_REQUESTED` state is cleared.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified follow-up to `codex/main-integration`, reply to Asif with evidence for all three items, and monitor the newly required certification checks.
+- Keep pull request #1 open and unmerged until Asif approves the latest head.
+
+## 2026-07-15 — Final Automated Review Repairs
+
+### What Was Implemented
+- Closed Gemini's multi-word credential leak by redacting unquoted sensitive assignments through the line boundary while preserving following lines.
+- Migrated agent-runtime discovery and health checks to asynchronous port operations so future database, local-process, and network adapters cannot block the coordinator event loop.
+- Removed the redundant payload thaw/copy from secret-value inspection and retained fail-closed scalar validation plus distinct secret-key and secret-value reason codes.
+- Added test-first regressions for all three review findings and observed each fail before the production repair.
+- Reproduced the post-push Ubuntu/macOS failure as a Ruff formatting-only mismatch in the new security test and normalized that file; all remote Python tests had already passed.
+- Closed the follow-up naive-clock defect by rejecting timezone-naive coordinator clocks inside the fail-closed authorization boundary before audit or runtime execution.
+- Made timezone-aware historical agent-run requests deserializable while retaining deadline enforcement at authorization time, preserving both archival fidelity and time-of-use safety.
+- Added exact safe classifications for provider token-usage counters/details while deliberately retaining generic `tokens` as sensitive credential-bearing data.
+- Replaced full provider-binding equality in simulator lookup with the established canonical digest, accepting health-only refreshes while retaining every stable identity, scope, capability, executable/credential, model, version, and disclosure boundary.
+- Enforced the request deadline against current coordinator time so an earlier valid authorization decision cannot start or resume an already expired run.
+- Canonicalized credential and budget evidence receipts from Python-native values, making equivalent timezone offsets digest-identical while preserving semantic changes.
+- Converted protocol-violating null start/resume/cancel adapter results into the existing operation-specific fail-closed outcomes and audit records.
+- Required exact typed start, resume, and cancel results from runtime adapters, mapping arbitrary protocol-violating objects to the same audited operation-specific failures.
+- Rejected non-canonical executable identities instead of silently normalizing them, preserving exact provider-binding evidence and preventing alternate path spellings from crossing the runtime boundary.
+- Preserved kill-switch cancellation after ordinary autonomy deadlines and budget/runtime consumption limits expire, while retaining authority, credential, binding-digest, current-proof, capability, and audit checks.
+- Rejected approval events for tool calls that have already reached a blocked or result terminal state, preserving causal effect authorization in replay and audit streams.
+- Redacted quoted JSON-style secret assignments without corrupting valid provider JSON or missing credential assignments embedded inside already-parsed log strings.
+- Required verified provider-side cancellation capability before authorizing emergency cancellation, while continuing to tolerate unavailable health status for the stop path.
+- Rejected secret-shaped mapping keys as well as sensitive field names before freezing agent-run event payloads.
+- Revalidated every declared authorization-decision field at the coordinator port boundary before trusting an allow result.
+- Bound nested cancellation-result handles to the exact cancelled handle identity and withheld malformed adapter results from failure responses.
+
+### Files Modified
+- `corvus/security.py` — fail-closed multi-word and quoted-key secret assignment redaction with valid JSON-string preservation.
+- `corvus/domain/agent_runtime.py` — allocation-free recursive secret inspection across keys and values, shared canonical evidence-value normalization, canonical executable identity enforcement, and causal tool-approval ordering.
+- `corvus/application/authorization.py` — exact agent-run cancellation exemption from budget/runtime consumption denial.
+- `corvus/application/ports.py` — asynchronous discovery and health contracts.
+- `corvus/application/agent_runtime.py` — awaited provider preflight, cancellation-safe deadline binding, revalidated authorization decisions, exact typed-result enforcement, and exact cancellation handle identity.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts plus narrowly scoped emergency-cancellation liveness and capability handling.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity and stable-digest binding lookup.
+- `tests/unit/test_security.py` — multi-word and quoted JSON-style credential regressions.
+- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, secret-shaped key, historical deserialization, structured usage-metadata, non-canonical executable-path, and late tool-approval regressions.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract and volatile health-refresh regressions.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, emergency-cancellation, malformed authorization, exact cancellation identity, null-result, and malformed typed-result fail-closed regressions.
+- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation, cancellation capability/consumption boundaries, and equivalent-timezone evidence receipt regressions.
+- `HACKATHON_STATUS.md` — current verification evidence.
+- `PROJECT_LOG.md` — this review-repair record.
+
+### Assumptions Made (flag these for review)
+- Unquoted sensitive assignments are intentionally redacted through end-of-line; safe over-redaction is preferred to leaking a multi-word credential.
+- `capabilities()` remains synchronous because the reviewed blocking-I/O concern was limited to discovery and health, and current capability reports are immutable binding metadata.
+- Provider status and health timestamps remain runtime observations outside the stable binding digest and are validated separately before execution.
+- Runtime adapters are typed as returning non-null contracts; defensive null handling maps violations to the existing operation-specific failure codes rather than inventing new public reasons.
+- No unsigned five-minute clock-skew allowance was introduced. The established security regression rejects authorization decisions even one microsecond in the future, so tolerance remains deferred until a signed and explicitly configured skew policy exists.
+- Cancellation bypasses only run-liveness, provider-health status, and budget/runtime consumption gates; revoked autonomy, future-issued grants, scope, identity, credential, provider binding, current kill-switch proof, capability, snapshot, and audit requirements remain fail-closed.
+
+### Known Issues / Deferred
+- CodeRabbit accepted the final review request but its hosted reviewer was rate-limited; the existing CodeRabbit status on the reviewed head remained successful.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified repairs, reply to and resolve all three Gemini threads, and re-request the final automated reviews on the new head.
+- Merge pull request #1 only after the new cross-platform certification matrix, conversation-resolution gate, and required code-owner approval are current.
+
+## 2026-07-15 — Final Codex Review Trust-Boundary Repairs
+
+### What Was Implemented
+- Bound emergency cancellation to the complete current kill-switch proof pair: both proof ID and proof digest now cross the runtime port, are validated for replay, and appear in cancellation and synthetic tool-close evidence.
+- Revalidated nested start, resume, and cancellation handles before the coordinator trusts adapter output; malformed nested identities or states now fail closed through the established operation-specific audit paths.
+- Rejected terminal cancellation results carrying a non-terminal nested handle before a success audit can be recorded.
+- Added an explicit numeric safe list for provider-native camelCase usage counters while retaining fail-closed handling for generic secret-shaped token keys.
+- Added test-first regressions for all four Codex findings and reran the complete repository Python certification commands against the final formatted files.
+- Reused one private read-only empty `SecretRedactor` for event payload key/value scans, eliminating per-call construction without introducing a mutable default argument; the regression reproduced Gemini's performance finding before the repair.
+- Made an already-active simulator event iterator observe contiguous events appended before that iterator completes, so a concurrent cancellation terminal event is not omitted from the open stream.
+
+### Files Modified
+- `corvus/application/ports.py` — cancellation port contract now carries the current proof digest.
+- `corvus/application/agent_runtime.py` — nested runtime-result reconstruction, validation, and stable cancellation identity failure mapping.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — proof-pair validation, replay binding, cancellation evidence parity, and active-iterator continuity.
+- `corvus/security.py` — explicit provider-native camelCase token-usage counters.
+- `corvus/domain/agent_runtime.py` — private reusable payload redactor for key and scalar-value scans.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — malformed nested start and terminal cancellation-handle regressions.
+- `tests/unit/domain/test_agent_runtime.py` — per-call redactor-construction regression.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — proof digest evidence, mismatched replay, and concurrent append visibility regressions.
+- `tests/unit/test_security.py` — camelCase usage-counter regression.
+- `HACKATHON_STATUS.md` — exact final Python verification evidence.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- The duplicated CodeRabbit reviewer name in the user request refers to the previously agreed fourth automated reviewer, Copilot; both CodeRabbit and Copilot are requested on the exact pushed head.
+- No cancellation proof compatibility shim is added: callers must provide the complete current proof pair so evidence cannot silently weaken across the runtime boundary.
+- Gemini's literal default-argument suggestion was implemented as an equivalent private module-scoped instance so the optimization does not add a mutable function default.
+- Missing or misspelled capability attributes remain invalid adapter output and are already caught by the provider-preflight exception boundary; no permissive attribute default was added.
+
+### Known Issues / Deferred
+- Pull request #1 remains subject to strict protected-branch certification, conversation resolution, and a fresh code-owner approval from Asif; no administrator bypass is permitted.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push this verified repair, reply to the four exact Codex threads with evidence, and request Gemini, CodeRabbit, Codex, Copilot, and Asif review on the new commit.
+- Merge pull request #1 only after all exact-head checks pass, no review threads remain unresolved, and GitHub reports the required approval satisfied.
+
 ## 2026-07-15 — PR #2 Security Governance Review Repairs
 
 ### What Was Implemented
@@ -520,3 +986,28 @@
 ### Suggested Next Steps
 - Verify, commit, and push the final PR #2 repairs; reply to and resolve all exact-head review threads.
 - Obtain the required owner review, merge PR #2 normally, then refresh PR #1 against protected `main` and request Asif's exact-head approval.
+
+## 2026-07-15 — PR #1 Governance Integration Refresh
+
+### What Was Implemented
+- Merged protected `main` after PR #2 into the PR #1 integration branch without discarding either milestone history.
+- Resolved CODEOWNERS to PR #2's complete 62-rule policy, which includes every PR #1 runtime and dedicated-security-test path.
+- Preserved the full PR #1 runtime/security implementation and both project-log histories.
+- Verified the merged tree with 680 Python tests, Ruff lint/format, MyPy across 93 source files, complete ownership-target validation, and conflict-marker checks.
+
+### Files Modified
+- `.github/CODEOWNERS` — retained the complete merged security-owner policy.
+- `.github/GUARDRAIL_CHECKLIST.md` — integrated the merged security review checklist.
+- `.github/THREAT_MODEL.md` — integrated the merged threat model.
+- `SECURITY_REVIEW.md` — integrated the protected-branch security gate checklist.
+- `PROJECT_LOG.md` — preserved both histories and recorded this integration refresh.
+
+### Assumptions Made (flag these for review)
+- PR #2's complete directory-aware ownership policy supersedes PR #1's narrower policy because it contains the full PR #1 ownership subset.
+
+### Known Issues / Deferred
+- The merge commit requires a fresh exact-head certification run and formal Asif code-owner approval because protected-branch stale-review dismissal applies after the head changes.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified integration merge, request exact-head reviewers, and merge PR #1 only after protected-branch requirements are satisfied.
