@@ -535,6 +535,32 @@
 - Run the controller-owned milestone-wide suite and complete whole-milestone self-review.
 - Submit the combined M2A branch through the ready PR review gate before merge.
 
+## 2026-07-15 — M2A Whole-Milestone Repair, UX Verification, and Documentation
+
+### What Was Implemented
+- Repaired all seven Important and three Minor whole-milestone review findings across concrete authorization, provider-binding identity, resume immutability, runtime receipts, event lifecycle and deduplication, secret-field rejection, audit acknowledgements, typed discovery/health, replay metadata, and fail-closed capabilities.
+- Reused the canonical capability-intersection and authorization-snapshot verification core through a repository-injectable verified agent-run adapter without adding a second policy engine or a database migration.
+- Exercised the real Windows desktop shell through onboarding, Everyday/Developer and Personal/Team profiles, the Cloud Preview boundary, Local connection, and graceful shutdown.
+- Replaced the stale README with verified product modes, runtime truth, quick-start commands, security boundaries, review workflow, and honest OpenAI Codex AI-assistance attribution.
+
+### Files Modified
+- `README.md` — current product, runtime, setup, verification, scope, PR workflow, and attribution.
+- `HACKATHON_STATUS.md` — M2A scope, current automated and Windows UI verification, and explicit durable/runtime limitations.
+- `PROJECT_LOG.md` — final repair and verification record.
+- M2A runtime, authorization, security, simulator, and tests — review-driven integrity repairs recorded in the preceding M2A entries and commits.
+
+### Assumptions Made (flag these for review)
+- OpenAI Codex is credited as an AI-assisted engineering tool only; no GitHub identity or account linkage is fabricated.
+- The current feature branch remains unmerged until both the independent internal re-review and the user's external review agents approve the ready PR.
+
+### Known Issues / Deferred
+- Live vendor adapters, durable current-state repositories for agent runtime authority families, E2B lifecycle, Google continuity, billing, and production signing remain outside M2A.
+- Post-effect audit reconciliation is fail-visible and retryable but does not claim a durable database outbox in this milestone.
+
+### Suggested Next Steps
+- Complete the exact-commit whole-M2A re-review and address every finding.
+- Push only the feature branch, open a ready PR targeting `main`, and wait for review-agent feedback before merge.
+
 ## 2026-07-15 — M2A Whole-Milestone Runtime Integrity Repairs
 
 ### What Was Implemented

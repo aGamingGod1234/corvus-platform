@@ -25,6 +25,14 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Team selection is capability-honest and grants no membership or permissions; real shared collaboration remains deferred to its authorized database milestone.
 - Responsive behavior includes desktop rail/inspector, mobile bottom navigation and profile sheet, full-screen mobile inspector, focus restoration, skip navigation, and reduced-motion handling.
 
+## Agent runtime foundation (M2A candidate)
+
+- Strict agent-run contracts bind the complete request, provider binding version/digest, executable or credential identity, model, scope, authorization snapshot, autonomy, credential, budget, kill-switch, sandbox, network, filesystem, tool, and idempotency inputs.
+- A verified agent-run authorization adapter reuses the canonical capability-intersection and authorization-snapshot verification core; it does not introduce a second policy engine.
+- Start, resume, cancel, event streaming, and audit receipts reject substituted runtime identities, non-proof resume changes, invalid event ordering, duplicate provider events, secret-bearing payload keys, and unacknowledged or tampered audit outcomes.
+- Capability discovery is fail-closed and typed. The only executable runtime remains deterministic/local; live Codex, Claude, Gemini, Cursor, and xAI/Grok adapters are not yet connected.
+- Durable provider binding, autonomy, credential, budget, kill-switch, and post-effect audit-reconciliation repositories remain an explicit later milestone. M2A does not claim those production integrations.
+
 ## Install and run
 
 ```powershell
@@ -136,11 +144,11 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `460 passed` in 69.28 seconds using an isolated final temp root; repository Ruff check/format passed; strict mypy passed for 90 source files.
+- Python: `555 passed` in 77.71 seconds using an isolated final temp root; the expanded M2A authority/runtime suite passed `283` tests; repository Ruff check/format and strict mypy passed for the changed sources.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `6 passed`; Vite production build passed (35 modules, 231.29 kB JS / 70.60 kB gzip); `pnpm audit` reported no known vulnerabilities.
+- Web: `23 passed` across 7 files; Vite production build passed (48 modules, 246.53 kB JS / 74.88 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
-- M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; the real second-launch WebView was visually confirmed paired; closing the real window stopped both desktop and sidecar processes; unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` built (2,558,724 bytes, SHA-256 `2eafd51ab287c051a35a1a91741f72a43a3acc48828dee3413c702e1b4b54707`).
+- M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; current `cargo check` passed. Windows Computer Use verified all four workspace profiles, the truthful Cloud Preview wall, Local connection, and graceful desktop/sidecar shutdown. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
 - Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
 - Design blueprint: packet, provenance, source evidence, fixed viewport captures, and responsive visual inspection exist. Its automated gate still fails because the installed auditor unconditionally requires a restaurant `dish-selector`, requires packet approval after edits, and statically scans one React source file at a time; no fake restaurant artifact was added.
 
@@ -173,3 +181,5 @@ pnpm --dir apps/web build
 - No production cloud, PostgreSQL server, external OAuth registration, notarization, production signing, or multi-OS installer certification was attempted.
 - The container definition is authored but not locally exercised because no container engine is installed.
 - The NSIS installer is unsigned and does not yet bundle a standalone Python sidecar; local execution uses the validated `CORVUS_SIDECAR_EXECUTABLE` path. No production signing, notarization, or multi-OS certification is claimed.
+- Live Codex, Claude, Gemini, Cursor, and xAI/Grok runtime adapters are not connected yet. M2A provides the verified contract and deterministic adapter boundary only.
+- Durable current-state repositories for agent provider bindings, autonomy grants, credential proofs, runtime budgets, kill switches, and post-effect audit reconciliation require a later explicitly authorized persistence milestone.
