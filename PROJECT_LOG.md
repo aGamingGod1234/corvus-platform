@@ -681,3 +681,27 @@
 ### Suggested Next Steps
 - Re-review exact commits `415920a`, `224f65a`, and `5c81932` plus the final verification/log commit.
 - Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Credentialless Local Placement Repair
+
+### What Was Implemented
+- Corrected canonical credential evidence presence detection so a valid execution placement alone does not create a credential claim for a credentialless local CLI run.
+- Preserved exact placement binding whenever real provider/credential/grant claims exist, including fail-closed partial claim handling and mandatory HTTP credential evidence.
+- Added a verified-adapter regression covering canonical budget evidence, a valid execution placement, no credential reference/grant/proof, and an allowed local CLI result.
+
+### Files Modified
+- `corvus/infrastructure/agent_run_authorization.py` — distinguish actual credential claims from the placement that binds them.
+- `tests/unit/application/test_authorization.py` — local CLI placement regression while retaining HTTP and partial-claim coverage.
+- `.superpowers/sdd/task-2-report.md` — final bounded repair RED/GREEN and verification evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Credential-presence semantics, retained HTTP/partial-claim behavior, verification scope, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable authority/evidence repositories and audit-pending reconciliation remain later infrastructure work.
+- No push, merge, README, HACKATHON status, dependency, migration, live provider/API/UI/database, Cloud/Team, history rewrite, or unrelated refactor was performed.
+
+### Suggested Next Steps
+- Re-review the final credential-presence repair commit together with `415920a`, `224f65a`, `5c81932`, and `cd19279`.
+- Keep M2A unmerged until the controller-owned final repository/web/desktop gates and ready PR review complete.

@@ -52,6 +52,7 @@ from corvus.domain.agent_runtime import (
     AgentRunRequest,
     AutonomyGrant,
     AutonomyProfile,
+    ExecutableIdentity,
     ProviderBinding,
     ProviderFamily,
     ProviderStatus,
@@ -3436,11 +3437,12 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
             self, *, workspace_id: UUID, snapshot_id: UUID
         ) -> AuthorizationDecisionSnapshot | None:
             assert workspace_id == authorization_request.workspace_id
-            assert snapshot_id == snapshot.id
+            assert snapshot_id == self.value.id
             return self.value
 
     inputs = Inputs()
-    adapter = VerifiedAgentRunAuthorizationAdapter(inputs=inputs, snapshots=Snapshots())
+    snapshots = Snapshots()
+    adapter = VerifiedAgentRunAuthorizationAdapter(inputs=inputs, snapshots=snapshots)
 
     allowed = adapter.authorize(agent_request)
     inputs.value = resolved.model_copy(
@@ -3632,6 +3634,99 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     )
     kill_switch_active = adapter.authorize(agent_request)
 
+    local_authorization_request = authorization_request.model_copy(
+        update={
+            "provider_connection_id": None,
+            "credential_ref_id": None,
+            "credential_version_id": None,
+            "credential_grant_id": None,
+        }
+    )
+    local_authority_context = authority_context.model_copy(
+        update={
+            "credential_ref": None,
+            "credential_verification_proof": None,
+            "expected_credential_rotation_epoch": None,
+            "expected_credential_nonce_digest": None,
+        }
+    )
+    local_binding = ProviderBinding(
+        workspace_id=authorization_request.workspace_id,
+        project_id=authorization_request.scope_id,
+        family=ProviderFamily.CODEX,
+        transport=ProviderTransport.LOCAL_CLI,
+        status=ProviderStatus.AVAILABLE,
+        executable_identity=ExecutableIdentity(
+            executable_path=Path("C:/corvus/codex.exe"),
+            version="1.0.0",
+            sha256_digest="a" * 64,
+        ),
+        model=binding.model,
+        capabilities=AgentCapabilities(),
+        health_checked_at=authorization_request.evaluated_at,
+        version=1,
+        data_egress_disclosure="Prompts leave the local process.",
+        server_storage_disclosure="Provider retention policy applies.",
+    )
+    local_autonomy = autonomy.model_copy(update={"credential_grant_ids": ()})
+    local_case = (
+        local_authorization_request,
+        requester_bundle,
+        requester_grant,
+        agent_grant,
+        agent_bundle,
+        agent_capability,
+    )
+    (
+        local_snapshot,
+        local_expected,
+        local_signing_key,
+        local_verification,
+        _,
+    ) = _authorization_snapshot_case(local_case)
+    local_context = context.model_copy(
+        update={
+            "authorization_snapshot_id": local_snapshot.id,
+            "authorization_snapshot_digest": local_expected.authorization_snapshot_digest,
+            "authorization_signing_key_version_id": local_signing_key.id,
+        }
+    )
+    local_run_request = run_request.model_copy(
+        update={
+            "provider_binding_id": local_binding.id,
+            "provider_binding_version": local_binding.version,
+            "provider_binding_digest": compute_provider_binding_digest(local_binding),
+            "authorization_proof_id": local_snapshot.id,
+            "authorization_proof_digest": local_expected.authorization_snapshot_digest,
+            "autonomy_grant_digest": compute_autonomy_grant_digest(local_autonomy),
+            "credential_grant_ids": (),
+            "credential_proof_id": None,
+            "credential_proof_digest": None,
+        }
+    )
+    local_agent_request = AgentRunAuthorizationRequest(
+        context=local_context,
+        client_surface=local_authorization_request.client_surface,
+        operation=AgentRunOperation.START,
+        request=local_run_request,
+        canonical_request_digest=compute_agent_run_request_digest(local_run_request),
+    )
+    inputs.expected = local_agent_request
+    inputs.value = resolved.model_copy(
+        update={
+            "request": local_authorization_request,
+            "authority_context": local_authority_context,
+            "snapshot": local_snapshot,
+            "snapshot_expected": local_expected,
+            "snapshot_verification": local_verification,
+            "signing_key": local_signing_key,
+            "autonomy_grant": local_autonomy,
+            "provider_binding": local_binding,
+        }
+    )
+    snapshots.value = local_snapshot
+    credentialless_local_cli = adapter.authorize(local_agent_request)
+
     assert allowed.allowed is True
     assert allowed.reason_code == "exact_capability_intersection"
     assert allowed.immutable_request_digest == run_request.immutable_request_digest
@@ -3651,3 +3746,5 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     assert missing_budget_evidence.reason_code == "agent_run_over_budget"
     assert {decision.reason_code for decision in limit_denials} == {"stale_autonomy_grant"}
     assert kill_switch_active.reason_code == "kill_switch_armed"
+    assert credentialless_local_cli.allowed is True
+    assert credentialless_local_cli.reason_code == "exact_capability_intersection"

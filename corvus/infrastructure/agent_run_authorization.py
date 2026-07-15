@@ -59,7 +59,6 @@ def canonical_credential_evidence_receipt(
     context: AuthorityEvaluationContext | None,
 ) -> tuple[UUID, str] | None:
     claim_values = (
-        request.execution_placement_id,
         request.provider_connection_id,
         request.credential_ref_id,
         request.credential_version_id,
@@ -80,7 +79,11 @@ def canonical_credential_evidence_receipt(
         if evidence_present:
             raise ValueError("credential_evidence_mismatch")
         return None
-    if any(value is None for value in claim_values) or context is None:
+    if (
+        any(value is None for value in claim_values)
+        or request.execution_placement_id is None
+        or context is None
+    ):
         raise ValueError("credential_evidence_mismatch")
     if credential_ref is None or proof is None:
         raise ValueError("credential_evidence_mismatch")
