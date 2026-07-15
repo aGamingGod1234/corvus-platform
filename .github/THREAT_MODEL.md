@@ -41,8 +41,9 @@ plaintext secrets in runtime config or sandboxes.
   its token-pattern checks.
 - Agent-run event validation rejects secret-bearing event **keys AND values**
   via `_contains_secret_payload_key` and `_contains_secret_payload_value`.
-- `tests/security/test_structured_redaction.py` and PR #1's
-  `tests/unit/test_security.py` directly exercise the redaction core.
+- On this branch, `tests/security/test_structured_redaction.py` directly exercises
+  the redaction core. PR #1 adds the dedicated `tests/unit/test_security.py`
+  coverage tracked as an open follow-up in the guardrail checklist.
 **Open questions:**
 - Are provider outputs/logs redacted before storage?
 - Sandbox boundary: can a sandboxed build process ever read keyring/vault-resolved

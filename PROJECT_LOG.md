@@ -485,12 +485,14 @@
 - Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
 - Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
 - Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
-- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 30 non-redundant ownership rules.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 40 non-redundant ownership rules.
 - Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
 - Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
+- Added explicit ownership for the MVP ingress, update-verification, deployment/OIDC, API/session, governance, supply-chain, and matching regression-test trust boundaries identified in Gemini's exact-head review.
+- Aligned the threat model with the branch's actual redaction coverage while recording the dedicated `tests/unit/test_security.py` coverage as part of PR #1.
 
 ### Files Modified
-- `.github/CODEOWNERS` — complete security-owner routing and self-protection.
+- `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
 - `.github/GUARDRAIL_CHECKLIST.md` — commit-independent review evidence language.
 - `.github/THREAT_MODEL.md` — commit-independent stale-review warning.
 - `SECURITY_REVIEW.md` — explicit authorization coverage and truthful secret-scan gate.
@@ -503,7 +505,8 @@
 ### Known Issues / Deferred
 - PR #1 still requires a fresh formal Asif approval on its current head; a Discord verdict or PR comment does not satisfy GitHub branch protection.
 - A dedicated automated secret-scanning job remains deferred rather than being implied by documentation.
+- The dedicated `tests/unit/test_security.py` test remains on PR #1 until that integration branch is merged.
 
 ### Suggested Next Steps
-- Verify, commit, and push the PR #2 repairs; reply to and resolve its five exact review threads.
+- Verify, commit, and push the final PR #2 repairs; reply to and resolve all exact-head review threads.
 - Obtain the required owner review, merge PR #2 normally, then refresh PR #1 against protected `main` and request Asif's exact-head approval.
