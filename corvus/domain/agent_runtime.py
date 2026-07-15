@@ -176,6 +176,8 @@ class ExecutableIdentity(BaseModel):
     def validate_absolute_executable_path(cls, value: Path) -> Path:
         if not value.is_absolute():
             raise ValueError("executable_path_must_be_absolute")
+        if value != value.resolve(strict=False):
+            raise ValueError("executable_path_must_be_canonical")
         return value
 
 

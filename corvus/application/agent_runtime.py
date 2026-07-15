@@ -25,6 +25,7 @@ from corvus.application.ports import (
 from corvus.domain.agent_runtime import (
     AgentRunHandle,
     AgentRunRequest,
+    AgentRunStartResult,
     CancellationResult,
     CapabilitySupport,
     ProviderDiscoveryQuery,
@@ -111,7 +112,7 @@ class AgentRuntimeCoordinator:
                     reason_code=preflight_reason,
                 )
             start_result = await self._runtime.start(request)
-            if start_result is None:
+            if not isinstance(start_result, AgentRunStartResult):
                 raise RuntimeError("agent_runtime_start_result_missing")
         except Exception as exc:
             reason_code = (
@@ -189,7 +190,7 @@ class AgentRuntimeCoordinator:
                 handle,
                 request_with_fresh_proofs,
             )
-            if resumed_handle is None:
+            if not isinstance(resumed_handle, AgentRunHandle):
                 raise RuntimeError("agent_runtime_resume_result_missing")
         except Exception:
             reason_code = "agent_run_resume_failed"
@@ -256,7 +257,7 @@ class AgentRuntimeCoordinator:
                 handle,
                 current_kill_switch_proof_id,
             )
-            if cancellation_result is None:
+            if not isinstance(cancellation_result, CancellationResult):
                 raise RuntimeError("agent_runtime_cancel_result_missing")
         except Exception:
             reason_code = "agent_run_cancel_failed"

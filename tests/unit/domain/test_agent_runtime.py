@@ -389,6 +389,14 @@ def test_provider_binding_rejects_relative_executable_and_invalid_fallbacks(
             sha256_digest=_DIGEST,
         )
 
+    noncanonical = tmp_path.resolve() / "child" / ".." / "codex.exe"
+    with pytest.raises(ValidationError, match="executable_path_must_be_canonical"):
+        ExecutableIdentity(
+            executable_path=noncanonical,
+            version="1.2.3",
+            sha256_digest=_DIGEST,
+        )
+
     binding_id = uuid4()
     with pytest.raises(ValidationError, match="provider_binding_cannot_fallback_to_self"):
         _binding(tmp_path, id=binding_id, fallback_binding_ids=(binding_id,))
