@@ -53,6 +53,44 @@ class _AuthorizedAgentRun:
     receipt: AgentRunAuditReceipt
 
 
+def _revalidate_handle(value: object) -> AgentRunHandle:
+    if not isinstance(value, AgentRunHandle):
+        raise TypeError("agent_run_handle_invalid")
+    return AgentRunHandle.model_validate(
+        {field_name: getattr(value, field_name) for field_name in AgentRunHandle.model_fields}
+    )
+
+
+def _revalidate_start_result(value: object) -> AgentRunStartResult:
+    if not isinstance(value, AgentRunStartResult) or not isinstance(value.replayed, bool):
+        raise TypeError("agent_run_start_result_invalid")
+    return AgentRunStartResult(
+        handle=_revalidate_handle(value.handle),
+        replayed=value.replayed,
+    )
+
+
+def _revalidate_cancellation_result(value: object) -> CancellationResult:
+    if (
+        not isinstance(value, CancellationResult)
+        or not isinstance(value.accepted, bool)
+        or not isinstance(value.terminal, bool)
+    ):
+        raise TypeError("agent_run_cancellation_result_invalid")
+    return CancellationResult(
+        handle_id=value.handle_id,
+        handle=_revalidate_handle(value.handle) if value.handle is not None else None,
+        accepted=value.accepted,
+        terminal=value.terminal,
+        reason_code=value.reason_code,
+        timestamp=value.timestamp,
+    )
+
+
+def _validation_contains_reason(error: ValidationError, reason_code: str) -> bool:
+    return any(reason_code in str(item.get("ctx", {}).get("error", "")) for item in error.errors())
+
+
 class AgentRunOperationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
@@ -111,9 +149,7 @@ class AgentRuntimeCoordinator:
                     authorization,
                     reason_code=preflight_reason,
                 )
-            start_result = await self._runtime.start(request)
-            if not isinstance(start_result, AgentRunStartResult):
-                raise RuntimeError("agent_runtime_start_result_missing")
+            start_result = _revalidate_start_result(await self._runtime.start(request))
         except Exception as exc:
             reason_code = (
                 "agent_run_idempotency_mismatch"
@@ -186,12 +222,12 @@ class AgentRuntimeCoordinator:
                     reason_code=preflight_reason,
                     handle=handle,
                 )
-            resumed_handle = await self._runtime.resume(
-                handle,
-                request_with_fresh_proofs,
+            resumed_handle = _revalidate_handle(
+                await self._runtime.resume(
+                    handle,
+                    request_with_fresh_proofs,
+                )
             )
-            if not isinstance(resumed_handle, AgentRunHandle):
-                raise RuntimeError("agent_runtime_resume_result_missing")
         except Exception:
             reason_code = "agent_run_resume_failed"
             return self._post_authorization_failure(
@@ -253,14 +289,20 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization is not None
         try:
-            cancellation_result = await self._runtime.cancel(
-                handle,
-                current_kill_switch_proof_id,
+            cancellation_result = _revalidate_cancellation_result(
+                await self._runtime.cancel(
+                    handle,
+                    current_kill_switch_proof_id,
+                    current_kill_switch_proof_digest,
+                )
             )
-            if not isinstance(cancellation_result, CancellationResult):
-                raise RuntimeError("agent_runtime_cancel_result_missing")
-        except Exception:
-            reason_code = "agent_run_cancel_failed"
+        except Exception as exc:
+            reason_code = (
+                "agent_run_cancellation_handle_mismatch"
+                if isinstance(exc, ValidationError)
+                and _validation_contains_reason(exc, "cancellation_handle_id_mismatch")
+                else "agent_run_cancel_failed"
+            )
             return self._post_authorization_failure(
                 authorization,
                 reason_code=reason_code,

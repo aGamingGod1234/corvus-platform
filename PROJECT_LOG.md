@@ -905,3 +905,35 @@
 ### Suggested Next Steps
 - Commit and push the verified repairs, reply to and resolve all three Gemini threads, and re-request the final automated reviews on the new head.
 - Merge pull request #1 only after the new cross-platform certification matrix, conversation-resolution gate, and required code-owner approval are current.
+
+## 2026-07-15 — Final Codex Review Trust-Boundary Repairs
+
+### What Was Implemented
+- Bound emergency cancellation to the complete current kill-switch proof pair: both proof ID and proof digest now cross the runtime port, are validated for replay, and appear in cancellation and synthetic tool-close evidence.
+- Revalidated nested start, resume, and cancellation handles before the coordinator trusts adapter output; malformed nested identities or states now fail closed through the established operation-specific audit paths.
+- Rejected terminal cancellation results carrying a non-terminal nested handle before a success audit can be recorded.
+- Added an explicit numeric safe list for provider-native camelCase usage counters while retaining fail-closed handling for generic secret-shaped token keys.
+- Added test-first regressions for all four Codex findings and reran the complete repository Python certification commands against the final formatted files.
+
+### Files Modified
+- `corvus/application/ports.py` — cancellation port contract now carries the current proof digest.
+- `corvus/application/agent_runtime.py` — nested runtime-result reconstruction, validation, and stable cancellation identity failure mapping.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — proof-pair validation, replay binding, and cancellation evidence parity.
+- `corvus/security.py` — explicit provider-native camelCase token-usage counters.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — malformed nested start and terminal cancellation-handle regressions.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — proof digest evidence and mismatched replay regression.
+- `tests/unit/test_security.py` — camelCase usage-counter regression.
+- `HACKATHON_STATUS.md` — exact final Python verification evidence.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- The duplicated CodeRabbit reviewer name in the user request refers to the previously agreed fourth automated reviewer, Copilot; both CodeRabbit and Copilot are requested on the exact pushed head.
+- No cancellation proof compatibility shim is added: callers must provide the complete current proof pair so evidence cannot silently weaken across the runtime boundary.
+
+### Known Issues / Deferred
+- Pull request #1 remains subject to strict protected-branch certification, conversation resolution, and a fresh code-owner approval from Asif; no administrator bypass is permitted.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push this verified repair, reply to the four exact Codex threads with evidence, and request Gemini, CodeRabbit, Codex, Copilot, and Asif review on the new commit.
+- Merge pull request #1 only after all exact-head checks pass, no review threads remain unresolved, and GitHub reports the required approval satisfied.

@@ -30,6 +30,8 @@ _SAFE_TOKEN_COUNTER_FIELDS = frozenset(
         "audiotokens",
         "cachedtokens",
         "cachedinputtokens",
+        "cachedcontenttokencount",
+        "candidatestokencount",
         "completiontokensdetails",
         "completiontokens",
         "inputtokens",
@@ -37,9 +39,13 @@ _SAFE_TOKEN_COUNTER_FIELDS = frozenset(
         "outputtokens",
         "prompttokensdetails",
         "prompttokens",
+        "prompttokencount",
         "reasoningtokens",
         "rejectedpredictiontokens",
+        "thoughtstokencount",
         "totaltokens",
+        "totaltokencount",
+        "tooluseprompttokencount",
         "tokensused",
     }
 )

@@ -249,15 +249,23 @@ async def test_cancel_is_idempotent_and_records_one_terminal_event(tmp_path: Pat
     )
     handle = (await runtime.start(_request(binding))).handle
     proof_id = uuid4()
+    proof_digest = "f" * 64
 
-    first = await runtime.cancel(handle, proof_id)
-    second = await runtime.cancel(handle, proof_id)
+    first = await runtime.cancel(handle, proof_id, proof_digest)
+    second = await runtime.cancel(handle, proof_id, proof_digest)
     events = [event async for event in runtime.events(handle)]
 
     assert first == second
     assert first.accepted and first.terminal
     assert first.reason_code == "agent_run_cancelled"
     assert [event.event_type for event in events].count(AgentRunEventType.CANCELLED) == 1
+    assert events[-1].redacted_payload["current_kill_switch_proof_id"] == str(proof_id)
+    assert events[-1].redacted_payload["current_kill_switch_proof_digest"] == proof_digest
+
+    with pytest.raises(AgentRuntimeError) as mismatch:
+        await runtime.cancel(handle, proof_id, "e" * 64)
+
+    assert mismatch.value.reason_code == "current_kill_switch_proof_mismatch"
 
 
 @pytest.mark.asyncio
@@ -267,7 +275,7 @@ async def test_cancel_requires_current_kill_switch_proof(tmp_path: Path) -> None
     handle = (await runtime.start(_request(binding))).handle
 
     with pytest.raises(AgentRuntimeError) as exc_info:
-        await runtime.cancel(handle, None)  # type: ignore[arg-type]
+        await runtime.cancel(handle, None, None)  # type: ignore[arg-type]
 
     assert exc_info.value.reason_code == "current_kill_switch_proof_required"
 
@@ -281,7 +289,7 @@ async def test_empty_template_cancel_preserves_started_then_cancelled_lifecycle(
     handle = (await runtime.start(_request(binding))).handle
 
     before_cancel = [event async for event in runtime.events(handle)]
-    await runtime.cancel(handle, uuid4())
+    await runtime.cancel(handle, uuid4(), "f" * 64)
     after_cancel = [event async for event in runtime.events(handle)]
 
     assert [event.event_type for event in before_cancel] == [AgentRunEventType.STARTED]
@@ -330,7 +338,7 @@ async def test_cancel_closes_open_tool_calls_before_terminal_event(
     runtime = _runtime((binding,), {binding.id: tuple(templates)})
     handle = (await runtime.start(_request(binding))).handle
 
-    await runtime.cancel(handle, uuid4())
+    await runtime.cancel(handle, uuid4(), "f" * 64)
     events = [event async for event in runtime.events(handle)]
 
     assert events[-2].event_type is closing_event_type
@@ -500,7 +508,7 @@ async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -
     assert resumed == handle
     assert after == before
 
-    await runtime.cancel(handle, uuid4())
+    await runtime.cancel(handle, uuid4(), "f" * 64)
     with pytest.raises(AgentRuntimeError) as terminal_exc:
         await runtime.resume(
             handle,

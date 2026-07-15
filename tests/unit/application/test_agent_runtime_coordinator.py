@@ -355,6 +355,8 @@ class _RecordingRuntime:
             return None  # type: ignore[return-value]
         if "start" in self.malformed_results:
             return object()  # type: ignore[return-value]
+        if "start_nested" in self.malformed_results:
+            return AgentRunStartResult.model_construct(handle=object(), replayed=False)
         result = await self.runtime.start(request)
         return result.model_copy(
             update={
@@ -373,6 +375,7 @@ class _RecordingRuntime:
         self,
         handle: AgentRunHandle,
         current_kill_switch_proof_id: UUID,
+        current_kill_switch_proof_digest: str,
     ) -> CancellationResult:
         self.order.append("runtime:cancel")
         self._raise_if_failed("cancel")
@@ -382,7 +385,11 @@ class _RecordingRuntime:
             return object()  # type: ignore[return-value]
         if self.cancellation_result_override is not None:
             return self.cancellation_result_override
-        result = await self.runtime.cancel(handle, current_kill_switch_proof_id)
+        result = await self.runtime.cancel(
+            handle,
+            current_kill_switch_proof_id,
+            current_kill_switch_proof_digest,
+        )
         if self.cancellation_handle_id is None and self.cancellation_reason_code is None:
             return result
         updates: dict[str, object] = {}
@@ -1756,6 +1763,42 @@ async def test_cancel_rejects_substituted_nested_handle_identity(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_cancel_revalidates_terminal_result_handle_state(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    unvalidated_result = CancellationResult.model_construct(
+        handle_id=handle.id,
+        handle=handle,
+        accepted=True,
+        terminal=True,
+        reason_code="agent_run_cancelled",
+        timestamp=_NOW,
+    )
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_result_override=unvalidated_result,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_cancel_failed"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("outcome_audit_fails", [False, True])
 async def test_cancel_maps_unsafe_runtime_reason_to_a_stable_failure(
     tmp_path: Path,
@@ -1986,6 +2029,25 @@ async def test_malformed_runtime_results_fail_closed_with_operation_specific_err
     assert not result.ok
     assert result.reason_code == expected_reason
     assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_start_revalidates_nested_handle_before_dereference(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+        malformed_results=frozenset({"start_nested"}),
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_start_failed"
     assert audit.events[-1].outcome == "failure"
 
 

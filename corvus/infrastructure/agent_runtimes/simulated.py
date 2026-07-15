@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from corvus.domain.agent_runtime import (
 )
 
 _SIMULATED_HANDLE_NAMESPACE = UUID("895c0f76-81a2-4f35-bd94-df91f86d266e")
+_PROOF_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_EVENT_STATES = {
     AgentRunEventType.COMPLETED: AgentRunState.COMPLETED,
     AgentRunEventType.FAILED: AgentRunState.FAILED,
@@ -61,6 +63,7 @@ class _RunRecord:
     request_digest: str
     immutable_request_digest: str
     cancellation_result: CancellationResult | None = None
+    cancellation_proof: tuple[UUID, str] | None = None
 
 
 class SimulatedAgentRuntime:
@@ -179,14 +182,26 @@ class SimulatedAgentRuntime:
         self,
         handle: AgentRunHandle,
         current_kill_switch_proof_id: UUID,
+        current_kill_switch_proof_digest: str,
     ) -> CancellationResult:
-        if not isinstance(current_kill_switch_proof_id, UUID):
+        if not isinstance(current_kill_switch_proof_id, UUID) or (
+            not isinstance(current_kill_switch_proof_digest, str)
+            or _PROOF_DIGEST_PATTERN.fullmatch(current_kill_switch_proof_digest) is None
+        ):
             raise AgentRuntimeError(
                 "current_kill_switch_proof_required",
-                "cancellation requires a current kill-switch proof reference",
+                "cancellation requires a current kill-switch proof reference and digest",
             )
         record = self._known_record(handle)
         if record.cancellation_result is not None:
+            if record.cancellation_proof != (
+                current_kill_switch_proof_id,
+                current_kill_switch_proof_digest,
+            ):
+                raise AgentRuntimeError(
+                    "current_kill_switch_proof_mismatch",
+                    "cancellation replay must use the original kill-switch proof",
+                )
             return record.cancellation_result
 
         if record.handle.state is not AgentRunState.RUNNING:
@@ -200,11 +215,20 @@ class SimulatedAgentRuntime:
                 timestamp=timestamp,
             )
             record.cancellation_result = result
+            record.cancellation_proof = (
+                current_kill_switch_proof_id,
+                current_kill_switch_proof_digest,
+            )
             return result
 
-        self._close_open_tool_calls(record, current_kill_switch_proof_id)
+        self._close_open_tool_calls(
+            record,
+            current_kill_switch_proof_id,
+            current_kill_switch_proof_digest,
+        )
         payload: dict[str, JsonValue] = {
-            "current_kill_switch_proof_id": str(current_kill_switch_proof_id)
+            "current_kill_switch_proof_id": str(current_kill_switch_proof_id),
+            "current_kill_switch_proof_digest": current_kill_switch_proof_digest,
         }
         cancelled_event = self._append_event(
             record,
@@ -221,12 +245,17 @@ class SimulatedAgentRuntime:
             timestamp=cancelled_event.timestamp,
         )
         record.cancellation_result = result
+        record.cancellation_proof = (
+            current_kill_switch_proof_id,
+            current_kill_switch_proof_digest,
+        )
         return result
 
     def _close_open_tool_calls(
         self,
         record: _RunRecord,
         current_kill_switch_proof_id: UUID,
+        current_kill_switch_proof_digest: str,
     ) -> None:
         open_tools: dict[str, tuple[UUID, str, bool]] = {}
         for event in record.events:
@@ -264,6 +293,7 @@ class SimulatedAgentRuntime:
                 ),
                 payload={
                     "current_kill_switch_proof_id": str(current_kill_switch_proof_id),
+                    "current_kill_switch_proof_digest": current_kill_switch_proof_digest,
                     "reason": "agent_run_cancelled",
                     "status": "cancelled" if tool_started else "blocked",
                 },

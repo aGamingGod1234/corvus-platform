@@ -394,6 +394,7 @@ class AgentRuntimePort(Protocol):
         self,
         handle: AgentRunHandle,
         current_kill_switch_proof_id: UUID,
+        current_kill_switch_proof_digest: str,
     ) -> CancellationResult: ...
 
     async def resume(
