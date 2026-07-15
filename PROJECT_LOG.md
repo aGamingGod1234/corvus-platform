@@ -622,3 +622,33 @@
 ### Suggested Next Steps
 - Re-review exact commits `9f7c57d`, `3759837`, and `f2eaf5a` plus the final verification/log commit.
 - Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Receipt and Tool-Chain Re-Review Repairs
+
+### What Was Implemented
+- Added one coordinator receipt verifier that independently recomputes every returned audit receipt digest and uses constant-time comparisons for both event and receipt digests before accepting authorization or outcome acknowledgement.
+- Added adversarial start, resume, and cancel coverage for forged authorization and forged outcome receipts created by bypassing Pydantic validation with `model_copy`.
+- Added a public, typed, side-effect-free `validate_agent_run_event_chain` domain validator for stream identity, sequencing, digest linkage, terminal state, provider-event deduplication, tool prerequisites, and effect-authorization consistency.
+- Enforced one effect authorization decision reference across each tool call lifecycle; standalone approvals remain valid, while tool-bound approvals must follow a request and match its decision reference.
+- Made the simulator consume the shared chain validator and preserve the stable `tool_effect_authorization_mismatch` failure reason.
+
+### Files Modified
+- `corvus/application/agent_runtime.py` — constant-time independent verification of authorization and outcome audit receipts.
+- `corvus/domain/agent_runtime.py` — public event-chain validator and typed chain error.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — shared validator integration.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — six forged-receipt operation/phase regressions.
+- `tests/unit/domain/test_agent_runtime.py` — tool lifecycle decision-substitution and approval relationship coverage.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — shared-validator integration regression.
+- `.superpowers/sdd/task-2-report.md` — third bounded repair evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Constant-time receipt verification, all six adversarial cases, standalone versus tool-bound approval behavior, shared domain validator placement, reason code, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable audit persistence/reconciliation and live-adapter consumption of the public chain validator remain later infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, or unrelated refactor work was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `f340447` and `1479d59` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
