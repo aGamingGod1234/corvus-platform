@@ -36,14 +36,13 @@ overrides rejected before container start.
 (e.g. Codex/ChatGPT). Leaked or logged credentials = critical failure.
 **Mitigation:** Credentials via OS keyring or scoped cloud vault; explicit rule against
 plaintext secrets in runtime config or sandboxes.
-**Verified-in-code (PR #1, `305cbfb`):**
-- `corvus/security.py` `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest`
-  credentials in event payloads (lines 68–69).
-- `domain/agent_runtime.py` rejects secret-bearing event **keys AND values**
-  (lines 727–730) via `_contains_secret_payload_key/value`.
-- `tests/security/test_structured_redaction.py` exercises the redactor directly
-  (this is the dedicated suite — `tests/unit/test_security.py` for the core is
-  still an open follow-up, non-blocking).
+**Verified during PR #1 review:**
+- `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest` credentials through
+  its token-pattern checks.
+- Agent-run event validation rejects secret-bearing event **keys AND values**
+  via `_contains_secret_payload_key` and `_contains_secret_payload_value`.
+- `tests/security/test_structured_redaction.py` and PR #1's
+  `tests/unit/test_security.py` directly exercise the redaction core.
 **Open questions:**
 - Are provider outputs/logs redacted before storage?
 - Sandbox boundary: can a sandboxed build process ever read keyring/vault-resolved
@@ -93,17 +92,17 @@ If the review process is gameable (self-review, stale commit reference), the gat
 forges event-chain entries to replay/escalate actions.
 **Verified-in-code:**
 - `SimulatedAgentRuntime.start` keys its idempotency ledger on
-  `run_identity = (run_id, provider_binding_id)` (`simulated.py:125`). A second
+  `run_identity = (run_id, provider_binding_id)`. A second
   `start` with a different `idempotency_key` but same `run_id`+binding returns the
   **same handle with `replayed=True`** — it does NOT create a second handle. A
   differing request fails the `request_digest` check. → replay does not proliferate handles.
 - `validate_agent_run_event_chain` **recomputes** each event digest and enforces
-  sequence/run/handle binding + `previous_event_digest` chaining (`domain:797–818`).
+  sequence/run/handle binding plus `previous_event_digest` chaining.
   Tampered or out-of-order events are rejected.
-- `TOOL_BLOCKED` after `TOOL_STARTED` is rejected (`domain:855–858`).
+- `TOOL_BLOCKED` after `TOOL_STARTED` is rejected by event lifecycle validation.
 - Authorization is fail-closed on operation-field smuggling: START/RESUME reject
   unsolicited `handle`, `resume_handle_id`, `current_kill_switch_proof`
-  (`ports.py:199–231`).
+  through `AgentRunAuthorizationRequest.validate_operation_binding`.
 **Note:** original follow-up #1 ("two distinct handles") was an overstatement — the
 `run_identity` index already prevents it. Recorded here so it isn't re-flagged.
 

@@ -37,9 +37,6 @@
 /corvus/infrastructure/repositories/registry.py              @asifdotpy
 /corvus/database.py                                          @asifdotpy
 
-# Verification core: event-chain proof validation + agent run lifecycle
-/corvus/domain/agent_runtime.py                  @asifdotpy
-
 # Security test suites — changes here must keep the suite green
 /tests/security/                                 @asifdotpy
 /tests/unit/test_security.py                     @asifdotpy

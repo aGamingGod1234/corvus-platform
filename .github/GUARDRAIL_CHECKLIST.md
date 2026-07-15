@@ -17,7 +17,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
       or delivered evidence
 - [ ] VERIFIED during PR #1 review: `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest`
       in event payloads; event validation rejects secret keys AND values
-      (`security.py:68-69`, `domain/agent_runtime.py:727-730`)
+      (see `SecretRedactor` and the agent-runtime secret payload checks)
 - [ ] DEDICATED `tests/unit/test_security.py` for `corvus/security.py` core —
       OPEN follow-up (non-blocking); currently only `tests/security/test_structured_redaction.py`
       covers it directly
@@ -28,9 +28,9 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Delivery is atomic — no partial/corrupted state possible on interruption
 - [ ] VERIFIED during PR #1 review: `validate_agent_run_event_chain` recomputes every event
       digest + enforces sequence/run/handle/`previous_event_digest` chaining; tampered or
-      out-of-order events rejected (`domain/agent_runtime.py:797-818`)
+      out-of-order events rejected
 - [ ] VERIFIED: `TOOL_BLOCKED` after `TOOL_STARTED` rejected; authorization fail-closed on
-      operation-field smuggling (`ports.py:199-231`)
+      operation-field smuggling (see `AgentRunAuthorizationRequest.validate_operation_binding`)
 
 ## Review Process (gate integrity — lessons from this session)
 - [ ] Two independent reviews reference the EXACT same frozen commit hash
@@ -46,7 +46,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 ## Replay / Idempotency (verified during PR #1 review)
 - [ ] `SimulatedAgentRuntime.start` keys idempotency on `(run_id, provider_binding_id)`;
       a retry with a different idempotency_key returns the SAME handle (`replayed=True`),
-      never a second handle; a differing request fails the digest check (`simulated.py:125`)
+      never a second handle; a differing request fails the request-digest check
 - [ ] Event-chain proof holds within a single runtime AND must hold across devices once the
       cross-device/node sync surface opens (see THREAT_MODEL.md §8)
 
