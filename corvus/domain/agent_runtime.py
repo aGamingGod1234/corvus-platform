@@ -865,7 +865,7 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
             else:
                 finished_tools.add(tool_call_id)
         elif event.event_type is AgentRunEventType.APPROVAL_REQUIRED and tool_call_id is not None:
-            if tool_call_id not in requested_tools:
+            if tool_call_id not in requested_tools or tool_call_id in finished_tools:
                 raise AgentRunEventChainError("tool_event_prerequisite_missing")
             if _effect_authorization_reference(event) != requested_tools[tool_call_id]:
                 raise AgentRunEventChainError("tool_effect_authorization_mismatch")

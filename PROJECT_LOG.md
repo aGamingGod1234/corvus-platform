@@ -866,19 +866,23 @@
 - Converted protocol-violating null start/resume/cancel adapter results into the existing operation-specific fail-closed outcomes and audit records.
 - Required exact typed start, resume, and cancel results from runtime adapters, mapping arbitrary protocol-violating objects to the same audited operation-specific failures.
 - Rejected non-canonical executable identities instead of silently normalizing them, preserving exact provider-binding evidence and preventing alternate path spellings from crossing the runtime boundary.
+- Preserved kill-switch cancellation after ordinary autonomy deadlines and budget/runtime consumption limits expire, while retaining authority, credential, binding-digest, current-proof, capability, and audit checks.
+- Rejected approval events for tool calls that have already reached a blocked or result terminal state, preserving causal effect authorization in replay and audit streams.
+- Redacted quoted JSON-style secret assignments without corrupting valid provider JSON or missing credential assignments embedded inside already-parsed log strings.
 
 ### Files Modified
-- `corvus/security.py` — fail-closed multi-word secret assignment redaction.
-- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection, shared canonical evidence-value normalization, and canonical executable identity enforcement.
+- `corvus/security.py` — fail-closed multi-word and quoted-key secret assignment redaction with valid JSON-string preservation.
+- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection, shared canonical evidence-value normalization, canonical executable identity enforcement, and causal tool-approval ordering.
+- `corvus/application/authorization.py` — exact agent-run cancellation exemption from budget/runtime consumption denial.
 - `corvus/application/ports.py` — asynchronous discovery and health contracts.
-- `corvus/application/agent_runtime.py` — awaited provider preflight, current-time deadline enforcement, and exact typed-result enforcement for start, resume, and cancel.
-- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts.
+- `corvus/application/agent_runtime.py` — awaited provider preflight, cancellation-safe deadline binding, and exact typed-result enforcement for start, resume, and cancel.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts plus narrowly scoped emergency-cancellation liveness handling.
 - `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity and stable-digest binding lookup.
-- `tests/unit/test_security.py` — multi-word credential regression.
-- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, historical deserialization, structured usage-metadata, and non-canonical executable-path regressions.
+- `tests/unit/test_security.py` — multi-word and quoted JSON-style credential regressions.
+- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, historical deserialization, structured usage-metadata, non-canonical executable-path, and late tool-approval regressions.
 - `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract and volatile health-refresh regressions.
-- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, null-result, and malformed typed-result fail-closed regressions.
-- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation and equivalent-timezone evidence receipt regressions.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, emergency-cancellation, null-result, and malformed typed-result fail-closed regressions.
+- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation, cancellation after consumption exhaustion, and equivalent-timezone evidence receipt regressions.
 - `HACKATHON_STATUS.md` — current verification evidence.
 - `PROJECT_LOG.md` — this review-repair record.
 
@@ -888,6 +892,7 @@
 - Provider status and health timestamps remain runtime observations outside the stable binding digest and are validated separately before execution.
 - Runtime adapters are typed as returning non-null contracts; defensive null handling maps violations to the existing operation-specific failure codes rather than inventing new public reasons.
 - No unsigned five-minute clock-skew allowance was introduced. The established security regression rejects authorization decisions even one microsecond in the future, so tolerance remains deferred until a signed and explicitly configured skew policy exists.
+- Cancellation bypasses only run-liveness, provider-health status, and budget/runtime consumption gates; revoked autonomy, future-issued grants, scope, identity, credential, provider binding, current kill-switch proof, capability, snapshot, and audit requirements remain fail-closed.
 
 ### Known Issues / Deferred
 - CodeRabbit accepted the final review request but its hosted reviewer was rate-limited; the existing CodeRabbit status on the reviewed head remained successful.

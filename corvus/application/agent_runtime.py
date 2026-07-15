@@ -448,7 +448,11 @@ class AgentRuntimeCoordinator:
                 "agent_run_kill_switch_proof_digest_mismatch",
             ),
             (
-                decision.evaluated_at <= coordinator_time < expected.deadline,
+                decision.evaluated_at <= coordinator_time
+                and (
+                    request.operation is AgentRunOperation.CANCEL
+                    or coordinator_time < expected.deadline
+                ),
                 "agent_run_authorization_time_invalid",
             ),
         )

@@ -889,6 +889,39 @@ async def test_coordinator_rejects_run_after_request_deadline(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_cancel_reaches_runtime_after_request_deadline(tmp_path: Path) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding, deadline=_NOW - timedelta(seconds=1))
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(simulator, order)
+    authorizer = _Authorizer(
+        order,
+        decision_updates={"evaluated_at": _NOW - timedelta(seconds=2)},
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        authorizer=authorizer,
+    )
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert result.ok
+    assert "runtime:cancel" in order
+    assert audit.events[-1].outcome == "success"
+
+
+@pytest.mark.asyncio
 async def test_authorization_audit_failure_prevents_runtime(tmp_path: Path) -> None:
     workspace_id = uuid4()
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())

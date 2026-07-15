@@ -72,11 +72,25 @@ class BoundedRedactedText:
 
 class SecretRedactor:
     _TOKEN_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
-        re.compile(r"(?i)(authorization)\s*[:=]\s*['\"]?([^\r\n'\"]+)"),
+        re.compile(
+            r"(?i)['\"](authorization)['\"]\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
+        re.compile(
+            r"(?i)(authorization)\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
         re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"),
         re.compile(
-            r"(?i)(api[_-]?key|token|secret|password|cookie|credential|passphrase|"
-            r"private[_-]?key|signing[_-]?key)\s*[:=]\s*['\"]?([^\r\n'\"]+)"
+            r"(?i)['\"](api[_-]?key|token|secret|password|cookie|credential|passphrase|"
+            r"private[_-]?key|signing[_-]?key)['\"]\s*[:=]\s*(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
+        ),
+        re.compile(
+            r"(?i)(api[_-]?key|token|secret|password|cookie|credential|"
+            r"passphrase|private[_-]?key|signing[_-]?key)\s*[:=]\s*"
+            r"(?!['\"]?\[REDACTED\])"
+            r"(['\"][^\r\n'\"]*(?:['\"]|$)|[^\r\n'\"]+)"
         ),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
         re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),

@@ -18,6 +18,7 @@ from corvus.application.authorization import (
 from corvus.application.ports import (
     AgentRunAuthorizationDecision,
     AgentRunAuthorizationRequest,
+    AgentRunOperation,
 )
 from corvus.domain.agent_runtime import (
     AutonomyGrant,
@@ -266,6 +267,7 @@ class VerifiedAgentRunAuthorizationAdapter:
         if inputs.agent_grant is not None and inputs.agent_grant.id != context.agent_grant_id:
             return "agent_run_agent_grant_mismatch"
 
+        is_cancellation = agent_request.operation is AgentRunOperation.CANCEL
         autonomy = inputs.autonomy_grant
         filesystem_paths = tuple(Path(value) for value in run_request.filesystem_envelope)
         filesystem_authorized = all(
@@ -281,8 +283,8 @@ class VerifiedAgentRunAuthorizationAdapter:
             or compute_autonomy_grant_digest(autonomy) != run_request.autonomy_grant_digest
             or autonomy.revoked_at is not None
             or autonomy.issued_at > request.evaluated_at
-            or autonomy.expires_at <= request.evaluated_at
-            or run_request.deadline <= request.evaluated_at
+            or (not is_cancellation and autonomy.expires_at <= request.evaluated_at)
+            or (not is_cancellation and run_request.deadline <= request.evaluated_at)
             or autonomy.wall_clock_deadline < run_request.deadline
             or autonomy.expires_at < run_request.deadline
             or autonomy.credential_grant_ids != run_request.credential_grant_ids
@@ -315,7 +317,7 @@ class VerifiedAgentRunAuthorizationAdapter:
             or compute_provider_binding_digest(provider) != run_request.provider_binding_digest
         ):
             return "provider_binding_digest_mismatch"
-        if provider.status is not ProviderStatus.AVAILABLE:
+        if not is_cancellation and provider.status is not ProviderStatus.AVAILABLE:
             return "agent_run_provider_unavailable"
 
         canonical_credential_grant_ids = (
@@ -338,7 +340,7 @@ class VerifiedAgentRunAuthorizationAdapter:
         ):
             return "stale_credential_proof"
 
-        if (
+        if not is_cancellation and (
             request.runtime_limit_digest is None
             or request.budget_unit is None
             or request.budget_requested_amount is None
@@ -368,20 +370,21 @@ class VerifiedAgentRunAuthorizationAdapter:
             else None
         ):
             return "stale_credential_proof"
-        try:
-            budget_receipt = canonical_budget_evidence_receipt(
-                request,
-                inputs.authority_context,
-            )
-        except ValueError:
-            return "agent_run_over_budget"
-        if budget_receipt != (
-            (run_request.budget_proof_id, run_request.budget_proof_digest)
-            if run_request.budget_proof_id is not None
-            and run_request.budget_proof_digest is not None
-            else None
-        ):
-            return "agent_run_over_budget"
+        if not is_cancellation:
+            try:
+                budget_receipt = canonical_budget_evidence_receipt(
+                    request,
+                    inputs.authority_context,
+                )
+            except ValueError:
+                return "agent_run_over_budget"
+            if budget_receipt != (
+                (run_request.budget_proof_id, run_request.budget_proof_digest)
+                if run_request.budget_proof_id is not None
+                and run_request.budget_proof_digest is not None
+                else None
+            ):
+                return "agent_run_over_budget"
         if (
             inputs.kill_switch_proof_id != current_kill_id
             or inputs.kill_switch_proof_digest != current_kill_digest

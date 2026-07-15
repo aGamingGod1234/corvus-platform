@@ -801,6 +801,62 @@ def test_event_chain_allows_standalone_and_matching_tool_approvals() -> None:
     assert state.value == "running"
 
 
+def test_event_chain_rejects_tool_approval_after_tool_result() -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    requested = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    tool_started = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=3,
+        timestamp=started.timestamp + timedelta(microseconds=2),
+        event_type=AgentRunEventType.TOOL_STARTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=requested.event_digest,
+    )
+    result = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=4,
+        timestamp=started.timestamp + timedelta(microseconds=3),
+        event_type=AgentRunEventType.TOOL_RESULT,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=tool_started.event_digest,
+    )
+    late_approval = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=5,
+        timestamp=started.timestamp + timedelta(microseconds=4),
+        event_type=AgentRunEventType.APPROVAL_REQUIRED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=result.event_digest,
+    )
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((started, requested, tool_started, result, late_approval))
+
+    assert exc_info.value.reason_code == "tool_event_prerequisite_missing"
+
+
 @pytest.mark.parametrize("tool_is_started", [False, True])
 def test_event_chain_rejects_terminal_with_unresolved_tool_call(tool_is_started: bool) -> None:
     run_id = uuid4()

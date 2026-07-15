@@ -49,7 +49,9 @@ from corvus.domain.access import (
 )
 from corvus.domain.agent_runtime import (
     AgentCapabilities,
+    AgentRunHandle,
     AgentRunRequest,
+    AgentRunState,
     AutonomyGrant,
     AutonomyProfile,
     ExecutableIdentity,
@@ -2373,6 +2375,55 @@ def test_runtime_exhaustion_fails_closed() -> None:
     assert result.reason_code == "runtime_exhausted"
 
 
+def test_agent_run_cancellation_ignores_exhausted_budget_runtime() -> None:
+    case, context, proof = _budget_bound_case()
+    request = case[0].model_copy(
+        update={"resource_kind": "agent_run", "action": AgentRunOperation.CANCEL.value}
+    )
+    requester_grant = case[2].model_copy(
+        update={
+            "resource_kind": request.resource_kind,
+            "resource_id": request.resource_id,
+            "action": request.action,
+        }
+    )
+    agent_capability = case[5].model_copy(
+        update={
+            "resource_kind": request.resource_kind,
+            "resource_id": request.resource_id,
+            "action": request.action,
+        }
+    )
+    cancellation_case = (
+        request,
+        case[1],
+        requester_grant,
+        case[3],
+        case[4],
+        agent_capability,
+    )
+    exhausted = proof.model_copy(
+        update={
+            "action": request.action,
+            "runtime_consumed_ms": proof.runtime_limit_ms,
+        }
+    )
+    assert context.kill_switch_verification_proof is not None
+    cancellation_context = context.model_copy(
+        update={
+            "budget_runtime_verification_proof": exhausted,
+            "kill_switch_verification_proof": context.kill_switch_verification_proof.model_copy(
+                update={"action": request.action}
+            ),
+        }
+    )
+
+    result = _evaluate_direct_case(cancellation_case, cancellation_context)
+
+    assert result.decision is AuthorizationDecision.ALLOW
+    assert result.reason_code == "exact_capability_intersection"
+
+
 def test_unsolicited_budget_evidence_fails_closed() -> None:
     _, _, proof = _budget_bound_case()
     case = _exact_allow_case()
@@ -3478,6 +3529,60 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     inputs = Inputs()
     snapshots = Snapshots()
     adapter = VerifiedAgentRunAuthorizationAdapter(inputs=inputs, snapshots=snapshots)
+
+    cancellation_authorization_request = authorization_request.model_copy(
+        update={"action": AgentRunOperation.CANCEL.value}
+    )
+    cancellation_credential_proof = credential_proof.model_copy(
+        update={"operation": AgentRunOperation.CANCEL.value}
+    )
+    cancellation_authority_context = authority_context.model_copy(
+        update={"credential_verification_proof": cancellation_credential_proof}
+    )
+    cancellation_credential_receipt = canonical_credential_evidence_receipt(
+        cancellation_authorization_request,
+        cancellation_authority_context,
+    )
+    assert cancellation_credential_receipt is not None
+    expired_autonomy = autonomy.model_copy(
+        update={
+            "wall_clock_deadline": authorization_request.evaluated_at,
+            "expires_at": authorization_request.evaluated_at,
+        }
+    )
+    cancellation_run_request = run_request.model_copy(
+        update={
+            "deadline": authorization_request.evaluated_at,
+            "autonomy_grant_digest": compute_autonomy_grant_digest(expired_autonomy),
+            "credential_proof_id": cancellation_credential_receipt[0],
+            "credential_proof_digest": cancellation_credential_receipt[1],
+        }
+    )
+    cancellation_handle = AgentRunHandle(
+        run_id=cancellation_run_request.run_id,
+        provider_binding_id=cancellation_run_request.provider_binding_id,
+        created_at=authorization_request.evaluated_at,
+        state=AgentRunState.RUNNING,
+    )
+    cancellation_agent_request = AgentRunAuthorizationRequest(
+        context=context,
+        client_surface=cancellation_authorization_request.client_surface,
+        operation=AgentRunOperation.CANCEL,
+        request=cancellation_run_request,
+        handle=cancellation_handle,
+        canonical_request_digest=compute_agent_run_request_digest(cancellation_run_request),
+        current_kill_switch_proof_id=cancellation_run_request.kill_switch_proof_id,
+        current_kill_switch_proof_digest=cancellation_run_request.kill_switch_proof_digest,
+    )
+    cancellation_inputs = resolved.model_copy(
+        update={
+            "request": cancellation_authorization_request,
+            "authority_context": cancellation_authority_context,
+            "autonomy_grant": expired_autonomy,
+        }
+    )
+
+    assert adapter._binding_denial(cancellation_agent_request, cancellation_inputs) is None
 
     allowed = adapter.authorize(agent_request)
     expired_deadline_request = run_request.model_copy(

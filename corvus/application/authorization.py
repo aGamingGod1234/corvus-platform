@@ -56,6 +56,9 @@ from corvus.domain.deployment import (
 from corvus.domain.execution import ExecutionPlacement, ExecutionStatus
 from corvus.domain.scope import AudiencePolicySnapshot
 
+_AGENT_RUN_RESOURCE_KIND = "agent_run"
+_AGENT_RUN_CANCEL_ACTION = "agent_run.cancel"
+
 
 class AuthorizationDecision(StrEnum):
     ALLOW = "allow"
@@ -1250,12 +1253,17 @@ def evaluate_capability_intersection(
             decision=AuthorizationDecision.DENY,
             reason_code=credential_denial,
         )
-    budget_runtime_denial = _budget_runtime_denial_reason(request, authority_context)
-    if budget_runtime_denial is not None:
-        return AuthorizationResult(
-            decision=AuthorizationDecision.DENY,
-            reason_code=budget_runtime_denial,
-        )
+    is_agent_run_cancellation = (
+        request.resource_kind == _AGENT_RUN_RESOURCE_KIND
+        and request.action == _AGENT_RUN_CANCEL_ACTION
+    )
+    if not is_agent_run_cancellation:
+        budget_runtime_denial = _budget_runtime_denial_reason(request, authority_context)
+        if budget_runtime_denial is not None:
+            return AuthorizationResult(
+                decision=AuthorizationDecision.DENY,
+                reason_code=budget_runtime_denial,
+            )
     kill_switch_denial = _kill_switch_denial_reason(request, authority_context)
     if kill_switch_denial is not None:
         return AuthorizationResult(
