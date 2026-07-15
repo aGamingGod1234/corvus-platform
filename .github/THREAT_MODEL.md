@@ -4,8 +4,8 @@ Scope: threats specific to Corvus's architecture — sandboxed AI-driven code ex
 credential handling, multi-surface delivery (web / desktop / cloud), and the
 proof-carrying-completion verification layer. Updated as repo access reveals more.
 
-> Source of truth for the security spec: `PLAN.md`. Existing reviewer evidence:
-> `PLAN-REVIEW-LOG.md`. Read those before re-deriving anything below.
+> Source of truth for the security spec: [PLAN.md](../PLAN.md). Existing reviewer evidence:
+> [PLAN-REVIEW-LOG.md](../PLAN-REVIEW-LOG.md). Read those before re-deriving anything below.
 
 ---
 
@@ -113,13 +113,15 @@ Google OAuth, main node for sharing/syncing. This is a NEW auth boundary.
 2. Node sync must not replay/forge agent-run events — the event-chain proof
    (`§7`) must hold across devices, not just within one runtime.
 3. "Host locally vs cloud" must not weaken the sandbox image pinning (`§2`).
-**Action:** when the sync surface PR opens, run the `guardrail-checklist` §Credentials
-and §Verification items against it specifically.
+**Action:** when the sync surface PR opens, run the
+[GUARDRAIL_CHECKLIST.md](GUARDRAIL_CHECKLIST.md) §Credentials and §Verification
+items against it specifically.
 
 ---
 
 ## Priority for Asif (near-term)
-1. Read `PLAN.md` (authoritative spec) + `PLAN-REVIEW-LOG.md` (reviewer evidence).
+1. Read [PLAN.md](../PLAN.md) (authoritative spec) +
+   [PLAN-REVIEW-LOG.md](../PLAN-REVIEW-LOG.md) (reviewer evidence).
 2. Verify fail-closed sandbox behavior is *tested*, not just documented.
 3. Confirm credential/log redaction scope before the web/desktop/cloud surfaces open.
 4. Keep `§7`/`§8` in sync as the sync surface and any replay fixes land.

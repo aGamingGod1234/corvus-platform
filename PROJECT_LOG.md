@@ -496,6 +496,7 @@
 - Ran checksum-verified Gitleaks 8.30.1 scans over the staged final repair and the seven-commit PR range; both reported no leaks.
 - Added the final MVP server-adapter, V1 context/store firewall, root security-review document, and matching regression-test routes from Codex's late prior-head review; clarified that protected `main` must require Code Owner review.
 - Added the executable MVP package initializer to security ownership and removed a redundant checklist conjunction identified by Gemini's exact-head pass.
+- Repaired the threat model's repository-root and guardrail-checklist links; retained the intentionally plural authorization-inputs repository filename after verifying it stores multiple record types.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
