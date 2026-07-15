@@ -30,6 +30,7 @@ _GENESIS_EVENT_DIGEST = "0" * 64
 _MAX_AGENT_RUN_INPUT_CHARACTERS = 1_000_000
 _MAX_AGENT_RUN_MESSAGE_CHARACTERS = 100_000
 _MAX_AGENT_RUN_MESSAGES = 100
+_PAYLOAD_SECRET_REDACTOR = SecretRedactor()
 
 
 def _is_timezone_aware(value: datetime) -> bool:
@@ -612,13 +613,14 @@ class AgentRunStartResult(BaseModel):
 
 
 def _contains_secret_payload_key(value: object) -> bool:
-    redactor = SecretRedactor()
-
     def contains_secret(item: object) -> bool:
         if isinstance(item, Mapping):
             for key, child in item.items():
                 key_text = str(key)
-                if is_sensitive_field_name(key_text) or redactor.redact(key_text) != key_text:
+                if (
+                    is_sensitive_field_name(key_text)
+                    or _PAYLOAD_SECRET_REDACTOR.redact(key_text) != key_text
+                ):
                     return True
                 if contains_secret(child):
                     return True
@@ -630,14 +632,12 @@ def _contains_secret_payload_key(value: object) -> bool:
 
 
 def _contains_secret_payload_value(value: object) -> bool:
-    redactor = SecretRedactor()
-
     def contains_secret(item: object) -> bool:
         if isinstance(item, Mapping):
             return any(contains_secret(child) for child in item.values())
         if isinstance(item, (list, tuple)):
             return any(contains_secret(child) for child in item)
-        return bool(redactor.redact_value(item) != item)
+        return bool(_PAYLOAD_SECRET_REDACTOR.redact_value(item) != item)
 
     return contains_secret(value)
 

@@ -663,6 +663,19 @@ def test_secret_payload_value_scan_does_not_thaw_payload(
     )
 
 
+def test_secret_payload_scans_reuse_module_redactor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnexpectedRedactorConstruction:
+        def __init__(self) -> None:
+            raise AssertionError("payload scan constructed a per-call redactor")
+
+    monkeypatch.setattr(agent_runtime, "SecretRedactor", UnexpectedRedactorConstruction)
+
+    assert not agent_runtime._contains_secret_payload_key({"message": "safe"})
+    assert not agent_runtime._contains_secret_payload_value({"message": "safe"})
+
+
 @pytest.mark.parametrize(
     "event_type",
     [

@@ -914,13 +914,16 @@
 - Rejected terminal cancellation results carrying a non-terminal nested handle before a success audit can be recorded.
 - Added an explicit numeric safe list for provider-native camelCase usage counters while retaining fail-closed handling for generic secret-shaped token keys.
 - Added test-first regressions for all four Codex findings and reran the complete repository Python certification commands against the final formatted files.
+- Reused one private read-only empty `SecretRedactor` for event payload key/value scans, eliminating per-call construction without introducing a mutable default argument; the regression reproduced Gemini's performance finding before the repair.
 
 ### Files Modified
 - `corvus/application/ports.py` — cancellation port contract now carries the current proof digest.
 - `corvus/application/agent_runtime.py` — nested runtime-result reconstruction, validation, and stable cancellation identity failure mapping.
 - `corvus/infrastructure/agent_runtimes/simulated.py` — proof-pair validation, replay binding, and cancellation evidence parity.
 - `corvus/security.py` — explicit provider-native camelCase token-usage counters.
+- `corvus/domain/agent_runtime.py` — private reusable payload redactor for key and scalar-value scans.
 - `tests/unit/application/test_agent_runtime_coordinator.py` — malformed nested start and terminal cancellation-handle regressions.
+- `tests/unit/domain/test_agent_runtime.py` — per-call redactor-construction regression.
 - `tests/unit/infrastructure/test_simulated_agent_runtime.py` — proof digest evidence and mismatched replay regression.
 - `tests/unit/test_security.py` — camelCase usage-counter regression.
 - `HACKATHON_STATUS.md` — exact final Python verification evidence.
@@ -929,6 +932,7 @@
 ### Assumptions Made (flag these for review)
 - The duplicated CodeRabbit reviewer name in the user request refers to the previously agreed fourth automated reviewer, Copilot; both CodeRabbit and Copilot are requested on the exact pushed head.
 - No cancellation proof compatibility shim is added: callers must provide the complete current proof pair so evidence cannot silently weaken across the runtime boundary.
+- Gemini's literal default-argument suggestion was implemented as an equivalent private module-scoped instance so the optimization does not add a mutable function default.
 
 ### Known Issues / Deferred
 - Pull request #1 remains subject to strict protected-branch certification, conversation resolution, and a fresh code-owner approval from Asif; no administrator bypass is permitted.
