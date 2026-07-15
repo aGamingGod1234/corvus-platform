@@ -732,6 +732,7 @@
 
 ### What Was Implemented
 - Replaced the Windows-only root in the canonical-current-state authorization test with pytest's resolved cross-platform temporary root, fixing the shared Ubuntu and macOS certification failure without weakening production absolute-root validation.
+- After the first remote rerun exposed two later Windows-only adversarial path values in the same test, derived both the outside-root substitution and local executable identity from the resolved pytest root; no `Path("C:/...")` literals remain in that file.
 - Added JSON-only sorted serialization for every digest-bearing `AutonomyGrant` frozenset and `AgentRunRequest.requested_effect_classes`, eliminating cross-process hash-seed digest drift while preserving Python-mode frozensets.
 - Replaced exception-driven missing-provider lookup with explicit `None` handling that returns the existing fail-closed `agent_run_provider_unavailable` reason.
 - Added RED/GREEN regressions for deterministic serialization, Python-mode preservation, and missing-provider audit behavior.

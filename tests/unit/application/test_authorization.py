@@ -3230,6 +3230,7 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         server_storage_disclosure="Provider retention policy applies.",
     )
     autonomy_root = tmp_path.resolve()
+    outside_root = (autonomy_root.parent / f"{autonomy_root.name}-outside").resolve()
     autonomy = AutonomyGrant(
         workspace_id=authorization_request.workspace_id,
         project_id=authorization_request.scope_id,
@@ -3597,7 +3598,7 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     inputs.value = resolved
     limit_substitutions = (
         {"sandbox_profile": "unrestricted"},
-        {"filesystem_envelope": (str(Path("C:/outside")),)},
+        {"filesystem_envelope": (str(outside_root),)},
         {"network_envelope": ("evil.example:443",)},
         {"tool_envelope": ("shell.exec",)},
         {"requested_effect_classes": frozenset({"shell.execute"})},
@@ -3660,7 +3661,7 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         transport=ProviderTransport.LOCAL_CLI,
         status=ProviderStatus.AVAILABLE,
         executable_identity=ExecutableIdentity(
-            executable_path=Path("C:/corvus/codex.exe"),
+            executable_path=autonomy_root / "codex.exe",
             version="1.0.0",
             sha256_digest="a" * 64,
         ),
