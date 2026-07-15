@@ -1,7 +1,8 @@
 # Corvus V2 — Security Review Checklist (Asif, OAI)
 
 Use this per-milestone, before signing off as one of the required independent reviews.
-Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
+Source of truth: [PLAN.md](../PLAN.md). Evidence log:
+[PLAN-REVIEW-LOG.md](../PLAN-REVIEW-LOG.md).
 
 ## Sandbox & Execution
 - [ ] Build only runs inside pinned, digest-verified image — no tag-only fallback

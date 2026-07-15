@@ -498,6 +498,7 @@
 - Added the executable MVP package initializer to security ownership and removed a redundant checklist conjunction identified by Gemini's exact-head pass.
 - Repaired the threat model's repository-root and guardrail-checklist links; retained the intentionally plural authorization-inputs repository filename after verifying it stores multiple record types.
 - Replaced fragile per-file MVP source/test routes with complete directory ownership and made the remaining threat-model/certification references directly navigable.
+- Repaired the guardrail checklist's repository-root plan and evidence-log links.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
