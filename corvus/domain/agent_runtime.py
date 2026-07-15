@@ -246,6 +246,8 @@ class AutonomyGrant(BaseModel):
     allowed_roots: tuple[Path, ...] = Field(min_length=1)
     allowed_effect_classes: frozenset[str]
     denied_effect_classes: frozenset[str]
+    allowed_sandbox_profiles: frozenset[str] = Field(min_length=1)
+    allowed_tool_ids: frozenset[str]
     allowed_network_destinations: tuple[str, ...]
     credential_grant_ids: tuple[UUID, ...]
     wall_clock_deadline: datetime
@@ -376,16 +378,22 @@ class AgentRunRequest(BaseModel):
     autonomy_grant_id: UUID
     autonomy_grant_digest: str = Field(pattern=_SHA256_PATTERN)
     credential_grant_ids: tuple[UUID, ...]
-    credential_proof_id: UUID
-    credential_proof_digest: str = Field(pattern=_SHA256_PATTERN)
-    budget_proof_id: UUID
-    budget_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    credential_proof_id: UUID | None = None
+    credential_proof_digest: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    budget_proof_id: UUID | None = None
+    budget_proof_digest: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     kill_switch_proof_id: UUID
     kill_switch_proof_digest: str = Field(pattern=_SHA256_PATTERN)
     sandbox_profile: str = Field(min_length=1, max_length=200)
     filesystem_envelope: tuple[str, ...]
     network_envelope: tuple[str, ...]
     tool_envelope: tuple[str, ...]
+    requested_effect_classes: frozenset[str]
+    provider_spend_limit: Decimal = Field(ge=0)
+    corvus_budget_limit: Decimal = Field(ge=0)
+    approval_limit: int = Field(ge=0)
+    max_retries: int = Field(ge=0)
+    max_turns: int = Field(ge=1)
     deadline: datetime
     max_output_tokens: int = Field(ge=1)
     max_output_bytes: int = Field(ge=1)
@@ -405,6 +413,20 @@ class AgentRunRequest(BaseModel):
             raise ValueError("agent_run_requires_messages_or_prompt")
         if has_messages and has_prompt:
             raise ValueError("agent_run_prompt_shape_ambiguous")
+        return self
+
+    @model_validator(mode="after")
+    def validate_optional_proof_pairs(self) -> AgentRunRequest:
+        proof_pairs = (
+            ("credential", self.credential_proof_id, self.credential_proof_digest),
+            ("budget", self.budget_proof_id, self.budget_proof_digest),
+        )
+        for proof_kind, proof_id, proof_digest in proof_pairs:
+            if (proof_id is None) != (proof_digest is None):
+                _raise_contract_error(
+                    f"invalid_agent_run_{proof_kind}_proof",
+                    f"agent_run_{proof_kind}_proof_pair_incomplete",
+                )
         return self
 
     @field_validator("idempotency_key")

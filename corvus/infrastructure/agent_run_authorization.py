@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 from typing import Protocol
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import Field
 
 from corvus.application.authorization import (
+    AuthorityEvaluationContext,
     AuthorizationDecision,
+    AuthorizationRequest,
     evaluate_capability_intersection,
     verify_authorization_decision_snapshot,
 )
@@ -31,12 +36,131 @@ from corvus.infrastructure.project_authorization import (
 class VerifiedAgentRunAuthorizationInputs(VerifiedProjectAuthorizationInputs):
     autonomy_grant: AutonomyGrant
     provider_binding: ProviderBinding
-    credential_proof_id: UUID
-    credential_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    budget_proof_id: UUID
-    budget_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     kill_switch_proof_id: UUID
     kill_switch_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def _canonical_evidence_receipt(kind: str, payload: dict[str, object]) -> tuple[UUID, str]:
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return uuid5(NAMESPACE_URL, f"corvus:{kind}-evidence:{digest}"), digest
+
+
+def canonical_credential_evidence_receipt(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> tuple[UUID, str] | None:
+    claim_values = (
+        request.execution_placement_id,
+        request.provider_connection_id,
+        request.credential_ref_id,
+        request.credential_version_id,
+        request.credential_grant_id,
+    )
+    proof = context.credential_verification_proof if context is not None else None
+    credential_ref = context.credential_ref if context is not None else None
+    evidence_present = context is not None and any(
+        value is not None
+        for value in (
+            credential_ref,
+            proof,
+            context.expected_credential_rotation_epoch,
+            context.expected_credential_nonce_digest,
+        )
+    )
+    if not any(value is not None for value in claim_values):
+        if evidence_present:
+            raise ValueError("credential_evidence_mismatch")
+        return None
+    if any(value is None for value in claim_values) or context is None:
+        raise ValueError("credential_evidence_mismatch")
+    if credential_ref is None or proof is None:
+        raise ValueError("credential_evidence_mismatch")
+    if (
+        credential_ref.id != request.credential_ref_id
+        or credential_ref.provider_connection_id != request.provider_connection_id
+        or proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.provider_connection_id != request.provider_connection_id
+        or proof.credential_ref_id != request.credential_ref_id
+        or proof.credential_ref_version != credential_ref.version
+        or proof.credential_version_id != request.credential_version_id
+        or proof.credential_grant_id != request.credential_grant_id
+        or proof.acting_agent_id != request.acting_agent_id
+        or proof.execution_placement_id != request.execution_placement_id
+        or proof.operation != request.action
+        or proof.rotation_epoch != context.expected_credential_rotation_epoch
+        or proof.nonce_digest != context.expected_credential_nonce_digest
+    ):
+        raise ValueError("credential_evidence_mismatch")
+    return _canonical_evidence_receipt(
+        "credential",
+        {
+            "claims": {
+                "execution_placement_id": str(request.execution_placement_id),
+                "provider_connection_id": str(request.provider_connection_id),
+                "credential_ref_id": str(request.credential_ref_id),
+                "credential_version_id": str(request.credential_version_id),
+                "credential_grant_id": str(request.credential_grant_id),
+            },
+            "credential_ref": credential_ref.model_dump(mode="json"),
+            "verification_proof": proof.model_dump(mode="json"),
+            "expected_rotation_epoch": context.expected_credential_rotation_epoch,
+            "expected_nonce_digest": context.expected_credential_nonce_digest,
+        },
+    )
+
+
+def canonical_budget_evidence_receipt(
+    request: AuthorizationRequest,
+    context: AuthorityEvaluationContext | None,
+) -> tuple[UUID, str] | None:
+    claim_values = (
+        request.budget_snapshot_ids or None,
+        request.budget_snapshot_digest,
+        request.runtime_limit_digest,
+        request.budget_unit,
+        request.budget_requested_amount,
+    )
+    proof = context.budget_runtime_verification_proof if context is not None else None
+    if not any(value is not None for value in claim_values):
+        if proof is not None:
+            raise ValueError("budget_evidence_mismatch")
+        return None
+    if any(value is None for value in claim_values) or proof is None:
+        raise ValueError("budget_evidence_mismatch")
+    if (
+        proof.request_context_id != request.request_context_id
+        or proof.workspace_id != request.workspace_id
+        or proof.scope_kind != request.scope_kind
+        or proof.scope_id != request.scope_id
+        or proof.action != request.action
+        or proof.budget_snapshot_ids != request.budget_snapshot_ids
+        or proof.budget_snapshot_digest != request.budget_snapshot_digest
+        or proof.runtime_limit_digest != request.runtime_limit_digest
+        or proof.unit != request.budget_unit
+        or proof.requested_amount != request.budget_requested_amount
+    ):
+        raise ValueError("budget_evidence_mismatch")
+    return _canonical_evidence_receipt(
+        "budget",
+        {
+            "claims": {
+                "budget_snapshot_ids": [str(value) for value in request.budget_snapshot_ids],
+                "budget_snapshot_digest": request.budget_snapshot_digest,
+                "runtime_limit_digest": request.runtime_limit_digest,
+                "budget_unit": request.budget_unit,
+                "budget_requested_amount": request.budget_requested_amount,
+            },
+            "verification_proof": proof.model_dump(mode="json"),
+        },
+    )
 
 
 class VerifiedAgentRunAuthorizationInputProvider(Protocol):
@@ -137,6 +261,13 @@ class VerifiedAgentRunAuthorizationAdapter:
             return "agent_run_agent_grant_mismatch"
 
         autonomy = inputs.autonomy_grant
+        filesystem_paths = tuple(Path(value) for value in run_request.filesystem_envelope)
+        filesystem_authorized = all(
+            path.is_absolute()
+            and path == path.resolve(strict=False)
+            and any(path.is_relative_to(root) for root in autonomy.allowed_roots)
+            for path in filesystem_paths
+        )
         if (
             autonomy.id != run_request.autonomy_grant_id
             or autonomy.workspace_id != run_request.workspace_id
@@ -145,7 +276,22 @@ class VerifiedAgentRunAuthorizationAdapter:
             or autonomy.revoked_at is not None
             or autonomy.expires_at <= request.evaluated_at
             or autonomy.wall_clock_deadline < run_request.deadline
+            or autonomy.expires_at < run_request.deadline
             or autonomy.credential_grant_ids != run_request.credential_grant_ids
+            or run_request.sandbox_profile not in autonomy.allowed_sandbox_profiles
+            or not filesystem_authorized
+            or not set(run_request.network_envelope).issubset(autonomy.allowed_network_destinations)
+            or not set(run_request.tool_envelope).issubset(autonomy.allowed_tool_ids)
+            or not run_request.requested_effect_classes.issubset(autonomy.allowed_effect_classes)
+            or bool(
+                run_request.requested_effect_classes
+                & (autonomy.denied_effect_classes | autonomy.always_block_effects)
+            )
+            or run_request.provider_spend_limit > autonomy.provider_spend_ceiling
+            or run_request.corvus_budget_limit > autonomy.corvus_budget_ceiling
+            or run_request.approval_limit > autonomy.approval_ceiling
+            or run_request.max_retries > autonomy.max_retries
+            or run_request.max_turns > autonomy.max_turns
             or autonomy.max_output_tokens < run_request.max_output_tokens
         ):
             return "stale_autonomy_grant"
@@ -169,14 +315,32 @@ class VerifiedAgentRunAuthorizationAdapter:
         current_kill_digest = (
             agent_request.current_kill_switch_proof_digest or run_request.kill_switch_proof_digest
         )
-        if (
-            inputs.credential_proof_id != run_request.credential_proof_id
-            or inputs.credential_proof_digest != run_request.credential_proof_digest
+        try:
+            credential_receipt = canonical_credential_evidence_receipt(
+                request,
+                inputs.authority_context,
+            )
+        except ValueError:
+            return "stale_credential_proof"
+        if credential_receipt != (
+            (run_request.credential_proof_id, run_request.credential_proof_digest)
+            if run_request.credential_proof_id is not None
+            and run_request.credential_proof_digest is not None
+            else None
         ):
             return "stale_credential_proof"
-        if (
-            inputs.budget_proof_id != run_request.budget_proof_id
-            or inputs.budget_proof_digest != run_request.budget_proof_digest
+        try:
+            budget_receipt = canonical_budget_evidence_receipt(
+                request,
+                inputs.authority_context,
+            )
+        except ValueError:
+            return "agent_run_over_budget"
+        if budget_receipt != (
+            (run_request.budget_proof_id, run_request.budget_proof_digest)
+            if run_request.budget_proof_id is not None
+            and run_request.budget_proof_digest is not None
+            else None
         ):
             return "agent_run_over_budget"
         if (

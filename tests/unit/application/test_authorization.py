@@ -92,6 +92,8 @@ from corvus.domain.scope import AudiencePolicySnapshot
 from corvus.infrastructure.agent_run_authorization import (
     VerifiedAgentRunAuthorizationAdapter,
     VerifiedAgentRunAuthorizationInputs,
+    canonical_budget_evidence_receipt,
+    canonical_credential_evidence_receipt,
 )
 from corvus.infrastructure.project_authorization import (
     EvaluatingProjectAuthorizationAdapter,
@@ -1852,6 +1854,22 @@ def test_exact_current_credential_binding_allows() -> None:
     assert result.reason_code == "exact_capability_intersection"
 
 
+def test_credential_evidence_receipt_is_canonical_and_semantically_bound() -> None:
+    case, context, _, _ = _credential_bound_case()
+    request = case[0]
+
+    first = canonical_credential_evidence_receipt(request, context)
+    second = canonical_credential_evidence_receipt(request, context)
+
+    assert first == second
+    assert first is not None
+    with pytest.raises(ValueError, match="credential_evidence_mismatch"):
+        canonical_credential_evidence_receipt(
+            request.model_copy(update={"credential_grant_id": uuid4()}),
+            context,
+        )
+
+
 def test_partial_credential_claims_fail_closed() -> None:
     case, context, _, _ = _credential_bound_case()
     request = case[0].model_copy(update={"credential_version_id": None})
@@ -2159,6 +2177,22 @@ def test_exact_budget_and_runtime_evidence_allows() -> None:
 
     assert result.decision is AuthorizationDecision.ALLOW
     assert result.reason_code == "exact_capability_intersection"
+
+
+def test_budget_evidence_receipt_is_canonical_and_semantically_bound() -> None:
+    case, context, _ = _budget_bound_case()
+    request = case[0]
+
+    first = canonical_budget_evidence_receipt(request, context)
+    second = canonical_budget_evidence_receipt(request, context)
+
+    assert first == second
+    assert first is not None
+    with pytest.raises(ValueError, match="budget_evidence_mismatch"):
+        canonical_budget_evidence_receipt(
+            request.model_copy(update={"budget_requested_amount": 999}),
+            context,
+        )
 
 
 def test_partial_budget_claims_fail_closed() -> None:
@@ -3241,9 +3275,11 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         project_id=authorization_request.scope_id,
         profile=AutonomyProfile.REVIEW_FIRST,
         allowed_roots=(Path("C:/corvus"),),
-        allowed_effect_classes=frozenset(),
-        denied_effect_classes=frozenset(),
-        allowed_network_destinations=(),
+        allowed_effect_classes=frozenset({"repository.read"}),
+        denied_effect_classes=frozenset({"shell.execute"}),
+        allowed_sandbox_profiles=frozenset({"review"}),
+        allowed_tool_ids=frozenset({"repository.search"}),
+        allowed_network_destinations=("api.openai.com:443",),
         credential_grant_ids=(),
         wall_clock_deadline=authorization_request.evaluated_at + timedelta(days=1),
         provider_spend_ceiling=Decimal("0"),
@@ -3252,7 +3288,7 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         max_output_tokens=1024,
         max_retries=0,
         approval_ceiling=0,
-        always_block_effects=frozenset(),
+        always_block_effects=frozenset({"authority.bypass"}),
         notification_policy="notify",
         summary_policy="summary",
         issuer_principal_id=authorization_request.requester_id,
@@ -3275,16 +3311,22 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         autonomy_grant_id=autonomy.id,
         autonomy_grant_digest=compute_autonomy_grant_digest(autonomy),
         credential_grant_ids=(),
-        credential_proof_id=uuid4(),
-        credential_proof_digest="c" * 64,
-        budget_proof_id=uuid4(),
-        budget_proof_digest="d" * 64,
+        credential_proof_id=None,
+        credential_proof_digest=None,
+        budget_proof_id=None,
+        budget_proof_digest=None,
         kill_switch_proof_id=authorization_request.kill_switch_snapshot_ids[0],
         kill_switch_proof_digest=authorization_request.kill_switch_snapshot_digest,
         sandbox_profile="review",
-        filesystem_envelope=("C:/corvus",),
+        filesystem_envelope=(str(Path("C:/corvus")),),
         network_envelope=(),
         tool_envelope=(),
+        requested_effect_classes=frozenset(),
+        provider_spend_limit=Decimal("0"),
+        corvus_budget_limit=Decimal("0"),
+        approval_limit=0,
+        max_retries=0,
+        max_turns=4,
         deadline=autonomy.wall_clock_deadline,
         max_output_tokens=1024,
         max_output_bytes=4096,
@@ -3311,21 +3353,18 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         signing_key=signing_key,
         autonomy_grant=autonomy,
         provider_binding=binding,
-        credential_proof_id=run_request.credential_proof_id,
-        credential_proof_digest=run_request.credential_proof_digest,
-        budget_proof_id=run_request.budget_proof_id,
-        budget_proof_digest=run_request.budget_proof_digest,
         kill_switch_proof_id=run_request.kill_switch_proof_id,
         kill_switch_proof_digest=run_request.kill_switch_proof_digest,
     )
 
     class Inputs:
         value = resolved
+        expected = agent_request
 
         def resolve(
             self, received: AgentRunAuthorizationRequest
         ) -> VerifiedAgentRunAuthorizationInputs:
-            assert received == agent_request
+            assert received == self.expected
             return self.value
 
     class Snapshots:
@@ -3362,10 +3401,65 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         }
     )
     stale_authority = adapter.authorize(agent_request)
-    inputs.value = resolved.model_copy(update={"credential_proof_digest": "f" * 64})
-    stale_credential = adapter.authorize(agent_request)
-    inputs.value = resolved.model_copy(update={"budget_proof_digest": "f" * 64})
-    stale_budget = adapter.authorize(agent_request)
+    inputs.value = resolved
+    wrapper_credential_request = AgentRunRequest.model_validate(
+        {
+            **run_request.model_dump(exclude_computed_fields=True),
+            "credential_proof_id": uuid4(),
+            "credential_proof_digest": "f" * 64,
+        }
+    )
+    inputs.expected = agent_request.model_copy(
+        update={
+            "request": wrapper_credential_request,
+            "canonical_request_digest": compute_agent_run_request_digest(
+                wrapper_credential_request
+            ),
+        }
+    )
+    stale_credential = adapter.authorize(inputs.expected)
+    wrapper_budget_request = AgentRunRequest.model_validate(
+        {
+            **run_request.model_dump(exclude_computed_fields=True),
+            "budget_proof_id": uuid4(),
+            "budget_proof_digest": "f" * 64,
+        }
+    )
+    inputs.expected = agent_request.model_copy(
+        update={
+            "request": wrapper_budget_request,
+            "canonical_request_digest": compute_agent_run_request_digest(wrapper_budget_request),
+        }
+    )
+    stale_budget = adapter.authorize(inputs.expected)
+    inputs.expected = agent_request
+    inputs.value = resolved
+    limit_substitutions = (
+        {"sandbox_profile": "unrestricted"},
+        {"filesystem_envelope": (str(Path("C:/outside")),)},
+        {"network_envelope": ("evil.example:443",)},
+        {"tool_envelope": ("shell.exec",)},
+        {"requested_effect_classes": frozenset({"shell.execute"})},
+        {"requested_effect_classes": frozenset({"authority.bypass"})},
+        {"provider_spend_limit": Decimal("1")},
+        {"corvus_budget_limit": Decimal("1")},
+        {"approval_limit": 1},
+        {"max_retries": 1},
+        {"max_turns": 5},
+        {"max_output_tokens": 1025},
+        {"deadline": autonomy.wall_clock_deadline + timedelta(seconds=1)},
+    )
+    limit_denials = []
+    for substitution in limit_substitutions:
+        substituted_request = run_request.model_copy(update=substitution)
+        inputs.expected = agent_request.model_copy(
+            update={
+                "request": substituted_request,
+                "canonical_request_digest": compute_agent_run_request_digest(substituted_request),
+            }
+        )
+        limit_denials.append(adapter.authorize(inputs.expected))
+    inputs.expected = agent_request
     assert authority_context.kill_switch_verification_proof is not None
     kill_proof = authority_context.kill_switch_verification_proof
     armed_entry = kill_proof.entries[0].model_copy(update={"state": "armed"})
@@ -3392,4 +3486,5 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
     assert stale_authority.reason_code == "requester_grant_revoked"
     assert stale_credential.reason_code == "stale_credential_proof"
     assert stale_budget.reason_code == "agent_run_over_budget"
+    assert {decision.reason_code for decision in limit_denials} == {"stale_autonomy_grant"}
     assert kill_switch_active.reason_code == "kill_switch_armed"

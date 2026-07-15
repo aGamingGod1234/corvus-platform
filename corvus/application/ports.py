@@ -224,8 +224,8 @@ class AgentRunAuthorizationDecision(BaseModel):
     provider_binding_version: int = Field(ge=1)
     provider_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     autonomy_grant_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    credential_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    budget_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    credential_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    budget_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     kill_switch_proof_id: UUID
     kill_switch_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluated_at: datetime
@@ -253,10 +253,10 @@ class AgentRunAuditEvent(BaseModel):
     immutable_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     autonomy_grant_id: UUID
     autonomy_grant_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    credential_proof_id: UUID
-    credential_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    budget_proof_id: UUID
-    budget_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    credential_proof_id: UUID | None = None
+    credential_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    budget_proof_id: UUID | None = None
+    budget_proof_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     kill_switch_proof_id: UUID
     kill_switch_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     phase: Literal["authorization", "outcome"]
@@ -277,6 +277,14 @@ class AgentRunAuditEvent(BaseModel):
         }
         if self.outcome not in valid_phase_outcomes[self.phase]:
             _raise_agent_run_contract_error("agent_run_audit_phase_outcome_mismatch")
+        proof_pairs = (
+            (self.credential_proof_id, self.credential_proof_digest),
+            (self.budget_proof_id, self.budget_proof_digest),
+        )
+        if any(
+            (proof_id is None) != (proof_digest is None) for proof_id, proof_digest in proof_pairs
+        ):
+            _raise_agent_run_contract_error("agent_run_audit_proof_pair_incomplete")
         _validate_agent_run_timestamp(self.timestamp)
         return self
 

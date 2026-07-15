@@ -71,6 +71,8 @@ def _grant(tmp_path: Path, **updates: object) -> AutonomyGrant:
         "allowed_roots": (tmp_path.resolve(),),
         "allowed_effect_classes": frozenset({"repository.read"}),
         "denied_effect_classes": frozenset({"shell.execute"}),
+        "allowed_sandbox_profiles": frozenset({"workspace-write"}),
+        "allowed_tool_ids": frozenset({"repository.search"}),
         "allowed_network_destinations": ("api.openai.com:443",),
         "credential_grant_ids": (uuid4(),),
         "wall_clock_deadline": _FUTURE,
@@ -121,6 +123,12 @@ def _request(**updates: object) -> AgentRunRequest:
         "filesystem_envelope": ("repository.read",),
         "network_envelope": ("api.openai.com:443",),
         "tool_envelope": ("repository.search",),
+        "requested_effect_classes": frozenset({"repository.read"}),
+        "provider_spend_limit": 5,
+        "corvus_budget_limit": 10,
+        "approval_limit": 1,
+        "max_retries": 2,
+        "max_turns": 8,
         "deadline": _FUTURE,
         "max_output_tokens": 4000,
         "max_output_bytes": 100_000,
@@ -152,6 +160,48 @@ def _event(**updates: object) -> AgentRunEvent:
         previous_event_digest=values["previous_event_digest"],
     )
     return AgentRunEvent(**values)
+
+
+def test_autonomy_and_run_contracts_expose_enforceable_limits(tmp_path: Path) -> None:
+    grant = AutonomyGrant.model_validate(
+        {
+            **_grant(tmp_path).model_dump(),
+            "allowed_sandbox_profiles": frozenset({"workspace-write"}),
+            "allowed_tool_ids": frozenset({"repository.search"}),
+        }
+    )
+    request = AgentRunRequest.model_validate(
+        {
+            **_request().model_dump(exclude_computed_fields=True),
+            "filesystem_envelope": (str(tmp_path.resolve()),),
+            "requested_effect_classes": frozenset({"repository.read"}),
+            "provider_spend_limit": 5,
+            "corvus_budget_limit": 10,
+            "approval_limit": 1,
+            "max_retries": 2,
+            "max_turns": 8,
+        }
+    )
+
+    assert grant.allowed_sandbox_profiles == frozenset({"workspace-write"})
+    assert grant.allowed_tool_ids == frozenset({"repository.search"})
+    assert request.requested_effect_classes == frozenset({"repository.read"})
+
+
+@pytest.mark.parametrize("proof_kind", ["credential", "budget"])
+def test_optional_wrapper_proofs_must_be_paired(proof_kind: str) -> None:
+    paired_none = {
+        f"{proof_kind}_proof_id": None,
+        f"{proof_kind}_proof_digest": None,
+    }
+    assert _request(**paired_none)
+
+    with pytest.raises(ValidationError) as exc_info:
+        _request(**{f"{proof_kind}_proof_id": None})
+
+    assert exc_info.value.errors()[0]["ctx"]["reason_code"] == (
+        f"agent_run_{proof_kind}_proof_pair_incomplete"
+    )
 
 
 def test_provider_binding_enforces_transport_identity_xor(tmp_path: Path) -> None:
@@ -343,15 +393,16 @@ def test_request_requires_exactly_one_prompt_shape_and_has_no_secret_field() -> 
     assert "secret_value" not in AgentRunRequest.model_fields
 
 
-def test_request_requires_opaque_credential_proof_reference() -> None:
-    values = _request().model_dump()
-    del values["credential_proof_id"]
+def test_request_rejects_credential_digest_without_proof_identity() -> None:
+    values = _request().model_dump(exclude_computed_fields=True)
+    values["credential_proof_id"] = None
 
     with pytest.raises(ValidationError) as exc_info:
         AgentRunRequest.model_validate(values)
 
-    assert tuple(exc_info.value.errors()[0]["loc"]) == ("credential_proof_id",)
-    assert exc_info.value.errors()[0]["type"] == "missing"
+    assert exc_info.value.errors()[0]["ctx"]["reason_code"] == (
+        "agent_run_credential_proof_pair_incomplete"
+    )
 
 
 def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> None:
