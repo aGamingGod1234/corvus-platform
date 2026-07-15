@@ -1091,3 +1091,28 @@
 
 ### Suggested Next Steps
 - Push the PR-head update, request Asif's review, and merge only after the protected-branch gate is satisfied.
+
+## 2026-07-16 — Close PR #3 release security blockers
+
+### What Was Implemented
+- Removed pull-request-triggered multi-OS installer packaging while preserving manual and release-tag builds.
+- Pinned the alpha Vercel network contract to same-origin API and streaming connections.
+- Disclosed that the alpha loopback handoff cannot authenticate the process owning port 8080.
+- Added regression coverage for the packaging trigger, CSP contract, and visible trust disclosure.
+
+### Files Modified
+- `.github/workflows/desktop-release.yml` — limits packaging to manual dispatch and release tags.
+- `apps/web/HOSTED_RUNTIME_SECURITY.md` — documents CSP and loopback trust decisions.
+- `apps/web/src/runtime/LocalRuntimeLauncher.tsx` — shows the unverified loopback limitation.
+- `apps/web/src/App.workspace.test.tsx` — checks the visible trust disclosure.
+- `tests/security/test_release_surface.py` — enforces the release-trigger and hosted-network policies.
+- `PROJECT_LOG.md` — records the security follow-up.
+
+### Assumptions Made (flag these for review)
+- The alpha hosted surface has no external API, SSE, or WebSocket dependency; future cloud origins require an explicit CSP review.
+
+### Known Issues / Deferred
+- Cryptographic local-app identity requires a native bootstrap channel and remains in the runtime-selector milestone.
+
+### Suggested Next Steps
+- Run the focused and full verification suites, push the reviewed delta, and request exact-head security approval.

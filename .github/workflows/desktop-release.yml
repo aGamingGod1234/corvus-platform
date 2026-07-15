@@ -1,16 +1,6 @@
 name: desktop-release
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/desktop-release.yml"
-      - "apps/desktop/**"
-      - "apps/web/**"
-      - "corvus/**"
-      - "openapi/**"
-      - "scripts/corvus_mvp_entry.py"
-      - "pyproject.toml"
-      - "uv.lock"
   workflow_dispatch:
   push:
     tags:

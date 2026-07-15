@@ -30,7 +30,10 @@ export function LocalRuntimeLauncher({
           <a className="button button--primary" href={localWorkspaceUrl()}>Open local Corvus</a>
           <button className="text-button" onClick={onChangeSetup} type="button">Change workspace setup</button>
         </div>
-        <p className="local-launch-note">Requires Corvus to be running at 127.0.0.1:8080.</p>
+        <p className="local-launch-note">
+          Requires Corvus at 127.0.0.1:8080. This alpha handoff does not verify which app owns
+          port 8080; start Corvus yourself before continuing.
+        </p>
       </section>
     </main>
   );

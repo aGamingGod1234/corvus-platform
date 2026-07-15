@@ -131,6 +131,7 @@ describe("adaptive Corvus bootstrap", () => {
       "http://127.0.0.1:8080/"
     );
     expect(screen.getByText(/same-origin local page/i)).toBeVisible();
+    expect(screen.getByText(/does not verify which app owns port 8080/i)).toBeVisible();
     expect(api.session).not.toHaveBeenCalled();
   });
 
