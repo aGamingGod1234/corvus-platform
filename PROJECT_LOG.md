@@ -568,7 +568,7 @@
 - Enforced sequenced event lifecycle, provider-event deduplication, tool-call transitions, cursor bounds, and one shared recursive sensitive-field predicate for validation and redaction.
 - Added acknowledged tamper-evident audit receipts; authorization audit acknowledgment is mandatory, while a post-effect audit failure returns explicit `agent_run_audit_pending` state with no provider output.
 - Added a concrete repository-injectable verified agent-run authorization adapter that reuses the canonical capability evaluator and cryptographic snapshot verifier, then binds current autonomy, provider, credential, budget, and kill-switch receipts.
-- Validated runtime-returned start, resume, and cancellation identities and exposed durable start replay metadata.
+- Validated runtime-returned start, resume, and cancellation identities and exposed deterministic in-memory simulator replay metadata.
 
 ### Files Modified
 - `corvus/security.py` — shared public sensitive-field predicate used by redaction and runtime-event validation.
@@ -591,3 +591,34 @@
 ### Suggested Next Steps
 - Have the controller perform the final whole-milestone review against commits `7cf85ca`, `80d2490`, and `493142f` plus the final verification-record commit.
 - Keep M2A unmerged until the ready PR review gate is complete.
+
+## 2026-07-15 — M2A Exact-Commit Re-Review Repairs
+
+### What Was Implemented
+- Bound audit acknowledgement into the tamper-evident receipt digest and made every post-authorization exit explicitly audit-pending when its outcome audit is missing or unacknowledged, while retaining the primary reason and opaque handle/cancellation result.
+- Expanded autonomy and run contracts with explicit sandbox, tool, effect, provider-spend, Corvus-budget, approval, retry, and turn limits; verified canonical filesystem roots and every approved ceiling before evaluation.
+- Replaced arbitrary credential/budget wrapper assertions with optional paired receipts derived deterministically from canonical authorization claims and full authoritative verification evidence; absent claims require absent wrappers.
+- Added distinct per-effect authorization decision receipts to tool/approval events and included them in event digests and simulator chain materialization.
+- Made empty simulator templates synthesize a deterministic `STARTED` event so cancellation preserves `STARTED → CANCELLED` lifecycle ordering.
+
+### Files Modified
+- `corvus/application/ports.py` — acknowledgement-bound audit receipts and optional canonical proof receipts.
+- `corvus/application/agent_runtime.py` — primary failure retention and audit-pending behavior for every post-authorization exit.
+- `corvus/domain/agent_runtime.py` — explicit autonomy/run limits, optional proof pairs, and per-effect authorization references.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical evidence receipt derivation and complete autonomy-envelope enforcement.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — effect receipt propagation and deterministic empty-template start lifecycle.
+- `tests/unit/` — RED/GREEN regressions for receipt tampering, pending outcomes, autonomy/evidence binding, effect receipts, and empty-template cancellation.
+- `.superpowers/sdd/task-2-report.md` — exact-commit repair evidence.
+- `PROJECT_LOG.md` — corrected simulator durability wording and this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Result fields, autonomy/request shapes, canonical evidence behavior, effect receipt fields, empty-template behavior, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Replay metadata remains deterministic and in-memory in the simulator; durable replay persistence remains later infrastructure work.
+- Durable authority/evidence repositories and audit-pending reconciliation remain deferred infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, or unrelated refactor work was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `9f7c57d`, `3759837`, and `f2eaf5a` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
