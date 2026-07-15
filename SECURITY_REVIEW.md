@@ -10,7 +10,11 @@ runs this checklist.
 - [ ] Authorization decisions **deny by default**. An unverified or
       erroring check must block, never allow.
 - [ ] No new path introduces a default-allow branch in
-      `corvus/application/authorization.py` or the `*authority*` modules.
+      `corvus/application/authorization.py`, `corvus/infrastructure/*authority*.py`,
+      `corvus/infrastructure/repositories/authorization_inputs.py`, or
+      `corvus/mvp/governance.py`. (The `*authority*` glob in CODEOWNERS
+      covers authority modules; `governance.py` is security-adjacent and
+      must also be reviewed — see CODEOWNERS.)
 
 ## No secret material
 - [ ] No real credentials committed. `.env` files stay gitignored; fixtures

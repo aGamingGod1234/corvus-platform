@@ -13,6 +13,7 @@
 # Proof-carrying verification + sandbox execution boundary
 /corvus/security.py                              @asifdotpy
 /corvus/sandbox.py                               @asifdotpy
+/corvus/safe_process.py                          @asifdotpy
 /corvus/verification.py                          @asifdotpy
 
 # Authorization / authority / agent-to-agent trust root
@@ -24,5 +25,13 @@
 /corvus/infrastructure/repositories/authority.py            @asifdotpy
 /corvus/infrastructure/repositories/authorization_inputs.py @asifdotpy
 
-# Security test suite — changes here must keep the suite green
+# Verification core: event-chain proof validation + agent run lifecycle
+/corvus/domain/agent_runtime.py                  @asifdotpy
+
+# Security test suites — changes here must keep the suite green
 /tests/security/                                 @asifdotpy
+/tests/unit/test_safe_process.py                 @asifdotpy
+
+# NOTE: corvus/mvp/governance.py (approval governance) is security-adjacent.
+# Route it to @asifdotpy OR a security-aware reviewer + Lucas; not left unreviewed.
+/corvus/mvp/governance.py                       @asifdotpy @aGamingGod1234
