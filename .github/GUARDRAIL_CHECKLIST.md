@@ -51,7 +51,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
       do not establish agent-run replay behavior. Keep this item open until the runtime
       implementation and focused tests are present on the reviewed commit.
 - [ ] Event-chain proof holds within a single runtime AND must hold across devices once the
-      cross-device/node sync surface opens (see THREAT_MODEL.md §8)
+      cross-device/node sync surface opens (see [THREAT_MODEL.md](THREAT_MODEL.md) §8)
 
 ## Pre-Demo / Judge-Facing
 - [ ] Security layer is visible in the demo, not just backend plumbing

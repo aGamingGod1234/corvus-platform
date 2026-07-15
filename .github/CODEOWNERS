@@ -80,28 +80,11 @@
 /tests/integration/test_project_create_recovery.py           @asifdotpy
 /tests/integration/test_project_repository.py                @asifdotpy
 
-# MVP execution, persistence, governance, ingress, update, deployment, and API boundaries
-/corvus/mvp/__init__.py                         @asifdotpy
-/corvus/mvp/governance.py                       @asifdotpy
-/corvus/mvp/core.py                             @asifdotpy
-/corvus/mvp/store.py                            @asifdotpy
-/corvus/mvp/models.py                           @asifdotpy
-/corvus/mvp/ingress.py                          @asifdotpy
-/corvus/mvp/desktop.py                          @asifdotpy
-/corvus/mvp/desktop_runtime.py                  @asifdotpy
-/corvus/mvp/deployment.py                       @asifdotpy
-/corvus/mvp/api.py                              @asifdotpy
-/corvus/mvp/cli.py                              @asifdotpy
+# Own the complete current and future MVP trust surface by default.
+/corvus/mvp/                                    @asifdotpy
 
 # Supply-chain provenance generation
 /scripts/generate_supply_chain.py               @asifdotpy
 
-# MVP regression suites protect the execution and trust-boundary contracts.
-/tests/mvp/test_execution_core.py               @asifdotpy
-/tests/mvp/test_governance.py                   @asifdotpy
-/tests/mvp/test_ingress.py                      @asifdotpy
-/tests/mvp/test_deployment_desktop.py           @asifdotpy
-/tests/mvp/test_desktop_runtime.py              @asifdotpy
-/tests/mvp/test_api.py                          @asifdotpy
-/tests/mvp/test_cli_adapter.py                  @asifdotpy
-/tests/mvp/test_supply_chain.py                 @asifdotpy
+# Own all current and future MVP regression suites.
+/tests/mvp/                                     @asifdotpy

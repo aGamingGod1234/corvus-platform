@@ -485,7 +485,7 @@
 - Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
 - Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
 - Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
-- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 79 non-redundant ownership rules.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 62 non-redundant ownership rules.
 - Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
 - Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
 - Added explicit ownership for the MVP ingress, update-verification, deployment/OIDC, API/session, governance, supply-chain, and matching regression-test trust boundaries identified in Gemini's exact-head review.
@@ -497,6 +497,7 @@
 - Added the final MVP server-adapter, V1 context/store firewall, root security-review document, and matching regression-test routes from Codex's late prior-head review; clarified that protected `main` must require Code Owner review.
 - Added the executable MVP package initializer to security ownership and removed a redundant checklist conjunction identified by Gemini's exact-head pass.
 - Repaired the threat model's repository-root and guardrail-checklist links; retained the intentionally plural authorization-inputs repository filename after verifying it stores multiple record types.
+- Replaced fragile per-file MVP source/test routes with complete directory ownership and made the remaining threat-model/certification references directly navigable.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.

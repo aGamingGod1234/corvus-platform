@@ -25,7 +25,8 @@ CI runs the automated gates, and a human runs this checklist.
 
 ## Sandbox execution
 - [ ] No host mounts, privilege escalation, or `--privileged` in the sandbox path.
-- [ ] Sandbox base image is pinned by `sha256` (matches `certification.yml`).
+- [ ] Sandbox base image is pinned by `sha256` (matches
+      `.github/workflows/certification.yml`).
 - [ ] `tests/security/test_sandbox_options.py` passes.
 
 ## Proof, not claims (proof-carrying completion)
