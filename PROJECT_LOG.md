@@ -1056,11 +1056,13 @@
 - Made packaged sidecar discovery skip directory lookalikes and continue to the next trusted candidate.
 - Made loopback host classification reject missing or non-string runtime values without throwing.
 - Required every release tag commit to be an ancestor of `origin/main` before GitHub prerelease publication.
+- Removed redundant native-sidecar bundling because the desktop runtime uses the explicit packaged-resource lookup.
 
 ### Files Modified
 - `apps/desktop/src-tauri/src/lib.rs` — file-only packaged sidecar selection plus regression coverage.
 - `apps/web/src/runtime/localRuntime.ts` and `localRuntime.test.ts` — defensive runtime-host validation and regression coverage.
 - `.github/workflows/desktop-release.yml` — reviewed-main ancestry gate for release tags.
+- `apps/desktop/src-tauri/tauri.release.conf.json` — avoids packaging the sidecar twice.
 - `PROJECT_LOG.md` — this hardening record.
 
 ### Assumptions Made (flag these for review)
