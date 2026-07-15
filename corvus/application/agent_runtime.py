@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
@@ -10,12 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from corvus.application.ports import (
     AgentRunAuditEvent,
     AgentRunAuditPort,
+    AgentRunAuditReceipt,
     AgentRunAuthorizationDecision,
     AgentRunAuthorizationPort,
     AgentRunAuthorizationRequest,
     AgentRunOperation,
     AgentRuntimePort,
     compute_agent_run_audit_event_digest,
+    compute_agent_run_audit_receipt_digest,
 )
 from corvus.domain.agent_runtime import (
     AgentRunHandle,
@@ -322,9 +325,7 @@ class AgentRuntimeCoordinator:
                 operation,
                 "agent_run_audit_unavailable",
             )
-        if not receipt.acknowledged or receipt.event_digest != compute_agent_run_audit_event_digest(
-            event
-        ):
+        if not self._receipt_acknowledges_event(receipt, event):
             return None, self._failure(
                 context,
                 operation,
@@ -471,9 +472,24 @@ class AgentRuntimeCoordinator:
             receipt = self._audit.record(event)
         except Exception:
             return False
+        return self._receipt_acknowledges_event(receipt, event)
+
+    @staticmethod
+    def _receipt_acknowledges_event(
+        receipt: AgentRunAuditReceipt,
+        event: AgentRunAuditEvent,
+    ) -> bool:
+        expected_event_digest = compute_agent_run_audit_event_digest(event)
+        expected_receipt_digest = compute_agent_run_audit_receipt_digest(
+            sequence=receipt.sequence,
+            previous_receipt_digest=receipt.previous_receipt_digest,
+            event_digest=receipt.event_digest,
+            acknowledged=receipt.acknowledged,
+        )
         return (
             receipt.acknowledged
-            and receipt.event_digest == compute_agent_run_audit_event_digest(event)
+            and hmac.compare_digest(receipt.event_digest, expected_event_digest)
+            and hmac.compare_digest(receipt.receipt_digest, expected_receipt_digest)
         )
 
     @staticmethod

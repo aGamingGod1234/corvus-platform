@@ -206,11 +206,13 @@ class _AuditSink:
         fail_on_phase: str | None = None,
         acknowledged: bool = True,
         unacknowledged_on_phase: str | None = None,
+        forge_acknowledgement_on_phase: str | None = None,
     ) -> None:
         self.order = order
         self.fail_on_phase = fail_on_phase
         self.acknowledged = acknowledged
         self.unacknowledged_on_phase = unacknowledged_on_phase
+        self.forge_acknowledgement_on_phase = forge_acknowledgement_on_phase
         self.events: list[AgentRunAuditEvent] = []
         self.receipts: list[AgentRunAuditReceipt] = []
 
@@ -222,6 +224,7 @@ class _AuditSink:
         sequence = len(self.receipts) + 1
         previous_digest = self.receipts[-1].receipt_digest if self.receipts else "0" * 64
         event_digest = compute_agent_run_audit_event_digest(event)
+        acknowledged = self.acknowledged and event.phase != self.unacknowledged_on_phase
         receipt = AgentRunAuditReceipt(
             sequence=sequence,
             previous_receipt_digest=previous_digest,
@@ -230,10 +233,24 @@ class _AuditSink:
                 sequence=sequence,
                 previous_receipt_digest=previous_digest,
                 event_digest=event_digest,
-                acknowledged=(self.acknowledged and event.phase != self.unacknowledged_on_phase),
+                acknowledged=acknowledged,
             ),
-            acknowledged=(self.acknowledged and event.phase != self.unacknowledged_on_phase),
+            acknowledged=acknowledged,
         )
+        if event.phase == self.forge_acknowledgement_on_phase:
+            valid_false_receipt = AgentRunAuditReceipt(
+                sequence=receipt.sequence,
+                previous_receipt_digest=receipt.previous_receipt_digest,
+                event_digest=receipt.event_digest,
+                receipt_digest=compute_agent_run_audit_receipt_digest(
+                    sequence=receipt.sequence,
+                    previous_receipt_digest=receipt.previous_receipt_digest,
+                    event_digest=receipt.event_digest,
+                    acknowledged=False,
+                ),
+                acknowledged=False,
+            )
+            receipt = valid_false_receipt.model_copy(update={"acknowledged": True})
         self.receipts.append(receipt)
         return receipt
 
@@ -673,6 +690,62 @@ def test_audit_receipt_rejects_acknowledgement_tampering() -> None:
 
     with pytest.raises(ValidationError):
         AgentRunAuditReceipt.model_validate({**receipt.model_dump(), "acknowledged": True})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["start", "resume", "cancel"])
+@pytest.mark.parametrize("forged_phase", ["authorization", "outcome"])
+async def test_coordinator_rejects_forged_acknowledgement_receipts(
+    tmp_path: Path,
+    operation: str,
+    forged_phase: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(simulator, order)
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(
+            order,
+            forge_acknowledgement_on_phase=forged_phase,
+        ),
+    )
+
+    if operation == "start":
+        result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+        expected_primary_reason = "agent_run_started"
+    elif operation == "resume":
+        resumed = request.model_copy(update={"resume_handle_id": handle.id})
+        result = await coordinator.resume(
+            _context(resumed),
+            ClientSurface.CLI,
+            handle,
+            resumed,
+        )
+        expected_primary_reason = "agent_run_resumed"
+    else:
+        result = await coordinator.cancel(
+            _context(request),
+            ClientSurface.CLI,
+            handle,
+            request,
+            uuid4(),
+            "f" * 64,
+        )
+        expected_primary_reason = "agent_run_cancelled"
+
+    if forged_phase == "authorization":
+        assert result.reason_code == "agent_run_audit_unavailable"
+        assert f"runtime:{operation}" not in order
+    else:
+        assert result.reason_code == "agent_run_audit_pending"
+        assert result.audit_pending
+        assert result.primary_reason_code == expected_primary_reason
+        assert result.primary_outcome == "success"
 
 
 @pytest.mark.asyncio
