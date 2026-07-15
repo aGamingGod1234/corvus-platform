@@ -1,0 +1,28 @@
+# CODEOWNERS — security review routing for Corvus
+#
+# Implements the "structured PR + code review" half of the GitHub-workflow
+# proposal. Any change to the paths below REQUIRES security review before merge.
+# Pair this with branch protection on `main` (require PR review + certification
+# workflow as a required status check) — CODEOWNERS routes review but does not
+# itself enforce it.
+#
+# Security owner: @asifdotpy (Asif, OAI). Add Lucas/Alexander as owners for
+# their non-security paths (corvus/mvp, corvus/infrastructure/repositories
+# non-auth, apps/, openapi/) once this PR lands.
+
+# Proof-carrying verification + sandbox execution boundary
+/corvus/security.py                              @asifdotpy
+/corvus/sandbox.py                               @asifdotpy
+/corvus/verification.py                          @asifdotpy
+
+# Authorization / authority / agent-to-agent trust root
+/corvus/application/authorization.py             @asifdotpy
+/corvus/infrastructure/authority_root.py         @asifdotpy
+/corvus/infrastructure/project_authorization.py  @asifdotpy
+/corvus/infrastructure/project_authority.py      @asifdotpy
+/corvus/infrastructure/local_authority.py        @asifdotpy
+/corvus/infrastructure/repositories/authority.py            @asifdotpy
+/corvus/infrastructure/repositories/authorization_inputs.py @asifdotpy
+
+# Security test suite — changes here must keep the suite green
+/tests/security/                                 @asifdotpy
