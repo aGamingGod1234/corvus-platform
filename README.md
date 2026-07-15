@@ -78,7 +78,7 @@ pnpm --dir apps/desktop tauri build --no-bundle
 Unsigned alpha desktop installers are built by `.github/workflows/desktop-release.yml` for:
 
 - Windows x64 NSIS: `Corvus_0.2.0-alpha.1_x64-setup.exe`
-- macOS universal DMG
+- macOS x64 DMG
 - Linux x64 AppImage and `.deb`
 
 The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell. It uploads installer artifacts on pull requests for review, and creates a GitHub prerelease with `SHA256SUMS.txt` only when a reviewed `v0.2.0-alpha.1` tag is pushed from `main`.

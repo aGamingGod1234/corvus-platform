@@ -33,13 +33,13 @@ jobs:
             bundles: nsis
             artifact-name: corvus-windows-x64-alpha
             artifact-path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-          - name: macOS unsigned universal DMG
-            os: macos-latest
-            sidecar-triple: universal-apple-darwin
-            rust-target: universal-apple-darwin
+          - name: macOS unsigned x64 DMG
+            os: macos-13
+            sidecar-triple: x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
             bundles: dmg
-            artifact-name: corvus-macos-universal-alpha
-            artifact-path: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            artifact-name: corvus-macos-x64-alpha
+            artifact-path: apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           - name: Linux unsigned AppImage and deb
             os: ubuntu-22.04
             sidecar-triple: x86_64-unknown-linux-gnu
@@ -74,9 +74,9 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install Rust universal target
+      - name: Install Rust macOS target
         if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup target add ${{ matrix.rust-target }}
 
       - name: Install dependencies
         run: |
@@ -89,9 +89,6 @@ jobs:
         shell: pwsh
         run: |
           $pyinstallerArgs = @("--clean", "--noconfirm", "--onefile", "--name", "corvus-mvp", "scripts/corvus_mvp_entry.py")
-          if ($IsMacOS) {
-            $pyinstallerArgs = @("--target-arch", "universal2") + $pyinstallerArgs
-          }
           uv run --python 3.12 --with pyinstaller==6.21.0 pyinstaller @pyinstallerArgs
           $extension = if ($IsWindows) { ".exe" } else { "" }
           $source = "dist/corvus-mvp$extension"

@@ -1016,7 +1016,7 @@
 
 ### What Was Implemented
 - Added a release-only Tauri packaging config that bundles the compiled React client and a standalone PyInstaller `corvus-mvp` sidecar without weakening the existing local sidecar override.
-- Added a GitHub Actions desktop-release workflow for unsigned Windows NSIS, macOS universal DMG, Linux AppImage, and Linux `.deb` artifacts, with tag-gated GitHub prerelease publishing and SHA256 checksums.
+- Added a GitHub Actions desktop-release workflow for unsigned Windows NSIS, macOS x64 DMG, Linux AppImage, and Linux `.deb` artifacts, with tag-gated GitHub prerelease publishing and SHA256 checksums.
 - Added the hosted-web Local handoff so Vercel never receives same-machine pairing secrets or local session cookies.
 - Linked Vercel project `corvus-platform` to `aGamingGod1234/corvus-platform`, connected GitHub integration, set Git root to `apps/web`, and deployed the current web app to `https://corvus-platform-tau.vercel.app`.
 - Confirmed GitHub `main` protection is already enabled with strict required checks, one code-owner approval, stale-review dismissal, admin enforcement, and force/delete disabled.
@@ -1040,7 +1040,7 @@
 - Hosted Vercel Local mode should remain a launcher/handoff for same-machine runtime until a real cloud runtime and browser-safe local bridge are designed.
 
 ### Known Issues / Deferred
-- GitHub Release assets for macOS and Linux require the PR workflow to pass on hosted runners and a reviewed tag push from `main`.
+- GitHub Release assets require a reviewed tag push from `main`; the macOS alpha artifact is x64 because a locked dependency is not universal2-compatible in PyInstaller.
 - The Computer Use control surface was not exposed in this resumed tool set, so current Windows installer validation used process-level smoke testing instead of GUI automation.
 - Vercel direct deployment briefly required clearing `rootDirectory`; it was restored to `apps/web` after deployment for GitHub `main` auto-deploys.
 - Real E2B Cloud, Google-backed continuity, payments, production signing, notarization, live provider adapters, and real multi-user authority remain later milestones.
