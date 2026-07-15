@@ -32,6 +32,7 @@
 /corvus/infrastructure/project_recovery.py        @asifdotpy
 /corvus/infrastructure/agent_run_authorization.py @asifdotpy
 /corvus/infrastructure/agent_runtimes/             @asifdotpy
+/corvus/infrastructure/repositories/audit.py                @asifdotpy
 /corvus/infrastructure/repositories/authority.py            @asifdotpy
 /corvus/infrastructure/repositories/authorization_inputs.py @asifdotpy
 /corvus/infrastructure/repositories/registry.py              @asifdotpy

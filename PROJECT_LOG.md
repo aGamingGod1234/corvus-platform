@@ -485,8 +485,9 @@
 - Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
 - Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
 - Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
-- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 29 non-redundant ownership rules.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 30 non-redundant ownership rules.
 - Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
+- Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing and self-protection.

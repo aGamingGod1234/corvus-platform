@@ -41,7 +41,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] AFTER posting a review: verify it actually landed via
       `gh api repos/.../pulls/N/reviews` — a self-`--approve` may NOT persist
       (GitHub eligibility / dismissed). If it didn't land, post the verdict as a PR
-      COMMENT (guaranteed) AND have the PR author confirm the formal approve.
+      COMMENT (guaranteed) AND have the PR author confirm the formal approval.
 
 ## Replay / Idempotency (verified during PR #1 review)
 - [ ] `SimulatedAgentRuntime.start` keys idempotency on `(run_id, provider_binding_id)`;

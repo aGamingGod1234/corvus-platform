@@ -79,7 +79,7 @@ If the review process is gameable (self-review, stale commit reference), the gat
   the PR head and confirm the commit hash before reviewing.
 - **Self-approve may not persist.** A `gh pr review --approve` by the security owner
   did not land on PR #1 (GitHub eligibility / dismissed). Fix: post the verdict as a
-  PR **comment** (guaranteed to land) AND have the PR author confirm the formal approve.
+  PR **comment** (guaranteed to land) AND have the PR author confirm the formal approval.
   Verify the review actually exists via `gh api .../pulls/N/reviews` before declaring done.
 - Both reviews must reference the exact same frozen commit hash.
 **Open questions:**
