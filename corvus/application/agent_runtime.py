@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hmac
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -30,6 +32,15 @@ from corvus.domain.agent_runtime import (
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.request import RequestContext
+
+_REASON_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_INVALID_CANCELLATION_REASON = "agent_run_cancellation_reason_invalid"
+
+
+@dataclass(frozen=True)
+class _AuthorizedAgentRun:
+    request: AgentRunAuthorizationRequest
+    receipt: AgentRunAuditReceipt
 
 
 class AgentRunOperationResult(BaseModel):
@@ -71,7 +82,7 @@ class AgentRuntimeCoordinator:
         client_surface: ClientSurface,
         request: AgentRunRequest,
     ) -> AgentRunOperationResult:
-        authorization_request, failure = self._authorization_gate(
+        authorization, failure = self._authorization_gate(
             context=context,
             client_surface=client_surface,
             operation=AgentRunOperation.START,
@@ -79,12 +90,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization_request is not None
+        assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization_request)
+            preflight_reason = self._provider_preflight(authorization.request)
             if preflight_reason is not None:
                 return self._post_authorization_failure(
-                    authorization_request,
+                    authorization,
                     reason_code=preflight_reason,
                 )
             start_result = await self._runtime.start(request)
@@ -95,7 +106,7 @@ class AgentRuntimeCoordinator:
                 else "agent_run_start_failed"
             )
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
             )
         handle = start_result.handle
@@ -105,12 +116,12 @@ class AgentRuntimeCoordinator:
         ):
             reason_code = "agent_run_start_handle_mismatch"
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
                 handle=handle,
             )
         if not self._record_outcome(
-            authorization_request,
+            authorization,
             outcome="success",
             reason_code="agent_run_started",
             handle=handle,
@@ -139,7 +150,7 @@ class AgentRuntimeCoordinator:
         handle: AgentRunHandle,
         request_with_fresh_proofs: AgentRunRequest,
     ) -> AgentRunOperationResult:
-        authorization_request, failure = self._authorization_gate(
+        authorization, failure = self._authorization_gate(
             context=context,
             client_surface=client_surface,
             operation=AgentRunOperation.RESUME,
@@ -148,12 +159,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization_request is not None
+        assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization_request)
+            preflight_reason = self._provider_preflight(authorization.request)
             if preflight_reason is not None:
                 return self._post_authorization_failure(
-                    authorization_request,
+                    authorization,
                     reason_code=preflight_reason,
                     handle=handle,
                 )
@@ -164,7 +175,7 @@ class AgentRuntimeCoordinator:
         except Exception:
             reason_code = "agent_run_resume_failed"
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
                 handle=handle,
             )
@@ -175,12 +186,12 @@ class AgentRuntimeCoordinator:
         ):
             reason_code = "agent_run_resume_handle_mismatch"
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
                 handle=resumed_handle,
             )
         if not self._record_outcome(
-            authorization_request,
+            authorization,
             outcome="success",
             reason_code="agent_run_resumed",
             handle=resumed_handle,
@@ -209,7 +220,7 @@ class AgentRuntimeCoordinator:
         current_kill_switch_proof_id: UUID,
         current_kill_switch_proof_digest: str,
     ) -> AgentRunOperationResult:
-        authorization_request, failure = self._authorization_gate(
+        authorization, failure = self._authorization_gate(
             context=context,
             client_surface=client_surface,
             operation=AgentRunOperation.CANCEL,
@@ -220,12 +231,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization_request is not None
+        assert authorization is not None
         try:
-            preflight_reason = self._provider_preflight(authorization_request)
+            preflight_reason = self._provider_preflight(authorization.request)
             if preflight_reason is not None:
                 return self._post_authorization_failure(
-                    authorization_request,
+                    authorization,
                     reason_code=preflight_reason,
                     handle=handle,
                 )
@@ -236,20 +247,27 @@ class AgentRuntimeCoordinator:
         except Exception:
             reason_code = "agent_run_cancel_failed"
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
                 handle=handle,
             )
         if cancellation_result.handle_id != handle.id:
             reason_code = "agent_run_cancellation_handle_mismatch"
             return self._post_authorization_failure(
-                authorization_request,
+                authorization,
                 reason_code=reason_code,
                 handle=handle,
                 cancellation_result=cancellation_result,
             )
+        if _REASON_CODE_PATTERN.fullmatch(cancellation_result.reason_code) is None:
+            return self._post_authorization_failure(
+                authorization,
+                reason_code=_INVALID_CANCELLATION_REASON,
+                handle=handle,
+                cancellation_result=cancellation_result,
+            )
         if not self._record_outcome(
-            authorization_request,
+            authorization,
             outcome="success",
             reason_code=cancellation_result.reason_code,
             handle=handle,
@@ -281,7 +299,7 @@ class AgentRuntimeCoordinator:
         handle: AgentRunHandle | None = None,
         current_kill_switch_proof_id: UUID | None = None,
         current_kill_switch_proof_digest: str | None = None,
-    ) -> tuple[AgentRunAuthorizationRequest | None, AgentRunOperationResult | None]:
+    ) -> tuple[_AuthorizedAgentRun | None, AgentRunOperationResult | None]:
         try:
             authorization_request = AgentRunAuthorizationRequest(
                 context=context,
@@ -333,7 +351,7 @@ class AgentRuntimeCoordinator:
             )
         if binding_mismatch is not None or not decision.allowed:
             return None, self._failure(context, operation, authorization_reason)
-        return authorization_request, None
+        return _AuthorizedAgentRun(request=authorization_request, receipt=receipt), None
 
     @staticmethod
     def _decision_binding_mismatch(
@@ -422,29 +440,29 @@ class AgentRuntimeCoordinator:
 
     def _post_authorization_failure(
         self,
-        request: AgentRunAuthorizationRequest,
+        authorization: _AuthorizedAgentRun,
         *,
         reason_code: str,
         handle: AgentRunHandle | None = None,
         cancellation_result: CancellationResult | None = None,
     ) -> AgentRunOperationResult:
         if not self._record_outcome(
-            request,
+            authorization,
             outcome="failure",
             reason_code=reason_code,
             handle=handle,
         ):
             return self._audit_pending(
-                request.context,
-                request.operation,
+                authorization.request.context,
+                authorization.request.operation,
                 handle=handle,
                 cancellation_result=cancellation_result,
                 primary_reason_code=reason_code,
                 primary_outcome="failure",
             )
         return AgentRunOperationResult(
-            request_context_id=request.context.id,
-            operation=request.operation,
+            request_context_id=authorization.request.context.id,
+            operation=authorization.request.operation,
             ok=False,
             reason_code=reason_code,
             handle=handle,
@@ -455,7 +473,7 @@ class AgentRuntimeCoordinator:
 
     def _record_outcome(
         self,
-        request: AgentRunAuthorizationRequest,
+        authorization: _AuthorizedAgentRun,
         *,
         outcome: Literal["success", "failure"],
         reason_code: str,
@@ -463,7 +481,7 @@ class AgentRuntimeCoordinator:
     ) -> bool:
         try:
             event = self._audit_event(
-                request,
+                authorization.request,
                 phase="outcome",
                 outcome=outcome,
                 reason_code=reason_code,
@@ -472,13 +490,21 @@ class AgentRuntimeCoordinator:
             receipt = self._audit.record(event)
         except Exception:
             return False
-        return self._receipt_acknowledges_event(receipt, event)
+        return self._receipt_acknowledges_event(
+            receipt,
+            event,
+            previous_receipt=authorization.receipt,
+        )
 
     @staticmethod
     def _receipt_acknowledges_event(
-        receipt: AgentRunAuditReceipt,
+        receipt: object,
         event: AgentRunAuditEvent,
+        *,
+        previous_receipt: AgentRunAuditReceipt | None = None,
     ) -> bool:
+        if not isinstance(receipt, AgentRunAuditReceipt):
+            return False
         expected_event_digest = compute_agent_run_audit_event_digest(event)
         expected_receipt_digest = compute_agent_run_audit_receipt_digest(
             sequence=receipt.sequence,
@@ -486,8 +512,16 @@ class AgentRuntimeCoordinator:
             event_digest=receipt.event_digest,
             acknowledged=receipt.acknowledged,
         )
+        continuity_matches = previous_receipt is None or (
+            receipt.sequence == previous_receipt.sequence + 1
+            and hmac.compare_digest(
+                receipt.previous_receipt_digest,
+                previous_receipt.receipt_digest,
+            )
+        )
         return (
             receipt.acknowledged
+            and continuity_matches
             and hmac.compare_digest(receipt.event_digest, expected_event_digest)
             and hmac.compare_digest(receipt.receipt_digest, expected_receipt_digest)
         )

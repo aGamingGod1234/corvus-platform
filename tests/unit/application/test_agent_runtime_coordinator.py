@@ -209,12 +209,20 @@ class _AuditSink:
         acknowledged: bool = True,
         unacknowledged_on_phase: str | None = None,
         forge_acknowledgement_on_phase: str | None = None,
+        break_continuity_on_phase: str | None = None,
+        continuity_break: str = "sequence",
+        malformed_receipt_on_phase: str | None = None,
+        malformed_receipt: object = None,
     ) -> None:
         self.order = order
         self.fail_on_phase = fail_on_phase
         self.acknowledged = acknowledged
         self.unacknowledged_on_phase = unacknowledged_on_phase
         self.forge_acknowledgement_on_phase = forge_acknowledgement_on_phase
+        self.break_continuity_on_phase = break_continuity_on_phase
+        self.continuity_break = continuity_break
+        self.malformed_receipt_on_phase = malformed_receipt_on_phase
+        self.malformed_receipt = malformed_receipt
         self.events: list[AgentRunAuditEvent] = []
         self.receipts: list[AgentRunAuditReceipt] = []
 
@@ -239,6 +247,23 @@ class _AuditSink:
             ),
             acknowledged=acknowledged,
         )
+        if event.phase == self.break_continuity_on_phase:
+            if self.continuity_break == "sequence":
+                sequence += 1
+            else:
+                previous_digest = "f" * 64
+            receipt = AgentRunAuditReceipt(
+                sequence=sequence,
+                previous_receipt_digest=previous_digest,
+                event_digest=event_digest,
+                receipt_digest=compute_agent_run_audit_receipt_digest(
+                    sequence=sequence,
+                    previous_receipt_digest=previous_digest,
+                    event_digest=event_digest,
+                    acknowledged=acknowledged,
+                ),
+                acknowledged=acknowledged,
+            )
         if event.phase == self.forge_acknowledgement_on_phase:
             valid_false_receipt = AgentRunAuditReceipt(
                 sequence=receipt.sequence,
@@ -254,6 +279,8 @@ class _AuditSink:
             )
             receipt = valid_false_receipt.model_copy(update={"acknowledged": True})
         self.receipts.append(receipt)
+        if event.phase == self.malformed_receipt_on_phase:
+            return self.malformed_receipt  # type: ignore[return-value]
         return receipt
 
 
@@ -267,6 +294,7 @@ class _RecordingRuntime:
         start_handle_updates: dict[str, object] | None = None,
         resume_handle_updates: dict[str, object] | None = None,
         cancellation_handle_id: UUID | None = None,
+        cancellation_reason_code: str | None = None,
     ) -> None:
         self.runtime = runtime
         self.order = order
@@ -274,6 +302,7 @@ class _RecordingRuntime:
         self.start_handle_updates = start_handle_updates or {}
         self.resume_handle_updates = resume_handle_updates or {}
         self.cancellation_handle_id = cancellation_handle_id
+        self.cancellation_reason_code = cancellation_reason_code
 
     def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         self.order.append("runtime:discover")
@@ -311,9 +340,14 @@ class _RecordingRuntime:
         self.order.append("runtime:cancel")
         self._raise_if_failed("cancel")
         result = await self.runtime.cancel(handle, current_kill_switch_proof_id)
-        if self.cancellation_handle_id is None:
+        if self.cancellation_handle_id is None and self.cancellation_reason_code is None:
             return result
-        return result.model_copy(update={"handle_id": self.cancellation_handle_id})
+        updates: dict[str, object] = {}
+        if self.cancellation_handle_id is not None:
+            updates["handle_id"] = self.cancellation_handle_id
+        if self.cancellation_reason_code is not None:
+            updates["reason_code"] = self.cancellation_reason_code
+        return result.model_copy(update=updates)
 
     async def resume(
         self,
@@ -751,6 +785,74 @@ async def test_coordinator_rejects_forged_acknowledgement_receipts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("continuity_break", ["sequence", "previous_digest"])
+async def test_outcome_receipt_must_continue_the_authorization_receipt(
+    tmp_path: Path,
+    continuity_break: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(
+            order,
+            break_continuity_on_phase="outcome",
+            continuity_break=continuity_break,
+        ),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert result.reason_code == "agent_run_audit_pending"
+    assert result.audit_pending
+    assert result.primary_reason_code == "agent_run_started"
+    assert result.primary_outcome == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["authorization", "outcome"])
+@pytest.mark.parametrize("malformed_receipt", [None, object()])
+async def test_malformed_audit_receipts_fail_closed(
+    tmp_path: Path,
+    phase: str,
+    malformed_receipt: object,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(
+            order,
+            malformed_receipt_on_phase=phase,
+            malformed_receipt=malformed_receipt,
+        ),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    if phase == "authorization":
+        assert result.reason_code == "agent_run_audit_unavailable"
+        assert "runtime:start" not in order
+    else:
+        assert result.reason_code == "agent_run_audit_pending"
+        assert result.audit_pending
+        assert result.primary_reason_code == "agent_run_started"
+        assert result.primary_outcome == "success"
+
+
+@pytest.mark.asyncio
 async def test_outcome_audit_failure_returns_retryable_pending_result(tmp_path: Path) -> None:
     binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
     request = _request(binding)
@@ -1009,6 +1111,48 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
     assert all(event.kill_switch_proof_id == current_proof_id for event in audit.events)
     assert all(event.kill_switch_proof_digest == current_proof_digest for event in audit.events)
     assert all(event.handle_id == handle.id for event in audit.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome_audit_fails", [False, True])
+async def test_cancel_maps_unsafe_runtime_reason_to_a_stable_failure(
+    tmp_path: Path,
+    outcome_audit_fails: bool,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_reason_code="unsafe reason: provider payload",
+    )
+    audit = _AuditSink(order, fail_on_phase="outcome" if outcome_audit_fails else None)
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order, audit=audit)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.cancellation_result is not None
+    assert result.cancellation_result.reason_code == "unsafe reason: provider payload"
+    if outcome_audit_fails:
+        assert result.reason_code == "agent_run_audit_pending"
+        assert result.audit_pending
+        assert result.primary_reason_code == "agent_run_cancellation_reason_invalid"
+        assert result.primary_outcome == "failure"
+    else:
+        assert result.reason_code == "agent_run_cancellation_reason_invalid"
+        assert audit.events[-1].outcome == "failure"
+        assert audit.events[-1].reason_code == "agent_run_cancellation_reason_invalid"
 
 
 @pytest.mark.asyncio
