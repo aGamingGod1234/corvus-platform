@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -30,7 +32,11 @@ from corvus.application.authorization import (
     evaluate_capability_intersection,
     verify_authorization_decision_snapshot,
 )
-from corvus.application.ports import ProjectAuthorizationRequest
+from corvus.application.ports import (
+    AgentRunAuthorizationRequest,
+    AgentRunOperation,
+    ProjectAuthorizationRequest,
+)
 from corvus.domain.access import (
     AccessBundle,
     AgentGrant,
@@ -40,6 +46,20 @@ from corvus.domain.access import (
     CredentialRef,
     CredentialStatus,
     DelegationGrant,
+)
+from corvus.domain.agent_runtime import (
+    AgentCapabilities,
+    AgentRunRequest,
+    AutonomyGrant,
+    AutonomyProfile,
+    ExecutableIdentity,
+    ProviderBinding,
+    ProviderFamily,
+    ProviderStatus,
+    ProviderTransport,
+    compute_agent_run_request_digest,
+    compute_autonomy_grant_digest,
+    compute_provider_binding_digest,
 )
 from corvus.domain.audit import (
     AuthorizationDecisionSnapshot,
@@ -69,6 +89,10 @@ from corvus.domain.deployment import (
 from corvus.domain.execution import ExecutionKind, ExecutionPlacement, ExecutionStatus
 from corvus.domain.request import RequestContext
 from corvus.domain.scope import AudiencePolicySnapshot
+from corvus.infrastructure.agent_run_authorization import (
+    VerifiedAgentRunAuthorizationAdapter,
+    VerifiedAgentRunAuthorizationInputs,
+)
 from corvus.infrastructure.project_authorization import (
     EvaluatingProjectAuthorizationAdapter,
     ProjectAuthorizationInputs,
@@ -3127,3 +3151,245 @@ def test_verified_project_authorization_adapter_requires_persisted_crypto_eviden
     assert allowed.reason_code == "exact_capability_intersection"
     assert denied.allowed is False
     assert denied.reason_code == "authorization_snapshot_signature_invalid"
+
+
+def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_state() -> None:
+    base = _exact_allow_case()
+    (
+        base_request,
+        requester_bundle,
+        requester_grant,
+        agent_grant,
+        agent_bundle,
+        agent_capability,
+    ) = base
+    run_id = uuid4()
+    action = AgentRunOperation.START.value
+    authorization_request = base_request.model_copy(
+        update={
+            "resource_kind": "agent_run",
+            "resource_id": run_id,
+            "action": action,
+        }
+    )
+    requester_grant = requester_grant.model_copy(
+        update={"resource_kind": "agent_run", "resource_id": run_id, "action": action}
+    )
+    agent_capability = agent_capability.model_copy(
+        update={"resource_kind": "agent_run", "resource_id": run_id, "action": action}
+    )
+    case = (
+        authorization_request,
+        requester_bundle,
+        requester_grant,
+        agent_grant,
+        agent_bundle,
+        agent_capability,
+    )
+    authority_context = _valid_authority_context(authorization_request)
+    snapshot, expected, signing_key, verification, _ = _authorization_snapshot_case(case)
+    assert authority_context.deployment_instance is not None
+    context = RequestContext(
+        id=authorization_request.request_context_id,
+        deployment_profile_id=authority_context.deployment_instance.deployment_profile_id,
+        deployment_instance_id=authorization_request.deployment_instance_id,
+        workspace_id=authorization_request.workspace_id,
+        workspace_authority_epoch=authorization_request.workspace_authority_epoch,
+        workspace_authority_generation=authorization_request.workspace_authority_generation,
+        authority_state_root=authorization_request.authority_state_root,
+        authority_epoch_credential_id=authorization_request.authority_epoch_credential_id,
+        authority_commit_receipt_id=authorization_request.authority_commit_receipt_id,
+        authority_proof_digest=authorization_request.authority_proof_digest,
+        scope_kind=authorization_request.scope_kind,
+        scope_id=authorization_request.scope_id,
+        scope_digest=authorization_request.scope_digest,
+        audience_policy_snapshot_id=authorization_request.audience_policy_snapshot_id,
+        audience_policy_digest=authorization_request.audience_policy_digest,
+        requester_id=authorization_request.requester_id,
+        client_context_id=authorization_request.client_context_id,
+        transport_principal_id=authorization_request.transport_principal_id,
+        agent_id=authorization_request.acting_agent_id,
+        agent_grant_id=agent_grant.id,
+        access_bundle_id=requester_bundle.id,
+        policy_digest=requester_bundle.policy_digest,
+        authorization_snapshot_id=snapshot.id,
+        authorization_snapshot_digest=expected.authorization_snapshot_digest,
+        authorization_signing_key_version_id=signing_key.id,
+        idempotency_key="verified-agent-run-authorization",
+        correlation_id=uuid4(),
+    )
+    binding = ProviderBinding(
+        workspace_id=authorization_request.workspace_id,
+        project_id=authorization_request.scope_id,
+        family=ProviderFamily.CODEX,
+        transport=ProviderTransport.LOCAL_CLI,
+        status=ProviderStatus.AVAILABLE,
+        executable_identity=ExecutableIdentity(
+            executable_path=Path("C:/corvus/codex.exe"),
+            version="1.0.0",
+            sha256_digest="a" * 64,
+        ),
+        model="gpt-5.6-sol",
+        capabilities=AgentCapabilities(),
+        health_checked_at=authorization_request.evaluated_at,
+        version=1,
+        data_egress_disclosure="Prompts leave the local process.",
+        server_storage_disclosure="Provider retention policy applies.",
+    )
+    autonomy = AutonomyGrant(
+        workspace_id=authorization_request.workspace_id,
+        project_id=authorization_request.scope_id,
+        profile=AutonomyProfile.REVIEW_FIRST,
+        allowed_roots=(Path("C:/corvus"),),
+        allowed_effect_classes=frozenset(),
+        denied_effect_classes=frozenset(),
+        allowed_network_destinations=(),
+        credential_grant_ids=(),
+        wall_clock_deadline=authorization_request.evaluated_at + timedelta(days=1),
+        provider_spend_ceiling=Decimal("0"),
+        corvus_budget_ceiling=Decimal("0"),
+        max_turns=4,
+        max_output_tokens=1024,
+        max_retries=0,
+        approval_ceiling=0,
+        always_block_effects=frozenset(),
+        notification_policy="notify",
+        summary_policy="summary",
+        issuer_principal_id=authorization_request.requester_id,
+        issued_at=authorization_request.evaluated_at - timedelta(minutes=1),
+        expires_at=authorization_request.evaluated_at + timedelta(days=2),
+        policy_digest="b" * 64,
+    )
+    run_request = AgentRunRequest(
+        run_id=run_id,
+        workspace_id=authorization_request.workspace_id,
+        project_id=authorization_request.scope_id,
+        provider_binding_id=binding.id,
+        provider_binding_version=binding.version,
+        provider_binding_digest=compute_provider_binding_digest(binding),
+        model=binding.model,
+        effort="high",
+        prompt="Review the repository.",
+        authorization_proof_id=snapshot.id,
+        authorization_proof_digest=expected.authorization_snapshot_digest,
+        autonomy_grant_id=autonomy.id,
+        autonomy_grant_digest=compute_autonomy_grant_digest(autonomy),
+        credential_grant_ids=(),
+        credential_proof_id=uuid4(),
+        credential_proof_digest="c" * 64,
+        budget_proof_id=uuid4(),
+        budget_proof_digest="d" * 64,
+        kill_switch_proof_id=authorization_request.kill_switch_snapshot_ids[0],
+        kill_switch_proof_digest=authorization_request.kill_switch_snapshot_digest,
+        sandbox_profile="review",
+        filesystem_envelope=("C:/corvus",),
+        network_envelope=(),
+        tool_envelope=(),
+        deadline=autonomy.wall_clock_deadline,
+        max_output_tokens=1024,
+        max_output_bytes=4096,
+        idempotency_key=context.idempotency_key,
+    )
+    agent_request = AgentRunAuthorizationRequest(
+        context=context,
+        client_surface=authorization_request.client_surface,
+        operation=AgentRunOperation.START,
+        request=run_request,
+        canonical_request_digest=compute_agent_run_request_digest(run_request),
+    )
+    resolved = VerifiedAgentRunAuthorizationInputs(
+        request=authorization_request,
+        authority_context=authority_context,
+        requester_bundle=requester_bundle,
+        requester_grants=(requester_grant,),
+        agent_grant=agent_grant,
+        agent_bundle=agent_bundle,
+        agent_capabilities=(agent_capability,),
+        snapshot=snapshot,
+        snapshot_expected=expected,
+        snapshot_verification=verification,
+        signing_key=signing_key,
+        autonomy_grant=autonomy,
+        provider_binding=binding,
+        credential_proof_id=run_request.credential_proof_id,
+        credential_proof_digest=run_request.credential_proof_digest,
+        budget_proof_id=run_request.budget_proof_id,
+        budget_proof_digest=run_request.budget_proof_digest,
+        kill_switch_proof_id=run_request.kill_switch_proof_id,
+        kill_switch_proof_digest=run_request.kill_switch_proof_digest,
+    )
+
+    class Inputs:
+        value = resolved
+
+        def resolve(
+            self, received: AgentRunAuthorizationRequest
+        ) -> VerifiedAgentRunAuthorizationInputs:
+            assert received == agent_request
+            return self.value
+
+    class Snapshots:
+        value = snapshot
+
+        def get_snapshot(
+            self, *, workspace_id: UUID, snapshot_id: UUID
+        ) -> AuthorizationDecisionSnapshot | None:
+            assert workspace_id == authorization_request.workspace_id
+            assert snapshot_id == snapshot.id
+            return self.value
+
+    inputs = Inputs()
+    adapter = VerifiedAgentRunAuthorizationAdapter(inputs=inputs, snapshots=Snapshots())
+
+    allowed = adapter.authorize(agent_request)
+    inputs.value = resolved.model_copy(
+        update={
+            "autonomy_grant": autonomy.model_copy(
+                update={"revoked_at": authorization_request.evaluated_at}
+            )
+        }
+    )
+    stale_autonomy = adapter.authorize(agent_request)
+    inputs.value = resolved.model_copy(
+        update={"provider_binding": binding.model_copy(update={"version": 2})}
+    )
+    stale_provider = adapter.authorize(agent_request)
+    inputs.value = resolved.model_copy(
+        update={
+            "requester_bundle": requester_bundle.model_copy(
+                update={"revoked_at": authorization_request.evaluated_at}
+            )
+        }
+    )
+    stale_authority = adapter.authorize(agent_request)
+    inputs.value = resolved.model_copy(update={"credential_proof_digest": "f" * 64})
+    stale_credential = adapter.authorize(agent_request)
+    inputs.value = resolved.model_copy(update={"budget_proof_digest": "f" * 64})
+    stale_budget = adapter.authorize(agent_request)
+    assert authority_context.kill_switch_verification_proof is not None
+    kill_proof = authority_context.kill_switch_verification_proof
+    armed_entry = kill_proof.entries[0].model_copy(update={"state": "armed"})
+    inputs.value = resolved.model_copy(
+        update={
+            "authority_context": authority_context.model_copy(
+                update={
+                    "kill_switch_verification_proof": kill_proof.model_copy(
+                        update={"entries": (armed_entry, *kill_proof.entries[1:])}
+                    )
+                }
+            )
+        }
+    )
+    kill_switch_active = adapter.authorize(agent_request)
+
+    assert allowed.allowed is True
+    assert allowed.reason_code == "exact_capability_intersection"
+    assert allowed.immutable_request_digest == run_request.immutable_request_digest
+    assert stale_autonomy.allowed is False
+    assert stale_autonomy.reason_code == "stale_autonomy_grant"
+    assert stale_provider.allowed is False
+    assert stale_provider.reason_code == "provider_binding_digest_mismatch"
+    assert stale_authority.reason_code == "requester_grant_revoked"
+    assert stale_credential.reason_code == "stale_credential_proof"
+    assert stale_budget.reason_code == "agent_run_over_budget"
+    assert kill_switch_active.reason_code == "kill_switch_armed"
