@@ -12,24 +12,32 @@ from corvus.application.agent_runtime import AgentRuntimeCoordinator
 from corvus.application.ports import (
     AgentRunAuditEvent,
     AgentRunAuditPort,
+    AgentRunAuditReceipt,
     AgentRunAuthorizationDecision,
     AgentRunAuthorizationPort,
     AgentRunAuthorizationRequest,
     AgentRunOperation,
     AgentRuntimePort,
+    compute_agent_run_audit_event_digest,
+    compute_agent_run_audit_receipt_digest,
 )
 from corvus.domain.agent_runtime import (
     AgentCapabilities,
     AgentRunEvent,
     AgentRunHandle,
     AgentRunRequest,
+    AgentRunStartResult,
     CancellationResult,
     ExecutableIdentity,
     ProviderBinding,
+    ProviderCandidate,
+    ProviderDiscoveryQuery,
     ProviderFamily,
+    ProviderHealth,
     ProviderStatus,
     ProviderTransport,
     compute_agent_run_request_digest,
+    compute_provider_binding_digest,
 )
 from corvus.domain.client import ClientSurface
 from corvus.domain.request import RequestContext
@@ -71,6 +79,8 @@ def _request(binding: ProviderBinding, **updates: object) -> AgentRunRequest:
         "workspace_id": binding.workspace_id,
         "project_id": binding.project_id,
         "provider_binding_id": binding.id,
+        "provider_binding_version": binding.version,
+        "provider_binding_digest": compute_provider_binding_digest(binding),
         "model": binding.model,
         "effort": "high",
         "prompt": "Review the repository.",
@@ -140,6 +150,9 @@ def _decision(
         "reason_code": "agent_run_authorized",
         "authorization_snapshot_id": request.context.authorization_snapshot_id,
         "canonical_request_digest": request.canonical_request_digest,
+        "immutable_request_digest": request.request.immutable_request_digest,
+        "provider_binding_version": request.request.provider_binding_version,
+        "provider_binding_digest": request.request.provider_binding_digest,
         "autonomy_grant_digest": request.request.autonomy_grant_digest,
         "credential_proof_digest": request.request.credential_proof_digest,
         "budget_proof_digest": request.request.budget_proof_digest,
@@ -180,16 +193,40 @@ class _Authorizer:
 
 
 class _AuditSink:
-    def __init__(self, order: list[str], *, fail_on_phase: str | None = None) -> None:
+    def __init__(
+        self,
+        order: list[str],
+        *,
+        fail_on_phase: str | None = None,
+        acknowledged: bool = True,
+    ) -> None:
         self.order = order
         self.fail_on_phase = fail_on_phase
+        self.acknowledged = acknowledged
         self.events: list[AgentRunAuditEvent] = []
+        self.receipts: list[AgentRunAuditReceipt] = []
 
-    def record(self, event: AgentRunAuditEvent) -> None:
+    def record(self, event: AgentRunAuditEvent) -> AgentRunAuditReceipt:
         self.order.append(f"audit:{event.phase}")
         if event.phase == self.fail_on_phase:
             raise RuntimeError("audit unavailable")
         self.events.append(event)
+        sequence = len(self.receipts) + 1
+        previous_digest = self.receipts[-1].receipt_digest if self.receipts else "0" * 64
+        event_digest = compute_agent_run_audit_event_digest(event)
+        receipt = AgentRunAuditReceipt(
+            sequence=sequence,
+            previous_receipt_digest=previous_digest,
+            event_digest=event_digest,
+            receipt_digest=compute_agent_run_audit_receipt_digest(
+                sequence=sequence,
+                previous_receipt_digest=previous_digest,
+                event_digest=event_digest,
+            ),
+            acknowledged=self.acknowledged,
+        )
+        self.receipts.append(receipt)
+        return receipt
 
 
 class _RecordingRuntime:
@@ -199,24 +236,37 @@ class _RecordingRuntime:
         order: list[str],
         *,
         failures: dict[str, str] | None = None,
+        start_handle_updates: dict[str, object] | None = None,
+        resume_handle_updates: dict[str, object] | None = None,
+        cancellation_handle_id: UUID | None = None,
     ) -> None:
         self.runtime = runtime
         self.order = order
         self.failures = failures or {}
+        self.start_handle_updates = start_handle_updates or {}
+        self.resume_handle_updates = resume_handle_updates or {}
+        self.cancellation_handle_id = cancellation_handle_id
 
-    def discover(self) -> tuple[ProviderBinding, ...]:
-        return self.runtime.discover()
+    def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
+        self.order.append("runtime:discover")
+        return self.runtime.discover(query)
 
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities:
         return self.runtime.capabilities(binding)
 
-    def health(self, binding: ProviderBinding) -> ProviderStatus:
+    def health(self, binding: ProviderBinding) -> ProviderHealth:
+        self.order.append("runtime:health")
         return self.runtime.health(binding)
 
-    async def start(self, request: AgentRunRequest) -> AgentRunHandle:
+    async def start(self, request: AgentRunRequest) -> AgentRunStartResult:
         self.order.append("runtime:start")
         self._raise_if_failed("start")
-        return await self.runtime.start(request)
+        result = await self.runtime.start(request)
+        return result.model_copy(
+            update={
+                "handle": result.handle.model_copy(update=self.start_handle_updates),
+            }
+        )
 
     def events(
         self,
@@ -232,7 +282,10 @@ class _RecordingRuntime:
     ) -> CancellationResult:
         self.order.append("runtime:cancel")
         self._raise_if_failed("cancel")
-        return await self.runtime.cancel(handle, current_kill_switch_proof_id)
+        result = await self.runtime.cancel(handle, current_kill_switch_proof_id)
+        if self.cancellation_handle_id is None:
+            return result
+        return result.model_copy(update={"handle_id": self.cancellation_handle_id})
 
     async def resume(
         self,
@@ -241,7 +294,8 @@ class _RecordingRuntime:
     ) -> AgentRunHandle:
         self.order.append("runtime:resume")
         self._raise_if_failed("resume")
-        return await self.runtime.resume(handle, request_with_fresh_proofs)
+        result = await self.runtime.resume(handle, request_with_fresh_proofs)
+        return result.model_copy(update=self.resume_handle_updates)
 
     def _raise_if_failed(self, operation: str) -> None:
         reason_code = self.failures.get(operation)
@@ -308,10 +362,13 @@ async def test_start_authorizes_audits_executes_and_audits_outcome(tmp_path: Pat
     assert result.ok
     assert result.reason_code == "agent_run_started"
     assert result.handle is not None
-    assert result.identical_start_replayed is None
+    assert not result.identical_start_replayed
+    assert not result.audit_pending
     assert order == [
         "authorization",
         "audit:authorization",
+        "runtime:discover",
+        "runtime:health",
         "runtime:start",
         "audit:outcome",
     ]
@@ -515,6 +572,9 @@ async def test_authorization_denial_propagates_without_runtime(
             {"kill_switch_proof_digest": "f" * 64},
             "agent_run_kill_switch_proof_digest_mismatch",
         ),
+        ({"provider_binding_version": 999}, "provider_binding_digest_mismatch"),
+        ({"provider_binding_digest": "f" * 64}, "provider_binding_digest_mismatch"),
+        ({"immutable_request_digest": "f" * 64}, "resume_request_substitution"),
     ],
 )
 async def test_receipt_mismatch_denies_before_runtime(
@@ -566,6 +626,51 @@ async def test_authorization_audit_failure_prevents_runtime(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_unacknowledged_authorization_audit_prevents_runtime(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(order, acknowledged=False),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_audit_unavailable"
+    assert "runtime:discover" not in order
+
+
+@pytest.mark.asyncio
+async def test_outcome_audit_failure_returns_retryable_pending_result(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(order, fail_on_phase="outcome"),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_audit_pending"
+    assert result.audit_pending
+    assert result.handle is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "substitution",
     [
@@ -596,7 +701,7 @@ async def test_start_replay_returns_stable_handle_and_changed_request_fails(
     mismatch = await coordinator.start(_context(changed), ClientSurface.CLI, changed)
 
     assert first.handle == replay.handle
-    assert replay.identical_start_replayed is None
+    assert replay.identical_start_replayed
     assert not mismatch.ok
     assert mismatch.reason_code == "agent_run_idempotency_mismatch"
 
@@ -625,12 +730,30 @@ async def test_invalid_context_binding_skips_all_ports(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_preflight_rejects_stale_binding_receipt(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding).model_copy(update={"provider_binding_digest": "f" * 64})
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "provider_binding_digest_mismatch"
+    assert "runtime:start" not in order
+
+
+@pytest.mark.asyncio
 async def test_resume_rejects_handle_substitution_before_ports(tmp_path: Path) -> None:
     workspace_id = uuid4()
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
     simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
-    handle = await simulator.start(request)
+    handle = (await simulator.start(request)).handle
     substituted = request.model_copy(update={"resume_handle_id": uuid4()})
     order: list[str] = []
     coordinator, _, _ = _coordinator(
@@ -656,7 +779,7 @@ async def test_resume_requires_bound_receipt_for_matching_fresh_request(tmp_path
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
     simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
-    handle = await simulator.start(request)
+    handle = (await simulator.start(request)).handle
     fresh = request.model_copy(
         update={
             "authorization_proof_id": uuid4(),
@@ -707,6 +830,8 @@ async def test_resume_requires_bound_receipt_for_matching_fresh_request(tmp_path
     assert order == [
         "authorization",
         "audit:authorization",
+        "runtime:discover",
+        "runtime:health",
         "runtime:resume",
         "audit:outcome",
     ]
@@ -720,7 +845,7 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
     simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
-    handle = await simulator.start(request)
+    handle = (await simulator.start(request)).handle
     current_proof_id = uuid4()
     current_proof_digest = "f" * 64
     order: list[str] = []
@@ -762,7 +887,7 @@ async def test_cancel_rejects_unapproved_current_proof_before_runtime(tmp_path: 
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
     simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
-    handle = await simulator.start(request)
+    handle = (await simulator.start(request)).handle
     order: list[str] = []
     runtime = _RecordingRuntime(simulator, order)
     authorizer = _Authorizer(
@@ -807,7 +932,7 @@ async def test_runtime_exceptions_have_operation_specific_errors_and_outcome_aud
     binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
     request = _request(binding)
     simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
-    handle = await simulator.start(request)
+    handle = (await simulator.start(request)).handle
     order: list[str] = []
     runtime = _RecordingRuntime(
         simulator,
@@ -839,6 +964,54 @@ async def test_runtime_exceptions_have_operation_specific_errors_and_outcome_aud
     assert not result.ok
     assert result.reason_code == expected_reason
     assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "expected_reason"),
+    [
+        ("start", "agent_run_start_handle_mismatch"),
+        ("resume", "agent_run_resume_handle_mismatch"),
+        ("cancel", "agent_run_cancellation_handle_mismatch"),
+    ],
+)
+async def test_runtime_return_identity_substitution_is_rejected_before_success_audit(
+    tmp_path: Path,
+    operation: str,
+    expected_reason: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        start_handle_updates={"run_id": uuid4()} if operation == "start" else None,
+        resume_handle_updates={"id": uuid4()} if operation == "resume" else None,
+        cancellation_handle_id=uuid4() if operation == "cancel" else None,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    if operation == "start":
+        result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+    elif operation == "resume":
+        resumed = request.model_copy(update={"resume_handle_id": handle.id})
+        result = await coordinator.resume(_context(resumed), ClientSurface.CLI, handle, resumed)
+    else:
+        result = await coordinator.cancel(
+            _context(request),
+            ClientSurface.CLI,
+            handle,
+            request,
+            uuid4(),
+            "f" * 64,
+        )
+
+    assert not result.ok
+    assert result.reason_code == expected_reason
     assert audit.events[-1].outcome == "failure"
 
 

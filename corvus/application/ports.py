@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -15,9 +17,12 @@ from corvus.domain.agent_runtime import (
     AgentRunEvent,
     AgentRunHandle,
     AgentRunRequest,
+    AgentRunStartResult,
     CancellationResult,
     ProviderBinding,
-    ProviderStatus,
+    ProviderCandidate,
+    ProviderDiscoveryQuery,
+    ProviderHealth,
     compute_agent_run_request_digest,
 )
 from corvus.domain.client import ClientSurface
@@ -215,6 +220,9 @@ class AgentRunAuthorizationDecision(BaseModel):
     reason_code: str = Field(pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", max_length=200)
     authorization_snapshot_id: UUID
     canonical_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    immutable_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider_binding_version: int = Field(ge=1)
+    provider_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     autonomy_grant_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     credential_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     budget_proof_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -237,9 +245,12 @@ class AgentRunAuditEvent(BaseModel):
     run_id: UUID
     handle_id: UUID | None = None
     provider_binding_id: UUID
+    provider_binding_version: int = Field(ge=1)
+    provider_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     authorization_snapshot_id: UUID
     authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     canonical_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    immutable_request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     autonomy_grant_id: UUID
     autonomy_grant_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     credential_proof_id: UUID
@@ -270,6 +281,56 @@ class AgentRunAuditEvent(BaseModel):
         return self
 
 
+def compute_agent_run_audit_event_digest(event: AgentRunAuditEvent) -> str:
+    encoded = json.dumps(
+        event.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def compute_agent_run_audit_receipt_digest(
+    *,
+    sequence: int,
+    previous_receipt_digest: str,
+    event_digest: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "event_digest": event_digest,
+            "previous_receipt_digest": previous_receipt_digest,
+            "sequence": sequence,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class AgentRunAuditReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sequence: int = Field(ge=1)
+    previous_receipt_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    event_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    receipt_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    acknowledged: bool
+
+    @model_validator(mode="after")
+    def validate_receipt_digest(self) -> AgentRunAuditReceipt:
+        expected = compute_agent_run_audit_receipt_digest(
+            sequence=self.sequence,
+            previous_receipt_digest=self.previous_receipt_digest,
+            event_digest=self.event_digest,
+        )
+        if self.receipt_digest != expected:
+            _raise_agent_run_contract_error("agent_run_audit_receipt_digest_mismatch")
+        return self
+
+
 @runtime_checkable
 class AgentRunAuthorizationPort(Protocol):
     def authorize(
@@ -280,18 +341,18 @@ class AgentRunAuthorizationPort(Protocol):
 
 @runtime_checkable
 class AgentRunAuditPort(Protocol):
-    def record(self, event: AgentRunAuditEvent) -> None: ...
+    def record(self, event: AgentRunAuditEvent) -> AgentRunAuditReceipt: ...
 
 
 @runtime_checkable
 class AgentRuntimePort(Protocol):
-    def discover(self) -> tuple[ProviderBinding, ...]: ...
+    def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]: ...
 
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities: ...
 
-    def health(self, binding: ProviderBinding) -> ProviderStatus: ...
+    def health(self, binding: ProviderBinding) -> ProviderHealth: ...
 
-    async def start(self, request: AgentRunRequest) -> AgentRunHandle: ...
+    async def start(self, request: AgentRunRequest) -> AgentRunStartResult: ...
 
     def events(
         self,
