@@ -604,6 +604,8 @@ def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> Non
         AgentRunEvent(**{**event.model_dump(), "event_digest": "f" * 64})
     with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
         _event(redacted_payload={"nested": {"access_token": "redacted"}})
+    with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
+        _event(redacted_payload={"sk-1234567890abcdef": "ok"})
 
 
 def test_event_allows_numeric_token_usage_fields_without_classifying_as_secret() -> None:

@@ -22,6 +22,7 @@ from corvus.application.ports import (
 )
 from corvus.domain.agent_runtime import (
     AutonomyGrant,
+    CapabilitySupport,
     ProviderBinding,
     ProviderStatus,
     ProviderTransport,
@@ -35,6 +36,8 @@ from corvus.infrastructure.project_authorization import (
     CapabilityIntersectionEvaluator,
     VerifiedProjectAuthorizationInputs,
 )
+
+_AGENT_RUN_CAPABILITY_UNAVAILABLE = "agent_run_capability_unavailable"
 
 
 class VerifiedAgentRunAuthorizationInputs(VerifiedProjectAuthorizationInputs):
@@ -319,6 +322,11 @@ class VerifiedAgentRunAuthorizationAdapter:
             return "provider_binding_digest_mismatch"
         if not is_cancellation and provider.status is not ProviderStatus.AVAILABLE:
             return "agent_run_provider_unavailable"
+        if (
+            is_cancellation
+            and provider.capabilities.provider_side_cancellation is not CapabilitySupport.SUPPORTED
+        ):
+            return _AGENT_RUN_CAPABILITY_UNAVAILABLE
 
         canonical_credential_grant_ids = (
             (request.credential_grant_id,) if request.credential_grant_id is not None else ()

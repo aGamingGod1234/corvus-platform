@@ -54,6 +54,7 @@ from corvus.domain.agent_runtime import (
     AgentRunState,
     AutonomyGrant,
     AutonomyProfile,
+    CapabilitySupport,
     ExecutableIdentity,
     ProviderBinding,
     ProviderFamily,
@@ -3582,7 +3583,39 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         }
     )
 
-    assert adapter._binding_denial(cancellation_agent_request, cancellation_inputs) is None
+    assert (
+        adapter._binding_denial(cancellation_agent_request, cancellation_inputs)
+        == "agent_run_capability_unavailable"
+    )
+    cancellation_binding = binding.model_copy(
+        update={
+            "capabilities": AgentCapabilities(
+                provider_side_cancellation=CapabilitySupport.SUPPORTED
+            )
+        }
+    )
+    supported_cancellation_request = cancellation_run_request.model_copy(
+        update={"provider_binding_digest": compute_provider_binding_digest(cancellation_binding)}
+    )
+    supported_cancellation_agent_request = cancellation_agent_request.model_copy(
+        update={
+            "request": supported_cancellation_request,
+            "canonical_request_digest": compute_agent_run_request_digest(
+                supported_cancellation_request
+            ),
+        }
+    )
+    supported_cancellation_inputs = cancellation_inputs.model_copy(
+        update={"provider_binding": cancellation_binding}
+    )
+
+    assert (
+        adapter._binding_denial(
+            supported_cancellation_agent_request,
+            supported_cancellation_inputs,
+        )
+        is None
+    )
 
     allowed = adapter.authorize(agent_request)
     expired_deadline_request = run_request.model_copy(

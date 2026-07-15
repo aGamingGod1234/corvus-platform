@@ -144,7 +144,7 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `674 passed` in 60.32 seconds in an isolated clean-room temporary directory; quoted-secret and workflow/quarantine redaction integration regressions passed; full Ruff, Ruff format, and strict mypy passed.
+- Python: `676 passed` in 63.63 seconds in an isolated clean-room temporary directory; quoted-secret, secret-shaped-key, authorization-decision, and cancellation-identity regressions passed; full Ruff, Ruff format, and strict mypy passed.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
 - Web: `23 passed` across 7 files; Vite production build passed (48 modules, 246.53 kB JS / 74.88 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.

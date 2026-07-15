@@ -612,15 +612,21 @@ class AgentRunStartResult(BaseModel):
 
 
 def _contains_secret_payload_key(value: object) -> bool:
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if is_sensitive_field_name(str(key)):
-                return True
-            if _contains_secret_payload_key(item):
-                return True
-    elif isinstance(value, (list, tuple)):
-        return any(_contains_secret_payload_key(item) for item in value)
-    return False
+    redactor = SecretRedactor()
+
+    def contains_secret(item: object) -> bool:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                key_text = str(key)
+                if is_sensitive_field_name(key_text) or redactor.redact(key_text) != key_text:
+                    return True
+                if contains_secret(child):
+                    return True
+        elif isinstance(item, (list, tuple)):
+            return any(contains_secret(child) for child in item)
+        return False
+
+    return contains_secret(value)
 
 
 def _contains_secret_payload_value(value: object) -> bool:

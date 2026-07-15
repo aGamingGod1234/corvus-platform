@@ -188,10 +188,12 @@ class _Authorizer:
         order: list[str],
         *,
         decision_updates: dict[str, object] | None = None,
+        malformed_decision_updates: dict[str, object] | None = None,
         error: Exception | None = None,
     ) -> None:
         self.order = order
         self.decision_updates = decision_updates or {}
+        self.malformed_decision_updates = malformed_decision_updates or {}
         self.error = error
         self.requests: list[AgentRunAuthorizationRequest] = []
 
@@ -203,7 +205,8 @@ class _Authorizer:
         self.requests.append(request)
         if self.error is not None:
             raise self.error
-        return _decision(request, **self.decision_updates)
+        decision = _decision(request, **self.decision_updates)
+        return decision.model_copy(update=self.malformed_decision_updates)
 
 
 class _AuditSink:
@@ -672,6 +675,35 @@ async def test_authorization_exception_never_calls_audit_or_runtime(tmp_path: Pa
         order,
     )
     authorizer = _Authorizer(order, error=RuntimeError("unavailable"))
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        authorizer=authorizer,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_authorization_unavailable"
+    assert order == ["authorization"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_authorization_decision_never_calls_audit_or_runtime(
+    tmp_path: Path,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    authorizer = _Authorizer(
+        order,
+        malformed_decision_updates={"allowed": "true"},
+    )
     coordinator, _, _ = _coordinator(
         runtime=runtime,
         order=order,
@@ -1683,6 +1715,43 @@ async def test_cancel_terminal_result_requires_canonical_terminal_handle(tmp_pat
 
     assert not result.ok
     assert result.reason_code == "agent_run_cancellation_handle_missing"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_substituted_nested_handle_identity(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    substituted_handle = handle.model_copy(update={"id": uuid4(), "state": AgentRunState.CANCELLED})
+    unvalidated_result = CancellationResult.model_construct(
+        handle_id=handle.id,
+        handle=substituted_handle,
+        accepted=True,
+        terminal=True,
+        reason_code="agent_run_cancelled",
+        timestamp=_NOW,
+    )
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_result_override=unvalidated_result,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_cancellation_handle_mismatch"
     assert audit.events[-1].outcome == "failure"
 
 

@@ -296,14 +296,14 @@ class AgentRuntimeCoordinator:
             )
         result_handle = cancellation_result.handle or handle
         if (
-            result_handle.run_id != handle.run_id
+            result_handle.id != handle.id
+            or result_handle.run_id != handle.run_id
             or result_handle.provider_binding_id != handle.provider_binding_id
         ):
             return self._post_authorization_failure(
                 authorization,
                 reason_code="agent_run_cancellation_handle_mismatch",
                 handle=handle,
-                cancellation_result=cancellation_result,
             )
         if not self._record_outcome(
             authorization,
@@ -353,7 +353,17 @@ class AgentRuntimeCoordinator:
         except ValidationError as exc:
             return None, self._denial_from_validation(context, operation, exc)
         try:
-            decision = self._authorization.authorize(authorization_request)
+            raw_decision = self._authorization.authorize(authorization_request)
+            if not isinstance(raw_decision, AgentRunAuthorizationDecision) or not isinstance(
+                raw_decision.allowed, bool
+            ):
+                raise TypeError("agent_run_authorization_decision_invalid")
+            decision = AgentRunAuthorizationDecision.model_validate(
+                {
+                    field_name: getattr(raw_decision, field_name)
+                    for field_name in AgentRunAuthorizationDecision.model_fields
+                }
+            )
             coordinator_time = self._clock()
             if coordinator_time.tzinfo is None or coordinator_time.utcoffset() is None:
                 raise ValueError("coordinator_clock_must_be_timezone_aware")

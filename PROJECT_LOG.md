@@ -869,20 +869,24 @@
 - Preserved kill-switch cancellation after ordinary autonomy deadlines and budget/runtime consumption limits expire, while retaining authority, credential, binding-digest, current-proof, capability, and audit checks.
 - Rejected approval events for tool calls that have already reached a blocked or result terminal state, preserving causal effect authorization in replay and audit streams.
 - Redacted quoted JSON-style secret assignments without corrupting valid provider JSON or missing credential assignments embedded inside already-parsed log strings.
+- Required verified provider-side cancellation capability before authorizing emergency cancellation, while continuing to tolerate unavailable health status for the stop path.
+- Rejected secret-shaped mapping keys as well as sensitive field names before freezing agent-run event payloads.
+- Revalidated every declared authorization-decision field at the coordinator port boundary before trusting an allow result.
+- Bound nested cancellation-result handles to the exact cancelled handle identity and withheld malformed adapter results from failure responses.
 
 ### Files Modified
 - `corvus/security.py` — fail-closed multi-word and quoted-key secret assignment redaction with valid JSON-string preservation.
-- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection, shared canonical evidence-value normalization, canonical executable identity enforcement, and causal tool-approval ordering.
+- `corvus/domain/agent_runtime.py` — allocation-free recursive secret inspection across keys and values, shared canonical evidence-value normalization, canonical executable identity enforcement, and causal tool-approval ordering.
 - `corvus/application/authorization.py` — exact agent-run cancellation exemption from budget/runtime consumption denial.
 - `corvus/application/ports.py` — asynchronous discovery and health contracts.
-- `corvus/application/agent_runtime.py` — awaited provider preflight, cancellation-safe deadline binding, and exact typed-result enforcement for start, resume, and cancel.
-- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts plus narrowly scoped emergency-cancellation liveness handling.
+- `corvus/application/agent_runtime.py` — awaited provider preflight, cancellation-safe deadline binding, revalidated authorization decisions, exact typed-result enforcement, and exact cancellation handle identity.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts plus narrowly scoped emergency-cancellation liveness and capability handling.
 - `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity and stable-digest binding lookup.
 - `tests/unit/test_security.py` — multi-word and quoted JSON-style credential regressions.
-- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, historical deserialization, structured usage-metadata, non-canonical executable-path, and late tool-approval regressions.
+- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, secret-shaped key, historical deserialization, structured usage-metadata, non-canonical executable-path, and late tool-approval regressions.
 - `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract and volatile health-refresh regressions.
-- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, emergency-cancellation, null-result, and malformed typed-result fail-closed regressions.
-- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation, cancellation after consumption exhaustion, and equivalent-timezone evidence receipt regressions.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, emergency-cancellation, malformed authorization, exact cancellation identity, null-result, and malformed typed-result fail-closed regressions.
+- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation, cancellation capability/consumption boundaries, and equivalent-timezone evidence receipt regressions.
 - `HACKATHON_STATUS.md` — current verification evidence.
 - `PROJECT_LOG.md` — this review-repair record.
 
