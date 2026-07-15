@@ -418,8 +418,11 @@ class AgentRuntimeCoordinator:
                 )
             )
             candidate = next(
-                item for item in candidates if item.binding.id == run_request.provider_binding_id
+                (item for item in candidates if item.binding.id == run_request.provider_binding_id),
+                None,
             )
+            if candidate is None:
+                return "agent_run_provider_unavailable"
             if (
                 candidate.binding_version != run_request.provider_binding_version
                 or candidate.binding_digest != run_request.provider_binding_digest

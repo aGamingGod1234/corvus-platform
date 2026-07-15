@@ -267,6 +267,17 @@ class AutonomyGrant(BaseModel):
     policy_digest: str = Field(pattern=_SHA256_PATTERN)
     revoked_at: datetime | None = None
 
+    @field_serializer(
+        "allowed_effect_classes",
+        "denied_effect_classes",
+        "allowed_sandbox_profiles",
+        "allowed_tool_ids",
+        "always_block_effects",
+        when_used="json",
+    )
+    def serialize_digest_frozensets(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
+
     @field_validator("allowed_roots")
     @classmethod
     def validate_allowed_roots(cls, roots: tuple[Path, ...]) -> tuple[Path, ...]:
@@ -402,6 +413,10 @@ class AgentRunRequest(BaseModel):
     max_output_bytes: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=512)
     resume_handle_id: UUID | None = None
+
+    @field_serializer("requested_effect_classes", when_used="json")
+    def serialize_requested_effect_classes(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

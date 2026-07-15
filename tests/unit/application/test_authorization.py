@@ -3188,7 +3188,9 @@ def test_verified_project_authorization_adapter_requires_persisted_crypto_eviden
     assert denied.reason_code == "authorization_snapshot_signature_invalid"
 
 
-def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_state() -> None:
+def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_state(
+    tmp_path: Path,
+) -> None:
     base, credential_context, credential_ref, credential_proof = _credential_bound_case()
     (
         base_request,
@@ -3227,11 +3229,12 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         data_egress_disclosure="Prompts leave the local process.",
         server_storage_disclosure="Provider retention policy applies.",
     )
+    autonomy_root = tmp_path.resolve()
     autonomy = AutonomyGrant(
         workspace_id=authorization_request.workspace_id,
         project_id=authorization_request.scope_id,
         profile=AutonomyProfile.REVIEW_FIRST,
-        allowed_roots=(Path("C:/corvus"),),
+        allowed_roots=(autonomy_root,),
         allowed_effect_classes=frozenset({"repository.read"}),
         denied_effect_classes=frozenset({"shell.execute"}),
         allowed_sandbox_profiles=frozenset({"review"}),
@@ -3276,7 +3279,7 @@ def test_verified_agent_run_authorization_adapter_rechecks_canonical_current_sta
         kill_switch_proof_id=authorization_request.kill_switch_snapshot_ids[0],
         kill_switch_proof_digest=authorization_request.kill_switch_snapshot_digest,
         sandbox_profile="review",
-        filesystem_envelope=(str(Path("C:/corvus")),),
+        filesystem_envelope=(str(autonomy_root),),
         network_envelope=(),
         tool_envelope=(),
         requested_effect_classes=frozenset(),

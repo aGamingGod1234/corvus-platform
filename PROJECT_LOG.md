@@ -727,3 +727,31 @@
 ### Suggested Next Steps
 - Allow the user's review agents and GitHub certification to complete on pull request #1.
 - Address confirmed review findings on `codex/main-integration`, reverify, and update the pull request before any merge decision.
+
+## 2026-07-15 — PR #1 Cross-Platform and Deterministic-Digest Repairs
+
+### What Was Implemented
+- Replaced the Windows-only root in the canonical-current-state authorization test with pytest's resolved cross-platform temporary root, fixing the shared Ubuntu and macOS certification failure without weakening production absolute-root validation.
+- Added JSON-only sorted serialization for every digest-bearing `AutonomyGrant` frozenset and `AgentRunRequest.requested_effect_classes`, eliminating cross-process hash-seed digest drift while preserving Python-mode frozensets.
+- Replaced exception-driven missing-provider lookup with explicit `None` handling that returns the existing fail-closed `agent_run_provider_unavailable` reason.
+- Added RED/GREEN regressions for deterministic serialization, Python-mode preservation, and missing-provider audit behavior.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — deterministic JSON serializers for digest-bearing frozensets.
+- `corvus/application/agent_runtime.py` — explicit missing-provider preflight handling.
+- `tests/unit/domain/test_agent_runtime.py` — deterministic serialization and Python-mode preservation coverage.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — missing-provider preflight and audit regression.
+- `tests/unit/application/test_authorization.py` — cross-platform canonical-root fixture.
+- `HACKATHON_STATUS.md` — current full and expanded verification counts.
+- `PROJECT_LOG.md` — this review-repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly approved all four repairs and the Linux/macOS CI fix; the production absolute-root rule, failure reason, PR-only push, and no-merge boundary remain unchanged.
+
+### Known Issues / Deferred
+- GitHub certification must rerun on the pushed repair commit before the cross-platform failures are considered remotely closed.
+- CodeRabbit and Copilot reviews remain quota-limited; live providers, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified repair to `codex/main-integration`, reply to and resolve the three Gemini review threads, and recheck every GitHub certification job.
+- Keep pull request #1 open and unmerged until the user's review gate is satisfied.

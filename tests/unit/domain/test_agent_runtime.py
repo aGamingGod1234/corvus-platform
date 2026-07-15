@@ -177,6 +177,43 @@ def test_agent_run_runtime_limit_digest_contract_is_public() -> None:
     assert digest_function is not None
 
 
+def test_autonomy_grant_digest_serialization_sorts_frozensets(tmp_path: Path) -> None:
+    allowed_effects = frozenset(f"repository.read.{index}" for index in range(16))
+    denied_effects = frozenset(f"shell.execute.{index}" for index in range(16))
+    sandbox_profiles = frozenset(f"sandbox.{index}" for index in range(16))
+    tool_ids = frozenset(f"repository.search.{index}" for index in range(16))
+    blocked_effects = frozenset(f"authority.bypass.{index}" for index in range(16))
+    grant = _grant(
+        tmp_path,
+        allowed_effect_classes=allowed_effects,
+        denied_effect_classes=denied_effects,
+        allowed_sandbox_profiles=sandbox_profiles,
+        allowed_tool_ids=tool_ids,
+        always_block_effects=blocked_effects,
+    )
+
+    payload = grant.model_dump(mode="json")
+    python_payload = grant.model_dump()
+
+    assert payload["allowed_effect_classes"] == sorted(allowed_effects)
+    assert payload["denied_effect_classes"] == sorted(denied_effects)
+    assert payload["allowed_sandbox_profiles"] == sorted(sandbox_profiles)
+    assert payload["allowed_tool_ids"] == sorted(tool_ids)
+    assert payload["always_block_effects"] == sorted(blocked_effects)
+    assert python_payload["allowed_effect_classes"] == allowed_effects
+
+
+def test_agent_run_digest_serialization_sorts_requested_effects() -> None:
+    requested_effects = frozenset(f"repository.read.{index}" for index in range(16))
+    request = _request(requested_effect_classes=requested_effects)
+
+    payload = request.model_dump(mode="json")
+    python_payload = request.model_dump()
+
+    assert payload["requested_effect_classes"] == sorted(requested_effects)
+    assert python_payload["requested_effect_classes"] == requested_effects
+
+
 def test_autonomy_grant_requires_a_max_output_byte_ceiling() -> None:
     assert "max_output_bytes" in AutonomyGrant.model_fields
 

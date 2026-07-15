@@ -957,6 +957,31 @@ async def test_provider_preflight_rejects_stale_binding_receipt(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_provider_preflight_rejects_missing_candidate(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(), event_templates={}),
+        order,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_provider_unavailable"
+    assert order == [
+        "authorization",
+        "audit:authorization",
+        "runtime:discover",
+        "audit:outcome",
+    ]
+    assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
 async def test_provider_preflight_audit_failure_returns_pending_result(tmp_path: Path) -> None:
     binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
     request = _request(binding).model_copy(update={"provider_binding_digest": "f" * 64})
