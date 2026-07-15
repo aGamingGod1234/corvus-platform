@@ -12,6 +12,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+_SENSITIVE_FIELD_TOKENS = (
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+)
+
+
+def is_sensitive_field_name(key: str) -> bool:
+    """Return whether a structured field name may carry sensitive data."""
+
+    normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+    return any(token in normalized for token in _SENSITIVE_FIELD_TOKENS)
+
 
 class SecurityError(RuntimeError):
     pass
@@ -30,14 +46,6 @@ class BoundedRedactedText:
 
 
 class SecretRedactor:
-    _SECRET_KEY_SUFFIXES: ClassVar[tuple[str, ...]] = (
-        "apikey",
-        "token",
-        "secret",
-        "password",
-        "authorization",
-        "cookie",
-    )
     _TOKEN_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
         re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?([^\s'\"]+)"),
         re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
@@ -73,8 +81,7 @@ class SecretRedactor:
 
     @classmethod
     def _is_secret_key(cls, key: str) -> bool:
-        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
-        return any(normalized.endswith(suffix) for suffix in cls._SECRET_KEY_SUFFIXES)
+        return is_sensitive_field_name(key)
 
     def redact_value(self, value: Any) -> Any:
         return self._redact_value(value, active=set())

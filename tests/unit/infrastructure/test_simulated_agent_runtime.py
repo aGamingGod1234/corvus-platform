@@ -16,9 +16,13 @@ from corvus.domain.agent_runtime import (
     AgentRunState,
     ExecutableIdentity,
     ProviderBinding,
+    ProviderCandidate,
+    ProviderDiscoveryQuery,
     ProviderFamily,
+    ProviderHealth,
     ProviderStatus,
     ProviderTransport,
+    compute_provider_binding_digest,
 )
 from corvus.infrastructure.agent_runtimes import (
     AgentRuntimeError,
@@ -60,6 +64,8 @@ def _request(binding: ProviderBinding, **updates: object) -> AgentRunRequest:
         "workflow_id": uuid4(),
         "work_item_id": uuid4(),
         "provider_binding_id": binding.id,
+        "provider_binding_version": binding.version,
+        "provider_binding_digest": compute_provider_binding_digest(binding),
         "model": binding.model,
         "effort": "high",
         "prompt": "Review the repository.",
@@ -97,8 +103,21 @@ def _runtime(
 
 @pytest.mark.asyncio
 async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path: Path) -> None:
-    second = _binding(tmp_path, id=uuid4(), family=ProviderFamily.CLAUDE)
-    first = _binding(tmp_path, id=uuid4())
+    workspace_id = uuid4()
+    project_id = uuid4()
+    second = _binding(
+        tmp_path,
+        id=uuid4(),
+        workspace_id=workspace_id,
+        project_id=project_id,
+        family=ProviderFamily.CLAUDE,
+    )
+    first = _binding(
+        tmp_path,
+        id=uuid4(),
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
     template = (
         SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),
         SimulatedEventTemplate(AgentRunEventType.MESSAGE_DELTA, {"text": "hello"}),
@@ -107,12 +126,27 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
     runtime = _runtime((second, first), {first.id: template, second.id: template})
 
     assert isinstance(runtime, AgentRuntimePort)
-    assert runtime.discover() == tuple(sorted((first, second), key=lambda item: str(item.id)))
+    query = ProviderDiscoveryQuery(workspace_id=workspace_id, project_id=project_id)
+    assert runtime.discover(query) == tuple(
+        ProviderCandidate(
+            binding=item,
+            binding_version=item.version,
+            binding_digest=compute_provider_binding_digest(item),
+        )
+        for item in sorted((first, second), key=lambda item: str(item.id))
+    )
     assert runtime.capabilities(first) == first.capabilities
-    assert runtime.health(first) is ProviderStatus.AVAILABLE
+    assert runtime.health(first) == ProviderHealth(
+        binding_id=first.id,
+        binding_version=first.version,
+        binding_digest=compute_provider_binding_digest(first),
+        status=ProviderStatus.AVAILABLE,
+        observed_at=first.health_checked_at,
+    )
 
     request = _request(first)
-    handle = await runtime.start(request)
+    started = await runtime.start(request)
+    handle = started.handle
     events = [event async for event in runtime.events(handle)]
     replayed = [event async for event in runtime.events(handle, after_sequence=1)]
 
@@ -122,6 +156,7 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
     assert events[0].previous_event_digest == "0" * 64
     assert events[1].previous_event_digest == events[0].event_digest
     assert events[2].previous_event_digest == events[1].event_digest
+    assert not started.replayed
 
 
 @pytest.mark.asyncio
@@ -131,7 +166,7 @@ async def test_cancel_is_idempotent_and_records_one_terminal_event(tmp_path: Pat
         (binding,),
         {binding.id: (SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),)},
     )
-    handle = await runtime.start(_request(binding))
+    handle = (await runtime.start(_request(binding))).handle
     proof_id = uuid4()
 
     first = await runtime.cancel(handle, proof_id)
@@ -148,7 +183,7 @@ async def test_cancel_is_idempotent_and_records_one_terminal_event(tmp_path: Pat
 async def test_cancel_requires_current_kill_switch_proof(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     runtime = _runtime((binding,), {binding.id: ()})
-    handle = await runtime.start(_request(binding))
+    handle = (await runtime.start(_request(binding))).handle
 
     with pytest.raises(AgentRuntimeError) as exc_info:
         await runtime.cancel(handle, None)  # type: ignore[arg-type]
@@ -166,7 +201,7 @@ async def test_simulator_snapshots_mutable_event_templates(tmp_path: Path) -> No
     )
     payload["state"] = "mutated"
 
-    handle = await runtime.start(_request(binding))
+    handle = (await runtime.start(_request(binding))).handle
     events = [event async for event in runtime.events(handle)]
 
     assert events[0].redacted_payload == {"state": "original"}
@@ -187,7 +222,7 @@ async def test_simulator_never_yields_mutable_payload_aliases(tmp_path: Path) ->
         },
     )
 
-    handle = await runtime.start(_request(binding))
+    handle = (await runtime.start(_request(binding))).handle
     event = [item async for item in runtime.events(handle)][0]
     nested = event.redacted_payload["nested"]
     assert isinstance(nested, Mapping)
@@ -206,7 +241,9 @@ async def test_start_identical_replay_returns_stable_handle(tmp_path: Path) -> N
     first = await runtime.start(request)
     second = await runtime.start(request)
 
-    assert second == first
+    assert second.handle == first.handle
+    assert not first.replayed
+    assert second.replayed
 
 
 @pytest.mark.asyncio
@@ -244,6 +281,27 @@ async def test_start_rejects_binding_model_substitution(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "substitution",
+    [
+        {"provider_binding_version": 999},
+        {"provider_binding_digest": "f" * 64},
+    ],
+)
+async def test_start_rejects_binding_version_or_digest_substitution(
+    tmp_path: Path,
+    substitution: dict[str, object],
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(_request(binding, **substitution))
+
+    assert exc_info.value.reason_code == "provider_binding_digest_mismatch"
+
+
+@pytest.mark.asyncio
 async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     other = _binding(tmp_path)
@@ -255,22 +313,25 @@ async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -
         },
     )
     request = _request(binding)
-    handle = await runtime.start(request)
+    handle = (await runtime.start(request)).handle
 
     with pytest.raises(AgentRuntimeError) as run_exc:
         await runtime.resume(
             handle,
-            _request(binding, run_id=uuid4(), resume_handle_id=handle.id),
+            request.model_copy(update={"run_id": uuid4(), "resume_handle_id": handle.id}),
         )
     assert run_exc.value.reason_code == "resume_run_substitution"
 
     with pytest.raises(AgentRuntimeError) as provider_exc:
         await runtime.resume(
             handle,
-            _request(
-                other,
-                run_id=request.run_id,
-                resume_handle_id=handle.id,
+            request.model_copy(
+                update={
+                    "provider_binding_id": other.id,
+                    "provider_binding_version": other.version,
+                    "provider_binding_digest": compute_provider_binding_digest(other),
+                    "resume_handle_id": handle.id,
+                }
             ),
         )
     assert provider_exc.value.reason_code == "resume_provider_binding_substitution"
@@ -278,7 +339,13 @@ async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -
     before = [event async for event in runtime.events(handle)]
     resumed = await runtime.resume(
         handle,
-        _request(binding, run_id=request.run_id, resume_handle_id=handle.id),
+        request.model_copy(
+            update={
+                "authorization_proof_id": uuid4(),
+                "authorization_proof_digest": "a" * 64,
+                "resume_handle_id": handle.id,
+            }
+        ),
     )
     after = [event async for event in runtime.events(resumed)]
     assert resumed == handle
@@ -288,9 +355,92 @@ async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -
     with pytest.raises(AgentRuntimeError) as terminal_exc:
         await runtime.resume(
             handle,
-            _request(binding, run_id=request.run_id, resume_handle_id=handle.id),
+            request.model_copy(update={"resume_handle_id": handle.id}),
         )
     assert terminal_exc.value.reason_code == "agent_run_terminal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "substitution",
+    [
+        {"model": "substituted-model"},
+        {"prompt": "Substituted prompt."},
+        {"messages": ("substituted",), "prompt": None},
+        {"sandbox_profile": "unsafe"},
+        {"network_envelope": ("*",)},
+        {"max_output_bytes": 1},
+        {"idempotency_key": "substituted"},
+    ],
+)
+async def test_resume_rejects_non_refreshable_request_substitution(
+    tmp_path: Path,
+    substitution: dict[str, object],
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    request = _request(binding)
+    handle = (await runtime.start(request)).handle
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.resume(
+            handle,
+            request.model_copy(update={**substitution, "resume_handle_id": handle.id}),
+        )
+
+    assert exc_info.value.reason_code == "resume_request_substitution"
+
+
+@pytest.mark.asyncio
+async def test_event_lifecycle_rejects_replay_cursor_and_tool_prerequisite_errors(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path)
+    cases = (
+        (
+            (SimulatedEventTemplate(AgentRunEventType.MESSAGE_DELTA, {"text": "early"}),),
+            "event_stream_requires_started",
+        ),
+        (
+            (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+            ),
+            "duplicate_started_event",
+        ),
+        (
+            (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}, "start-1"),
+                SimulatedEventTemplate(AgentRunEventType.MESSAGE_DELTA, {}, "start-1"),
+            ),
+            "duplicate_provider_event_id",
+        ),
+        (
+            (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_STARTED,
+                    {},
+                    tool_call_id="tool-1",
+                ),
+            ),
+            "tool_event_prerequisite_missing",
+        ),
+    )
+    for templates, reason_code in cases:
+        runtime = _runtime((binding,), {binding.id: templates})
+        with pytest.raises(AgentRuntimeError) as exc_info:
+            await runtime.start(_request(binding))
+        assert exc_info.value.reason_code == reason_code
+
+    runtime = _runtime(
+        (binding,),
+        {binding.id: (SimulatedEventTemplate(AgentRunEventType.STARTED, {}),)},
+    )
+    handle = (await runtime.start(_request(binding))).handle
+    with pytest.raises(AgentRuntimeError) as cursor_exc:
+        _ = [event async for event in runtime.events(handle, after_sequence=2)]
+    assert cursor_exc.value.reason_code == "invalid_event_sequence_cursor"
 
 
 @pytest.mark.asyncio
@@ -303,6 +453,7 @@ async def test_unknown_unavailable_and_post_terminal_resources_have_stable_error
         (available, unavailable),
         {
             available.id: (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),
                 SimulatedEventTemplate(AgentRunEventType.COMPLETED, {"result": "ok"}),
                 SimulatedEventTemplate(AgentRunEventType.MESSAGE_DELTA, {"text": "late"}),
             ),

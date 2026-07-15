@@ -15,12 +15,17 @@ from corvus.domain.agent_runtime import (
     AgentRunEventType,
     AgentRunHandle,
     AgentRunRequest,
+    AgentRunStartResult,
     AgentRunState,
     CancellationResult,
     ProviderBinding,
+    ProviderCandidate,
+    ProviderDiscoveryQuery,
+    ProviderHealth,
     ProviderStatus,
     compute_agent_run_event_digest,
     compute_agent_run_request_digest,
+    compute_provider_binding_digest,
 )
 
 _SIMULATED_HANDLE_NAMESPACE = UUID("895c0f76-81a2-4f35-bd94-df91f86d266e")
@@ -42,6 +47,7 @@ class SimulatedEventTemplate:
     event_type: AgentRunEventType
     redacted_payload: Mapping[str, JsonValue]
     provider_event_id: str | None = None
+    tool_call_id: str | None = None
 
 
 @dataclass
@@ -49,6 +55,7 @@ class _RunRecord:
     handle: AgentRunHandle
     events: list[AgentRunEvent]
     request_digest: str
+    immutable_request_digest: str
     cancellation_result: CancellationResult | None = None
 
 
@@ -79,16 +86,31 @@ class SimulatedAgentRuntime:
         }
         self._runs: dict[UUID, _RunRecord] = {}
 
-    def discover(self) -> tuple[ProviderBinding, ...]:
-        return tuple(self._bindings.values())
+    def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
+        return tuple(
+            ProviderCandidate(
+                binding=binding,
+                binding_version=binding.version,
+                binding_digest=compute_provider_binding_digest(binding),
+            )
+            for binding in self._bindings.values()
+            if binding.workspace_id == query.workspace_id and binding.project_id == query.project_id
+        )
 
     def capabilities(self, binding: ProviderBinding) -> AgentCapabilities:
         return self._known_binding(binding).capabilities
 
-    def health(self, binding: ProviderBinding) -> ProviderStatus:
-        return self._known_binding(binding).status
+    def health(self, binding: ProviderBinding) -> ProviderHealth:
+        known = self._known_binding(binding)
+        return ProviderHealth(
+            binding_id=known.id,
+            binding_version=known.version,
+            binding_digest=compute_provider_binding_digest(known),
+            status=known.status,
+            observed_at=known.health_checked_at,
+        )
 
-    async def start(self, request: AgentRunRequest) -> AgentRunHandle:
+    async def start(self, request: AgentRunRequest) -> AgentRunStartResult:
         binding = self._binding_for_start(request)
         request_digest = compute_agent_run_request_digest(request)
         handle_id = uuid5(
@@ -102,7 +124,7 @@ class SimulatedAgentRuntime:
                     "agent_run_idempotency_mismatch",
                     "idempotent start replay does not match the original request",
                 )
-            return existing.handle
+            return AgentRunStartResult(handle=existing.handle, replayed=True)
 
         events, state = self._materialize_events(
             request=request,
@@ -121,8 +143,9 @@ class SimulatedAgentRuntime:
             handle=handle,
             events=events,
             request_digest=request_digest,
+            immutable_request_digest=request.immutable_request_digest,
         )
-        return handle
+        return AgentRunStartResult(handle=handle, replayed=False)
 
     async def events(
         self,
@@ -135,6 +158,11 @@ class SimulatedAgentRuntime:
                 "event sequence cursor cannot be negative",
             )
         record = self._known_record(handle)
+        if after_sequence > len(record.events):
+            raise AgentRuntimeError(
+                "invalid_event_sequence_cursor",
+                "event sequence cursor exceeds the contiguous stream",
+            )
         for event in tuple(record.events):
             if event.sequence > after_sequence:
                 yield event
@@ -225,6 +253,11 @@ class SimulatedAgentRuntime:
                 "resume_handle_substitution",
                 "resume request must reference the current handle",
             )
+        if request_with_fresh_proofs.immutable_request_digest != record.immutable_request_digest:
+            raise AgentRuntimeError(
+                "resume_request_substitution",
+                "resume may refresh proofs only",
+            )
         if record.handle.state is not AgentRunState.RUNNING:
             raise AgentRuntimeError(
                 "agent_run_terminal",
@@ -256,6 +289,7 @@ class SimulatedAgentRuntime:
             event_type=template.event_type,
             redacted_payload=deepcopy(dict(template.redacted_payload)),
             provider_event_id=template.provider_event_id,
+            tool_call_id=template.tool_call_id,
         )
 
     def _binding_for_start(self, request: AgentRunRequest) -> ProviderBinding:
@@ -274,6 +308,14 @@ class SimulatedAgentRuntime:
             raise AgentRuntimeError(
                 "provider_binding_model_mismatch",
                 "requested model does not match the provider binding",
+            )
+        if (
+            request.provider_binding_version != binding.version
+            or request.provider_binding_digest != compute_provider_binding_digest(binding)
+        ):
+            raise AgentRuntimeError(
+                "provider_binding_digest_mismatch",
+                "requested provider binding receipt is stale or substituted",
             )
         self._validate_binding_scope(request, binding)
         return binding
@@ -302,6 +344,11 @@ class SimulatedAgentRuntime:
         previous_digest = GENESIS_EVENT_DIGEST
         state = AgentRunState.RUNNING
         terminal_seen = False
+        started_seen = False
+        provider_event_ids: set[str] = set()
+        requested_tools: set[str] = set()
+        started_tools: set[str] = set()
+        finished_tools: set[str] = set()
         templates = self._event_templates.get(binding.id, ())
         for sequence, template in enumerate(templates, start=1):
             if terminal_seen:
@@ -309,6 +356,31 @@ class SimulatedAgentRuntime:
                     "event_after_terminal",
                     "event template contains an event after a terminal event",
                 )
+            if sequence == 1 and template.event_type is not AgentRunEventType.STARTED:
+                raise AgentRuntimeError(
+                    "event_stream_requires_started",
+                    "the first event must be started",
+                )
+            if template.event_type is AgentRunEventType.STARTED:
+                if started_seen:
+                    raise AgentRuntimeError(
+                        "duplicate_started_event",
+                        "an event stream may contain one started event",
+                    )
+                started_seen = True
+            if template.provider_event_id is not None:
+                if template.provider_event_id in provider_event_ids:
+                    raise AgentRuntimeError(
+                        "duplicate_provider_event_id",
+                        "provider event identities must be unique",
+                    )
+                provider_event_ids.add(template.provider_event_id)
+            self._validate_tool_transition(
+                template,
+                requested=requested_tools,
+                started=started_tools,
+                finished=finished_tools,
+            )
             timestamp = binding.health_checked_at + timedelta(microseconds=sequence - 1)
             payload = dict(template.redacted_payload)
             event_digest = compute_agent_run_event_digest(
@@ -320,6 +392,7 @@ class SimulatedAgentRuntime:
                 redacted_payload=payload,
                 provider_event_id=template.provider_event_id,
                 previous_event_digest=previous_digest,
+                tool_call_id=template.tool_call_id,
             )
             event = AgentRunEvent(
                 run_id=request.run_id,
@@ -329,6 +402,7 @@ class SimulatedAgentRuntime:
                 event_type=template.event_type,
                 redacted_payload=payload,
                 provider_event_id=template.provider_event_id,
+                tool_call_id=template.tool_call_id,
                 previous_event_digest=previous_digest,
                 event_digest=event_digest,
             )
@@ -339,6 +413,59 @@ class SimulatedAgentRuntime:
                 state = terminal_state
                 terminal_seen = True
         return events, state
+
+    @staticmethod
+    def _validate_tool_transition(
+        template: SimulatedEventTemplate,
+        *,
+        requested: set[str],
+        started: set[str],
+        finished: set[str],
+    ) -> None:
+        event_type = template.event_type
+        tool_call_id = template.tool_call_id
+        tool_events = {
+            AgentRunEventType.TOOL_REQUESTED,
+            AgentRunEventType.TOOL_BLOCKED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_RESULT,
+        }
+        if event_type not in tool_events:
+            return
+        if tool_call_id is None:
+            raise AgentRuntimeError(
+                "tool_event_prerequisite_missing",
+                "tool events require a tool call identity",
+            )
+        if event_type is AgentRunEventType.TOOL_REQUESTED:
+            if tool_call_id in requested:
+                raise AgentRuntimeError(
+                    "tool_event_prerequisite_missing",
+                    "tool request identity cannot be replayed",
+                )
+            requested.add(tool_call_id)
+            return
+        if tool_call_id not in requested or tool_call_id in finished:
+            raise AgentRuntimeError(
+                "tool_event_prerequisite_missing",
+                "tool event lacks its requested prerequisite",
+            )
+        if event_type is AgentRunEventType.TOOL_STARTED:
+            if tool_call_id in started:
+                raise AgentRuntimeError(
+                    "tool_event_prerequisite_missing",
+                    "tool start identity cannot be replayed",
+                )
+            started.add(tool_call_id)
+        elif event_type is AgentRunEventType.TOOL_BLOCKED:
+            finished.add(tool_call_id)
+        elif tool_call_id not in started:
+            raise AgentRuntimeError(
+                "tool_event_prerequisite_missing",
+                "tool result requires a started tool call",
+            )
+        else:
+            finished.add(tool_call_id)
 
     def _known_record(self, handle: AgentRunHandle) -> _RunRecord:
         record = self._runs.get(handle.id)

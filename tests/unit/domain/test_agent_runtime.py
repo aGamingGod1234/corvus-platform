@@ -24,7 +24,10 @@ from corvus.domain.agent_runtime import (
     ProviderTransport,
     capability_enabled,
     compute_agent_run_event_digest,
+    compute_agent_run_immutable_digest,
+    compute_provider_binding_digest,
 )
+from corvus.security import SecretRedactor
 
 _DIGEST = "a" * 64
 _FUTURE = datetime(2030, 1, 1, tzinfo=UTC)
@@ -97,6 +100,8 @@ def _request(**updates: object) -> AgentRunRequest:
         "workflow_id": uuid4(),
         "work_item_id": uuid4(),
         "provider_binding_id": uuid4(),
+        "provider_binding_version": 1,
+        "provider_binding_digest": "6" * 64,
         "model": "gpt-5.6-sol",
         "effort": "high",
         "prompt": "Review the repository.",
@@ -192,12 +197,82 @@ def test_provider_binding_rejects_relative_executable_and_invalid_fallbacks(
 def test_capabilities_default_conservatively_and_only_exact_support_enables() -> None:
     capabilities = AgentCapabilities()
 
-    assert capabilities.text is CapabilitySupport.SUPPORTED
+    assert capabilities.text is CapabilitySupport.UNVERIFIED
     assert capabilities.tools is CapabilitySupport.UNVERIFIED
     assert capabilities.repository_write is CapabilitySupport.UNVERIFIED
     assert capability_enabled(CapabilitySupport.SUPPORTED)
     assert not capability_enabled(CapabilitySupport.UNVERIFIED)
     assert not capability_enabled(CapabilitySupport.UNSUPPORTED)
+
+
+def test_provider_binding_digest_covers_version_executable_and_credential_identity(
+    tmp_path: Path,
+) -> None:
+    local = _binding(tmp_path)
+    changed_version = local.model_copy(update={"version": 2})
+    changed_executable = local.model_copy(
+        update={
+            "executable_identity": local.executable_identity.model_copy(
+                update={"sha256_digest": "b" * 64}
+            )
+            if local.executable_identity is not None
+            else None
+        }
+    )
+    remote = _binding(
+        tmp_path,
+        transport=ProviderTransport.HTTP_API,
+        executable_identity=None,
+        credential_ref_id=uuid4(),
+    )
+
+    assert compute_provider_binding_digest(local) != compute_provider_binding_digest(
+        changed_version
+    )
+    assert compute_provider_binding_digest(local) != compute_provider_binding_digest(
+        changed_executable
+    )
+    assert compute_provider_binding_digest(remote) != compute_provider_binding_digest(
+        remote.model_copy(update={"credential_ref_id": uuid4()})
+    )
+
+
+def test_immutable_request_digest_allows_only_explicit_proof_refresh() -> None:
+    request = _request()
+    refreshed = request.model_copy(
+        update={
+            "authorization_proof_id": uuid4(),
+            "authorization_proof_digest": "a" * 64,
+            "autonomy_grant_id": uuid4(),
+            "autonomy_grant_digest": "b" * 64,
+            "credential_grant_ids": (uuid4(),),
+            "credential_proof_id": uuid4(),
+            "credential_proof_digest": "c" * 64,
+            "budget_proof_id": uuid4(),
+            "budget_proof_digest": "d" * 64,
+            "kill_switch_proof_id": uuid4(),
+            "kill_switch_proof_digest": "e" * 64,
+            "resume_handle_id": uuid4(),
+        }
+    )
+
+    assert compute_agent_run_immutable_digest(request) == compute_agent_run_immutable_digest(
+        refreshed
+    )
+    assert request.immutable_request_digest == compute_agent_run_immutable_digest(request)
+
+    for field, value in (
+        ("model", "substituted-model"),
+        ("prompt", "Substituted prompt."),
+        ("sandbox_profile", "unsafe"),
+        ("filesystem_envelope", ("filesystem.all",)),
+        ("max_output_tokens", 9999),
+        ("deadline", datetime(2031, 1, 1, tzinfo=UTC)),
+        ("idempotency_key", "substituted"),
+    ):
+        assert compute_agent_run_immutable_digest(request) != (
+            compute_agent_run_immutable_digest(request.model_copy(update={field: value}))
+        )
 
 
 @pytest.mark.parametrize(
@@ -289,6 +364,23 @@ def test_event_requires_positive_sequence_valid_digest_and_safe_payload() -> Non
         AgentRunEvent(**{**event.model_dump(), "event_digest": "f" * 64})
     with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
         _event(redacted_payload={"nested": {"access_token": "redacted"}})
+
+
+@pytest.mark.parametrize(
+    "secret_key",
+    [
+        "api_key_value",
+        "API-Key-Value",
+        "password_hash",
+        "authorization_header",
+        "cookie_value",
+        "refreshTokenValue",
+    ],
+)
+def test_event_rejects_common_secret_key_variants(secret_key: str) -> None:
+    with pytest.raises(ValidationError, match="agent_run_event_payload_contains_secret_key"):
+        _event(redacted_payload={"nested": [{secret_key: "redacted"}]})
+    assert SecretRedactor().redact_value({secret_key: "plaintext"}) == {secret_key: "[REDACTED]"}
 
 
 def test_event_payload_rejects_top_level_mutation_after_validation() -> None:

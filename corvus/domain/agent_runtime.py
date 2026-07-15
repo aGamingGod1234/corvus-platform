@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,22 +16,17 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    computed_field,
     field_serializer,
     field_validator,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
 
+from corvus.security import is_sensitive_field_name
+
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _GENESIS_EVENT_DIGEST = "0" * 64
-_SECRET_KEY_SUFFIXES = (
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "authorization",
-    "cookie",
-)
 
 
 def _now_utc() -> datetime:
@@ -90,7 +84,7 @@ def capability_enabled(support: CapabilitySupport) -> bool:
 class AgentCapabilities(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
-    text: CapabilitySupport = CapabilitySupport.SUPPORTED
+    text: CapabilitySupport = CapabilitySupport.UNVERIFIED
     structured_output: CapabilitySupport = CapabilitySupport.UNVERIFIED
     streaming: CapabilitySupport = CapabilitySupport.UNVERIFIED
     images: CapabilitySupport = CapabilitySupport.UNVERIFIED
@@ -176,6 +170,61 @@ class ProviderBinding(BaseModel):
     @field_validator("health_checked_at")
     @classmethod
     def validate_health_timestamp(cls, value: datetime) -> datetime:
+        if not _is_timezone_aware(value):
+            raise ValueError("provider_health_timestamp_must_be_timezone_aware")
+        return value
+
+
+def compute_provider_binding_digest(binding: ProviderBinding) -> str:
+    encoded = json.dumps(
+        binding.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class ProviderDiscoveryQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workspace_id: UUID
+    project_id: UUID | None = None
+
+
+class ProviderCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    binding: ProviderBinding
+    binding_version: int = Field(ge=1)
+    binding_digest: str = Field(pattern=_SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_binding_receipt(self) -> ProviderCandidate:
+        if (
+            self.binding_version != self.binding.version
+            or self.binding_digest != compute_provider_binding_digest(self.binding)
+        ):
+            _raise_contract_error(
+                "invalid_provider_candidate",
+                "provider_binding_digest_mismatch",
+            )
+        return self
+
+
+class ProviderHealth(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+
+    binding_id: UUID
+    binding_version: int = Field(ge=1)
+    binding_digest: str = Field(pattern=_SHA256_PATTERN)
+    status: ProviderStatus
+    observed_at: datetime
+
+    @field_validator("observed_at")
+    @classmethod
+    def validate_observed_at(cls, value: datetime) -> datetime:
         if not _is_timezone_aware(value):
             raise ValueError("provider_health_timestamp_must_be_timezone_aware")
         return value
@@ -273,6 +322,17 @@ class AutonomyGrant(BaseModel):
         return self
 
 
+def compute_autonomy_grant_digest(grant: AutonomyGrant) -> str:
+    encoded = json.dumps(
+        grant.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class AgentRunEventType(StrEnum):
     STARTED = "started"
     MESSAGE_DELTA = "message_delta"
@@ -304,6 +364,8 @@ class AgentRunRequest(BaseModel):
     workflow_id: UUID | None = None
     work_item_id: UUID | None = None
     provider_binding_id: UUID
+    provider_binding_version: int = Field(ge=1)
+    provider_binding_digest: str = Field(pattern=_SHA256_PATTERN)
     model: str = Field(min_length=1, max_length=200)
     effort: str = Field(min_length=1, max_length=100)
     messages: tuple[str, ...] | None = None
@@ -329,6 +391,11 @@ class AgentRunRequest(BaseModel):
     max_output_bytes: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=512)
     resume_handle_id: UUID | None = None
+
+    @computed_field
+    @property
+    def immutable_request_digest(self) -> str:
+        return compute_agent_run_immutable_digest(self)
 
     @model_validator(mode="after")
     def validate_prompt_shape(self) -> AgentRunRequest:
@@ -368,6 +435,39 @@ def compute_agent_run_request_digest(request: AgentRunRequest) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_REFRESHABLE_AGENT_RUN_FIELDS = frozenset(
+    {
+        "authorization_proof_id",
+        "authorization_proof_digest",
+        "autonomy_grant_id",
+        "autonomy_grant_digest",
+        "credential_grant_ids",
+        "credential_proof_id",
+        "credential_proof_digest",
+        "budget_proof_id",
+        "budget_proof_digest",
+        "kill_switch_proof_id",
+        "kill_switch_proof_digest",
+        "resume_handle_id",
+    }
+)
+
+
+def compute_agent_run_immutable_digest(request: AgentRunRequest) -> str:
+    encoded = json.dumps(
+        request.model_dump(
+            mode="json",
+            exclude=_REFRESHABLE_AGENT_RUN_FIELDS,
+            exclude_computed_fields=True,
+        ),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class AgentRunHandle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
@@ -386,16 +486,17 @@ class AgentRunHandle(BaseModel):
         return value
 
 
-def _normalize_payload_key(key: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", key.casefold())
+class AgentRunStartResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    handle: AgentRunHandle
+    replayed: bool
 
 
 def _contains_secret_payload_key(value: object) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            if any(
-                _normalize_payload_key(str(key)).endswith(suffix) for suffix in _SECRET_KEY_SUFFIXES
-            ):
+            if is_sensitive_field_name(str(key)):
                 return True
             if _contains_secret_payload_key(item):
                 return True
@@ -431,6 +532,7 @@ def compute_agent_run_event_digest(
     redacted_payload: Mapping[str, JsonValue],
     provider_event_id: str | None,
     previous_event_digest: str,
+    tool_call_id: str | None = None,
 ) -> str:
     encoded = json.dumps(
         {
@@ -438,6 +540,7 @@ def compute_agent_run_event_digest(
             "handle_id": str(handle_id),
             "previous_event_digest": previous_event_digest,
             "provider_event_id": provider_event_id,
+            "tool_call_id": tool_call_id,
             "redacted_payload": _thaw_json(redacted_payload),
             "run_id": str(run_id),
             "sequence": sequence,
@@ -461,6 +564,7 @@ class AgentRunEvent(BaseModel):
     event_type: AgentRunEventType
     redacted_payload: Mapping[str, JsonValue]
     provider_event_id: str | None = Field(default=None, min_length=1, max_length=512)
+    tool_call_id: str | None = Field(default=None, min_length=1, max_length=512)
     previous_event_digest: str = Field(pattern=_SHA256_PATTERN)
     event_digest: str = Field(pattern=_SHA256_PATTERN)
 
@@ -487,6 +591,14 @@ class AgentRunEvent(BaseModel):
             raise ValueError("agent_run_event_timestamp_must_be_timezone_aware")
         if _contains_secret_payload_key(self.redacted_payload):
             raise ValueError("agent_run_event_payload_contains_secret_key")
+        tool_events = {
+            AgentRunEventType.TOOL_REQUESTED,
+            AgentRunEventType.TOOL_BLOCKED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_RESULT,
+        }
+        if self.event_type in tool_events and self.tool_call_id is None:
+            raise ValueError("agent_run_tool_call_id_required")
         expected = compute_agent_run_event_digest(
             run_id=self.run_id,
             handle_id=self.handle_id,
@@ -496,6 +608,7 @@ class AgentRunEvent(BaseModel):
             redacted_payload=self.redacted_payload,
             provider_event_id=self.provider_event_id,
             previous_event_digest=self.previous_event_digest,
+            tool_call_id=self.tool_call_id,
         )
         if self.event_digest != expected:
             raise ValueError("agent_run_event_digest_mismatch")
