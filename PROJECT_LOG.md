@@ -1073,3 +1073,21 @@
 
 ### Suggested Next Steps
 - Re-run focused and full verification, obtain exact-head approval, merge PR #3, and tag `v0.2.0-alpha.1` from updated `main`.
+
+## 2026-07-16 — Complete PR #3 code-owner coverage
+
+### What Was Implemented
+- Extended required security review ownership to the desktop application and all release-support scripts.
+
+### Files Modified
+- `.github/CODEOWNERS` — enforces `@asifdotpy` review for `apps/desktop/` and `scripts/`.
+- `PROJECT_LOG.md` — records the governance follow-up.
+
+### Assumptions Made (flag these for review)
+- `@asifdotpy` remains the security owner for the alpha release surface.
+
+### Known Issues / Deferred
+- A fresh formal approval is still required because branch protection dismisses stale reviews after new commits.
+
+### Suggested Next Steps
+- Push the PR-head update, request Asif's review, and merge only after the protected-branch gate is satisfied.
