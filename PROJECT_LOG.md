@@ -652,3 +652,32 @@
 ### Suggested Next Steps
 - Re-review exact commits `f340447` and `1479d59` plus the final verification/log commit.
 - Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
+
+## 2026-07-15 — M2A Final Quality Review Repairs
+
+### What Was Implemented
+- Bound verified HTTP runs to the exact canonical credential reference and singleton credential grant, while preserving credentialless local CLI runs.
+- Added required budget unit/requested amount fields, a public runtime-limit digest over both spend ceilings and the complete runtime envelope, mandatory canonical budget evidence for every verified run, and a required autonomy output-byte ceiling.
+- Required outcome audit receipts to continue the authorization receipt exactly, made malformed receipts fail closed, and mapped unsafe runtime cancellation reasons to `agent_run_cancellation_reason_invalid` without losing the opaque cancellation result.
+- Rejected terminal event chains with unresolved tool calls and reuse of one effect decision across different tool calls; expanded nested sensitive-field detection and made only text capability default to supported.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py` — budget/runtime digest contracts, output-byte grant ceiling, capability default, and event-chain invariants.
+- `corvus/infrastructure/agent_run_authorization.py` — exact credential, mandatory budget, runtime-digest, and byte-ceiling enforcement.
+- `corvus/application/agent_runtime.py` — audit receipt continuity, malformed-receipt handling, and safe cancellation-reason mapping.
+- `corvus/security.py` — additional credential/private-key/signing-key/passphrase field variants.
+- `tests/unit/` — RED/GREEN regressions for every repaired boundary.
+- `HACKATHON_STATUS.md` — exact rerun count/result correction only.
+- `.superpowers/sdd/task-2-report.md` — fourth bounded repair evidence.
+- `PROJECT_LOG.md` — this completion record.
+
+### Assumptions Made (flag these for review)
+- None. Credential topology, budget semantics, receipt continuity, cancellation behavior, event-chain rules, sensitive variants, capability default, documentation limits, and stop boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Durable authority/evidence repositories and audit-pending reconciliation remain later infrastructure work.
+- No push, merge, README, dependency, migration, live provider/API/UI/database, Cloud/Team, history rewrite, or unrelated refactor was performed.
+
+### Suggested Next Steps
+- Re-review exact commits `415920a`, `224f65a`, and `5c81932` plus the final verification/log commit.
+- Keep M2A unmerged until the controller-owned ready PR review gate succeeds.
