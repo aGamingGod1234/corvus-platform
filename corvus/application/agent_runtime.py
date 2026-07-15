@@ -248,13 +248,6 @@ class AgentRuntimeCoordinator:
         if binding_mismatch is not None or not decision.allowed:
             return None, self._failure(context, operation, authorization_reason)
         return authorization_request, None
-        return AgentRunOperationResult(
-            request_context_id=context.id,
-            operation=AgentRunOperation.START,
-            ok=True,
-            reason_code="agent_run_started",
-            handle=handle,
-        )
 
     @staticmethod
     def _decision_binding_mismatch(
