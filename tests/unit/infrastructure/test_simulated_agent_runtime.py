@@ -169,6 +169,23 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_active_event_iterator_includes_events_appended_before_completion(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    handle = (await runtime.start(_request(binding))).handle
+    stream = runtime.events(handle)
+
+    first = await anext(stream)
+    await runtime.cancel(handle, uuid4(), "f" * 64)
+    remaining = [event async for event in stream]
+
+    assert first.event_type is AgentRunEventType.STARTED
+    assert [event.event_type for event in remaining] == [AgentRunEventType.CANCELLED]
+
+
+@pytest.mark.asyncio
 async def test_binding_lookup_accepts_volatile_health_refresh(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     runtime = _runtime((binding,), {binding.id: ()})

@@ -174,9 +174,10 @@ class SimulatedAgentRuntime:
                 "invalid_event_sequence_cursor",
                 "event sequence cursor exceeds the contiguous stream",
             )
-        for event in tuple(record.events):
-            if event.sequence > after_sequence:
-                yield event
+        next_event_index = after_sequence
+        while next_event_index < len(record.events):
+            yield record.events[next_event_index]
+            next_event_index += 1
 
     async def cancel(
         self,
