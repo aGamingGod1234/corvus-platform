@@ -694,6 +694,30 @@ async def test_authorization_clock_failure_never_calls_audit_or_runtime(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_naive_authorization_clock_never_calls_audit_or_runtime(tmp_path: Path) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator = AgentRuntimeCoordinator(
+        runtime=runtime,
+        authorization=_Authorizer(order),
+        audit=_AuditSink(order),
+        clock=lambda: datetime(2026, 7, 15),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_authorization_unavailable"
+    assert order == ["authorization"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reason_code",
     [

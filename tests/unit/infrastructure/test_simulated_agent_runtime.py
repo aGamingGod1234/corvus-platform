@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -166,6 +166,23 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
     assert events[1].previous_event_digest == events[0].event_digest
     assert events[2].previous_event_digest == events[1].event_digest
     assert not started.replayed
+
+
+@pytest.mark.asyncio
+async def test_binding_lookup_accepts_volatile_health_refresh(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime((binding,), {binding.id: ()})
+    refreshed = binding.model_copy(
+        update={
+            "status": ProviderStatus.UNHEALTHY,
+            "health_checked_at": binding.health_checked_at + timedelta(seconds=1),
+        }
+    )
+
+    assert runtime.capabilities(refreshed) == binding.capabilities
+    health = await runtime.health(refreshed)
+    assert health.status is ProviderStatus.AVAILABLE
+    assert health.observed_at == binding.health_checked_at
 
 
 @pytest.mark.asyncio

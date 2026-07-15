@@ -32,10 +32,6 @@ _MAX_AGENT_RUN_MESSAGE_CHARACTERS = 100_000
 _MAX_AGENT_RUN_MESSAGES = 100
 
 
-def _now_utc() -> datetime:
-    return datetime.now(UTC)
-
-
 def _is_timezone_aware(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
@@ -529,8 +525,6 @@ class AgentRunRequest(BaseModel):
     def validate_deadline(cls, value: datetime) -> datetime:
         if not _is_timezone_aware(value):
             raise ValueError("agent_run_deadline_must_be_timezone_aware")
-        if value <= _now_utc():
-            raise ValueError("agent_run_deadline_in_past")
         return value
 
 

@@ -38,6 +38,14 @@ def test_secret_redactor_removes_unquoted_multiword_credentials() -> None:
 def test_sensitive_field_classification_preserves_token_usage_counters() -> None:
     assert not is_sensitive_field_name("input_tokens")
     assert not is_sensitive_field_name("max_output_tokens")
+    assert not is_sensitive_field_name("tokens_used")
+    assert not is_sensitive_field_name("prompt_tokens_details")
+    assert not is_sensitive_field_name("completion_tokens_details")
+    assert not is_sensitive_field_name("cached_tokens")
+    assert not is_sensitive_field_name("audio_tokens")
+    assert not is_sensitive_field_name("accepted_prediction_tokens")
+    assert not is_sensitive_field_name("rejected_prediction_tokens")
+    assert is_sensitive_field_name("tokens")
     assert is_sensitive_field_name("access_token")
     assert is_sensitive_field_name("signing_key")
 

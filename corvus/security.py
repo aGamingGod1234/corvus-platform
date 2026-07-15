@@ -26,14 +26,21 @@ _SENSITIVE_FIELD_TOKENS = (
 )
 _SAFE_TOKEN_COUNTER_FIELDS = frozenset(
     {
+        "acceptedpredictiontokens",
+        "audiotokens",
+        "cachedtokens",
         "cachedinputtokens",
+        "completiontokensdetails",
         "completiontokens",
         "inputtokens",
         "maxoutputtokens",
         "outputtokens",
+        "prompttokensdetails",
         "prompttokens",
         "reasoningtokens",
+        "rejectedpredictiontokens",
         "totaltokens",
+        "tokensused",
     }
 )
 

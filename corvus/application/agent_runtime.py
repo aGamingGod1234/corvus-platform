@@ -348,6 +348,8 @@ class AgentRuntimeCoordinator:
         try:
             decision = self._authorization.authorize(authorization_request)
             coordinator_time = self._clock()
+            if coordinator_time.tzinfo is None or coordinator_time.utcoffset() is None:
+                raise ValueError("coordinator_clock_must_be_timezone_aware")
         except Exception:
             return None, self._failure(
                 context,

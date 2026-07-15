@@ -857,23 +857,29 @@
 - Removed the redundant payload thaw/copy from secret-value inspection and retained fail-closed scalar validation plus distinct secret-key and secret-value reason codes.
 - Added test-first regressions for all three review findings and observed each fail before the production repair.
 - Reproduced the post-push Ubuntu/macOS failure as a Ruff formatting-only mismatch in the new security test and normalized that file; all remote Python tests had already passed.
+- Closed the follow-up naive-clock defect by rejecting timezone-naive coordinator clocks inside the fail-closed authorization boundary before audit or runtime execution.
+- Made timezone-aware historical agent-run requests deserializable while retaining deadline enforcement at authorization time, preserving both archival fidelity and time-of-use safety.
+- Added exact safe classifications for provider token-usage counters/details while deliberately retaining generic `tokens` as sensitive credential-bearing data.
+- Replaced full provider-binding equality in simulator lookup with the established canonical digest, accepting health-only refreshes while retaining every stable identity, scope, capability, executable/credential, model, version, and disclosure boundary.
 
 ### Files Modified
 - `corvus/security.py` — fail-closed multi-word secret assignment redaction.
 - `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection.
 - `corvus/application/ports.py` — asynchronous discovery and health contracts.
 - `corvus/application/agent_runtime.py` — awaited provider preflight operations.
-- `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity and stable-digest binding lookup.
 - `tests/unit/test_security.py` — multi-word credential regression.
-- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload-scan regression.
-- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract regression.
-- `tests/unit/application/test_agent_runtime_coordinator.py` — asynchronous tracing test adapter.
+- `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, historical deserialization, and structured usage-metadata regressions.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract and volatile health-refresh regressions.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — asynchronous tracing adapter and naive coordinator-clock fail-closed regression.
+- `tests/unit/application/test_authorization.py` — existing authorization-time deadline regressions reverified.
 - `HACKATHON_STATUS.md` — current verification evidence.
 - `PROJECT_LOG.md` — this review-repair record.
 
 ### Assumptions Made (flag these for review)
 - Unquoted sensitive assignments are intentionally redacted through end-of-line; safe over-redaction is preferred to leaking a multi-word credential.
 - `capabilities()` remains synchronous because the reviewed blocking-I/O concern was limited to discovery and health, and current capability reports are immutable binding metadata.
+- Provider status and health timestamps remain runtime observations outside the stable binding digest and are validated separately before execution.
 
 ### Known Issues / Deferred
 - CodeRabbit accepted the final review request but its hosted reviewer was rate-limited; the existing CodeRabbit status on the reviewed head remained successful.

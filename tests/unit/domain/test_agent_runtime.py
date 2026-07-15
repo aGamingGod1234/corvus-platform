@@ -539,13 +539,19 @@ def test_autonomy_grant_rejects_noncanonical_root(tmp_path: Path) -> None:
         _grant(tmp_path, allowed_roots=(noncanonical,))
 
 
-def test_request_rejects_blank_idempotency_past_deadline_and_malformed_digest() -> None:
+def test_request_rejects_blank_idempotency_and_malformed_digest() -> None:
     with pytest.raises(ValidationError):
         _request(idempotency_key="   ")
-    with pytest.raises(ValidationError, match="agent_run_deadline_in_past"):
-        _request(deadline=datetime.now(UTC) - timedelta(seconds=1))
     with pytest.raises(ValidationError):
         _request(authorization_proof_digest="ABC")
+
+
+def test_request_allows_timezone_aware_historical_deadline_for_archival() -> None:
+    historical_deadline = datetime(2025, 1, 1, tzinfo=UTC)
+
+    request = _request(deadline=historical_deadline)
+
+    assert request.deadline == historical_deadline
 
 
 def test_request_requires_exactly_one_prompt_shape_and_has_no_secret_field() -> None:
@@ -599,6 +605,13 @@ def test_event_allows_numeric_token_usage_fields_without_classifying_as_secret()
             "input_tokens": 12,
             "output_tokens": 8,
             "max_output_tokens": 100,
+            "tokens_used": 20,
+            "prompt_tokens_details": {"cached_tokens": 4, "audio_tokens": 0},
+            "completion_tokens_details": {
+                "reasoning_tokens": 3,
+                "accepted_prediction_tokens": 2,
+                "rejected_prediction_tokens": 1,
+            },
         },
     )
 
@@ -919,6 +932,7 @@ def test_event_chain_rejects_tool_blocked_after_tool_started() -> None:
         "privateKeyPem",
         "signing-key-material",
         "passphrase_text",
+        "tokens",
     ],
 )
 def test_event_rejects_common_secret_key_variants(secret_key: str) -> None:

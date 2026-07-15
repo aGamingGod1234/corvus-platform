@@ -144,7 +144,7 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `659 passed` in 68.07 seconds; the latest Gemini review-repair runtime/security suite passed `195` tests in 1.17 seconds; the dedicated security unit module passed `4` tests; full Ruff and strict mypy passed.
+- Python: `663 passed` in 71.44 seconds; the latest Gemini authority/runtime/security repair suite passed `318` tests in 1.36 seconds plus the focused volatile-binding regression; the dedicated security unit module passed `4` tests; full Ruff, Ruff format, and strict mypy passed.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
 - Web: `23 passed` across 7 files; Vite production build passed (48 modules, 246.53 kB JS / 74.88 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.

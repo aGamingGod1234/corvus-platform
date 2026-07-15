@@ -358,7 +358,7 @@ class SimulatedAgentRuntime:
                 "unknown_provider_binding",
                 "provider binding is not registered",
             )
-        if known != binding:
+        if compute_provider_binding_digest(known) != compute_provider_binding_digest(binding):
             raise AgentRuntimeError(
                 "provider_binding_substitution",
                 "provider binding fields do not match the registered binding",
