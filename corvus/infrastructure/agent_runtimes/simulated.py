@@ -12,6 +12,7 @@ from corvus.domain.agent_runtime import (
     GENESIS_EVENT_DIGEST,
     AgentCapabilities,
     AgentRunEvent,
+    AgentRunEventChainError,
     AgentRunEventType,
     AgentRunHandle,
     AgentRunRequest,
@@ -26,6 +27,7 @@ from corvus.domain.agent_runtime import (
     compute_agent_run_event_digest,
     compute_agent_run_request_digest,
     compute_provider_binding_digest,
+    validate_agent_run_event_chain,
 )
 
 _SIMULATED_HANDLE_NAMESPACE = UUID("895c0f76-81a2-4f35-bd94-df91f86d266e")
@@ -431,6 +433,13 @@ class SimulatedAgentRuntime:
             if terminal_state is not None:
                 state = terminal_state
                 terminal_seen = True
+        try:
+            state = validate_agent_run_event_chain(events)
+        except AgentRunEventChainError as exc:
+            raise AgentRuntimeError(
+                exc.reason_code,
+                "event stream violates the shared agent-run chain contract",
+            ) from exc
         return events, state
 
     @staticmethod

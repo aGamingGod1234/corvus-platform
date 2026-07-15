@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -661,6 +661,100 @@ class AgentRunEvent(BaseModel):
         if self.event_digest != expected:
             raise ValueError("agent_run_event_digest_mismatch")
         return self
+
+
+class AgentRunEventChainError(ValueError):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunState:
+    if not events or events[0].event_type is not AgentRunEventType.STARTED:
+        raise AgentRunEventChainError("event_stream_requires_started")
+    run_id = events[0].run_id
+    handle_id = events[0].handle_id
+    previous_digest = _GENESIS_EVENT_DIGEST
+    provider_event_ids: set[str] = set()
+    requested_tools: dict[str, tuple[UUID, str]] = {}
+    started_tools: set[str] = set()
+    finished_tools: set[str] = set()
+    state = AgentRunState.RUNNING
+    terminal_seen = False
+    started_seen = False
+    terminal_states = {
+        AgentRunEventType.COMPLETED: AgentRunState.COMPLETED,
+        AgentRunEventType.FAILED: AgentRunState.FAILED,
+        AgentRunEventType.CANCELLED: AgentRunState.CANCELLED,
+    }
+
+    for expected_sequence, event in enumerate(events, start=1):
+        if terminal_seen:
+            raise AgentRunEventChainError("event_after_terminal")
+        if (
+            event.sequence != expected_sequence
+            or event.run_id != run_id
+            or event.handle_id != handle_id
+            or event.previous_event_digest != previous_digest
+        ):
+            raise AgentRunEventChainError("event_chain_binding_mismatch")
+        if event.event_type is AgentRunEventType.STARTED:
+            if started_seen:
+                raise AgentRunEventChainError("duplicate_started_event")
+            started_seen = True
+        if event.provider_event_id is not None:
+            if event.provider_event_id in provider_event_ids:
+                raise AgentRunEventChainError("duplicate_provider_event_id")
+            provider_event_ids.add(event.provider_event_id)
+
+        tool_call_id = event.tool_call_id
+        if event.event_type is AgentRunEventType.TOOL_REQUESTED:
+            if tool_call_id is None or tool_call_id in requested_tools:
+                raise AgentRunEventChainError("tool_event_prerequisite_missing")
+            requested_tools[tool_call_id] = _effect_authorization_reference(event)
+        elif event.event_type in {
+            AgentRunEventType.TOOL_BLOCKED,
+            AgentRunEventType.TOOL_STARTED,
+            AgentRunEventType.TOOL_RESULT,
+        }:
+            if (
+                tool_call_id is None
+                or tool_call_id not in requested_tools
+                or tool_call_id in finished_tools
+            ):
+                raise AgentRunEventChainError("tool_event_prerequisite_missing")
+            if _effect_authorization_reference(event) != requested_tools[tool_call_id]:
+                raise AgentRunEventChainError("tool_effect_authorization_mismatch")
+            if event.event_type is AgentRunEventType.TOOL_STARTED:
+                if tool_call_id in started_tools:
+                    raise AgentRunEventChainError("tool_event_prerequisite_missing")
+                started_tools.add(tool_call_id)
+            elif event.event_type is AgentRunEventType.TOOL_BLOCKED:
+                finished_tools.add(tool_call_id)
+            elif tool_call_id not in started_tools:
+                raise AgentRunEventChainError("tool_event_prerequisite_missing")
+            else:
+                finished_tools.add(tool_call_id)
+        elif event.event_type is AgentRunEventType.APPROVAL_REQUIRED and tool_call_id is not None:
+            if tool_call_id not in requested_tools:
+                raise AgentRunEventChainError("tool_event_prerequisite_missing")
+            if _effect_authorization_reference(event) != requested_tools[tool_call_id]:
+                raise AgentRunEventChainError("tool_effect_authorization_mismatch")
+
+        previous_digest = event.event_digest
+        terminal_state = terminal_states.get(event.event_type)
+        if terminal_state is not None:
+            state = terminal_state
+            terminal_seen = True
+    return state
+
+
+def _effect_authorization_reference(event: AgentRunEvent) -> tuple[UUID, str]:
+    decision_id = event.effect_authorization_decision_id
+    decision_digest = event.effect_authorization_decision_digest
+    if decision_id is None or decision_digest is None:
+        raise AgentRunEventChainError("effect_authorization_decision_required")
+    return decision_id, decision_digest
 
 
 class CancellationResult(BaseModel):

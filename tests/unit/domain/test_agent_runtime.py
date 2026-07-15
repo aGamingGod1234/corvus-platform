@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from corvus.domain.agent_runtime import (
     AgentCapabilities,
     AgentRunEvent,
+    AgentRunEventChainError,
     AgentRunEventType,
     AgentRunRequest,
     AutonomyGrant,
@@ -26,6 +27,7 @@ from corvus.domain.agent_runtime import (
     compute_agent_run_event_digest,
     compute_agent_run_immutable_digest,
     compute_provider_binding_digest,
+    validate_agent_run_event_chain,
 )
 from corvus.security import SecretRedactor
 
@@ -454,6 +456,110 @@ def test_effect_events_require_digest_bound_authorization_decision(
                 "effect_authorization_decision_digest": "e" * 64,
             }
         )
+
+
+@pytest.mark.parametrize(
+    "follow_up_type",
+    [
+        AgentRunEventType.TOOL_BLOCKED,
+        AgentRunEventType.TOOL_STARTED,
+        AgentRunEventType.TOOL_RESULT,
+        AgentRunEventType.APPROVAL_REQUIRED,
+    ],
+)
+def test_event_chain_rejects_tool_decision_reference_substitution(
+    follow_up_type: AgentRunEventType,
+) -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    first_decision_id = uuid4()
+    second_decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    requested = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=first_decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    events = [started, requested]
+    if follow_up_type is AgentRunEventType.TOOL_RESULT:
+        tool_started = _event(
+            run_id=run_id,
+            handle_id=handle_id,
+            sequence=3,
+            timestamp=started.timestamp + timedelta(microseconds=2),
+            event_type=AgentRunEventType.TOOL_STARTED,
+            tool_call_id="tool-1",
+            effect_authorization_decision_id=first_decision_id,
+            effect_authorization_decision_digest="d" * 64,
+            previous_event_digest=requested.event_digest,
+        )
+        events.append(tool_started)
+    previous = events[-1]
+    substituted = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=len(events) + 1,
+        timestamp=started.timestamp + timedelta(microseconds=len(events)),
+        event_type=follow_up_type,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=second_decision_id,
+        effect_authorization_decision_digest="e" * 64,
+        previous_event_digest=previous.event_digest,
+    )
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((*events, substituted))
+
+    assert exc_info.value.reason_code == "tool_effect_authorization_mismatch"
+
+
+def test_event_chain_allows_standalone_and_matching_tool_approvals() -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    standalone_approval = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.APPROVAL_REQUIRED,
+        effect_authorization_decision_id=uuid4(),
+        effect_authorization_decision_digest="c" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    requested = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=3,
+        timestamp=started.timestamp + timedelta(microseconds=2),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=standalone_approval.event_digest,
+    )
+    tool_approval = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=4,
+        timestamp=started.timestamp + timedelta(microseconds=3),
+        event_type=AgentRunEventType.APPROVAL_REQUIRED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=requested.event_digest,
+    )
+
+    state = validate_agent_run_event_chain((started, standalone_approval, requested, tool_approval))
+
+    assert state.value == "running"
 
 
 @pytest.mark.parametrize(

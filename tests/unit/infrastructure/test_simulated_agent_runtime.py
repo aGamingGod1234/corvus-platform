@@ -510,6 +510,40 @@ async def test_effect_authorization_receipt_is_preserved_in_event_chain(
 
 
 @pytest.mark.asyncio
+async def test_simulator_rejects_tool_effect_authorization_substitution(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path)
+    runtime = _runtime(
+        (binding,),
+        {
+            binding.id: (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_REQUESTED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=uuid4(),
+                    effect_authorization_decision_digest="d" * 64,
+                ),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_STARTED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=uuid4(),
+                    effect_authorization_decision_digest="e" * 64,
+                ),
+            )
+        },
+    )
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(_request(binding))
+
+    assert exc_info.value.reason_code == "tool_effect_authorization_mismatch"
+
+
+@pytest.mark.asyncio
 async def test_unknown_unavailable_and_post_terminal_resources_have_stable_errors(
     tmp_path: Path,
 ) -> None:
