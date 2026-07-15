@@ -2,9 +2,9 @@
 
 Required for every PR that touches any path in `.github/CODEOWNERS`
 (security, sandbox, authorization, verification, trust root, `tests/security/`).
-The security owner (Asif) must approve before merge. This is the enforceable
-half of the GitHub-workflow proposal — CI runs the automated gates, a human
-runs this checklist.
+The security owner (Asif) must approve before merge. CODEOWNERS routes review;
+enforcement depends on protected-branch settings requiring code-owner approval.
+CI runs the automated gates, and a human runs this checklist.
 
 ## Fail-closed by default
 - [ ] Authorization decisions **deny by default**. An unverified or
@@ -12,7 +12,8 @@ runs this checklist.
 - [ ] No new path introduces a default-allow branch in
       `corvus/application/authorization.py`, `corvus/infrastructure/project_authorization.py`,
       the explicit authority/repository modules listed in CODEOWNERS, or
-      `corvus/mvp/governance.py`.
+      `corvus/mvp/governance.py`, or `corvus/mvp/core.py` (effect approval,
+      execution, idempotency, and budget state transitions).
 
 ## No secret material
 - [ ] No real credentials committed. `.env` files stay gitignored; fixtures

@@ -10,20 +10,33 @@
 # their non-security paths (corvus/mvp, corvus/infrastructure/repositories
 # non-auth, apps/, openapi/) once this PR lands.
 
-# Protect the ownership policy itself from unreviewed rerouting.
-/.github/CODEOWNERS                            @asifdotpy
+# Protect the ownership policy, security-governance documents, and required
+# certification workflow from unreviewed rerouting or check-name preservation.
+/.github/                                       @asifdotpy
 
 # Proof-carrying verification + sandbox execution boundary
 /corvus/security.py                              @asifdotpy
 /corvus/sandbox.py                               @asifdotpy
 /corvus/safe_process.py                          @asifdotpy
 /corvus/verification.py                          @asifdotpy
+/corvus/models.py                                @asifdotpy
+/corvus/cli.py                                   @asifdotpy
+/corvus/snapshot.py                              @asifdotpy
+/corvus/delivery.py                              @asifdotpy
 /corvus/domain/                                  @asifdotpy
+
+# Provider validation, redaction, credential, and child-process boundaries
+/corvus/providers.py                             @asifdotpy
+/corvus/provider_control.py                      @asifdotpy
+/corvus/codex_cli.py                             @asifdotpy
+/corvus/codex_install.py                         @asifdotpy
+/corvus/config.py                                @asifdotpy
 
 # Authorization / authority / agent-to-agent trust root
 /corvus/application/authorization.py             @asifdotpy
 /corvus/application/agent_runtime.py              @asifdotpy
 /corvus/application/ports.py                      @asifdotpy
+/corvus/application/projects.py                   @asifdotpy
 /corvus/infrastructure/authority_root.py         @asifdotpy
 /corvus/infrastructure/project_authorization.py  @asifdotpy
 /corvus/infrastructure/project_authority.py      @asifdotpy
@@ -32,9 +45,16 @@
 /corvus/infrastructure/project_recovery.py        @asifdotpy
 /corvus/infrastructure/agent_run_authorization.py @asifdotpy
 /corvus/infrastructure/agent_runtimes/             @asifdotpy
+/corvus/infrastructure/db.py                                @asifdotpy
+/corvus/infrastructure/migrations/                         @asifdotpy
+/corvus/infrastructure/project_audit.py                    @asifdotpy
+/corvus/infrastructure/importers/project_config.py         @asifdotpy
 /corvus/infrastructure/repositories/audit.py                @asifdotpy
 /corvus/infrastructure/repositories/authority.py            @asifdotpy
 /corvus/infrastructure/repositories/authorization_inputs.py @asifdotpy
+/corvus/infrastructure/repositories/handoff.py              @asifdotpy
+/corvus/infrastructure/repositories/identity_scope.py       @asifdotpy
+/corvus/infrastructure/repositories/projects.py             @asifdotpy
 /corvus/infrastructure/repositories/registry.py              @asifdotpy
 /corvus/database.py                                          @asifdotpy
 
@@ -46,21 +66,36 @@
 /tests/unit/application/test_authorization.py              @asifdotpy
 /tests/unit/domain/test_agent_runtime.py                   @asifdotpy
 /tests/unit/infrastructure/test_simulated_agent_runtime.py @asifdotpy
+/tests/integration/test_authority_repository.py              @asifdotpy
+/tests/integration/test_authority_root_calculator.py         @asifdotpy
+/tests/integration/test_authorization_input_repository.py    @asifdotpy
+/tests/integration/test_local_authority.py                   @asifdotpy
+/tests/integration/test_project_authority_slice.py           @asifdotpy
+/tests/integration/test_project_authorization_adapter.py     @asifdotpy
+/tests/integration/test_scoped_audit_repository.py           @asifdotpy
+/tests/integration/test_signed_project_service.py            @asifdotpy
+/tests/integration/test_project_create_recovery.py           @asifdotpy
+/tests/integration/test_project_repository.py                @asifdotpy
 
-# NOTE: corvus/mvp/governance.py (approval governance) is security-adjacent.
-# Route it to @asifdotpy OR a security-aware reviewer + Lucas; not left unreviewed.
-/corvus/mvp/governance.py                       @asifdotpy @aGamingGod1234
+# MVP execution, persistence, governance, ingress, update, deployment, and API boundaries
+/corvus/mvp/governance.py                       @asifdotpy
+/corvus/mvp/core.py                             @asifdotpy
+/corvus/mvp/store.py                            @asifdotpy
+/corvus/mvp/models.py                           @asifdotpy
 /corvus/mvp/ingress.py                          @asifdotpy
 /corvus/mvp/desktop.py                          @asifdotpy
+/corvus/mvp/desktop_runtime.py                  @asifdotpy
 /corvus/mvp/deployment.py                       @asifdotpy
 /corvus/mvp/api.py                              @asifdotpy
 
 # Supply-chain provenance generation
 /scripts/generate_supply_chain.py               @asifdotpy
 
-# MVP security regression suites
+# MVP regression suites protect the execution and trust-boundary contracts.
+/tests/mvp/test_execution_core.py               @asifdotpy
 /tests/mvp/test_governance.py                   @asifdotpy
 /tests/mvp/test_ingress.py                      @asifdotpy
 /tests/mvp/test_deployment_desktop.py           @asifdotpy
+/tests/mvp/test_desktop_runtime.py              @asifdotpy
 /tests/mvp/test_api.py                          @asifdotpy
 /tests/mvp/test_supply_chain.py                 @asifdotpy

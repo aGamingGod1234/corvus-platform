@@ -15,9 +15,11 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Credentials resolved only via OS keyring / scoped cloud vault at point of use
 - [ ] Provider output redaction confirmed — no leaked tokens/keys in logs, screenshots,
       or delivered evidence
-- [ ] VERIFIED during PR #1 review: `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest`
-      in event payloads; event validation rejects secret keys AND values
-      (see `SecretRedactor` and the agent-runtime secret payload checks)
+- [ ] CURRENT BRANCH STATUS: `SecretRedactor` redacts registered values, sensitive
+      mapping keys, assigned api_key/token/secret/password values, and recognized
+      sk-/GitHub token forms. It does not generically detect bare
+      `Bearer`/`Basic`/`Digest` strings under benign keys. Keep this item open until
+      explicit patterns and benign-key regressions land.
 - [ ] DEDICATED `tests/unit/test_security.py` for `corvus/security.py` core —
       OPEN follow-up (non-blocking); currently only `tests/security/test_structured_redaction.py`
       covers it directly
@@ -26,11 +28,10 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Completion claims backed by actual evidence (logs, hashes, test output) — not just agent assertion
 - [ ] Migration fixtures are byte-exact and reproducible, not approximate
 - [ ] Delivery is atomic — no partial/corrupted state possible on interruption
-- [ ] VERIFIED during PR #1 review: `validate_agent_run_event_chain` recomputes every event
-      digest + enforces sequence/run/handle/`previous_event_digest` chaining; tampered or
-      out-of-order events rejected
-- [ ] VERIFIED: `TOOL_BLOCKED` after `TOOL_STARTED` rejected; authorization fail-closed on
-      operation-field smuggling (see `AgentRunAuthorizationRequest.validate_operation_binding`)
+- [ ] CURRENT BRANCH STATUS: the agent-run event-chain validator and operation-binding
+      contracts are not present on this branch and are not verified here. Existing
+      project-create and MVP replay tests cover separate paths. Keep this item open
+      until the runtime implementation and focused tests are present on the reviewed commit.
 
 ## Review Process (gate integrity — lessons from this session)
 - [ ] Two independent reviews reference the EXACT same frozen commit hash
@@ -40,13 +41,15 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
       review is a real failure mode; never treat an earlier reviewed commit as the current head
 - [ ] AFTER posting a review: verify it actually landed via
       `gh api repos/.../pulls/N/reviews` — a self-`--approve` may NOT persist
-      (GitHub eligibility / dismissed). If it didn't land, post the verdict as a PR
-      COMMENT (guaranteed) AND have the PR author confirm the formal approval.
+      (GitHub eligibility / dismissed). If it did not land, an eligible reviewer
+      must successfully submit a formal approval review; a PR comment is evidence
+      only and does not satisfy branch protection.
 
-## Replay / Idempotency (verified during PR #1 review)
-- [ ] `SimulatedAgentRuntime.start` keys idempotency on `(run_id, provider_binding_id)`;
-      a retry with a different idempotency_key returns the SAME handle (`replayed=True`),
-      never a second handle; a differing request fails the request-digest check
+## Replay / Idempotency
+- [ ] CURRENT BRANCH STATUS: the agent-run runtime and its same-handle replay contract
+      are not present on this branch. Existing project-create and MVP idempotency tests
+      do not establish agent-run replay behavior. Keep this item open until the runtime
+      implementation and focused tests are present on the reviewed commit.
 - [ ] Event-chain proof holds within a single runtime AND must hold across devices once the
       cross-device/node sync surface opens (see THREAT_MODEL.md §8)
 

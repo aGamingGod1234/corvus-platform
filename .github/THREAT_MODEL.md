@@ -36,11 +36,14 @@ overrides rejected before container start.
 (e.g. Codex/ChatGPT). Leaked or logged credentials = critical failure.
 **Mitigation:** Credentials via OS keyring or scoped cloud vault; explicit rule against
 plaintext secrets in runtime config or sandboxes.
-**Verified during PR #1 review:**
-- `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest` credentials through
-  its token-pattern checks.
-- Agent-run event validation rejects secret-bearing event **keys AND values**
-  via `_contains_secret_payload_key` and `_contains_secret_payload_value`.
+**Current branch status:**
+- `SecretRedactor` redacts registered values, sensitive mapping keys, assigned
+  api_key/token/secret/password values, and recognized sk-/GitHub token forms.
+- It does not generically detect bare `Bearer`/`Basic`/`Digest` strings under
+  benign keys. Existing Authorization-key tests do not prove that behavior.
+- Agent-run secret key/value validation is not present on this branch. These
+  controls remain open until their implementation and focused tests are present
+  on the reviewed commit.
 - On this branch, `tests/security/test_structured_redaction.py` directly exercises
   the redaction core. PR #1 adds the dedicated `tests/unit/test_security.py`
   coverage tracked as an open follow-up in the guardrail checklist.
@@ -79,33 +82,26 @@ If the review process is gameable (self-review, stale commit reference), the gat
   at the later reviewed head most flagged issues were already fixed. Always re-pull
   the PR head and confirm the commit hash before reviewing.
 - **Self-approve may not persist.** A `gh pr review --approve` by the security owner
-  did not land on PR #1 (GitHub eligibility / dismissed). Fix: post the verdict as a
-  PR **comment** (guaranteed to land) AND have the PR author confirm the formal approval.
-  Verify the review actually exists via `gh api .../pulls/N/reviews` before declaring done.
+  did not land on PR #1 (GitHub eligibility / dismissed). Fix: an eligible reviewer
+  must successfully submit a formal approval review. A PR comment may preserve the
+  verdict as evidence, but it does not satisfy branch protection. Verify the approval
+  exists via `gh api .../pulls/N/reviews` before declaring done.
 - Both reviews must reference the exact same frozen commit hash.
 **Open questions:**
 - Who are the two reviewers in practice, and is Asif one of them?
 - Is there a check that both reviews reference the same frozen commit hash?
 
-## 7. Replay / Idempotency & Event-Chain Proof (verified during PR #1 review)
+## 7. Replay / Idempotency & Event-Chain Proof
 
 **Risk:** A client retries an agent-run start with a different idempotency key or
 forges event-chain entries to replay/escalate actions.
-**Verified-in-code:**
-- `SimulatedAgentRuntime.start` keys its idempotency ledger on
-  `run_identity = (run_id, provider_binding_id)`. A second
-  `start` with a different `idempotency_key` but same `run_id`+binding returns the
-  **same handle with `replayed=True`** — it does NOT create a second handle. A
-  differing request fails the `request_digest` check. → replay does not proliferate handles.
-- `validate_agent_run_event_chain` **recomputes** each event digest and enforces
-  sequence/run/handle binding plus `previous_event_digest` chaining.
-  Tampered or out-of-order events are rejected.
-- `TOOL_BLOCKED` after `TOOL_STARTED` is rejected by event lifecycle validation.
-- Authorization is fail-closed on operation-field smuggling: START/RESUME reject
-  unsolicited `handle`, `resume_handle_id`, `current_kill_switch_proof`
-  through `AgentRunAuthorizationRequest.validate_operation_binding`.
-**Note:** original follow-up #1 ("two distinct handles") was an overstatement — the
-`run_identity` index already prevents it. Recorded here so it isn't re-flagged.
+**Current branch status:** the agent-run runtime, event-chain validator, and
+operation-binding contracts are not present on this branch and are therefore not
+verified here. Existing project-create and MVP idempotency/replay tests cover
+separate code paths; they do not establish agent-run same-handle replay,
+event-chain proof, or operation-field fail-closed behavior. Keep these mitigations
+open until the runtime implementation and focused tests are present on the
+reviewed commit.
 
 ## 8. OAuth / Cross-Device & Node Sync Surface (TRACKED FUTURE — not yet opened)
 

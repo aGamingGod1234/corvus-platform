@@ -485,17 +485,21 @@
 - Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
 - Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
 - Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
-- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 40 non-redundant ownership rules.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 73 non-redundant ownership rules.
 - Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
 - Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
 - Added explicit ownership for the MVP ingress, update-verification, deployment/OIDC, API/session, governance, supply-chain, and matching regression-test trust boundaries identified in Gemini's exact-head review.
 - Aligned the threat model with the branch's actual redaction coverage while recording the dedicated `tests/unit/test_security.py` coverage as part of PR #1.
+- Protected the required workflow and the remaining provider, sandbox, snapshot, delivery, authority-persistence, MVP execution, and focused regression-test boundaries identified by the final Codex and Gemini exact-head reviews.
+- Removed misleading current-branch verification claims for bare credential redaction and the not-yet-merged agent runtime, event chain, replay, and operation-binding contracts.
+- Corrected the review-gate guidance so only a persisted formal approval from an eligible reviewer satisfies protected-branch and CODEOWNERS requirements.
+- Ran checksum-verified Gitleaks 8.30.1 scans over the staged final repair and the seven-commit PR range; both reported no leaks.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
 - `.github/GUARDRAIL_CHECKLIST.md` — commit-independent review evidence language.
 - `.github/THREAT_MODEL.md` — commit-independent stale-review warning.
-- `SECURITY_REVIEW.md` — explicit authorization coverage and truthful secret-scan gate.
+- `SECURITY_REVIEW.md` — explicit authorization/MVP-core coverage, truthful secret-scan gate, and branch-protection dependency.
 - `PROJECT_LOG.md` — this repair record.
 
 ### Assumptions Made (flag these for review)
@@ -506,6 +510,7 @@
 - PR #1 still requires a fresh formal Asif approval on its current head; a Discord verdict or PR comment does not satisfy GitHub branch protection.
 - A dedicated automated secret-scanning job remains deferred rather than being implied by documentation.
 - The dedicated `tests/unit/test_security.py` test remains on PR #1 until that integration branch is merged.
+- The seven agent-runtime and dedicated-security-test CODEOWNERS routes intentionally pre-own PR #1 paths that are absent from PR #2's base.
 
 ### Suggested Next Steps
 - Verify, commit, and push the final PR #2 repairs; reply to and resolve all exact-head review threads.
