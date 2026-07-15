@@ -943,3 +943,71 @@
 ### Suggested Next Steps
 - Commit and push this verified repair, reply to the four exact Codex threads with evidence, and request Gemini, CodeRabbit, Codex, Copilot, and Asif review on the new commit.
 - Merge pull request #1 only after all exact-head checks pass, no review threads remain unresolved, and GitHub reports the required approval satisfied.
+
+## 2026-07-15 — PR #2 Security Governance Review Repairs
+
+### What Was Implemented
+- Expanded CODEOWNERS to preserve the union of PR #2's authority/sandbox coverage and PR #1's runtime plus dedicated security-test coverage.
+- Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
+- Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
+- Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 62 non-redundant ownership rules.
+- Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
+- Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
+- Added explicit ownership for the MVP ingress, update-verification, deployment/OIDC, API/session, governance, supply-chain, and matching regression-test trust boundaries identified in Gemini's exact-head review.
+- Aligned the threat model with the branch's actual redaction coverage while recording the dedicated `tests/unit/test_security.py` coverage as part of PR #1.
+- Protected the required workflow and the remaining provider, sandbox, snapshot, delivery, authority-persistence, MVP execution, and focused regression-test boundaries identified by the final Codex and Gemini exact-head reviews.
+- Removed misleading current-branch verification claims for bare credential redaction and the not-yet-merged agent runtime, event chain, replay, and operation-binding contracts.
+- Corrected the review-gate guidance so only a persisted formal approval from an eligible reviewer satisfies protected-branch and CODEOWNERS requirements.
+- Ran checksum-verified Gitleaks 8.30.1 scans over the staged final repair and the seven-commit PR range; both reported no leaks.
+- Added the final MVP server-adapter, V1 context/store firewall, root security-review document, and matching regression-test routes from Codex's late prior-head review; clarified that protected `main` must require Code Owner review.
+- Added the executable MVP package initializer to security ownership and removed a redundant checklist conjunction identified by Gemini's exact-head pass.
+- Repaired the threat model's repository-root and guardrail-checklist links; retained the intentionally plural authorization-inputs repository filename after verifying it stores multiple record types.
+- Replaced fragile per-file MVP source/test routes with complete directory ownership and made the remaining threat-model/certification references directly navigable.
+- Repaired the guardrail checklist's repository-root plan and evidence-log links.
+
+### Files Modified
+- `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
+- `.github/GUARDRAIL_CHECKLIST.md` — commit-independent review evidence language.
+- `.github/THREAT_MODEL.md` — commit-independent stale-review warning.
+- `SECURITY_REVIEW.md` — explicit authorization/MVP-core coverage, truthful secret-scan gate, and branch-protection dependency.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- Broader code-owner routing is intentionally conservative; requiring Asif review on the complete domain directory is preferable to leaving a trust-boundary model unowned.
+- Secret scanning remains a documented manual review step until a separately reviewed CI implementation is added and made required.
+
+### Known Issues / Deferred
+- PR #1 still requires a fresh formal Asif approval on its current head; a Discord verdict or PR comment does not satisfy GitHub branch protection.
+- A dedicated automated secret-scanning job remains deferred rather than being implied by documentation.
+- The dedicated `tests/unit/test_security.py` test remains on PR #1 until that integration branch is merged.
+- The seven agent-runtime and dedicated-security-test CODEOWNERS routes intentionally pre-own PR #1 paths that are absent from PR #2's base.
+
+### Suggested Next Steps
+- Verify, commit, and push the final PR #2 repairs; reply to and resolve all exact-head review threads.
+- Obtain the required owner review, merge PR #2 normally, then refresh PR #1 against protected `main` and request Asif's exact-head approval.
+
+## 2026-07-15 — PR #1 Governance Integration Refresh
+
+### What Was Implemented
+- Merged protected `main` after PR #2 into the PR #1 integration branch without discarding either milestone history.
+- Resolved CODEOWNERS to PR #2's complete 62-rule policy, which includes every PR #1 runtime and dedicated-security-test path.
+- Preserved the full PR #1 runtime/security implementation and both project-log histories.
+- Verified the merged tree with 680 Python tests, Ruff lint/format, MyPy across 93 source files, complete ownership-target validation, and conflict-marker checks.
+
+### Files Modified
+- `.github/CODEOWNERS` — retained the complete merged security-owner policy.
+- `.github/GUARDRAIL_CHECKLIST.md` — integrated the merged security review checklist.
+- `.github/THREAT_MODEL.md` — integrated the merged threat model.
+- `SECURITY_REVIEW.md` — integrated the protected-branch security gate checklist.
+- `PROJECT_LOG.md` — preserved both histories and recorded this integration refresh.
+
+### Assumptions Made (flag these for review)
+- PR #2's complete directory-aware ownership policy supersedes PR #1's narrower policy because it contains the full PR #1 ownership subset.
+
+### Known Issues / Deferred
+- The merge commit requires a fresh exact-head certification run and formal Asif code-owner approval because protected-branch stale-review dismissal applies after the head changes.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified integration merge, request exact-head reviewers, and merge PR #1 only after protected-branch requirements are satisfied.
