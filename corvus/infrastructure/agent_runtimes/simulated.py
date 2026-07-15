@@ -564,6 +564,11 @@ class SimulatedAgentRuntime:
                 )
             started.add(tool_call_id)
         elif event_type is AgentRunEventType.TOOL_BLOCKED:
+            if tool_call_id in started:
+                raise AgentRuntimeError(
+                    "tool_event_prerequisite_missing",
+                    "a started tool call must finish with a tool result",
+                )
             finished.add(tool_call_id)
         elif tool_call_id not in started:
             raise AgentRuntimeError(

@@ -196,10 +196,27 @@ class AgentRunAuthorizationRequest(BaseModel):
                 _raise_agent_run_contract_error("agent_run_handle_run_mismatch")
             if self.handle.provider_binding_id != self.request.provider_binding_id:
                 _raise_agent_run_contract_error("agent_run_handle_provider_mismatch")
-        if self.operation is AgentRunOperation.RESUME:
+        if self.operation is AgentRunOperation.START:
+            if self.handle is not None:
+                _raise_agent_run_contract_error("agent_run_handle_unsolicited")
+            if self.request.resume_handle_id is not None:
+                _raise_agent_run_contract_error("agent_run_resume_handle_unsolicited")
+            if (
+                self.current_kill_switch_proof_id is not None
+                or self.current_kill_switch_proof_digest is not None
+            ):
+                _raise_agent_run_contract_error("agent_run_current_kill_switch_proof_unsolicited")
+        elif self.operation is AgentRunOperation.RESUME:
             if self.handle is None or self.request.resume_handle_id != self.handle.id:
                 _raise_agent_run_contract_error("agent_run_resume_handle_mismatch")
-        if self.operation is AgentRunOperation.CANCEL:
+            if (
+                self.current_kill_switch_proof_id is not None
+                or self.current_kill_switch_proof_digest is not None
+            ):
+                _raise_agent_run_contract_error("agent_run_current_kill_switch_proof_unsolicited")
+        elif self.operation is AgentRunOperation.CANCEL:
+            if self.request.resume_handle_id is not None:
+                _raise_agent_run_contract_error("agent_run_resume_handle_unsolicited")
             if self.handle is None:
                 _raise_agent_run_contract_error("agent_run_handle_run_mismatch")
             if (

@@ -5,7 +5,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import cast
@@ -27,6 +27,9 @@ from corvus.security import SecretRedactor, is_sensitive_field_name
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _GENESIS_EVENT_DIGEST = "0" * 64
+_MAX_AGENT_RUN_INPUT_CHARACTERS = 1_000_000
+_MAX_AGENT_RUN_MESSAGE_CHARACTERS = 100_000
+_MAX_AGENT_RUN_MESSAGES = 100
 
 
 def _now_utc() -> datetime:
@@ -35,6 +38,72 @@ def _now_utc() -> datetime:
 
 def _is_timezone_aware(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _canonical_datetime(value: datetime) -> str:
+    if not _is_timezone_aware(value):
+        raise ValueError("canonical_digest_timestamp_must_be_timezone_aware")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_decimal(value: Decimal) -> str:
+    if not value.is_finite():
+        raise ValueError("canonical_digest_decimal_must_be_finite")
+    if value == 0:
+        return "0"
+    sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("canonical_digest_decimal_exponent_invalid")
+    coefficient = list(digits)
+    while coefficient[-1] == 0:
+        coefficient.pop()
+        exponent += 1
+    sign_prefix = "-" if sign else ""
+    coefficient_text = "".join(str(digit) for digit in coefficient)
+    if exponent == 0:
+        return f"{sign_prefix}{coefficient_text}"
+    return f"{sign_prefix}{coefficient_text}E{exponent:+d}"
+
+
+def _canonicalize_digest_value(value: object) -> object:
+    if isinstance(value, datetime):
+        return _canonical_datetime(value)
+    if isinstance(value, Decimal):
+        return _canonical_decimal(value)
+    if isinstance(value, Enum):
+        return _canonicalize_digest_value(value.value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _canonicalize_digest_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize_digest_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        items = [_canonicalize_digest_value(item) for item in value]
+        return sorted(
+            items,
+            key=lambda item: json.dumps(
+                item,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+    return value
+
+
+def _compute_canonical_digest(value: object) -> str:
+    encoded = json.dumps(
+        _canonicalize_digest_value(value),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _raise_contract_error(error_type: str, reason_code: str) -> None:
@@ -176,14 +245,9 @@ class ProviderBinding(BaseModel):
 
 
 def compute_provider_binding_digest(binding: ProviderBinding) -> str:
-    encoded = json.dumps(
-        binding.model_dump(mode="json", exclude={"health_checked_at", "status"}),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _compute_canonical_digest(
+        binding.model_dump(mode="python", exclude={"health_checked_at", "status"})
+    )
 
 
 class ProviderDiscoveryQuery(BaseModel):
@@ -337,14 +401,7 @@ class AutonomyGrant(BaseModel):
 
 
 def compute_autonomy_grant_digest(grant: AutonomyGrant) -> str:
-    encoded = json.dumps(
-        grant.model_dump(mode="json"),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _compute_canonical_digest(grant.model_dump(mode="python"))
 
 
 class AgentRunEventType(StrEnum):
@@ -382,8 +439,8 @@ class AgentRunRequest(BaseModel):
     provider_binding_digest: str = Field(pattern=_SHA256_PATTERN)
     model: str = Field(min_length=1, max_length=200)
     effort: str = Field(min_length=1, max_length=100)
-    messages: tuple[str, ...] | None = None
-    prompt: str | None = Field(default=None, max_length=1_000_000)
+    messages: tuple[str, ...] | None = Field(default=None, max_length=_MAX_AGENT_RUN_MESSAGES)
+    prompt: str | None = Field(default=None, max_length=_MAX_AGENT_RUN_INPUT_CHARACTERS)
     untrusted_context_ref_ids: tuple[UUID, ...] = ()
     authorization_proof_id: UUID
     authorization_proof_digest: str = Field(pattern=_SHA256_PATTERN)
@@ -422,6 +479,19 @@ class AgentRunRequest(BaseModel):
     @property
     def immutable_request_digest(self) -> str:
         return compute_agent_run_immutable_digest(self)
+
+    @field_validator("messages")
+    @classmethod
+    def validate_messages(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return value
+        if any(not message.strip() for message in value):
+            raise ValueError("agent_run_message_blank")
+        if any(len(message) > _MAX_AGENT_RUN_MESSAGE_CHARACTERS for message in value):
+            raise ValueError("agent_run_message_too_long")
+        if sum(len(message) for message in value) > _MAX_AGENT_RUN_INPUT_CHARACTERS:
+            raise ValueError("agent_run_messages_too_large")
+        return value
 
     @model_validator(mode="after")
     def validate_prompt_shape(self) -> AgentRunRequest:
@@ -465,19 +535,12 @@ class AgentRunRequest(BaseModel):
 
 
 def compute_agent_run_request_digest(request: AgentRunRequest) -> str:
-    encoded = json.dumps(
-        request.model_dump(mode="json"),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _compute_canonical_digest(request.model_dump(mode="python"))
 
 
 def compute_agent_run_runtime_limit_digest(request: AgentRunRequest) -> str:
     payload = request.model_dump(
-        mode="json",
+        mode="python",
         include={
             "model",
             "effort",
@@ -496,14 +559,7 @@ def compute_agent_run_runtime_limit_digest(request: AgentRunRequest) -> str:
             "requested_effect_classes",
         },
     )
-    encoded = json.dumps(
-        payload,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _compute_canonical_digest(payload)
 
 
 _REFRESHABLE_AGENT_RUN_FIELDS = frozenset(
@@ -525,18 +581,13 @@ _REFRESHABLE_AGENT_RUN_FIELDS = frozenset(
 
 
 def compute_agent_run_immutable_digest(request: AgentRunRequest) -> str:
-    encoded = json.dumps(
+    return _compute_canonical_digest(
         request.model_dump(
-            mode="json",
+            mode="python",
             exclude=set(_REFRESHABLE_AGENT_RUN_FIELDS),
             exclude_computed_fields=True,
-        ),
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+        )
+    )
 
 
 class AgentRunHandle(BaseModel):
@@ -612,7 +663,7 @@ def compute_agent_run_event_digest(
     effect_authorization_decision_id: UUID | None = None,
     effect_authorization_decision_digest: str | None = None,
 ) -> str:
-    encoded = json.dumps(
+    return _compute_canonical_digest(
         {
             "event_type": event_type.value,
             "effect_authorization_decision_digest": effect_authorization_decision_digest,
@@ -628,14 +679,9 @@ def compute_agent_run_event_digest(
             "redacted_payload": _thaw_json(redacted_payload),
             "run_id": str(run_id),
             "sequence": sequence,
-            "timestamp": timestamp.isoformat(),
+            "timestamp": _canonical_datetime(timestamp),
         },
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    )
 
 
 class AgentRunEvent(BaseModel):
@@ -807,6 +853,8 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
                     raise AgentRunEventChainError("tool_event_prerequisite_missing")
                 started_tools.add(tool_call_id)
             elif event.event_type is AgentRunEventType.TOOL_BLOCKED:
+                if tool_call_id in started_tools:
+                    raise AgentRunEventChainError("tool_event_prerequisite_missing")
                 finished_tools.add(tool_call_id)
             elif tool_call_id not in started_tools:
                 raise AgentRunEventChainError("tool_event_prerequisite_missing")

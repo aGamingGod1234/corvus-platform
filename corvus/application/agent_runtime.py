@@ -347,6 +347,7 @@ class AgentRuntimeCoordinator:
             return None, self._denial_from_validation(context, operation, exc)
         try:
             decision = self._authorization.authorize(authorization_request)
+            coordinator_time = self._clock()
         except Exception:
             return None, self._failure(
                 context,
@@ -356,6 +357,7 @@ class AgentRuntimeCoordinator:
         binding_mismatch = self._decision_binding_mismatch(
             authorization_request,
             decision,
+            coordinator_time=coordinator_time,
         )
         authorization_outcome: Literal["allow", "deny"] = (
             "allow" if decision.allowed and binding_mismatch is None else "deny"
@@ -389,6 +391,8 @@ class AgentRuntimeCoordinator:
     def _decision_binding_mismatch(
         request: AgentRunAuthorizationRequest,
         decision: AgentRunAuthorizationDecision,
+        *,
+        coordinator_time: datetime,
     ) -> str | None:
         expected = request.request
         checks: tuple[tuple[bool, str], ...] = (
@@ -433,6 +437,11 @@ class AgentRuntimeCoordinator:
                 decision.kill_switch_proof_digest
                 == (request.current_kill_switch_proof_digest or expected.kill_switch_proof_digest),
                 "agent_run_kill_switch_proof_digest_mismatch",
+            ),
+            (
+                decision.evaluated_at <= coordinator_time
+                and decision.evaluated_at < expected.deadline,
+                "agent_run_authorization_time_invalid",
             ),
         )
         return next((reason_code for matches, reason_code in checks if not matches), None)

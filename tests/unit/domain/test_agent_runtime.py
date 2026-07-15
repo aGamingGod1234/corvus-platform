@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal, localcontext
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ from corvus.domain.agent_runtime import (
     capability_enabled,
     compute_agent_run_event_digest,
     compute_agent_run_immutable_digest,
+    compute_agent_run_request_digest,
+    compute_agent_run_runtime_limit_digest,
+    compute_autonomy_grant_digest,
     compute_provider_binding_digest,
     validate_agent_run_event_chain,
 )
@@ -201,6 +205,99 @@ def test_autonomy_grant_digest_serialization_sorts_frozensets(tmp_path: Path) ->
     assert payload["allowed_tool_ids"] == sorted(tool_ids)
     assert payload["always_block_effects"] == sorted(blocked_effects)
     assert python_payload["allowed_effect_classes"] == allowed_effects
+
+
+def test_autonomy_grant_digest_normalizes_decimal_scale_and_timezone_offset(
+    tmp_path: Path,
+) -> None:
+    grant = _grant(
+        tmp_path,
+        provider_spend_ceiling=Decimal("5.0"),
+        corvus_budget_ceiling=Decimal("10.00"),
+    )
+    offset = timezone(timedelta(hours=8))
+    equivalent = grant.model_copy(
+        update={
+            "provider_spend_ceiling": Decimal("5.000"),
+            "corvus_budget_ceiling": Decimal("10.0"),
+            "issued_at": grant.issued_at.astimezone(offset),
+            "expires_at": grant.expires_at.astimezone(offset),
+            "wall_clock_deadline": grant.wall_clock_deadline.astimezone(offset),
+        }
+    )
+
+    assert grant == equivalent
+    assert compute_autonomy_grant_digest(grant) == compute_autonomy_grant_digest(equivalent)
+
+
+def test_canonical_decimal_keeps_large_exponents_compact() -> None:
+    expected = "1E+10000"
+    canonical = agent_runtime._canonical_decimal(Decimal(expected))
+
+    assert len(canonical) == len(expected)
+    assert canonical == expected
+
+
+def test_canonical_decimal_is_independent_of_decimal_context() -> None:
+    canonical_values: list[str] = []
+    for precision in (2, 28, 100):
+        with localcontext() as context:
+            context.prec = precision
+            canonical_values.append(agent_runtime._canonical_decimal(Decimal("1.234")))
+
+    assert len(set(canonical_values)) == 1
+
+
+def test_canonical_decimal_preserves_digits_beyond_context_precision() -> None:
+    with localcontext() as context:
+        context.prec = 2
+        first = agent_runtime._canonical_decimal(Decimal("1.234"))
+        second = agent_runtime._canonical_decimal(Decimal("1.235"))
+
+    assert first != second
+
+
+def test_agent_run_digests_normalize_decimal_scale_and_timezone_offset() -> None:
+    request = _request(
+        provider_spend_limit=Decimal("5.0"),
+        corvus_budget_limit=Decimal("10.00"),
+    )
+    equivalent = request.model_copy(
+        update={
+            "provider_spend_limit": Decimal("5.000"),
+            "corvus_budget_limit": Decimal("10.0"),
+            "deadline": request.deadline.astimezone(timezone(timedelta(hours=8))),
+        }
+    )
+
+    assert request == equivalent
+    for digest_function in (
+        compute_agent_run_request_digest,
+        compute_agent_run_runtime_limit_digest,
+        compute_agent_run_immutable_digest,
+    ):
+        assert digest_function(request) == digest_function(equivalent)
+
+
+def test_agent_run_event_digest_normalizes_timezone_offset() -> None:
+    timestamp = datetime(2026, 7, 15, tzinfo=UTC)
+    values = {
+        "run_id": uuid4(),
+        "handle_id": uuid4(),
+        "sequence": 1,
+        "event_type": AgentRunEventType.STARTED,
+        "redacted_payload": {"state": "running"},
+        "provider_event_id": None,
+        "previous_event_digest": "0" * 64,
+    }
+
+    utc_digest = compute_agent_run_event_digest(timestamp=timestamp, **values)
+    offset_digest = compute_agent_run_event_digest(
+        timestamp=timestamp.astimezone(timezone(timedelta(hours=8))),
+        **values,
+    )
+
+    assert utc_digest == offset_digest
 
 
 def test_agent_run_digest_serialization_sorts_requested_effects() -> None:
@@ -454,6 +551,14 @@ def test_request_rejects_blank_idempotency_past_deadline_and_malformed_digest() 
 def test_request_requires_exactly_one_prompt_shape_and_has_no_secret_field() -> None:
     with pytest.raises(ValidationError, match="agent_run_requires_messages_or_prompt"):
         _request(prompt=None)
+    with pytest.raises(ValidationError, match="agent_run_message_blank"):
+        _request(prompt=None, messages=("   ",))
+    with pytest.raises(ValidationError, match="agent_run_message_too_long"):
+        _request(prompt=None, messages=("x" * 100_001,))
+    with pytest.raises(ValidationError, match="agent_run_messages_too_large"):
+        _request(prompt=None, messages=("x" * 100_000,) * 11)
+    with pytest.raises(ValidationError):
+        _request(prompt=None, messages=("message",) * 101)
     with pytest.raises(ValidationError, match="agent_run_prompt_shape_ambiguous"):
         _request(messages=("hello",))
     with pytest.raises(ValidationError) as secret:
@@ -505,7 +610,10 @@ def test_event_allows_numeric_token_usage_fields_without_classifying_as_secret()
     [
         {"message": "api_key=sk-1234567890abcdef"},
         {"nested": {"items": ["safe", "token=secret-shaped-value"]}},
+        {"message": "Bearer abcdefghijklmnop"},
+        {"message": "Basic dXNlcjpwYXNzd29yZA=="},
         {"message": "Authorization: Bearer abcdefghijklmnop"},
+        {"message": ("Authorization: Digest username=lucas,response=abcdef1234567890")},
         {"message": "cookie=session_id=abcdefghijklmnop"},
         {"message": "credential=abcdefghijklmnop"},
         {"message": "passphrase=abcdefghijklmnop"},
@@ -737,6 +845,51 @@ def test_event_chain_rejects_decision_reference_reuse_across_tool_calls() -> Non
         validate_agent_run_event_chain((started, first, reused))
 
     assert exc_info.value.reason_code == "tool_effect_authorization_reused"
+
+
+def test_event_chain_rejects_tool_blocked_after_tool_started() -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    requested = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    tool_started = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=3,
+        timestamp=started.timestamp + timedelta(microseconds=2),
+        event_type=AgentRunEventType.TOOL_STARTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=requested.event_digest,
+    )
+    blocked = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=4,
+        timestamp=started.timestamp + timedelta(microseconds=3),
+        event_type=AgentRunEventType.TOOL_BLOCKED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=tool_started.event_digest,
+    )
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((started, requested, tool_started, blocked))
+
+    assert exc_info.value.reason_code == "tool_event_prerequisite_missing"
 
 
 @pytest.mark.parametrize(

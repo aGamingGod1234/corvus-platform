@@ -169,6 +169,47 @@ async def test_simulator_discovers_starts_and_replays_deterministically(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_simulator_rejects_tool_blocked_after_tool_started(tmp_path: Path) -> None:
+    binding = _binding(tmp_path)
+    decision_id = uuid4()
+    decision_digest = "d" * 64
+    runtime = _runtime(
+        (binding,),
+        {
+            binding.id: (
+                SimulatedEventTemplate(AgentRunEventType.STARTED, {}),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_REQUESTED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=decision_id,
+                    effect_authorization_decision_digest=decision_digest,
+                ),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_STARTED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=decision_id,
+                    effect_authorization_decision_digest=decision_digest,
+                ),
+                SimulatedEventTemplate(
+                    AgentRunEventType.TOOL_BLOCKED,
+                    {},
+                    tool_call_id="tool-1",
+                    effect_authorization_decision_id=decision_id,
+                    effect_authorization_decision_digest=decision_digest,
+                ),
+            )
+        },
+    )
+
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        await runtime.start(_request(binding))
+
+    assert exc_info.value.reason_code == "tool_event_prerequisite_missing"
+
+
+@pytest.mark.asyncio
 async def test_start_rejects_same_run_with_new_idempotency_key(tmp_path: Path) -> None:
     binding = _binding(tmp_path)
     runtime = _runtime((binding,), {binding.id: ()})

@@ -789,3 +789,35 @@
 ### Suggested Next Steps
 - Commit and push this verified repair to `codex/main-integration`, respond to every duplicated review thread with evidence, and resolve only the findings demonstrably closed by the pushed commit.
 - Keep pull request #1 open and unmerged until the user's review agents approve it.
+
+## 2026-07-15 — PR #1 Post-Review Quality Sweep
+
+### What Was Implemented
+- Rechecked the live pull request after the prior repair commit and confirmed there were no new GitHub comments or unresolved threads, then completed two independent read-only security and portability reviews.
+- Closed seven additional reproduced defects: Digest and bare Bearer/Basic credentials are rejected from event payloads; authorization decisions fail closed when evaluated in the future or at/after the run deadline; operation-specific authorization fields cannot be smuggled into START, RESUME, or CANCEL.
+- Canonicalized semantically equal Decimal and timezone-offset values before hashing without mutable Decimal-context rounding, kept extreme exponents compact, rejected blank or oversized message inputs, and prevented `TOOL_BLOCKED` from closing an already-started tool call in both shared and simulator lifecycle validation.
+- Added RED/GREEN regressions for every repaired boundary and reran Python, web, dependency, lint, type, patch, and desktop compilation checks.
+
+### Files Modified
+- `corvus/security.py` — conservative Authorization plus bare Bearer/Basic credential redaction.
+- `corvus/application/agent_runtime.py` — coordinator-clock and run-deadline validation for authorization decisions.
+- `corvus/application/ports.py` — operation-specific authorization request field hygiene.
+- `corvus/domain/agent_runtime.py` — canonical proof digests, bounded message input, and valid tool lifecycle transitions.
+- `corvus/infrastructure/agent_runtimes/simulated.py` — simulator template parity for started-tool closure.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — decision-time, clock-failure, and field-smuggling regressions.
+- `tests/unit/domain/test_agent_runtime.py` — credential, digest, message-bound, and shared lifecycle regressions.
+- `tests/unit/infrastructure/test_simulated_agent_runtime.py` — simulator lifecycle regression.
+- `HACKATHON_STATUS.md` — current verification counts.
+- `PROJECT_LOG.md` — this post-review repair record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly authorized all remaining evidence-backed repairs while preserving the PR-only push and no-merge review boundary.
+
+### Known Issues / Deferred
+- Canonical agent-runtime proof digests intentionally changed for semantically equal Decimal scales and timezone offsets; any in-flight pre-repair proofs must be regenerated instead of silently accepted.
+- GitHub certification must rerun on the pushed commit before the remote macOS, Linux, Windows, and Docker gates are current.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified sweep to `codex/main-integration`, leave evidence on pull request #1, and monitor every remote certification job.
+- Keep pull request #1 open and unmerged until the user's review agents approve it.

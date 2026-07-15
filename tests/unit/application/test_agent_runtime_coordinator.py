@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -581,6 +581,70 @@ def test_authorization_request_rejects_request_handle_and_cancel_substitution(
     assert exc_info.value.errors()[0]["ctx"]["reason_code"] == reason_code
 
 
+@pytest.mark.parametrize(
+    ("case", "reason_code"),
+    [
+        ("start_handle", "agent_run_handle_unsolicited"),
+        ("start_resume_handle", "agent_run_resume_handle_unsolicited"),
+        ("start_kill_switch", "agent_run_current_kill_switch_proof_unsolicited"),
+        ("resume_kill_switch", "agent_run_current_kill_switch_proof_unsolicited"),
+        ("cancel_resume_handle", "agent_run_resume_handle_unsolicited"),
+    ],
+)
+def test_authorization_request_rejects_operation_specific_field_smuggling(
+    tmp_path: Path,
+    case: str,
+    reason_code: str,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    run_id = uuid4()
+    handle_id = uuid4()
+    request = _request(
+        binding,
+        run_id=run_id,
+        resume_handle_id=(
+            handle_id
+            if case in {"start_resume_handle", "resume_kill_switch", "cancel_resume_handle"}
+            else None
+        ),
+    )
+    handle = AgentRunHandle(
+        id=handle_id,
+        run_id=run_id,
+        provider_binding_id=request.provider_binding_id,
+        created_at=_NOW,
+        state="running",
+    )
+    updates: dict[str, object] = {}
+    if case == "start_handle":
+        updates["handle"] = handle
+    elif case == "start_kill_switch":
+        updates.update(
+            current_kill_switch_proof_id=uuid4(),
+            current_kill_switch_proof_digest="f" * 64,
+        )
+    elif case == "resume_kill_switch":
+        updates.update(
+            operation=AgentRunOperation.RESUME,
+            handle=handle,
+            current_kill_switch_proof_id=uuid4(),
+            current_kill_switch_proof_digest="f" * 64,
+        )
+    elif case == "cancel_resume_handle":
+        updates.update(
+            operation=AgentRunOperation.CANCEL,
+            handle=handle,
+            current_kill_switch_proof_id=uuid4(),
+            current_kill_switch_proof_digest="f" * 64,
+        )
+
+    with pytest.raises(ValidationError) as exc_info:
+        _authorization_request(_context(request), request, **updates)
+
+    assert exc_info.value.errors()[0]["ctx"]["reason_code"] == reason_code
+
+
 @pytest.mark.asyncio
 async def test_authorization_exception_never_calls_audit_or_runtime(tmp_path: Path) -> None:
     workspace_id = uuid4()
@@ -596,6 +660,30 @@ async def test_authorization_exception_never_calls_audit_or_runtime(tmp_path: Pa
         runtime=runtime,
         order=order,
         authorizer=authorizer,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_authorization_unavailable"
+    assert order == ["authorization"]
+
+
+@pytest.mark.asyncio
+async def test_authorization_clock_failure_never_calls_audit_or_runtime(tmp_path: Path) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator = AgentRuntimeCoordinator(
+        runtime=runtime,
+        authorization=_Authorizer(order),
+        audit=_AuditSink(order),
+        clock=lambda: (_ for _ in ()).throw(RuntimeError("clock unavailable")),
     )
 
     result = await coordinator.start(_context(request), ClientSurface.CLI, request)
@@ -695,6 +783,39 @@ async def test_receipt_mismatch_denies_before_runtime(
 
     assert not result.ok
     assert result.reason_code == reason_code
+    assert order == ["authorization", "audit:authorization"]
+    assert audit.events[0].outcome == "deny"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evaluated_at",
+    [_NOW + timedelta(microseconds=1), _FUTURE],
+    ids=["future_of_coordinator_clock", "at_request_deadline"],
+)
+async def test_authorization_decision_rejects_invalid_evaluation_time_before_runtime(
+    tmp_path: Path,
+    evaluated_at: datetime,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    authorizer = _Authorizer(order, decision_updates={"evaluated_at": evaluated_at})
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        authorizer=authorizer,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_authorization_time_invalid"
     assert order == ["authorization", "audit:authorization"]
     assert audit.events[0].outcome == "deny"
 
