@@ -297,12 +297,14 @@ def compute_agent_run_audit_receipt_digest(
     sequence: int,
     previous_receipt_digest: str,
     event_digest: str,
+    acknowledged: bool,
 ) -> str:
     encoded = json.dumps(
         {
             "event_digest": event_digest,
             "previous_receipt_digest": previous_receipt_digest,
             "sequence": sequence,
+            "acknowledged": acknowledged,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -325,6 +327,7 @@ class AgentRunAuditReceipt(BaseModel):
             sequence=self.sequence,
             previous_receipt_digest=self.previous_receipt_digest,
             event_digest=self.event_digest,
+            acknowledged=self.acknowledged,
         )
         if self.receipt_digest != expected:
             _raise_agent_run_contract_error("agent_run_audit_receipt_digest_mismatch")

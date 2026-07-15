@@ -40,6 +40,12 @@ class AgentRunOperationResult(BaseModel):
     cancellation_result: CancellationResult | None = None
     identical_start_replayed: bool = False
     audit_pending: bool = False
+    primary_reason_code: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        max_length=200,
+    )
+    primary_outcome: Literal["success", "failure"] | None = None
 
 
 class AgentRuntimeCoordinator:
@@ -72,9 +78,12 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization_request is not None
         try:
-            preflight_failure = self._provider_preflight(authorization_request)
-            if preflight_failure is not None:
-                return preflight_failure
+            preflight_reason = self._provider_preflight(authorization_request)
+            if preflight_reason is not None:
+                return self._post_authorization_failure(
+                    authorization_request,
+                    reason_code=preflight_reason,
+                )
             start_result = await self._runtime.start(request)
         except Exception as exc:
             reason_code = (
@@ -82,25 +91,21 @@ class AgentRuntimeCoordinator:
                 if getattr(exc, "reason_code", None) == "agent_run_idempotency_mismatch"
                 else "agent_run_start_failed"
             )
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
             )
-            return self._failure(context, AgentRunOperation.START, reason_code)
         handle = start_result.handle
         if (
             handle.run_id != request.run_id
             or handle.provider_binding_id != request.provider_binding_id
         ):
             reason_code = "agent_run_start_handle_mismatch"
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
                 handle=handle,
             )
-            return self._failure(context, AgentRunOperation.START, reason_code)
         if not self._record_outcome(
             authorization_request,
             outcome="success",
@@ -112,6 +117,8 @@ class AgentRuntimeCoordinator:
                 AgentRunOperation.START,
                 handle=handle,
                 identical_start_replayed=start_result.replayed,
+                primary_reason_code="agent_run_started",
+                primary_outcome="success",
             )
         return AgentRunOperationResult(
             request_context_id=context.id,
@@ -140,35 +147,35 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization_request is not None
         try:
-            preflight_failure = self._provider_preflight(authorization_request)
-            if preflight_failure is not None:
-                return preflight_failure
+            preflight_reason = self._provider_preflight(authorization_request)
+            if preflight_reason is not None:
+                return self._post_authorization_failure(
+                    authorization_request,
+                    reason_code=preflight_reason,
+                    handle=handle,
+                )
             resumed_handle = await self._runtime.resume(
                 handle,
                 request_with_fresh_proofs,
             )
         except Exception:
             reason_code = "agent_run_resume_failed"
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
                 handle=handle,
             )
-            return self._failure(context, AgentRunOperation.RESUME, reason_code)
         if (
             resumed_handle.id != handle.id
             or resumed_handle.run_id != handle.run_id
             or resumed_handle.provider_binding_id != handle.provider_binding_id
         ):
             reason_code = "agent_run_resume_handle_mismatch"
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
                 handle=resumed_handle,
             )
-            return self._failure(context, AgentRunOperation.RESUME, reason_code)
         if not self._record_outcome(
             authorization_request,
             outcome="success",
@@ -179,6 +186,8 @@ class AgentRuntimeCoordinator:
                 context,
                 AgentRunOperation.RESUME,
                 handle=resumed_handle,
+                primary_reason_code="agent_run_resumed",
+                primary_outcome="success",
             )
         return AgentRunOperationResult(
             request_context_id=context.id,
@@ -210,31 +219,32 @@ class AgentRuntimeCoordinator:
             return failure
         assert authorization_request is not None
         try:
-            preflight_failure = self._provider_preflight(authorization_request)
-            if preflight_failure is not None:
-                return preflight_failure
+            preflight_reason = self._provider_preflight(authorization_request)
+            if preflight_reason is not None:
+                return self._post_authorization_failure(
+                    authorization_request,
+                    reason_code=preflight_reason,
+                    handle=handle,
+                )
             cancellation_result = await self._runtime.cancel(
                 handle,
                 current_kill_switch_proof_id,
             )
         except Exception:
             reason_code = "agent_run_cancel_failed"
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
                 handle=handle,
             )
-            return self._failure(context, AgentRunOperation.CANCEL, reason_code)
         if cancellation_result.handle_id != handle.id:
             reason_code = "agent_run_cancellation_handle_mismatch"
-            self._record_outcome(
+            return self._post_authorization_failure(
                 authorization_request,
-                outcome="failure",
                 reason_code=reason_code,
                 handle=handle,
+                cancellation_result=cancellation_result,
             )
-            return self._failure(context, AgentRunOperation.CANCEL, reason_code)
         if not self._record_outcome(
             authorization_request,
             outcome="success",
@@ -246,6 +256,8 @@ class AgentRuntimeCoordinator:
                 AgentRunOperation.CANCEL,
                 handle=handle,
                 cancellation_result=cancellation_result,
+                primary_reason_code=cancellation_result.reason_code,
+                primary_outcome="success",
             )
         return AgentRunOperationResult(
             request_context_id=context.id,
@@ -377,7 +389,7 @@ class AgentRuntimeCoordinator:
     def _provider_preflight(
         self,
         request: AgentRunAuthorizationRequest,
-    ) -> AgentRunOperationResult | None:
+    ) -> str | None:
         run_request = request.request
         try:
             candidates = self._runtime.discover(
@@ -393,35 +405,52 @@ class AgentRuntimeCoordinator:
                 candidate.binding_version != run_request.provider_binding_version
                 or candidate.binding_digest != run_request.provider_binding_digest
             ):
-                return self._failure(
-                    request.context,
-                    request.operation,
-                    "provider_binding_digest_mismatch",
-                )
+                return "provider_binding_digest_mismatch"
             health = self._runtime.health(candidate.binding)
             if (
                 health.binding_id != run_request.provider_binding_id
                 or health.binding_version != run_request.provider_binding_version
                 or health.binding_digest != run_request.provider_binding_digest
             ):
-                return self._failure(
-                    request.context,
-                    request.operation,
-                    "provider_binding_digest_mismatch",
-                )
+                return "provider_binding_digest_mismatch"
             if health.status is not ProviderStatus.AVAILABLE:
-                return self._failure(
-                    request.context,
-                    request.operation,
-                    "agent_run_provider_unavailable",
-                )
+                return "agent_run_provider_unavailable"
         except Exception:
-            return self._failure(
+            return "agent_run_provider_unavailable"
+        return None
+
+    def _post_authorization_failure(
+        self,
+        request: AgentRunAuthorizationRequest,
+        *,
+        reason_code: str,
+        handle: AgentRunHandle | None = None,
+        cancellation_result: CancellationResult | None = None,
+    ) -> AgentRunOperationResult:
+        if not self._record_outcome(
+            request,
+            outcome="failure",
+            reason_code=reason_code,
+            handle=handle,
+        ):
+            return self._audit_pending(
                 request.context,
                 request.operation,
-                "agent_run_provider_unavailable",
+                handle=handle,
+                cancellation_result=cancellation_result,
+                primary_reason_code=reason_code,
+                primary_outcome="failure",
             )
-        return None
+        return AgentRunOperationResult(
+            request_context_id=request.context.id,
+            operation=request.operation,
+            ok=False,
+            reason_code=reason_code,
+            handle=handle,
+            cancellation_result=cancellation_result,
+            primary_reason_code=reason_code,
+            primary_outcome="failure",
+        )
 
     def _record_outcome(
         self,
@@ -455,6 +484,8 @@ class AgentRuntimeCoordinator:
         handle: AgentRunHandle | None = None,
         cancellation_result: CancellationResult | None = None,
         identical_start_replayed: bool = False,
+        primary_reason_code: str,
+        primary_outcome: Literal["success", "failure"],
     ) -> AgentRunOperationResult:
         return AgentRunOperationResult(
             request_context_id=context.id,
@@ -465,6 +496,8 @@ class AgentRuntimeCoordinator:
             cancellation_result=cancellation_result,
             identical_start_replayed=identical_start_replayed,
             audit_pending=True,
+            primary_reason_code=primary_reason_code,
+            primary_outcome=primary_outcome,
         )
 
     @staticmethod

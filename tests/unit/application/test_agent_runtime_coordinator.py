@@ -199,10 +199,12 @@ class _AuditSink:
         *,
         fail_on_phase: str | None = None,
         acknowledged: bool = True,
+        unacknowledged_on_phase: str | None = None,
     ) -> None:
         self.order = order
         self.fail_on_phase = fail_on_phase
         self.acknowledged = acknowledged
+        self.unacknowledged_on_phase = unacknowledged_on_phase
         self.events: list[AgentRunAuditEvent] = []
         self.receipts: list[AgentRunAuditReceipt] = []
 
@@ -222,8 +224,9 @@ class _AuditSink:
                 sequence=sequence,
                 previous_receipt_digest=previous_digest,
                 event_digest=event_digest,
+                acknowledged=(self.acknowledged and event.phase != self.unacknowledged_on_phase),
             ),
-            acknowledged=self.acknowledged,
+            acknowledged=(self.acknowledged and event.phase != self.unacknowledged_on_phase),
         )
         self.receipts.append(receipt)
         return receipt
@@ -647,6 +650,25 @@ async def test_unacknowledged_authorization_audit_prevents_runtime(tmp_path: Pat
     assert "runtime:discover" not in order
 
 
+def test_audit_receipt_rejects_acknowledgement_tampering() -> None:
+    event_digest = "a" * 64
+    receipt = AgentRunAuditReceipt(
+        sequence=1,
+        previous_receipt_digest="0" * 64,
+        event_digest=event_digest,
+        receipt_digest=compute_agent_run_audit_receipt_digest(
+            sequence=1,
+            previous_receipt_digest="0" * 64,
+            event_digest=event_digest,
+            acknowledged=False,
+        ),
+        acknowledged=False,
+    )
+
+    with pytest.raises(ValidationError):
+        AgentRunAuditReceipt.model_validate({**receipt.model_dump(), "acknowledged": True})
+
+
 @pytest.mark.asyncio
 async def test_outcome_audit_failure_returns_retryable_pending_result(tmp_path: Path) -> None:
     binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
@@ -668,6 +690,8 @@ async def test_outcome_audit_failure_returns_retryable_pending_result(tmp_path: 
     assert result.reason_code == "agent_run_audit_pending"
     assert result.audit_pending
     assert result.handle is not None
+    assert result.primary_reason_code == "agent_run_started"
+    assert result.primary_outcome == "success"
 
 
 @pytest.mark.asyncio
@@ -738,13 +762,38 @@ async def test_provider_preflight_rejects_stale_binding_receipt(tmp_path: Path) 
         SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
         order,
     )
-    coordinator, _, _ = _coordinator(runtime=runtime, order=order)
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
 
     result = await coordinator.start(_context(request), ClientSurface.CLI, request)
 
     assert not result.ok
     assert result.reason_code == "provider_binding_digest_mismatch"
     assert "runtime:start" not in order
+    assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_provider_preflight_audit_failure_returns_pending_result(tmp_path: Path) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding).model_copy(update={"provider_binding_digest": "f" * 64})
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(order, fail_on_phase="outcome"),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert result.reason_code == "agent_run_audit_pending"
+    assert result.audit_pending
+    assert result.primary_reason_code == "provider_binding_digest_mismatch"
+    assert result.primary_outcome == "failure"
 
 
 @pytest.mark.asyncio
@@ -969,6 +1018,53 @@ async def test_runtime_exceptions_have_operation_specific_errors_and_outcome_aud
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("operation", "primary_reason"),
+    [
+        ("start", "agent_run_start_failed"),
+        ("resume", "agent_run_resume_failed"),
+        ("cancel", "agent_run_cancel_failed"),
+    ],
+)
+async def test_runtime_exception_with_missing_outcome_audit_is_pending(
+    tmp_path: Path,
+    operation: str,
+    primary_reason: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(simulator, order, failures={operation: "provider_failed"})
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(order, fail_on_phase="outcome"),
+    )
+
+    if operation == "start":
+        result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+    elif operation == "resume":
+        resumed = request.model_copy(update={"resume_handle_id": handle.id})
+        result = await coordinator.resume(_context(resumed), ClientSurface.CLI, handle, resumed)
+    else:
+        result = await coordinator.cancel(
+            _context(request),
+            ClientSurface.CLI,
+            handle,
+            request,
+            uuid4(),
+            "f" * 64,
+        )
+
+    assert result.reason_code == "agent_run_audit_pending"
+    assert result.audit_pending
+    assert result.primary_reason_code == primary_reason
+    assert result.primary_outcome == "failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("operation", "expected_reason"),
     [
         ("start", "agent_run_start_handle_mismatch"),
@@ -1013,6 +1109,59 @@ async def test_runtime_return_identity_substitution_is_rejected_before_success_a
     assert not result.ok
     assert result.reason_code == expected_reason
     assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "primary_reason"),
+    [
+        ("start", "agent_run_start_handle_mismatch"),
+        ("resume", "agent_run_resume_handle_mismatch"),
+        ("cancel", "agent_run_cancellation_handle_mismatch"),
+    ],
+)
+async def test_identity_mismatch_with_unacknowledged_outcome_audit_is_pending(
+    tmp_path: Path,
+    operation: str,
+    primary_reason: str,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        start_handle_updates={"run_id": uuid4()} if operation == "start" else None,
+        resume_handle_updates={"id": uuid4()} if operation == "resume" else None,
+        cancellation_handle_id=uuid4() if operation == "cancel" else None,
+    )
+    coordinator, _, _ = _coordinator(
+        runtime=runtime,
+        order=order,
+        audit=_AuditSink(order, unacknowledged_on_phase="outcome"),
+    )
+
+    if operation == "start":
+        result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+    elif operation == "resume":
+        resumed = request.model_copy(update={"resume_handle_id": handle.id})
+        result = await coordinator.resume(_context(resumed), ClientSurface.CLI, handle, resumed)
+    else:
+        result = await coordinator.cancel(
+            _context(request),
+            ClientSurface.CLI,
+            handle,
+            request,
+            uuid4(),
+            "f" * 64,
+        )
+
+    assert result.reason_code == "agent_run_audit_pending"
+    assert result.audit_pending
+    assert result.primary_reason_code == primary_reason
+    assert result.primary_outcome == "failure"
 
 
 def test_audit_schema_contains_no_sensitive_payload_fields() -> None:
