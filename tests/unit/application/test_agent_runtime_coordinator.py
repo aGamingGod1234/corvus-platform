@@ -306,6 +306,7 @@ class _RecordingRuntime:
         capabilities_override: AgentCapabilities | None = None,
         discover_error: Exception | None = None,
         capabilities_error: Exception | None = None,
+        null_results: frozenset[str] | None = None,
     ) -> None:
         self.runtime = runtime
         self.order = order
@@ -319,6 +320,7 @@ class _RecordingRuntime:
         self.capabilities_override = capabilities_override
         self.discover_error = discover_error
         self.capabilities_error = capabilities_error
+        self.null_results = null_results or frozenset()
 
     async def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         self.order.append("runtime:discover")
@@ -344,6 +346,8 @@ class _RecordingRuntime:
     async def start(self, request: AgentRunRequest) -> AgentRunStartResult:
         self.order.append("runtime:start")
         self._raise_if_failed("start")
+        if "start" in self.null_results:
+            return None  # type: ignore[return-value]
         result = await self.runtime.start(request)
         return result.model_copy(
             update={
@@ -365,6 +369,8 @@ class _RecordingRuntime:
     ) -> CancellationResult:
         self.order.append("runtime:cancel")
         self._raise_if_failed("cancel")
+        if "cancel" in self.null_results:
+            return None  # type: ignore[return-value]
         if self.cancellation_result_override is not None:
             return self.cancellation_result_override
         result = await self.runtime.cancel(handle, current_kill_switch_proof_id)
@@ -384,6 +390,8 @@ class _RecordingRuntime:
     ) -> AgentRunHandle:
         self.order.append("runtime:resume")
         self._raise_if_failed("resume")
+        if "resume" in self.null_results:
+            return None  # type: ignore[return-value]
         result = await self.runtime.resume(handle, request_with_fresh_proofs)
         return result.model_copy(update=self.resume_handle_updates)
 
@@ -841,6 +849,34 @@ async def test_authorization_decision_rejects_invalid_evaluation_time_before_run
     assert not result.ok
     assert result.reason_code == "agent_run_authorization_time_invalid"
     assert order == ["authorization", "audit:authorization"]
+    assert audit.events[0].outcome == "deny"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rejects_run_after_request_deadline(tmp_path: Path) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding, deadline=_NOW - timedelta(seconds=1))
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    authorizer = _Authorizer(
+        order,
+        decision_updates={"evaluated_at": _NOW - timedelta(seconds=2)},
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        authorizer=authorizer,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_authorization_time_invalid"
+    assert "runtime:start" not in order
     assert audit.events[0].outcome == "deny"
 
 
@@ -1708,6 +1744,59 @@ async def test_runtime_exceptions_have_operation_specific_errors_and_outcome_aud
         simulator,
         order,
         failures={operation: "provider_failed"},
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    if operation == "start":
+        result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+    elif operation == "resume":
+        resumed_request = request.model_copy(update={"resume_handle_id": handle.id})
+        result = await coordinator.resume(
+            _context(resumed_request),
+            ClientSurface.CLI,
+            handle,
+            resumed_request,
+        )
+    else:
+        result = await coordinator.cancel(
+            _context(request),
+            ClientSurface.CLI,
+            handle,
+            request,
+            uuid4(),
+            "f" * 64,
+        )
+
+    assert not result.ok
+    assert result.reason_code == expected_reason
+    assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "expected_reason"),
+    [
+        ("start", "agent_run_start_failed"),
+        ("resume", "agent_run_resume_failed"),
+        ("cancel", "agent_run_cancel_failed"),
+    ],
+)
+async def test_null_runtime_results_fail_closed_with_operation_specific_errors(
+    tmp_path: Path,
+    operation: str,
+    expected_reason: str,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        null_results=frozenset({operation}),
     )
     coordinator, _, audit = _coordinator(runtime=runtime, order=order)
 

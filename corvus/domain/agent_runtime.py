@@ -61,23 +61,23 @@ def _canonical_decimal(value: Decimal) -> str:
     return f"{sign_prefix}{coefficient_text}E{exponent:+d}"
 
 
-def _canonicalize_digest_value(value: object) -> object:
+def canonicalize_digest_value(value: object) -> object:
     if isinstance(value, datetime):
         return _canonical_datetime(value)
     if isinstance(value, Decimal):
         return _canonical_decimal(value)
     if isinstance(value, Enum):
-        return _canonicalize_digest_value(value.value)
+        return canonicalize_digest_value(value.value)
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, Mapping):
-        return {str(key): _canonicalize_digest_value(item) for key, item in value.items()}
+        return {str(key): canonicalize_digest_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_canonicalize_digest_value(item) for item in value]
+        return [canonicalize_digest_value(item) for item in value]
     if isinstance(value, (set, frozenset)):
-        items = [_canonicalize_digest_value(item) for item in value]
+        items = [canonicalize_digest_value(item) for item in value]
         return sorted(
             items,
             key=lambda item: json.dumps(
@@ -93,7 +93,7 @@ def _canonicalize_digest_value(value: object) -> object:
 
 def _compute_canonical_digest(value: object) -> str:
     encoded = json.dumps(
-        _canonicalize_digest_value(value),
+        canonicalize_digest_value(value),
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),

@@ -24,6 +24,7 @@ from corvus.domain.agent_runtime import (
     ProviderBinding,
     ProviderStatus,
     ProviderTransport,
+    canonicalize_digest_value,
     compute_agent_run_runtime_limit_digest,
     compute_autonomy_grant_digest,
     compute_provider_binding_digest,
@@ -44,7 +45,7 @@ class VerifiedAgentRunAuthorizationInputs(VerifiedProjectAuthorizationInputs):
 
 def _canonical_evidence_receipt(kind: str, payload: dict[str, object]) -> tuple[UUID, str]:
     encoded = json.dumps(
-        payload,
+        canonicalize_digest_value(payload),
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
@@ -114,8 +115,8 @@ def canonical_credential_evidence_receipt(
                 "credential_version_id": str(request.credential_version_id),
                 "credential_grant_id": str(request.credential_grant_id),
             },
-            "credential_ref": credential_ref.model_dump(mode="json"),
-            "verification_proof": proof.model_dump(mode="json"),
+            "credential_ref": credential_ref.model_dump(mode="python"),
+            "verification_proof": proof.model_dump(mode="python"),
             "expected_rotation_epoch": context.expected_credential_rotation_epoch,
             "expected_nonce_digest": context.expected_credential_nonce_digest,
         },
@@ -163,7 +164,7 @@ def canonical_budget_evidence_receipt(
                 "budget_unit": request.budget_unit,
                 "budget_requested_amount": request.budget_requested_amount,
             },
-            "verification_proof": proof.model_dump(mode="json"),
+            "verification_proof": proof.model_dump(mode="python"),
         },
     )
 

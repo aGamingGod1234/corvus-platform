@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -1856,11 +1856,29 @@ def test_exact_current_credential_binding_allows() -> None:
 
 
 def test_credential_evidence_receipt_is_canonical_and_semantically_bound() -> None:
-    case, context, _, _ = _credential_bound_case()
+    case, context, credential_ref, proof = _credential_bound_case()
     request = case[0]
+    offset = timezone(timedelta(hours=8))
+    equivalent_context = context.model_copy(
+        update={
+            "credential_ref": credential_ref.model_copy(
+                update={
+                    "created_at": credential_ref.created_at.astimezone(offset),
+                    "updated_at": credential_ref.updated_at.astimezone(offset),
+                    "expires_at": credential_ref.expires_at.astimezone(offset),
+                }
+            ),
+            "credential_verification_proof": proof.model_copy(
+                update={
+                    "issued_at": proof.issued_at.astimezone(offset),
+                    "expires_at": proof.expires_at.astimezone(offset),
+                }
+            ),
+        }
+    )
 
     first = canonical_credential_evidence_receipt(request, context)
-    second = canonical_credential_evidence_receipt(request, context)
+    second = canonical_credential_evidence_receipt(request, equivalent_context)
 
     assert first == second
     assert first is not None
@@ -2181,11 +2199,24 @@ def test_exact_budget_and_runtime_evidence_allows() -> None:
 
 
 def test_budget_evidence_receipt_is_canonical_and_semantically_bound() -> None:
-    case, context, _ = _budget_bound_case()
+    case, context, proof = _budget_bound_case()
     request = case[0]
+    offset = timezone(timedelta(hours=8))
+    equivalent_context = context.model_copy(
+        update={
+            "budget_runtime_verification_proof": proof.model_copy(
+                update={
+                    "period_starts_at": proof.period_starts_at.astimezone(offset),
+                    "period_ends_at": proof.period_ends_at.astimezone(offset),
+                    "observed_at": proof.observed_at.astimezone(offset),
+                    "expires_at": proof.expires_at.astimezone(offset),
+                }
+            )
+        }
+    )
 
     first = canonical_budget_evidence_receipt(request, context)
-    second = canonical_budget_evidence_receipt(request, context)
+    second = canonical_budget_evidence_receipt(request, equivalent_context)
 
     assert first == second
     assert first is not None

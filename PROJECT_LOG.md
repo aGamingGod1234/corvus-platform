@@ -861,18 +861,22 @@
 - Made timezone-aware historical agent-run requests deserializable while retaining deadline enforcement at authorization time, preserving both archival fidelity and time-of-use safety.
 - Added exact safe classifications for provider token-usage counters/details while deliberately retaining generic `tokens` as sensitive credential-bearing data.
 - Replaced full provider-binding equality in simulator lookup with the established canonical digest, accepting health-only refreshes while retaining every stable identity, scope, capability, executable/credential, model, version, and disclosure boundary.
+- Enforced the request deadline against current coordinator time so an earlier valid authorization decision cannot start or resume an already expired run.
+- Canonicalized credential and budget evidence receipts from Python-native values, making equivalent timezone offsets digest-identical while preserving semantic changes.
+- Converted protocol-violating null start/resume/cancel adapter results into the existing operation-specific fail-closed outcomes and audit records.
 
 ### Files Modified
 - `corvus/security.py` — fail-closed multi-word secret assignment redaction.
-- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection.
+- `corvus/domain/agent_runtime.py` — allocation-free recursive secret-value inspection and shared canonical evidence-value normalization.
 - `corvus/application/ports.py` — asynchronous discovery and health contracts.
-- `corvus/application/agent_runtime.py` — awaited provider preflight operations.
+- `corvus/application/agent_runtime.py` — awaited provider preflight, current-time deadline enforcement, and defensive null-result handling.
+- `corvus/infrastructure/agent_run_authorization.py` — canonical credential and budget evidence receipts.
 - `corvus/infrastructure/agent_runtimes/simulated.py` — asynchronous simulator parity and stable-digest binding lookup.
 - `tests/unit/test_security.py` — multi-word credential regression.
 - `tests/unit/domain/test_agent_runtime.py` — no-thaw payload scan, historical deserialization, and structured usage-metadata regressions.
 - `tests/unit/infrastructure/test_simulated_agent_runtime.py` — asynchronous runtime contract and volatile health-refresh regressions.
-- `tests/unit/application/test_agent_runtime_coordinator.py` — asynchronous tracing adapter and naive coordinator-clock fail-closed regression.
-- `tests/unit/application/test_authorization.py` — existing authorization-time deadline regressions reverified.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — async tracing adapter plus clock, expired-request, and null-result fail-closed regressions.
+- `tests/unit/application/test_authorization.py` — authorization-time deadline revalidation and equivalent-timezone evidence receipt regressions.
 - `HACKATHON_STATUS.md` — current verification evidence.
 - `PROJECT_LOG.md` — this review-repair record.
 
@@ -880,6 +884,7 @@
 - Unquoted sensitive assignments are intentionally redacted through end-of-line; safe over-redaction is preferred to leaking a multi-word credential.
 - `capabilities()` remains synchronous because the reviewed blocking-I/O concern was limited to discovery and health, and current capability reports are immutable binding metadata.
 - Provider status and health timestamps remain runtime observations outside the stable binding digest and are validated separately before execution.
+- Runtime adapters are typed as returning non-null contracts; defensive null handling maps violations to the existing operation-specific failure codes rather than inventing new public reasons.
 
 ### Known Issues / Deferred
 - CodeRabbit accepted the final review request but its hosted reviewer was rate-limited; the existing CodeRabbit status on the reviewed head remained successful.
