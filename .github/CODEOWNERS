@@ -81,6 +81,7 @@
 /tests/integration/test_project_repository.py                @asifdotpy
 
 # MVP execution, persistence, governance, ingress, update, deployment, and API boundaries
+/corvus/mvp/__init__.py                         @asifdotpy
 /corvus/mvp/governance.py                       @asifdotpy
 /corvus/mvp/core.py                             @asifdotpy
 /corvus/mvp/store.py                            @asifdotpy

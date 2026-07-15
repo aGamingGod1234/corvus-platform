@@ -11,7 +11,7 @@ CI runs the automated gates, and a human runs this checklist.
       erroring check must block, never allow.
 - [ ] No new path introduces a default-allow branch in
       `corvus/application/authorization.py`, `corvus/infrastructure/project_authorization.py`,
-      the explicit authority/repository modules listed in CODEOWNERS, or
+      the explicit authority/repository modules listed in CODEOWNERS,
       `corvus/mvp/governance.py`, or `corvus/mvp/core.py` (effect approval,
       execution, idempotency, and budget state transitions).
 
