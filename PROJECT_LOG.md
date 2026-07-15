@@ -1049,3 +1049,25 @@
 - Push this branch and open a ready PR targeting `main` for review.
 - After review and merge, tag `v0.2.0-alpha.1` on `main` so the release workflow publishes installer assets and checksums.
 - Verify the GitHub Actions macOS and Linux installer artifacts before treating them as downloadable alpha builds.
+
+## 2026-07-15 — Alpha Release Review Hardening
+
+### What Was Implemented
+- Made packaged sidecar discovery skip directory lookalikes and continue to the next trusted candidate.
+- Made loopback host classification reject missing or non-string runtime values without throwing.
+- Required every release tag commit to be an ancestor of `origin/main` before GitHub prerelease publication.
+
+### Files Modified
+- `apps/desktop/src-tauri/src/lib.rs` — file-only packaged sidecar selection plus regression coverage.
+- `apps/web/src/runtime/localRuntime.ts` and `localRuntime.test.ts` — defensive runtime-host validation and regression coverage.
+- `.github/workflows/desktop-release.yml` — reviewed-main ancestry gate for release tags.
+- `PROJECT_LOG.md` — this hardening record.
+
+### Assumptions Made (flag these for review)
+- Tags may point at any reviewed commit reachable from `main`; they do not need to point only at the current `main` tip.
+
+### Known Issues / Deferred
+- Broader CODEOWNERS coverage for release, desktop, and scripts paths remains a separate governance change so this release fix stays narrowly reviewable.
+
+### Suggested Next Steps
+- Re-run focused and full verification, obtain exact-head approval, merge PR #3, and tag `v0.2.0-alpha.1` from updated `main`.

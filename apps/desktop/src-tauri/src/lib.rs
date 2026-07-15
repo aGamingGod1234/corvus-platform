@@ -475,17 +475,28 @@ fn sidecar_executable(app: &tauri::App) -> Result<PathBuf, String> {
     let app_executable_dir = app_executable
         .parent()
         .ok_or_else(|| "desktop_executable_directory_failed:missing_parent".to_owned())?;
-    for candidate in
-        packaged_sidecar_candidates(&resource_dir, app_executable_dir, executable_name)
-    {
-        if candidate.exists() {
-            return canonical_file(&candidate, "sidecar_executable_invalid");
-        }
+    if let Some(executable) = select_packaged_sidecar(packaged_sidecar_candidates(
+        &resource_dir,
+        app_executable_dir,
+        executable_name,
+    ))? {
+        return Ok(executable);
     }
     Err(format!(
         "sidecar_executable_missing:{}",
         resource_dir.join(executable_name).display()
     ))
+}
+
+fn select_packaged_sidecar(
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    for candidate in candidates {
+        if candidate.is_file() {
+            return canonical_file(&candidate, "sidecar_executable_invalid").map(Some);
+        }
+    }
+    Ok(None)
 }
 
 fn packaged_sidecar_candidates(
@@ -673,6 +684,7 @@ mod tests {
     use super::{
         SidecarLaunch, SidecarLifecycle, SidecarState, build_desktop_url, capture_bounded_stderr,
         packaged_sidecar_candidates, readiness_probe, sanitize_diagnostics,
+        select_packaged_sidecar,
     };
 
     #[test]
@@ -805,5 +817,20 @@ mod tests {
                 PathBuf::from("C:/Corvus/bin/corvus-mvp.exe"),
             ]
         );
+    }
+
+    #[test]
+    fn packaged_sidecar_lookup_skips_directories() {
+        let directory =
+            std::env::temp_dir().join(format!("corvus-sidecar-directory-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let executable = std::env::current_exe().unwrap();
+
+        let selected = select_packaged_sidecar([directory.clone(), executable.clone()])
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(selected, std::fs::canonicalize(executable).unwrap());
+        std::fs::remove_dir(directory).unwrap();
     }
 }
