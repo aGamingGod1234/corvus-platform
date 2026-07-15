@@ -129,11 +129,7 @@ async def test_cancel_is_idempotent_and_records_one_terminal_event(tmp_path: Pat
     binding = _binding(tmp_path)
     runtime = _runtime(
         (binding,),
-        {
-            binding.id: (
-                SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),
-            )
-        },
+        {binding.id: (SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),)},
     )
     handle = await runtime.start(_request(binding))
     proof_id = uuid4()
@@ -166,11 +162,7 @@ async def test_simulator_snapshots_mutable_event_templates(tmp_path: Path) -> No
     payload = {"state": "original"}
     runtime = _runtime(
         (binding,),
-        {
-            binding.id: (
-                SimulatedEventTemplate(AgentRunEventType.STARTED, payload),
-            )
-        },
+        {binding.id: (SimulatedEventTemplate(AgentRunEventType.STARTED, payload),)},
     )
     payload["state"] = "mutated"
 
@@ -258,9 +250,7 @@ async def test_resume_rejects_substitution_and_terminal_handle(tmp_path: Path) -
     runtime = _runtime(
         (binding, other),
         {
-            binding.id: (
-                SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),
-            ),
+            binding.id: (SimulatedEventTemplate(AgentRunEventType.STARTED, {"state": "running"}),),
             other.id: (),
         },
     )

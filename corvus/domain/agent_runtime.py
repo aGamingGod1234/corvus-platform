@@ -394,8 +394,7 @@ def _contains_secret_payload_key(value: object) -> bool:
     if isinstance(value, Mapping):
         for key, item in value.items():
             if any(
-                _normalize_payload_key(str(key)).endswith(suffix)
-                for suffix in _SECRET_KEY_SUFFIXES
+                _normalize_payload_key(str(key)).endswith(suffix) for suffix in _SECRET_KEY_SUFFIXES
             ):
                 return True
             if _contains_secret_payload_key(item):

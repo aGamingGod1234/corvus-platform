@@ -262,9 +262,7 @@ def test_request_requires_exactly_one_prompt_shape_and_has_no_secret_field() -> 
     with pytest.raises(ValidationError, match="agent_run_prompt_shape_ambiguous"):
         _request(messages=("hello",))
     with pytest.raises(ValidationError) as secret:
-        AgentRunRequest.model_validate(
-            {**_request().model_dump(), "secret_value": "plaintext"}
-        )
+        AgentRunRequest.model_validate({**_request().model_dump(), "secret_value": "plaintext"})
     assert secret.value.errors()[0]["type"] == "extra_forbidden"
     assert "secret" not in AgentRunRequest.model_fields
     assert "secret_value" not in AgentRunRequest.model_fields

@@ -167,9 +167,7 @@ class SimulatedAgentRuntime:
 
         sequence = len(record.events) + 1
         timestamp = self._next_event_timestamp(record)
-        previous_digest = (
-            record.events[-1].event_digest if record.events else GENESIS_EVENT_DIGEST
-        )
+        previous_digest = record.events[-1].event_digest if record.events else GENESIS_EVENT_DIGEST
         payload: dict[str, JsonValue] = {
             "current_kill_switch_proof_id": str(current_kill_switch_proof_id)
         }
