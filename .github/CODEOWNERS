@@ -2,9 +2,9 @@
 #
 # Implements the "structured PR + code review" half of the GitHub-workflow
 # proposal. Any change to the paths below REQUIRES security review before merge.
-# Pair this with branch protection on `main` (require PR review + certification
-# workflow as a required status check) — CODEOWNERS routes review but does not
-# itself enforce it.
+# Pair this with branch protection on `main` that requires Code Owner review and
+# the certification workflow status checks. CODEOWNERS routes review but does
+# not itself enforce it.
 #
 # Security owner: @asifdotpy (Asif, OAI). Add Lucas/Alexander as owners for
 # their non-security paths (corvus/mvp, corvus/infrastructure/repositories
@@ -13,6 +13,7 @@
 # Protect the ownership policy, security-governance documents, and required
 # certification workflow from unreviewed rerouting or check-name preservation.
 /.github/                                       @asifdotpy
+/SECURITY_REVIEW.md                             @asifdotpy
 
 # Proof-carrying verification + sandbox execution boundary
 /corvus/security.py                              @asifdotpy
@@ -23,6 +24,8 @@
 /corvus/cli.py                                   @asifdotpy
 /corvus/snapshot.py                              @asifdotpy
 /corvus/delivery.py                              @asifdotpy
+/corvus/context.py                               @asifdotpy
+/corvus/store.py                                 @asifdotpy
 /corvus/domain/                                  @asifdotpy
 
 # Provider validation, redaction, credential, and child-process boundaries
@@ -87,6 +90,7 @@
 /corvus/mvp/desktop_runtime.py                  @asifdotpy
 /corvus/mvp/deployment.py                       @asifdotpy
 /corvus/mvp/api.py                              @asifdotpy
+/corvus/mvp/cli.py                              @asifdotpy
 
 # Supply-chain provenance generation
 /scripts/generate_supply_chain.py               @asifdotpy
@@ -98,4 +102,5 @@
 /tests/mvp/test_deployment_desktop.py           @asifdotpy
 /tests/mvp/test_desktop_runtime.py              @asifdotpy
 /tests/mvp/test_api.py                          @asifdotpy
+/tests/mvp/test_cli_adapter.py                  @asifdotpy
 /tests/mvp/test_supply_chain.py                 @asifdotpy

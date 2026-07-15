@@ -485,7 +485,7 @@
 - Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
 - Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
 - Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
-- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 73 non-redundant ownership rules.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 78 non-redundant ownership rules.
 - Removed one redundant ownership rule and replaced hardcoded source line references with stable class, method, and helper names after Gemini's exact-head review.
 - Added explicit audit-repository ownership and corrected the formal-approval wording identified in Gemini's final documentation pass.
 - Added explicit ownership for the MVP ingress, update-verification, deployment/OIDC, API/session, governance, supply-chain, and matching regression-test trust boundaries identified in Gemini's exact-head review.
@@ -494,6 +494,7 @@
 - Removed misleading current-branch verification claims for bare credential redaction and the not-yet-merged agent runtime, event chain, replay, and operation-binding contracts.
 - Corrected the review-gate guidance so only a persisted formal approval from an eligible reviewer satisfies protected-branch and CODEOWNERS requirements.
 - Ran checksum-verified Gitleaks 8.30.1 scans over the staged final repair and the seven-commit PR range; both reported no leaks.
+- Added the final MVP server-adapter, V1 context/store firewall, root security-review document, and matching regression-test routes from Codex's late prior-head review; clarified that protected `main` must require Code Owner review.
 
 ### Files Modified
 - `.github/CODEOWNERS` — complete security-owner routing, MVP trust-boundary coverage, and self-protection.
