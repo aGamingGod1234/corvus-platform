@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from corvus.domain import agent_runtime
 from corvus.domain.agent_runtime import (
     AgentCapabilities,
     AgentRunEvent,
@@ -82,6 +83,7 @@ def _grant(tmp_path: Path, **updates: object) -> AutonomyGrant:
         "corvus_budget_ceiling": 10,
         "max_turns": 8,
         "max_output_tokens": 4000,
+        "max_output_bytes": 100_000,
         "max_retries": 2,
         "approval_ceiling": 1,
         "always_block_effects": frozenset({"authority.bypass"}),
@@ -128,6 +130,8 @@ def _request(**updates: object) -> AgentRunRequest:
         "requested_effect_classes": frozenset({"repository.read"}),
         "provider_spend_limit": 5,
         "corvus_budget_limit": 10,
+        "budget_unit": "usd_micros",
+        "budget_requested_amount": 1,
         "approval_limit": 1,
         "max_retries": 2,
         "max_turns": 8,
@@ -165,6 +169,16 @@ def _event(**updates: object) -> AgentRunEvent:
         effect_authorization_decision_digest=values.get("effect_authorization_decision_digest"),
     )
     return AgentRunEvent(**values)
+
+
+def test_agent_run_runtime_limit_digest_contract_is_public() -> None:
+    digest_function = getattr(agent_runtime, "compute_agent_run_runtime_limit_digest", None)
+
+    assert digest_function is not None
+
+
+def test_autonomy_grant_requires_a_max_output_byte_ceiling() -> None:
+    assert "max_output_bytes" in AutonomyGrant.model_fields
 
 
 def test_autonomy_and_run_contracts_expose_enforceable_limits(tmp_path: Path) -> None:

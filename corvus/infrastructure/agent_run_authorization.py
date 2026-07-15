@@ -23,6 +23,8 @@ from corvus.domain.agent_runtime import (
     AutonomyGrant,
     ProviderBinding,
     ProviderStatus,
+    ProviderTransport,
+    compute_agent_run_runtime_limit_digest,
     compute_autonomy_grant_digest,
     compute_provider_binding_digest,
 )
@@ -293,6 +295,7 @@ class VerifiedAgentRunAuthorizationAdapter:
             or run_request.max_retries > autonomy.max_retries
             or run_request.max_turns > autonomy.max_turns
             or autonomy.max_output_tokens < run_request.max_output_tokens
+            or autonomy.max_output_bytes < run_request.max_output_bytes
         ):
             return "stale_autonomy_grant"
 
@@ -308,6 +311,36 @@ class VerifiedAgentRunAuthorizationAdapter:
             return "provider_binding_digest_mismatch"
         if provider.status is not ProviderStatus.AVAILABLE:
             return "agent_run_provider_unavailable"
+
+        canonical_credential_grant_ids = (
+            (request.credential_grant_id,) if request.credential_grant_id is not None else ()
+        )
+        if (
+            run_request.credential_grant_ids != canonical_credential_grant_ids
+            or (
+                provider.transport is ProviderTransport.HTTP_API
+                and (
+                    provider.credential_ref_id is None
+                    or provider.credential_ref_id != request.credential_ref_id
+                    or request.credential_grant_id is None
+                )
+            )
+            or (
+                provider.transport is ProviderTransport.LOCAL_CLI
+                and (request.credential_ref_id is not None or canonical_credential_grant_ids)
+            )
+        ):
+            return "stale_credential_proof"
+
+        if (
+            request.runtime_limit_digest is None
+            or request.budget_unit is None
+            or request.budget_requested_amount is None
+            or run_request.budget_unit != request.budget_unit
+            or run_request.budget_requested_amount != request.budget_requested_amount
+            or compute_agent_run_runtime_limit_digest(run_request) != request.runtime_limit_digest
+        ):
+            return "agent_run_over_budget"
 
         current_kill_id = (
             agent_request.current_kill_switch_proof_id or run_request.kill_switch_proof_id

@@ -255,6 +255,7 @@ class AutonomyGrant(BaseModel):
     corvus_budget_ceiling: Decimal = Field(ge=0)
     max_turns: int = Field(ge=1)
     max_output_tokens: int = Field(ge=1)
+    max_output_bytes: int = Field(ge=1)
     max_retries: int = Field(ge=0)
     approval_ceiling: int = Field(ge=0)
     always_block_effects: frozenset[str]
@@ -391,6 +392,8 @@ class AgentRunRequest(BaseModel):
     requested_effect_classes: frozenset[str]
     provider_spend_limit: Decimal = Field(ge=0)
     corvus_budget_limit: Decimal = Field(ge=0)
+    budget_unit: str = Field(min_length=1, max_length=100)
+    budget_requested_amount: int = Field(ge=1)
     approval_limit: int = Field(ge=0)
     max_retries: int = Field(ge=0)
     max_turns: int = Field(ge=1)
@@ -449,6 +452,37 @@ class AgentRunRequest(BaseModel):
 def compute_agent_run_request_digest(request: AgentRunRequest) -> str:
     encoded = json.dumps(
         request.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def compute_agent_run_runtime_limit_digest(request: AgentRunRequest) -> str:
+    payload = request.model_dump(
+        mode="json",
+        include={
+            "model",
+            "effort",
+            "provider_spend_limit",
+            "corvus_budget_limit",
+            "deadline",
+            "max_turns",
+            "max_retries",
+            "approval_limit",
+            "max_output_tokens",
+            "max_output_bytes",
+            "sandbox_profile",
+            "filesystem_envelope",
+            "network_envelope",
+            "tool_envelope",
+            "requested_effect_classes",
+        },
+    )
+    encoded = json.dumps(
+        payload,
         allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),

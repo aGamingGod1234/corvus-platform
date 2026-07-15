@@ -88,6 +88,8 @@ def _request(binding: ProviderBinding, **updates: object) -> AgentRunRequest:
         "requested_effect_classes": frozenset(),
         "provider_spend_limit": 0,
         "corvus_budget_limit": 0,
+        "budget_unit": "usd_micros",
+        "budget_requested_amount": 1,
         "approval_limit": 0,
         "max_retries": 0,
         "max_turns": 1,
