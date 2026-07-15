@@ -19,6 +19,10 @@ _SENSITIVE_FIELD_TOKENS = (
     "password",
     "authorization",
     "cookie",
+    "credential",
+    "privatekey",
+    "signingkey",
+    "passphrase",
 )
 
 

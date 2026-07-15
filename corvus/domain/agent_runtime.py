@@ -84,7 +84,7 @@ def capability_enabled(support: CapabilitySupport) -> bool:
 class AgentCapabilities(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
-    text: CapabilitySupport = CapabilitySupport.UNVERIFIED
+    text: CapabilitySupport = CapabilitySupport.SUPPORTED
     structured_output: CapabilitySupport = CapabilitySupport.UNVERIFIED
     streaming: CapabilitySupport = CapabilitySupport.UNVERIFIED
     images: CapabilitySupport = CapabilitySupport.UNVERIFIED
@@ -711,6 +711,7 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
     previous_digest = _GENESIS_EVENT_DIGEST
     provider_event_ids: set[str] = set()
     requested_tools: dict[str, tuple[UUID, str]] = {}
+    decision_tool_calls: dict[tuple[UUID, str], str] = {}
     started_tools: set[str] = set()
     finished_tools: set[str] = set()
     state = AgentRunState.RUNNING
@@ -745,7 +746,12 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
         if event.event_type is AgentRunEventType.TOOL_REQUESTED:
             if tool_call_id is None or tool_call_id in requested_tools:
                 raise AgentRunEventChainError("tool_event_prerequisite_missing")
-            requested_tools[tool_call_id] = _effect_authorization_reference(event)
+            decision_reference = _effect_authorization_reference(event)
+            prior_tool_call_id = decision_tool_calls.get(decision_reference)
+            if prior_tool_call_id is not None and prior_tool_call_id != tool_call_id:
+                raise AgentRunEventChainError("tool_effect_authorization_reused")
+            requested_tools[tool_call_id] = decision_reference
+            decision_tool_calls[decision_reference] = tool_call_id
         elif event.event_type in {
             AgentRunEventType.TOOL_BLOCKED,
             AgentRunEventType.TOOL_STARTED,
@@ -778,6 +784,8 @@ def validate_agent_run_event_chain(events: Sequence[AgentRunEvent]) -> AgentRunS
         previous_digest = event.event_digest
         terminal_state = terminal_states.get(event.event_type)
         if terminal_state is not None:
+            if requested_tools.keys() - finished_tools:
+                raise AgentRunEventChainError("terminal_with_unresolved_tool_call")
             state = terminal_state
             terminal_seen = True
     return state

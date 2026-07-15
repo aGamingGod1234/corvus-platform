@@ -263,12 +263,12 @@ def test_provider_binding_rejects_relative_executable_and_invalid_fallbacks(
         _binding(tmp_path, fallback_binding_ids=(duplicate, duplicate))
 
 
-def test_capabilities_default_conservatively_and_only_exact_support_enables() -> None:
+def test_text_capability_defaults_supported_and_other_capabilities_stay_unverified() -> None:
     capabilities = AgentCapabilities()
 
-    assert capabilities.text is CapabilitySupport.UNVERIFIED
-    assert capabilities.tools is CapabilitySupport.UNVERIFIED
-    assert capabilities.repository_write is CapabilitySupport.UNVERIFIED
+    assert capabilities.text is CapabilitySupport.SUPPORTED
+    for field_name in AgentCapabilities.model_fields.keys() - {"text"}:
+        assert getattr(capabilities, field_name) is CapabilitySupport.UNVERIFIED
     assert capability_enabled(CapabilitySupport.SUPPORTED)
     assert not capability_enabled(CapabilitySupport.UNVERIFIED)
     assert not capability_enabled(CapabilitySupport.UNSUPPORTED)
@@ -576,6 +576,87 @@ def test_event_chain_allows_standalone_and_matching_tool_approvals() -> None:
     assert state.value == "running"
 
 
+@pytest.mark.parametrize("tool_is_started", [False, True])
+def test_event_chain_rejects_terminal_with_unresolved_tool_call(tool_is_started: bool) -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    requested = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    events = [started, requested]
+    if tool_is_started:
+        tool_started = _event(
+            run_id=run_id,
+            handle_id=handle_id,
+            sequence=3,
+            timestamp=started.timestamp + timedelta(microseconds=2),
+            event_type=AgentRunEventType.TOOL_STARTED,
+            tool_call_id="tool-1",
+            effect_authorization_decision_id=decision_id,
+            effect_authorization_decision_digest="d" * 64,
+            previous_event_digest=requested.event_digest,
+        )
+        events.append(tool_started)
+    previous = events[-1]
+    terminal = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=len(events) + 1,
+        timestamp=started.timestamp + timedelta(microseconds=len(events)),
+        event_type=AgentRunEventType.COMPLETED,
+        previous_event_digest=previous.event_digest,
+    )
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((*events, terminal))
+
+    assert exc_info.value.reason_code == "terminal_with_unresolved_tool_call"
+
+
+def test_event_chain_rejects_decision_reference_reuse_across_tool_calls() -> None:
+    run_id = uuid4()
+    handle_id = uuid4()
+    decision_id = uuid4()
+    started = _event(run_id=run_id, handle_id=handle_id)
+    first = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=2,
+        timestamp=started.timestamp + timedelta(microseconds=1),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-1",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=started.event_digest,
+    )
+    reused = _event(
+        run_id=run_id,
+        handle_id=handle_id,
+        sequence=3,
+        timestamp=started.timestamp + timedelta(microseconds=2),
+        event_type=AgentRunEventType.TOOL_REQUESTED,
+        tool_call_id="tool-2",
+        effect_authorization_decision_id=decision_id,
+        effect_authorization_decision_digest="d" * 64,
+        previous_event_digest=first.event_digest,
+    )
+
+    with pytest.raises(AgentRunEventChainError) as exc_info:
+        validate_agent_run_event_chain((started, first, reused))
+
+    assert exc_info.value.reason_code == "tool_effect_authorization_reused"
+
+
 @pytest.mark.parametrize(
     "secret_key",
     [
@@ -585,6 +666,10 @@ def test_event_chain_allows_standalone_and_matching_tool_approvals() -> None:
         "authorization_header",
         "cookie_value",
         "refreshTokenValue",
+        "credential_value",
+        "privateKeyPem",
+        "signing-key-material",
+        "passphrase_text",
     ],
 )
 def test_event_rejects_common_secret_key_variants(secret_key: str) -> None:
