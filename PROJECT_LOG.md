@@ -705,3 +705,25 @@
 ### Suggested Next Steps
 - Re-review the final credential-presence repair commit together with `415920a`, `224f65a`, `5c81932`, and `cd19279`.
 - Keep M2A unmerged until the controller-owned final repository/web/desktop gates and ready PR review complete.
+
+## 2026-07-15 — M2A Review-Gated Pull Request Handoff
+
+### What Was Implemented
+- Re-ran the complete local release matrix after the final credentialless-placement repair: 604 Python tests, 23 web tests plus production build, and Windows desktop `cargo check` all passed.
+- Obtained an independent final READY review with no Critical, Important, or Minor findings.
+- Published `codex/main-integration` and opened ready, non-draft pull request #1 against `main` for the user's code-review agents.
+- Preserved the explicit review gate: the pull request was not merged and `main` remained at `f95a814`.
+
+### Files Modified
+- `PROJECT_LOG.md` — record the verified, review-gated GitHub handoff.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly requested a ready pull request targeting `main`, no automatic merge, and follow-up repairs after review-agent findings.
+
+### Known Issues / Deferred
+- GitHub certification checks were still running when the pull request was opened.
+- Live provider adapters, Google identity, E2B Cloud lifecycle, payments, database migrations, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Allow the user's review agents and GitHub certification to complete on pull request #1.
+- Address confirmed review findings on `codex/main-integration`, reverify, and update the pull request before any merge decision.
