@@ -76,7 +76,7 @@ are sensitive to corruption or tampering.
 If the review process is gameable (self-review, stale commit reference), the gate is theater.
 **Verified-in-practice (this session):**
 - **Stale-commit review is a real failure mode.** Lucas's agent reviewed `7d2ec2e`;
-  at current head `305cbfb` 7 of 8 flagged issues were already fixed. Always re-pull
+  at the later reviewed head most flagged issues were already fixed. Always re-pull
   the PR head and confirm the commit hash before reviewing.
 - **Self-approve may not persist.** A `gh pr review --approve` by the security owner
   did not land on PR #1 (GitHub eligibility / dismissed). Fix: post the verdict as a
@@ -87,7 +87,7 @@ If the review process is gameable (self-review, stale commit reference), the gat
 - Who are the two reviewers in practice, and is Asif one of them?
 - Is there a check that both reviews reference the same frozen commit hash?
 
-## 7. Replay / Idempotency & Event-Chain Proof (verified, PR #1 `305cbfb`)
+## 7. Replay / Idempotency & Event-Chain Proof (verified during PR #1 review)
 
 **Risk:** A client retries an agent-run start with a different idempotency key or
 forges event-chain entries to replay/escalate actions.

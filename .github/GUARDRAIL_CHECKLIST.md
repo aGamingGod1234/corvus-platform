@@ -15,7 +15,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Credentials resolved only via OS keyring / scoped cloud vault at point of use
 - [ ] Provider output redaction confirmed — no leaked tokens/keys in logs, screenshots,
       or delivered evidence
-- [ ] VERIFIED (`305cbfb`): `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest`
+- [ ] VERIFIED during PR #1 review: `SecretRedactor` rejects bare `Bearer`/`Basic`/`Digest`
       in event payloads; event validation rejects secret keys AND values
       (`security.py:68-69`, `domain/agent_runtime.py:727-730`)
 - [ ] DEDICATED `tests/unit/test_security.py` for `corvus/security.py` core —
@@ -26,7 +26,7 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Completion claims backed by actual evidence (logs, hashes, test output) — not just agent assertion
 - [ ] Migration fixtures are byte-exact and reproducible, not approximate
 - [ ] Delivery is atomic — no partial/corrupted state possible on interruption
-- [ ] VERIFIED (`305cbfb`): `validate_agent_run_event_chain` recomputes every event
+- [ ] VERIFIED during PR #1 review: `validate_agent_run_event_chain` recomputes every event
       digest + enforces sequence/run/handle/`previous_event_digest` chaining; tampered or
       out-of-order events rejected (`domain/agent_runtime.py:797-818`)
 - [ ] VERIFIED: `TOOL_BLOCKED` after `TOOL_STARTED` rejected; authorization fail-closed on
@@ -37,13 +37,13 @@ Source of truth: `PLAN.md`. Evidence log: `PLAN-REVIEW-LOG.md`.
 - [ ] Reviewer is not the same person who implemented the milestone
 - [ ] Findings are logged (not just verbally raised) before sign-off
 - [ ] BEFORE reviewing: re-pull the PR head and confirm the commit hash. A stale-commit
-      review is a real failure mode (agent reviewed `7d2ec2e`; fixes already landed at `305cbfb`)
+      review is a real failure mode; never treat an earlier reviewed commit as the current head
 - [ ] AFTER posting a review: verify it actually landed via
       `gh api repos/.../pulls/N/reviews` — a self-`--approve` may NOT persist
       (GitHub eligibility / dismissed). If it didn't land, post the verdict as a PR
       COMMENT (guaranteed) AND have the PR author confirm the formal approve.
 
-## Replay / Idempotency (verified, `305cbfb`)
+## Replay / Idempotency (verified during PR #1 review)
 - [ ] `SimulatedAgentRuntime.start` keys idempotency on `(run_id, provider_binding_id)`;
       a retry with a different idempotency_key returns the SAME handle (`replayed=True`),
       never a second handle; a differing request fails the digest check (`simulated.py:125`)

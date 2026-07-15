@@ -477,3 +477,31 @@
 ### Suggested Next Steps
 - Confirm the recommended defaults in `QUESTIONS.md`.
 - Begin M2A with failing contract/security tests before any live adapter wiring.
+
+## 2026-07-15 — PR #2 Security Governance Review Repairs
+
+### What Was Implemented
+- Expanded CODEOWNERS to preserve the union of PR #2's authority/sandbox coverage and PR #1's runtime plus dedicated security-test coverage.
+- Protected the CODEOWNERS file itself and added the omitted audit, recovery, registry, database, domain, runtime, and authorization trust-root paths identified by Gemini and Codex.
+- Replaced the misleading required-CI secret-scan claim with a truthful manual evidence requirement until a dedicated required job exists.
+- Removed stale commit-specific language from the guardrail checklist and threat model while preserving the verified PR #1 review history.
+- Verified the repaired governance branch with 461 Python tests, Ruff lint/format, MyPy across 88 source files, diff checks, and validation of all 30 ownership rules.
+
+### Files Modified
+- `.github/CODEOWNERS` — complete security-owner routing and self-protection.
+- `.github/GUARDRAIL_CHECKLIST.md` — commit-independent review evidence language.
+- `.github/THREAT_MODEL.md` — commit-independent stale-review warning.
+- `SECURITY_REVIEW.md` — explicit authorization coverage and truthful secret-scan gate.
+- `PROJECT_LOG.md` — this repair record.
+
+### Assumptions Made (flag these for review)
+- Broader code-owner routing is intentionally conservative; requiring Asif review on the complete domain directory is preferable to leaving a trust-boundary model unowned.
+- Secret scanning remains a documented manual review step until a separately reviewed CI implementation is added and made required.
+
+### Known Issues / Deferred
+- PR #1 still requires a fresh formal Asif approval on its current head; a Discord verdict or PR comment does not satisfy GitHub branch protection.
+- A dedicated automated secret-scanning job remains deferred rather than being implied by documentation.
+
+### Suggested Next Steps
+- Verify, commit, and push the PR #2 repairs; reply to and resolve its five exact review threads.
+- Obtain the required owner review, merge PR #2 normally, then refresh PR #1 against protected `main` and request Asif's exact-head approval.

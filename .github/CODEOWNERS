@@ -10,27 +10,44 @@
 # their non-security paths (corvus/mvp, corvus/infrastructure/repositories
 # non-auth, apps/, openapi/) once this PR lands.
 
+# Protect the ownership policy itself from unreviewed rerouting.
+/.github/CODEOWNERS                            @asifdotpy
+
 # Proof-carrying verification + sandbox execution boundary
 /corvus/security.py                              @asifdotpy
 /corvus/sandbox.py                               @asifdotpy
 /corvus/safe_process.py                          @asifdotpy
 /corvus/verification.py                          @asifdotpy
+/corvus/domain/                                  @asifdotpy
 
 # Authorization / authority / agent-to-agent trust root
 /corvus/application/authorization.py             @asifdotpy
+/corvus/application/agent_runtime.py              @asifdotpy
+/corvus/application/ports.py                      @asifdotpy
 /corvus/infrastructure/authority_root.py         @asifdotpy
 /corvus/infrastructure/project_authorization.py  @asifdotpy
 /corvus/infrastructure/project_authority.py      @asifdotpy
 /corvus/infrastructure/local_authority.py        @asifdotpy
+/corvus/infrastructure/audit_history.py           @asifdotpy
+/corvus/infrastructure/project_recovery.py        @asifdotpy
+/corvus/infrastructure/agent_run_authorization.py @asifdotpy
+/corvus/infrastructure/agent_runtimes/             @asifdotpy
 /corvus/infrastructure/repositories/authority.py            @asifdotpy
 /corvus/infrastructure/repositories/authorization_inputs.py @asifdotpy
+/corvus/infrastructure/repositories/registry.py              @asifdotpy
+/corvus/database.py                                          @asifdotpy
 
 # Verification core: event-chain proof validation + agent run lifecycle
 /corvus/domain/agent_runtime.py                  @asifdotpy
 
 # Security test suites — changes here must keep the suite green
 /tests/security/                                 @asifdotpy
+/tests/unit/test_security.py                     @asifdotpy
 /tests/unit/test_safe_process.py                 @asifdotpy
+/tests/unit/application/test_agent_runtime_coordinator.py @asifdotpy
+/tests/unit/application/test_authorization.py              @asifdotpy
+/tests/unit/domain/test_agent_runtime.py                   @asifdotpy
+/tests/unit/infrastructure/test_simulated_agent_runtime.py @asifdotpy
 
 # NOTE: corvus/mvp/governance.py (approval governance) is security-adjacent.
 # Route it to @asifdotpy OR a security-aware reviewer + Lucas; not left unreviewed.

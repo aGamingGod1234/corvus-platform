@@ -10,17 +10,16 @@ runs this checklist.
 - [ ] Authorization decisions **deny by default**. An unverified or
       erroring check must block, never allow.
 - [ ] No new path introduces a default-allow branch in
-      `corvus/application/authorization.py`, `corvus/infrastructure/*authority*.py`,
-      `corvus/infrastructure/repositories/authorization_inputs.py`, or
-      `corvus/mvp/governance.py`. (The `*authority*` glob in CODEOWNERS
-      covers authority modules; `governance.py` is security-adjacent and
-      must also be reviewed — see CODEOWNERS.)
+      `corvus/application/authorization.py`, `corvus/infrastructure/project_authorization.py`,
+      the explicit authority/repository modules listed in CODEOWNERS, or
+      `corvus/mvp/governance.py`.
 
 ## No secret material
 - [ ] No real credentials committed. `.env` files stay gitignored; fixtures
       must NOT use the `.env` filename (see the force-tracked
       `tests/fixtures/v1/legacy/config/.env` footgun — rename it).
-- [ ] CI secret-scan (`gitleaks` / `trufflehog`) passes as a required step.
+- [ ] Until a dedicated required CI job exists, run and record a manual
+      repository secret scan (`gitleaks` or `trufflehog`) before approval.
 - [ ] `.env.example` values remain placeholders only.
 
 ## Sandbox execution
