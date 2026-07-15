@@ -821,3 +821,30 @@
 ### Suggested Next Steps
 - Commit and push the verified sweep to `codex/main-integration`, leave evidence on pull request #1, and monitor every remote certification job.
 - Keep pull request #1 open and unmerged until the user's review agents approve it.
+
+## 2026-07-15 — Asif Security-Owner Review Follow-Up
+
+### What Was Implemented
+- Validated Asif's three mandatory PR follow-ups against the current head instead of applying a stale change mechanically.
+- Confirmed the differing-idempotency-key scenario is already fail-closed: the simulator indexes logical `(run_id, binding_id)`, raises `agent_run_idempotency_mismatch`, creates no second handle, and the exact existing regression passes.
+- Added a dedicated `tests/unit/test_security.py` module covering registered, keyed, and bare secret redaction; token-usage safe-list classification; and absolute/parent path-traversal rejection.
+- Added `.github/CODEOWNERS` routing security-critical authority, runtime, redaction, sandbox, and certification-test surfaces to `@asifdotpy`.
+- Enabled `main` branch protection with strict required certification checks, admin enforcement, one approving review, code-owner review, stale-review dismissal, conversation resolution, and force-push/deletion denial.
+
+### Files Modified
+- `.github/CODEOWNERS` — security-owner routing for critical implementation and test paths.
+- `tests/unit/test_security.py` — direct security-core unit coverage requested by the reviewer.
+- `HACKATHON_STATUS.md` — current full and dedicated-security verification counts.
+- `PROJECT_LOG.md` — this security-owner review follow-up record.
+
+### Assumptions Made (flag these for review)
+- None. The user explicitly requested that Asif's review be inspected and fixed; the idempotency behavior was preserved because live code and an exact regression disproved that stale finding.
+
+### Known Issues / Deferred
+- The CODEOWNERS file is part of pull request #1 and becomes base-branch ownership policy only after this reviewed PR is merged; branch protection is already active and requires an approval now.
+- Asif must re-review the latest pushed commit before the existing `CHANGES_REQUESTED` state is cleared.
+- Live provider adapters, E2B Cloud lifecycle, Google identity, payments, durable runtime repositories, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Commit and push the verified follow-up to `codex/main-integration`, reply to Asif with evidence for all three items, and monitor the newly required certification checks.
+- Keep pull request #1 open and unmerged until Asif approves the latest head.

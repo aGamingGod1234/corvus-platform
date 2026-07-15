@@ -1,0 +1,45 @@
+from pathlib import Path
+
+import pytest
+
+from corvus.security import (
+    SecretRedactor,
+    SecurityError,
+    is_sensitive_field_name,
+    resolve_under,
+)
+
+
+def test_secret_redactor_removes_registered_keyed_and_bare_secret_values() -> None:
+    canary = "corvus-unit-secret-canary"
+    redactor = SecretRedactor([canary])
+
+    redacted = redactor.redact_value(
+        {
+            "api_key": "sk-1234567890abcdef",
+            "message": canary,
+            "nested": [{"message": "Bearer abcdefghijklmnop"}],
+        }
+    )
+
+    assert redacted == {
+        "api_key": "[REDACTED]",
+        "message": "[REDACTED]",
+        "nested": [{"message": "[REDACTED]"}],
+    }
+
+
+def test_sensitive_field_classification_preserves_token_usage_counters() -> None:
+    assert not is_sensitive_field_name("input_tokens")
+    assert not is_sensitive_field_name("max_output_tokens")
+    assert is_sensitive_field_name("access_token")
+    assert is_sensitive_field_name("signing_key")
+
+
+def test_resolve_under_rejects_absolute_and_parent_traversal(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+
+    with pytest.raises(SecurityError, match="relative"):
+        resolve_under(root, str((tmp_path / "outside.txt").resolve()))
+    with pytest.raises(SecurityError, match="traversal"):
+        resolve_under(root, "../outside.txt")

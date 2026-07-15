@@ -1,0 +1,15 @@
+# Security-critical authority, runtime, redaction, and sandbox surfaces.
+/corvus/security.py @asifdotpy
+/corvus/application/agent_runtime.py @asifdotpy
+/corvus/application/ports.py @asifdotpy
+/corvus/domain/agent_runtime.py @asifdotpy
+/corvus/infrastructure/agent_run_authorization.py @asifdotpy
+/corvus/infrastructure/agent_runtimes/ @asifdotpy
+
+# Tests that certify the security-critical surfaces above.
+/tests/security/ @asifdotpy
+/tests/unit/test_security.py @asifdotpy
+/tests/unit/application/test_agent_runtime_coordinator.py @asifdotpy
+/tests/unit/application/test_authorization.py @asifdotpy
+/tests/unit/domain/test_agent_runtime.py @asifdotpy
+/tests/unit/infrastructure/test_simulated_agent_runtime.py @asifdotpy
