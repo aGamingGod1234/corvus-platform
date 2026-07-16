@@ -9,7 +9,10 @@ config = context.config
 def run_migrations_online() -> None:
     supplied_connection = config.attributes.get("connection")
     if supplied_connection is not None:
-        context.configure(connection=supplied_connection, render_as_batch=True)
+        context.configure(
+            connection=supplied_connection,
+            render_as_batch=supplied_connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
         return
@@ -20,7 +23,10 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, render_as_batch=True)
+        context.configure(
+            connection=connection,
+            render_as_batch=connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
     connectable.dispose()

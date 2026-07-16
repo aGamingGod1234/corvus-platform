@@ -13,6 +13,11 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    drop_immutable_triggers,
+)
+
 revision: str = "m1_007_identity_scope"
 down_revision: str | None = "m1_006_handoff_restore"
 branch_labels: str | Sequence[str] | None = None
@@ -30,14 +35,7 @@ _NEW_FAMILIES = {
 
 
 def _immutable(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def upgrade() -> None:
@@ -192,10 +190,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_update")
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_delete")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_update")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_delete")
+    drop_immutable_triggers("authority_state_root_leaf_families")
+    drop_immutable_triggers("authority_state_root_manifests")
     bind = op.get_bind()
     bind.execute(
         sa.text("DELETE FROM authority_state_root_leaf_families WHERE manifest_version_id = :id"),
@@ -214,8 +210,7 @@ def downgrade() -> None:
         "principals",
         "identity_workspaces",
     ):
-        op.execute(f"DROP TRIGGER {table_name}_no_update")
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
+        drop_immutable_triggers(table_name)
     op.drop_table("scopes")
     op.drop_index("ix_agent_identities_workspace", table_name="agent_identities")
     op.drop_table("agent_identities")

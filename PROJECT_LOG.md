@@ -1266,3 +1266,31 @@
 
 ### Suggested Next Steps
 - Preserve these render gates when the native runtime selector and real Cloud lifecycle are implemented.
+
+## 2026-07-16 — Task 1.2 Hosted configuration and PostgreSQL support
+
+### What Was Implemented
+- Added immutable, fail-closed hosted settings with required SQLite/PostgreSQL URLs, distinct minimum-length signing secrets, and redacted representations and configuration errors.
+- Added URL-based SQLAlchemy engine and Alembic revision/upgrade APIs while preserving the existing SQLite `Path` APIs and classification gates.
+- Added a disposable PostgreSQL 17 test service and an environment-gated fresh-database integration test.
+- Made M1-002 through M1-009 migration triggers dialect-aware and preserved both partial unique constraints on PostgreSQL.
+
+### Files Modified
+- `corvus/platform/__init__.py` and `corvus/platform/config.py` — expose immutable hosted settings and validated engine creation.
+- `corvus/infrastructure/db.py` and `corvus/infrastructure/migrations/env.py` — add URL-based migration access and dialect-aware Alembic configuration.
+- `corvus/infrastructure/migrations/trigger_ddl.py` and M1-002 through M1-009 — emit equivalent SQLite and PostgreSQL trigger DDL and PostgreSQL partial-index predicates.
+- `compose.platform-test.yaml` — provides the disposable PostgreSQL integration-test service.
+- `pyproject.toml` and `uv.lock` — add the approved psycopg binary driver.
+- `tests/unit/platform/test_config.py` and `tests/integration/test_postgres_database.py` — cover fail-closed settings, redaction, engine URLs, fresh SQLite migration, and the real PostgreSQL migration contract.
+- `PROJECT_LOG.md` — records Task 1.2 implementation and verification status.
+
+### Assumptions Made (flag these for review)
+- None. Secret requirements, allowed database URLs, PostgreSQL test skipping, and SQLite compatibility were fixed by the approved Task 1.2 authority.
+
+### Known Issues / Deferred
+- Docker, PostgreSQL client tools, and `CORVUS_TEST_POSTGRES_URL` were unavailable on this workstation, so the real PostgreSQL integration test skipped with its explicit service-unavailable reason; it remains mandatory when the disposable service is available.
+- Hosted identity/session tables and OAuth flows are deferred to their later Milestone 1 tasks.
+
+### Suggested Next Steps
+- Run the PostgreSQL integration test against `compose.platform-test.yaml` in CI or on a workstation with Docker.
+- Continue with the next approved Milestone 1 task after Task 1.2 review.

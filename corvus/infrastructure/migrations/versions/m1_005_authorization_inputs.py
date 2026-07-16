@@ -13,6 +13,13 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    create_reject_trigger,
+    drop_immutable_triggers,
+    drop_reject_trigger,
+)
+
 revision: str = "m1_005_authorization_inputs"
 down_revision: str | None = "m1_004_registry_manifest"
 branch_labels: str | Sequence[str] | None = None
@@ -47,14 +54,7 @@ _FAMILY_NAMES = (
 
 
 def _immutable(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def _manifest_families() -> list[dict[str, object]]:
@@ -259,10 +259,10 @@ def upgrade() -> None:
         ("workspace_signing_key_versions", "workspace signing key versions"),
     ):
         _immutable(table_name, label)
-    op.execute(
-        "CREATE TRIGGER idempotency_envelopes_no_delete "
-        "BEFORE DELETE ON idempotency_envelopes "
-        "BEGIN SELECT RAISE(ABORT, 'idempotency envelopes cannot be deleted'); END"
+    create_reject_trigger(
+        "idempotency_envelopes",
+        "DELETE",
+        "idempotency envelopes cannot be deleted",
     )
 
     families = _manifest_families()
@@ -300,10 +300,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_update")
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_delete")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_update")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_delete")
+    drop_immutable_triggers("authority_state_root_leaf_families")
+    drop_immutable_triggers("authority_state_root_manifests")
     bind = op.get_bind()
     bind.execute(
         sa.text(
@@ -319,7 +317,7 @@ def downgrade() -> None:
     _immutable("authority_state_root_manifests", "authority state-root manifests")
     _immutable("authority_state_root_leaf_families", "authority state-root leaf families")
 
-    op.execute("DROP TRIGGER idempotency_envelopes_no_delete")
+    drop_reject_trigger("idempotency_envelopes", "DELETE")
     op.drop_table("idempotency_envelopes")
     for table_name in (
         "workspace_signing_key_versions",
@@ -329,6 +327,5 @@ def downgrade() -> None:
         "access_bundles",
         "audience_policy_snapshots",
     ):
-        op.execute(f"DROP TRIGGER {table_name}_no_update")
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
+        drop_immutable_triggers(table_name)
         op.drop_table(table_name)

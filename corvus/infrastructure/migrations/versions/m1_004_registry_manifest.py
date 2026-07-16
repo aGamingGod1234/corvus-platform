@@ -13,6 +13,11 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    drop_immutable_triggers,
+)
+
 revision: str = "m1_004_registry_manifest"
 down_revision: str | None = "m1_003_authority_core"
 branch_labels: str | Sequence[str] | None = None
@@ -40,14 +45,7 @@ _FAMILY_NAMES = (
 
 
 def _immutable(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def _seed_families() -> list[dict[str, object]]:
@@ -335,6 +333,5 @@ def downgrade() -> None:
         "authority_registry_verifier_keys",
         "authority_registries",
     ):
-        op.execute(f"DROP TRIGGER {table_name}_no_update")
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
+        drop_immutable_triggers(table_name)
         op.drop_table(table_name)

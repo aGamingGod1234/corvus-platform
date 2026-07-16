@@ -18,6 +18,7 @@ from corvus.database import M1_PROJECT_REVISION as _M1_PROJECT_REVISION
 from corvus.database import M1_REGISTRY_REVISION as _M1_REGISTRY_REVISION
 from corvus.database import M1_ROOT_MANIFEST_REVISION as _M1_ROOT_MANIFEST_REVISION
 from corvus.database import DatabaseState, classify_database
+from corvus.platform import create_platform_engine
 
 M1_PROJECT_REVISION: Final = _M1_PROJECT_REVISION
 M1_AUDIT_REVISION: Final = _M1_AUDIT_REVISION
@@ -35,14 +36,49 @@ class InfrastructureDatabaseError(RuntimeError):
     pass
 
 
-def _alembic_config(database: Path) -> Config:
+def _alembic_config_url(database_url: str) -> Config:
     config = Config()
     config.set_main_option(
         "script_location",
         str(Path(__file__).with_name("migrations")),
     )
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
+
+
+def _alembic_config(database: Path) -> Config:
+    return _alembic_config_url(f"sqlite:///{database}")
+
+
+def current_revision_url(database_url: str) -> str | None:
+    engine = create_platform_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+
+
+def upgrade_database_url(database_url: str) -> str:
+    revision = current_revision_url(database_url)
+    if revision not in {
+        None,
+        M1_PROJECT_REVISION,
+        M1_AUDIT_REVISION,
+        M1_AUTHORITY_REVISION,
+        M1_REGISTRY_REVISION,
+        M1_AUTHORIZATION_INPUT_REVISION,
+        M1_HANDOFF_REVISION,
+        M1_IDENTITY_SCOPE_REVISION,
+        M1_ROOT_MANIFEST_REVISION,
+        M1_CURRENT_REVISION,
+    }:
+        raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
+    command.upgrade(_alembic_config_url(database_url), "head")
+    upgraded = current_revision_url(database_url)
+    if upgraded != M1_CURRENT_REVISION:
+        raise InfrastructureDatabaseError(f"database_revision_mismatch:{upgraded or 'unstamped'}")
+    return upgraded
 
 
 def current_revision(database: Path) -> str | None:
