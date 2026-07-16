@@ -72,7 +72,7 @@ For every task: write the stated failing test, run the focused command and obser
 - Consumes: approved design and current Vercel app.
 - Produces: approved selectors, interactions, source hooks, responsive targets, and change boundary for every frontend task.
 
-- [ ] Run intake and source-backed research:
+- [x] Run intake and source-backed research:
 
 ~~~powershell
 ag design intake --project-root . --goal "Complete Corvus identity-backed agent platform" --audience "Everyday and developer individuals and teams" --conversion "Sign in and start a governed agent thread"
@@ -82,7 +82,7 @@ ag design plan --project-root .
 ag design compose --project-root .
 ~~~
 
-- [ ] Lock the allowed frontend change surface and baseline:
+- [x] Lock the allowed frontend change surface and baseline:
 
 ~~~powershell
 ag design change-plan --project-root . --allow "apps/web/src/**" --allow "apps/desktop/src-tauri/src/**" --forbid "corvus/domain/**"
@@ -91,7 +91,7 @@ ag design verify-packet --project-root .
 ag design approve-packet --project-root . --approved-by "Lucas" --approval-note "Approved seven-section Corvus product design in the 2026-07-16 Codex thread"
 ~~~
 
-- [ ] Verify the packet reports no missing artifact, weak source, stale approval hash, uncited section, or uncited interaction.
+- [x] Verify the packet reports no missing artifact, weak source, stale approval hash, uncited section, or uncited interaction.
 
 ### Task 1.2: Add hosted configuration and PostgreSQL support
 
