@@ -12,6 +12,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Corvus" }]
 dependencies = [
   "alembic>=1.14,<2",
+  "authlib>=1.6,<2",
   "cryptography>=48.0.1,<49",
   "docker>=7,<8",
   "fastapi>=0.116,<1",

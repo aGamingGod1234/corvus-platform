@@ -57,6 +57,23 @@ def test_platform_settings_constructor_cannot_bypass_validation() -> None:
         )
 
 
+def test_hosted_oauth_rejects_password_only_public_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_hosted_environment(monkeypatch, database_url=POSTGRES_URL)
+    monkeypatch.setenv("CORVUS_PUBLIC_ORIGIN", "https://:password@example.com")
+    monkeypatch.setenv("CORVUS_GOOGLE_CLIENT_ID", "google-client-id")
+    monkeypatch.setenv("CORVUS_GOOGLE_CLIENT_SECRET_REF", "env://CORVUS_GOOGLE_CLIENT_SECRET")
+    monkeypatch.setenv(
+        "CORVUS_GOOGLE_REDIRECT_URIS",
+        "https://example.com/api/v2/auth/google/callback",
+    )
+    monkeypatch.setenv("CORVUS_OAUTH_TRANSACTION_SECRET", "t" * 48)
+
+    with pytest.raises(ValueError, match="public_origin_invalid"):
+        PlatformSettings.from_env()
+
+
 @pytest.mark.parametrize("secret_name", ["session_secret", "oauth_state_secret"])
 def test_platform_settings_constructor_rejects_blank_secrets(secret_name: str) -> None:
     values = {

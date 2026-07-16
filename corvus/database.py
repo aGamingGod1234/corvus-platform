@@ -36,6 +36,7 @@ M1_IDENTITY_SCOPE_REVISION = "m1_007_identity_scope"
 M1_ROOT_MANIFEST_REVISION = "m1_008_non_circular_root_manifest"
 M1_AUDIT_PROOF_MANIFEST_REVISION = "m1_009_audit_external_proofs"
 M2_IDENTITY_CONTINUITY_REVISION = "m2_001_identity_continuity"
+M2_OAUTH_SESSIONS_REVISION = "m2_001a_oauth_sessions"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -101,6 +102,14 @@ M1_IDENTITY_SCOPE_REQUIRED_TABLES = frozenset(
 )
 M2_IDENTITY_CONTINUITY_REQUIRED_TABLES = frozenset(
     {"accounts", "external_identities", "device_registrations", "session_records"}
+)
+M2_OAUTH_SESSIONS_REQUIRED_TABLES = frozenset(
+    {
+        "oauth_transactions",
+        "web_session_bindings",
+        "account_onboarding_versions",
+        "identity_idempotency",
+    }
 )
 M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES = frozenset(
     {
@@ -823,6 +832,37 @@ M2_IDENTITY_CONTINUITY_REQUIRED_COLUMNS = {
         }
     ),
 }
+M2_OAUTH_SESSIONS_REQUIRED_COLUMNS = {
+    "oauth_transactions": frozenset(
+        {
+            "id",
+            "state_digest",
+            "nonce_digest",
+            "redirect_uri",
+            "encrypted_pkce_verifier",
+            "created_at",
+            "expires_at",
+            "consumed_at",
+            "version",
+        }
+    ),
+    "web_session_bindings": frozenset(
+        {"session_id", "session_version", "csrf_digest", "created_at"}
+    ),
+    "account_onboarding_versions": frozenset(
+        {"account_id", "version", "experience_kind", "updated_at", "payload_json"}
+    ),
+    "identity_idempotency": frozenset(
+        {
+            "account_id",
+            "operation",
+            "idempotency_key",
+            "request_digest",
+            "result_json",
+            "created_at",
+        }
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
@@ -855,6 +895,10 @@ M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS = {
     "identity_workspaces": frozenset(
         {*M1_IDENTITY_SCOPE_REQUIRED_COLUMNS["identity_workspaces"], "workspace_kind"}
     ),
+}
+M2_OAUTH_SESSIONS_CURRENT_REQUIRED_COLUMNS = {
+    **M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS,
+    **M2_OAUTH_SESSIONS_REQUIRED_COLUMNS,
 }
 
 
@@ -1176,6 +1220,12 @@ def classify_database(path: Path) -> DatabaseStatus:
                     *M2_IDENTITY_CONTINUITY_REQUIRED_TABLES,
                 }
             )
+            m2_oauth_sessions_current_tables = frozenset(
+                {
+                    *m2_identity_continuity_current_tables,
+                    *M2_OAUTH_SESSIONS_REQUIRED_TABLES,
+                }
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
@@ -1187,6 +1237,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                 m1_handoff_current_tables,
                 m1_identity_scope_current_tables,
                 m2_identity_continuity_current_tables,
+                m2_oauth_sessions_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -1207,8 +1258,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = M1_HANDOFF_CURRENT_REQUIRED_COLUMNS
                 elif tables == m1_identity_scope_current_tables:
                     expected_columns = M1_IDENTITY_SCOPE_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m2_identity_continuity_current_tables:
                     expected_columns = M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M2_OAUTH_SESSIONS_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -1240,7 +1293,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         else []
                     )
                     actual_revision = revision_rows[0][0] if len(revision_rows) == 1 else None
-                    if tables == m2_identity_continuity_current_tables:
+                    if tables == m2_oauth_sessions_current_tables:
+                        expected_revision = M2_OAUTH_SESSIONS_REVISION
+                        latest_manifest_schema_version = 7
+                    elif tables == m2_identity_continuity_current_tables:
                         expected_revision = M2_IDENTITY_CONTINUITY_REVISION
                         latest_manifest_schema_version = 7
                     elif tables == m1_current_tables:
@@ -1286,6 +1342,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_audit_triggers_match(connection)
                     authority_controls_match = tables not in {
                         m1_authority_current_tables,
@@ -1294,6 +1351,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_authority_schema_controls_match(connection)
                     registry_controls_match = tables not in {
                         m1_registry_current_tables,
@@ -1301,6 +1359,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_registry_schema_controls_match(
                         connection,
                         latest_schema_version=latest_manifest_schema_version,
@@ -1310,20 +1369,23 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_authorization_input_controls_match(connection)
                     handoff_controls_match = tables not in {
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_handoff_controls_match(connection)
                     identity_scope_controls_match = tables not in {
                         m1_identity_scope_current_tables,
                         m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
                     } or _m1_identity_scope_controls_match(connection)
-                    identity_continuity_controls_match = (
-                        tables != m2_identity_continuity_current_tables
-                        or _m2_identity_continuity_controls_match(connection)
-                    )
+                    identity_continuity_controls_match = tables not in {
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                    } or _m2_identity_continuity_controls_match(connection)
                     if (
                         tables
                         in {
@@ -1336,6 +1398,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                             m1_handoff_current_tables,
                             m1_identity_scope_current_tables,
                             m2_identity_continuity_current_tables,
+                            m2_oauth_sessions_current_tables,
                         }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
@@ -1348,7 +1411,9 @@ def classify_database(path: Path) -> DatabaseStatus:
                         and identity_scope_controls_match
                         and identity_continuity_controls_match
                     ):
-                        if tables == m2_identity_continuity_current_tables:
+                        if tables == m2_oauth_sessions_current_tables:
+                            detail = "database schema is current with M2 OAuth sessions"
+                        elif tables == m2_identity_continuity_current_tables:
                             detail = "database schema is current with M2 identity continuity"
                         elif tables == m1_identity_scope_current_tables:
                             detail = (

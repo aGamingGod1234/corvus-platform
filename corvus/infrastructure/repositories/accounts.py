@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -27,6 +31,49 @@ from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
 class AccountRepositoryError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class WebSessionAuthentication:
+    account: Account
+    session: SessionRecord
+    csrf_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebLoginResult(WebSessionAuthentication):
+    session_token: str
+    device_token: str | None
+
+
+_WEB_SESSION_CSRF_LABEL = b"corvus/web-session-csrf/v1\0"
+
+
+def _credential_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _csrf_token(session_token: str, session_secret: str) -> str:
+    return hmac.new(
+        session_secret.encode("utf-8"),
+        _WEB_SESSION_CSRF_LABEL + session_token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _opaque_credential(identifier: UUID | None = None) -> tuple[UUID, str]:
+    selected = identifier or uuid4()
+    return selected, f"{selected}.{secrets.token_urlsafe(32)}"
+
+
+def _credential_id(value: str) -> UUID | None:
+    try:
+        identifier, raw = value.split(".", maxsplit=1)
+        if len(raw) < 43:
+            return None
+        return UUID(identifier)
+    except (ValueError, AttributeError):
+        return None
 
 
 class AccountRepository:
@@ -243,85 +290,14 @@ class AccountRepository:
     ) -> Account:
         try:
             with self._transaction() as connection:
-                existing_identity_payload = connection.scalar(
-                    text(
-                        "SELECT payload_json FROM external_identities "
-                        "WHERE issuer = :issuer AND subject = :subject"
-                    ),
-                    {"issuer": issuer, "subject": subject},
-                )
-                if existing_identity_payload is not None:
-                    existing_identity = self._identity_from_payload(existing_identity_payload)
-                    if (
-                        not existing_identity.email_verified
-                        or existing_identity.normalized_email != normalized_email
-                    ):
-                        raise AccountRepositoryError("external_identity_claim_conflict")
-                    account_payload = self._account_payload_by_id(
-                        connection,
-                        existing_identity.account_id,
-                    )
-                    if account_payload is None:
-                        raise AccountRepositoryError("external_identity_account_missing")
-                    return self._account_from_payload(account_payload)
-
-                account_payload = connection.scalar(
-                    text("SELECT payload_json FROM accounts WHERE normalized_email = :email"),
-                    {"email": normalized_email},
-                )
-                if account_payload is not None:
-                    account = self._account_from_payload(account_payload)
-                    identity_count = connection.scalar(
-                        text(
-                            "SELECT COUNT(*) FROM external_identities "
-                            "WHERE account_id = :account_id"
-                        ),
-                        {"account_id": str(account.id)},
-                    )
-                    if identity_count != 0:
-                        raise AccountRepositoryError("identity_email_link_conflict")
-                    principal_payload = connection.scalar(
-                        text("SELECT payload_json FROM principals WHERE id = :id"),
-                        {"id": str(account.principal_id)},
-                    )
-                    if principal_payload is None or (
-                        Principal.model_validate_json(principal_payload).kind
-                        is not PrincipalKind.USER
-                    ):
-                        raise AccountRepositoryError("account_principal_must_be_user")
-                else:
-                    account_id = uuid4()
-                    principal_id = uuid4()
-                    principal = Principal(
-                        id=principal_id,
-                        kind=PrincipalKind.USER,
-                        external_provider="corvus-account",
-                        external_subject=f"account:{account_id}",
-                        display_name=display_name.strip(),
-                        created_at=now,
-                    )
-                    account = Account(
-                        id=account_id,
-                        principal_id=principal_id,
-                        normalized_email=normalized_email,
-                        experience_kind=None,
-                        status=RecordStatus.ACTIVE,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    self._insert_principal(connection, principal)
-                    self._insert_account(connection, account)
-
-                identity = ExternalIdentity(
-                    account_id=account.id,
+                return self._complete_google_identity(
+                    connection,
                     issuer=issuer,
                     subject=subject,
                     normalized_email=normalized_email,
-                    email_verified=True,
-                    created_at=now,
+                    display_name=display_name,
+                    now=now,
                 )
-                self._insert_external_identity(connection, identity)
-                return account
         except IntegrityError as exc:
             existing = self.get_external_identity(issuer, subject)
             if existing is not None and existing.normalized_email == normalized_email:
@@ -329,6 +305,89 @@ class AccountRepository:
                 if resolved_account is not None:
                     return resolved_account
             raise AccountRepositoryError("external_identity_conflict") from exc
+
+    def _complete_google_identity(
+        self,
+        connection: Connection,
+        *,
+        issuer: str,
+        subject: str,
+        normalized_email: str,
+        display_name: str,
+        now: datetime,
+    ) -> Account:
+        existing_identity_payload = connection.scalar(
+            text(
+                "SELECT payload_json FROM external_identities "
+                "WHERE issuer = :issuer AND subject = :subject"
+            ),
+            {"issuer": issuer, "subject": subject},
+        )
+        if existing_identity_payload is not None:
+            existing_identity = self._identity_from_payload(existing_identity_payload)
+            if (
+                not existing_identity.email_verified
+                or existing_identity.normalized_email != normalized_email
+            ):
+                raise AccountRepositoryError("external_identity_claim_conflict")
+            account_payload = self._account_payload_by_id(connection, existing_identity.account_id)
+            if account_payload is None:
+                raise AccountRepositoryError("external_identity_account_missing")
+            return self._account_from_payload(account_payload)
+        account_payload = connection.scalar(
+            text("SELECT payload_json FROM accounts WHERE normalized_email = :email"),
+            {"email": normalized_email},
+        )
+        if account_payload is not None:
+            account = self._account_from_payload(account_payload)
+            identity_count = connection.scalar(
+                text("SELECT COUNT(*) FROM external_identities WHERE account_id = :account_id"),
+                {"account_id": str(account.id)},
+            )
+            if identity_count != 0:
+                raise AccountRepositoryError("identity_email_link_conflict")
+            principal_payload = connection.scalar(
+                text("SELECT payload_json FROM principals WHERE id = :id"),
+                {"id": str(account.principal_id)},
+            )
+            if principal_payload is None or (
+                Principal.model_validate_json(principal_payload).kind is not PrincipalKind.USER
+            ):
+                raise AccountRepositoryError("account_principal_must_be_user")
+        else:
+            account_id = uuid4()
+            principal_id = uuid4()
+            principal = Principal(
+                id=principal_id,
+                kind=PrincipalKind.USER,
+                external_provider="corvus-account",
+                external_subject=f"account:{account_id}",
+                display_name=display_name.strip(),
+                created_at=now,
+            )
+            account = Account(
+                id=account_id,
+                principal_id=principal_id,
+                normalized_email=normalized_email,
+                experience_kind=None,
+                status=RecordStatus.ACTIVE,
+                created_at=now,
+                updated_at=now,
+            )
+            self._insert_principal(connection, principal)
+            self._insert_account(connection, account)
+        self._insert_external_identity(
+            connection,
+            ExternalIdentity(
+                account_id=account.id,
+                issuer=issuer,
+                subject=subject,
+                normalized_email=normalized_email,
+                email_verified=True,
+                created_at=now,
+            ),
+        )
+        return account
 
     @staticmethod
     def _insert_device(connection: Connection, device: DeviceRegistration) -> None:
@@ -668,6 +727,269 @@ class AccountRepository:
                     issued_at=current.issued_at,
                     expires_at=current.expires_at,
                     revoked_at=revoked_at,
+                )
+                self._insert_session(connection, revoked)
+                return revoked
+        except IntegrityError as exc:
+            raise AccountRepositoryError("session_revocation_conflict") from exc
+
+    @staticmethod
+    def _latest_session_by_id(
+        connection: Connection,
+        session_id: UUID,
+    ) -> SessionRecord | None:
+        payload = connection.scalar(
+            text(
+                "SELECT payload_json FROM session_records WHERE id = :session_id "
+                "ORDER BY version DESC LIMIT 1"
+            ),
+            {"session_id": str(session_id)},
+        )
+        return None if payload is None else SessionRecord.model_validate_json(payload)
+
+    def _authenticate_web_session(
+        self,
+        connection: Connection,
+        *,
+        session_token: str,
+        session_secret: str,
+        now: datetime,
+    ) -> WebSessionAuthentication:
+        session_id = _credential_id(session_token)
+        if session_id is None:
+            raise AccountRepositoryError("session_authentication_failed")
+        session = self._latest_session_by_id(connection, session_id)
+        presented_digest = _credential_digest(session_token)
+        if session is None:
+            raise AccountRepositoryError("session_authentication_failed")
+        if session.token_digest is None or not hmac.compare_digest(
+            session.token_digest, presented_digest
+        ):
+            if self._digest_was_seen(
+                connection,
+                account_id=session.account_id,
+                session_id=session.id,
+                digest=presented_digest,
+            ):
+                raise AccountRepositoryError("session_replay_detected")
+            raise AccountRepositoryError("session_authentication_failed")
+        if session.status is not SessionStatus.ACTIVE or session.expires_at <= now:
+            raise AccountRepositoryError("session_inactive")
+        device = self._latest_device(
+            connection,
+            account_id=session.account_id,
+            device_id=session.device_id,
+        )
+        if device is None or device.status is not DeviceStatus.ACTIVE:
+            raise AccountRepositoryError("session_device_revoked")
+        if session.device_version != device.version:
+            raise AccountRepositoryError("session_device_version_stale")
+        csrf = _csrf_token(session_token, session_secret)
+        persisted_csrf = connection.scalar(
+            text(
+                "SELECT csrf_digest FROM web_session_bindings "
+                "WHERE session_id = :session_id AND session_version = :session_version"
+            ),
+            {"session_id": str(session.id), "session_version": session.version},
+        )
+        if not isinstance(persisted_csrf, str) or not hmac.compare_digest(
+            persisted_csrf, _credential_digest(csrf)
+        ):
+            raise AccountRepositoryError("session_binding_invalid")
+        account_payload = self._account_payload_by_id(connection, session.account_id)
+        if account_payload is None:
+            raise AccountRepositoryError("session_account_missing")
+        return WebSessionAuthentication(
+            account=self._account_from_payload(account_payload),
+            session=session,
+            csrf_token=csrf,
+        )
+
+    def complete_web_login(
+        self,
+        *,
+        issuer: str,
+        subject: str,
+        normalized_email: str,
+        display_name: str,
+        existing_device_token: str | None,
+        session_secret: str,
+        now: datetime,
+        expires_at: datetime,
+    ) -> WebLoginResult:
+        try:
+            with self._transaction() as connection:
+                account = self._complete_google_identity(
+                    connection,
+                    issuer=issuer,
+                    subject=subject,
+                    normalized_email=normalized_email,
+                    display_name=display_name,
+                    now=now,
+                )
+                device: DeviceRegistration | None = None
+                if existing_device_token is not None:
+                    device_id = _credential_id(existing_device_token)
+                    if device_id is not None:
+                        candidate = self._latest_device(
+                            connection,
+                            account_id=account.id,
+                            device_id=device_id,
+                        )
+                        if (
+                            candidate is not None
+                            and candidate.status is DeviceStatus.ACTIVE
+                            and hmac.compare_digest(
+                                candidate.public_key_digest,
+                                _credential_digest(existing_device_token),
+                            )
+                        ):
+                            device = candidate
+                new_device_token: str | None = None
+                if device is None:
+                    device_id, new_device_token = _opaque_credential()
+                    device = DeviceRegistration(
+                        id=device_id,
+                        account_id=account.id,
+                        name="Web browser",
+                        public_key_digest=_credential_digest(new_device_token),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    self._insert_device(connection, device)
+                session_id, session_token = _opaque_credential()
+                session = SessionRecord(
+                    id=session_id,
+                    account_id=account.id,
+                    device_id=device.id,
+                    device_version=device.version,
+                    token_digest=_credential_digest(session_token),
+                    issued_at=now,
+                    expires_at=expires_at,
+                )
+                self._insert_session(connection, session)
+                csrf = _csrf_token(session_token, session_secret)
+                connection.execute(
+                    text(
+                        "INSERT INTO web_session_bindings "
+                        "(session_id, session_version, csrf_digest, created_at) "
+                        "VALUES (:session_id, :session_version, :csrf_digest, :created_at)"
+                    ),
+                    {
+                        "session_id": str(session.id),
+                        "session_version": session.version,
+                        "csrf_digest": _credential_digest(csrf),
+                        "created_at": now.isoformat(),
+                    },
+                )
+                return WebLoginResult(
+                    account=account,
+                    session=session,
+                    csrf_token=csrf,
+                    session_token=session_token,
+                    device_token=new_device_token,
+                )
+        except IntegrityError as exc:
+            raise AccountRepositoryError("web_login_conflict") from exc
+
+    def authenticate_web_session(
+        self,
+        *,
+        session_token: str,
+        session_secret: str,
+        now: datetime,
+    ) -> WebSessionAuthentication:
+        with self._connection() as connection:
+            return self._authenticate_web_session(
+                connection,
+                session_token=session_token,
+                session_secret=session_secret,
+                now=now,
+            )
+
+    def rotate_web_session(
+        self,
+        *,
+        session_token: str,
+        session_secret: str,
+        now: datetime,
+        expires_at: datetime,
+    ) -> WebLoginResult:
+        try:
+            with self._transaction() as connection:
+                authenticated = self._authenticate_web_session(
+                    connection,
+                    session_token=session_token,
+                    session_secret=session_secret,
+                    now=now,
+                )
+                _identifier, replacement_token = _opaque_credential(authenticated.session.id)
+                replacement_digest = _credential_digest(replacement_token)
+                if self._replacement_digest_conflicts(connection, replacement_digest):
+                    raise AccountRepositoryError("session_replacement_conflict")
+                rotated = SessionRecord(
+                    id=authenticated.session.id,
+                    account_id=authenticated.account.id,
+                    device_id=authenticated.session.device_id,
+                    device_version=authenticated.session.device_version,
+                    version=authenticated.session.version + 1,
+                    token_digest=replacement_digest,
+                    predecessor_digest=_credential_digest(session_token),
+                    issued_at=now,
+                    expires_at=expires_at,
+                )
+                self._insert_session(connection, rotated)
+                csrf = _csrf_token(replacement_token, session_secret)
+                connection.execute(
+                    text(
+                        "INSERT INTO web_session_bindings "
+                        "(session_id, session_version, csrf_digest, created_at) "
+                        "VALUES (:session_id, :session_version, :csrf_digest, :created_at)"
+                    ),
+                    {
+                        "session_id": str(rotated.id),
+                        "session_version": rotated.version,
+                        "csrf_digest": _credential_digest(csrf),
+                        "created_at": now.isoformat(),
+                    },
+                )
+                return WebLoginResult(
+                    account=authenticated.account,
+                    session=rotated,
+                    csrf_token=csrf,
+                    session_token=replacement_token,
+                    device_token=None,
+                )
+        except IntegrityError as exc:
+            raise AccountRepositoryError("session_replacement_conflict") from exc
+
+    def revoke_web_session(
+        self,
+        *,
+        session_token: str,
+        session_secret: str,
+        now: datetime,
+    ) -> SessionRecord:
+        try:
+            with self._transaction() as connection:
+                authenticated = self._authenticate_web_session(
+                    connection,
+                    session_token=session_token,
+                    session_secret=session_secret,
+                    now=now,
+                )
+                revoked = SessionRecord(
+                    id=authenticated.session.id,
+                    account_id=authenticated.account.id,
+                    device_id=authenticated.session.device_id,
+                    device_version=authenticated.session.device_version,
+                    version=authenticated.session.version + 1,
+                    token_digest=None,
+                    predecessor_digest=_credential_digest(session_token),
+                    status=SessionStatus.REVOKED,
+                    issued_at=authenticated.session.issued_at,
+                    expires_at=authenticated.session.expires_at,
+                    revoked_at=now,
                 )
                 self._insert_session(connection, revoked)
                 return revoked

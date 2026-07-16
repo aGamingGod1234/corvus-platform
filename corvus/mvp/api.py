@@ -50,6 +50,8 @@ from corvus.mvp.models import (
     WorkItem,
     WorkItemDefinition,
 )
+from corvus.platform.api import IdentityApiDependencies, create_platform_router
+from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
@@ -297,6 +299,7 @@ def create_app(
     allowed_origins: frozenset[str] | None = None,
     allow_existing_user_pairing: bool = False,
     instance_token: str | None = None,
+    identity_dependencies: IdentityApiDependencies | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -904,6 +907,13 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    hosted_identity = (
+        identity_dependencies
+        if identity_dependencies is not None
+        else build_hosted_identity_dependencies_from_env()
+    )
+    app.include_router(create_platform_router(hosted_identity))
 
     if static_root is not None:
         app.mount("/", StaticFiles(directory=static_root, html=True), name="operator-console")

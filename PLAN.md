@@ -143,10 +143,10 @@ def test_platform_settings_require_distinct_secrets(monkeypatch):
 **Interfaces:**
 - Produces: <code>GoogleOAuthClient.start(redirect_uri) -&gt; OAuthStart</code>, <code>exchange(callback) -&gt; VerifiedIdentity</code>, plus auth/session, onboarding, workspace, and device routes: <code>GET /api/v2/auth/google/start</code>, <code>GET /api/v2/auth/google/callback</code>, <code>GET /api/v2/session</code>, <code>POST /api/v2/session/refresh</code>, <code>POST /api/v2/logout</code>, <code>GET|PUT /api/v2/onboarding</code>, <code>GET|POST /api/v2/workspaces</code>, <code>GET|PATCH /api/v2/workspaces/{workspace_id}</code>, and <code>GET|POST|DELETE /api/v2/devices</code>.
 
-- [ ] Write failing tests for PKCE/state/nonce, redirect allowlists, issuer/audience, one-time callback use, account-linking rejection, cookie flags, rotation, revocation, and redaction.
-- [ ] Run the two focused files; expect route/import failures.
-- [ ] Implement Authlib exchange behind an HTTP transport port, transaction digests, durable sessions, CSRF binding, compose the modular v2 router in <code>corvus/platform/api/app.py</code>, and include it once from the legacy app factory.
-- [ ] Run focused tests, Bandit on new modules, and mypy; expect success.
+- [x] Write failing tests for PKCE/state/nonce, redirect allowlists, issuer/audience, one-time callback use, account-linking rejection, cookie flags, rotation, revocation, and redaction.
+- [x] Run the two focused files; expect route/import failures.
+- [x] Implement Authlib exchange behind an HTTP transport port, transaction digests, durable sessions, CSRF binding, compose the modular v2 router in <code>corvus/platform/api/app.py</code>, and include it once from the legacy app factory.
+- [x] Run focused tests, Bandit on new modules, and mypy; expect success.
 
 ### Task 1.5: Implement ordered workspace synchronization
 

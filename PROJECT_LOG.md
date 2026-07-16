@@ -1429,3 +1429,34 @@
 ### Suggested Next Steps
 - Run the guarded PostgreSQL test against the approved disposable service for server-backed TEAM-workspace downgrade evidence.
 - Review this final Task 1.3 follow-up commit before starting Task 1.4.
+
+## 2026-07-16 — Implement Task 1.4 Google OAuth and durable sessions
+
+### What Was Implemented
+- Added Google Authorization Code OAuth with S256 PKCE, HMAC-authenticated state, nonce binding, exact redirect allowlists, fixed Google endpoints, RS256/JWKS verification, verified-email policy, and late secret resolution through injectable ports.
+- Added encrypted, expiring, durably single-use OAuth transactions plus opaque browser-device/session credentials, digest-only persistence, HMAC-bound CSRF values, atomic login/session rotation, replay rejection, revocation, and secure host-only cookies.
+- Added the modular `/api/v2` identity, session, onboarding, workspace, and device routes with tenant scoping, optimistic versions, durable create idempotency, stable redacted errors, and truthful unconfigured `503` responses while preserving legacy pairing/static behavior.
+- Added the additive `m2_001a_oauth_sessions` migration and classifier/revision support for OAuth transactions, web-session bindings, onboarding versions, and identity idempotency records on SQLite and PostgreSQL-compatible SQLAlchemy paths.
+- Added a Vercel same-origin `/api/v2/**` proxy with a validated Railway origin, strict method/path/header forwarding, manual redirect handling, safe response-header filtering, and traversal/authority/header-injection tests without enabling credentialed cross-origin CORS.
+
+### Files Modified
+- `corvus/application/oauth.py`, `corvus/infrastructure/oauth/`, and `corvus/platform/api/` — define OAuth ports, Google verification, transaction persistence, hosted dependency composition, and v2 routes.
+- `corvus/infrastructure/repositories/accounts.py` and `corvus/infrastructure/repositories/platform_identity.py` — implement atomic browser login/session behavior and scoped onboarding/workspace/device persistence.
+- `corvus/infrastructure/migrations/versions/m2_001a_oauth_sessions.py`, `corvus/database.py`, and `corvus/infrastructure/db.py` — add and classify the Task 1.4 schema revision.
+- `corvus/platform/config.py`, `corvus/platform/__init__.py`, `.env.example`, `pyproject.toml`, and `uv.lock` — add fail-closed hosted OAuth configuration, documented deployment variables, and the approved Authlib dependency.
+- `corvus/mvp/api.py` — composes the v2 router exactly once before the catch-all static mount while retaining existing callers and legacy auth.
+- `apps/web/api/v2/[...path].ts`, `apps/web/vercel.json`, `apps/web/tsconfig.app.json`, and `apps/web/src/v2Proxy.test.ts` — add and verify the same-origin Vercel proxy boundary.
+- `tests/security/test_google_oauth.py`, `tests/integration/test_identity_api.py`, and `tests/unit/platform/test_config.py` — prove OAuth, session, route, cookie, persistence, redaction, and hosted-configuration behavior.
+- `PLAN.md` — records the completed Task 1.4 checklist.
+
+### Assumptions Made (flag these for review)
+- None. OAuth topology, algorithms, TTLs, cookie names, token formats, route contracts, migration revision, proxy boundary, and stop boundary were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- Live Google consent/token exchange, live Vercel-to-Railway proxy behavior, deployment, and desktop browser-to-app handoff remain intentionally deferred by the Task 1.4 stop boundary.
+- The guarded destructive PostgreSQL contract remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized.
+- A broad Bandit scan still reports three pre-existing low-severity B101 assertions in `corvus/application/agent_runtime.py`; the complete Task 1.4 module scan is clean.
+
+### Suggested Next Steps
+- Review the Task 1.4 commit and configure disposable hosted OAuth/proxy credentials before any authorized live integration exercise.
+- Run the guarded PostgreSQL test against the approved disposable service, then begin Task 1.5 only after explicit authorization.
