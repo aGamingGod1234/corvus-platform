@@ -24,3 +24,4 @@ apps/desktop/src-tauri/binaries/
 .env.*
 !.env.example
 .vercel/
+.superpowers/

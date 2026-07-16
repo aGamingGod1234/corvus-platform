@@ -1,3 +1,739 @@
+# Corvus Full Product Platform Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> or <code>superpowers:executing-plans</code> task-by-task. Steps use checkbox syntax for tracking.
+
+**Goal:** Deliver the complete Corvus identity, synchronization, agent execution, scheduling, settings, collaboration, local/E2B runtime, and web/desktop product specified in <code>docs/superpowers/specs/2026-07-16-corvus-full-product-platform-design.md</code>.
+
+**Architecture:** Extend the authoritative Python/FastAPI core as a modular Railway control plane backed by PostgreSQL. Web and Tauri clients consume typed HTTP/SSE contracts; paired desktop nodes and E2B implement one constrained execution-placement boundary.
+
+**Tech Stack:** Python 3.12/3.13, FastAPI, Pydantic 2, SQLAlchemy 2, Alembic, PostgreSQL/psycopg, Authlib, HTTPX, E2B Python SDK, React 19, TypeScript 5.9, Vite 7, openapi-fetch, TanStack Query, React Router, Zod, date-fns/rrule, Tauri 2/Rust, Vitest, Playwright, axe, pytest, Ruff, mypy, and Bandit.
+
+## Global Constraints
+
+- Preserve all completed M0.5-M11 behavior and existing security tests.
+- Reuse <code>corvus.domain.identity.Workspace</code>/<code>WorkspaceMembership</code>, <code>corvus.domain.access.CredentialRef</code>, <code>AgentRuntimePort</code>, and <code>AgentRuntimeCoordinator</code>; do not create parallel authority, credential, approval, budget, audit, lease, or runtime systems.
+- Never allow a client, profile selection, provider, local node, or E2B sandbox to manufacture authority.
+- Store only opaque credential references; never put raw secrets in prompts, synchronized state, events, URLs, logs, artifacts, or audit rows.
+- Authenticate Google with Authorization Code, PKCE, state, nonce, exact redirect allowlists, JWKS validation, refresh rotation, and revocation.
+- Scope every repository operation and subscription by workspace/tenant.
+- Require idempotency keys for mutations and explicit optimistic-version conflicts; do not silently use last-write-wins for security-relevant data.
+- Preserve approval, budget, autonomy, sandbox, kill-switch, audit-chain, redaction, replay, and fencing invariants.
+- Local execution may access only explicit canonical roots and local vault references.
+- E2B uses secure access, pinned templates, bounded resources, scoped network/tool policy, heartbeat, and cleanup reconciliation.
+- Cloud remains visibly Preview until its full lifecycle gate passes; billing remains a non-purchasing preview page.
+- Preserve the Corvus visual identity and profile adaptation; do not copy T3Code chrome.
+- Every visible control needs a real state transition, keyboard support, focus behavior, reduced-motion behavior, and a test.
+- Commit once after each verified milestone. Push only after all seven milestones pass together.
+- Open one pull request after final verification and leave it unmerged for reviewers.
+
+## Approved Dependency Additions
+
+Install only when the consuming milestone begins:
+
+~~~powershell
+uv add "authlib>=1.6,<2" "psycopg[binary]>=3.2,<4" "e2b>=2.3,<3" "python-dateutil>=2.9,<3" "croniter>=6,<7"
+pnpm --dir apps/web add react-router-dom @tanstack/react-query zod date-fns rrule lucide-react react-markdown remark-gfm
+pnpm --dir apps/web add -D @playwright/test @axe-core/playwright
+~~~
+
+Do not add Redis, a second web framework, a second ORM, or a distributed queue. PostgreSQL leases/outbox and the existing Corvus worker model are sufficient.
+
+## Planned File Boundaries
+
+| Area | Files and responsibility |
+| --- | --- |
+| Platform configuration | <code>corvus/platform/config.py</code> owns database, OAuth, public URL, E2B, and vault settings. |
+| Identity | <code>corvus/domain/account.py</code> adds account/session/device types while <code>corvus/domain/identity.py</code> remains authoritative for existing workspace/membership types; services and repositories live in <code>corvus/application/identity.py</code>, <code>corvus/infrastructure/repositories/accounts.py</code>, and <code>corvus/platform/api/identity.py</code>. |
+| Synchronization | <code>corvus/domain/sync.py</code>, <code>corvus/application/sync.py</code>, <code>corvus/infrastructure/repositories/sync.py</code>, <code>corvus/platform/api/sync.py</code>. |
+| Conversations | <code>corvus/domain/conversations.py</code>, <code>corvus/application/conversations.py</code>, <code>corvus/infrastructure/repositories/conversations.py</code>, <code>corvus/platform/api/conversations.py</code>. |
+| Providers | <code>corvus/infrastructure/agent_runtimes/{registry,process_session,codex,claude,gemini,cursor,openai_compatible}.py</code>. |
+| Scheduling | <code>corvus/domain/scheduling.py</code>, <code>corvus/application/scheduling.py</code>, <code>corvus/infrastructure/repositories/scheduling.py</code>, <code>corvus/platform/worker/scheduler.py</code>, <code>corvus/platform/api/schedules.py</code>. |
+| Settings/vaults | <code>corvus/domain/settings.py</code>, <code>corvus/application/settings.py</code>, <code>corvus/infrastructure/{vaults,mcp,integrations}/</code>, <code>corvus/platform/api/settings.py</code>. |
+| Collaboration | <code>corvus/domain/collaboration.py</code>, <code>corvus/application/collaboration.py</code>, <code>corvus/infrastructure/repositories/collaboration.py</code>, <code>corvus/platform/api/collaboration.py</code>. |
+| Runtime placement | <code>corvus/domain/runtime_placement.py</code>, <code>corvus/application/runtime_placement.py</code>, <code>corvus/infrastructure/runtime_nodes/bridge.py</code>, <code>corvus/infrastructure/e2b/runtime.py</code>, <code>corvus/platform/api/runtimes.py</code>. |
+| Platform API composition | <code>corvus/platform/api/app.py</code> composes modular v2 routers; <code>corvus/mvp/api.py</code> includes that router without absorbing feature logic. |
+| Web product | Focused modules under <code>apps/web/src/auth/</code>, <code>sync/</code>, <code>threads/</code>, <code>schedules/</code>, <code>settings/</code>, <code>teams/</code>, <code>runtimes/</code>, and <code>components/</code>; <code>App.tsx</code> remains composition only. |
+| Desktop | Focused Rust modules under <code>apps/desktop/src-tauri/src/</code>; <code>lib.rs</code> remains composition only. |
+
+## Execution Protocol
+
+For every task: write the stated failing test, run the focused command and observe failure, implement the smallest complete behavior, rerun the focused test, then run the milestone suite. Mark checkboxes only after fresh evidence. Subagents may implement bounded non-overlapping tasks, but the root agent owns integration, security review, plan tracking, and milestone commits.
+
+---
+
+## Milestone 1 — Google Identity and Cross-Device Continuity
+
+### Task 1.1: Produce and approve the frontend design packet
+
+**Files:**
+- Create the required packet under <code>.antigravity/website-blueprint/</code>: <code>PROJECT_CONTEXT.md</code>, <code>REFERENCE_RESEARCH.md</code>, <code>SOURCE_MANIFEST.json</code>, <code>COMPONENT_ADOPTION_MAP.json</code>, <code>FRONTEND_CRAFT_BRIEF.md</code>, <code>EXPERIENCE_STORYBOARD.json</code>, <code>INTERACTION_SPEC.json</code>, <code>VISUAL_TARGET.md</code>, <code>SECTION_PLAN.json</code>, <code>VISUAL_COMPOSITION_DRAFT.md</code>, <code>DESIGN_SCORECARD_CRITERIA.json</code>, and <code>CHANGE_PLAN.md</code>.
+
+**Interfaces:**
+- Consumes: approved design and current Vercel app.
+- Produces: approved selectors, interactions, source hooks, responsive targets, and change boundary for every frontend task.
+
+- [ ] Run intake and source-backed research:
+
+~~~powershell
+ag design intake --project-root . --goal "Complete Corvus identity-backed agent platform" --audience "Everyday and developer individuals and teams" --conversion "Sign in and start a governed agent thread"
+ag design research --project-root . --business-source "https://github.com/aGamingGod1234/corvus-platform" --visual-ref "https://github.com/pingdotgg/t3code" --conversion-ref "https://chatgpt.com/" --component "shadcn:button" --icon "lucide:send"
+ag design target --project-root .
+ag design plan --project-root .
+ag design compose --project-root .
+~~~
+
+- [ ] Lock the allowed frontend change surface and baseline:
+
+~~~powershell
+ag design change-plan --project-root . --allow "apps/web/src/**" --allow "apps/desktop/src-tauri/src/**" --forbid "corvus/domain/**"
+ag design snapshot-before --project-root . --url "http://127.0.0.1:5173"
+ag design verify-packet --project-root .
+ag design approve-packet --project-root . --approved-by "Lucas" --approval-note "Approved seven-section Corvus product design in the 2026-07-16 Codex thread"
+~~~
+
+- [ ] Verify the packet reports no missing artifact, weak source, stale approval hash, uncited section, or uncited interaction.
+
+### Task 1.2: Add hosted configuration and PostgreSQL support
+
+**Files:**
+- Create: <code>corvus/platform/__init__.py</code>, <code>corvus/platform/config.py</code>, <code>compose.platform-test.yaml</code>
+- Modify: <code>corvus/infrastructure/db.py</code>, <code>corvus/infrastructure/migrations/env.py</code>
+- Test: <code>tests/unit/platform/test_config.py</code>, <code>tests/integration/test_postgres_database.py</code>
+
+**Interfaces:**
+- Produces: <code>PlatformSettings.from_env() -&gt; PlatformSettings</code>, <code>create_platform_engine(database_url: str) -&gt; Engine</code>, and URL-based Alembic upgrades.
+
+- [ ] Write a failing test that rejects reused signing secrets and verifies PostgreSQL URL handling:
+
+~~~python
+def test_platform_settings_require_distinct_secrets(monkeypatch):
+    monkeypatch.setenv("CORVUS_DATABASE_URL", "postgresql+psycopg://corvus:test@localhost/corvus")
+    monkeypatch.setenv("CORVUS_SESSION_SECRET", "x" * 48)
+    monkeypatch.setenv("CORVUS_OAUTH_STATE_SECRET", "x" * 48)
+    with pytest.raises(ValueError, match="secrets_must_be_distinct"):
+        PlatformSettings.from_env()
+~~~
+
+- [ ] Run <code>uv run --python 3.13 pytest tests/unit/platform/test_config.py tests/integration/test_postgres_database.py -q</code>; confirm missing imports fail.
+- [ ] Implement immutable settings, URL-based engine creation, redacted configuration errors, PostgreSQL-aware Alembic configuration, and the test compose service.
+- [ ] Rerun focused tests and <code>uv run --python 3.13 mypy corvus/platform corvus/infrastructure/db.py</code>; expect success.
+
+### Task 1.3: Persist accounts, workspaces, memberships, sessions, and devices
+
+**Files:**
+- Create: <code>corvus/domain/account.py</code>, <code>corvus/application/identity.py</code>, <code>corvus/infrastructure/repositories/accounts.py</code>, <code>corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py</code>
+- Modify: <code>corvus/domain/identity.py</code>, <code>corvus/infrastructure/repositories/identity_scope.py</code>
+- Test: <code>tests/unit/domain/test_account.py</code>, <code>tests/integration/test_account_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>Account</code>, <code>ExternalIdentity</code>, <code>DeviceRegistration</code>, <code>SessionRecord</code>, and <code>IdentityService.complete_google_identity()</code>; reuses existing <code>Workspace</code> and <code>WorkspaceMembership</code> as the only workspace authority types.
+
+- [ ] Write failing tests for verified-email linking, unique issuer/subject, independent experience/workspace kind, membership capabilities, session rotation, device revocation, and cross-tenant denial.
+- [ ] Run both focused files and confirm missing models/migration failures.
+- [ ] Implement frozen account/session/device models, extend the existing workspace/membership repository contract, add constraints/indexes, and create the reversible migration without parallel authority types.
+- [ ] Upgrade/downgrade/upgrade fresh SQLite and PostgreSQL databases, then rerun the tests.
+
+### Task 1.4: Implement Google OAuth and durable sessions
+
+**Files:**
+- Create: <code>corvus/infrastructure/oauth/__init__.py</code>, <code>corvus/infrastructure/oauth/google.py</code>, <code>corvus/application/oauth.py</code>, <code>corvus/platform/api/__init__.py</code>, <code>corvus/platform/api/app.py</code>, <code>corvus/platform/api/dependencies.py</code>, <code>corvus/platform/api/identity.py</code>
+- Modify: <code>corvus/mvp/api.py</code>
+- Test: <code>tests/security/test_google_oauth.py</code>, <code>tests/integration/test_identity_api.py</code>
+
+**Interfaces:**
+- Produces: <code>GoogleOAuthClient.start(redirect_uri) -&gt; OAuthStart</code>, <code>exchange(callback) -&gt; VerifiedIdentity</code>, plus auth/session, onboarding, workspace, and device routes: <code>GET /api/v2/auth/google/start</code>, <code>GET /api/v2/auth/google/callback</code>, <code>GET /api/v2/session</code>, <code>POST /api/v2/session/refresh</code>, <code>POST /api/v2/logout</code>, <code>GET|PUT /api/v2/onboarding</code>, <code>GET|POST /api/v2/workspaces</code>, <code>GET|PATCH /api/v2/workspaces/{workspace_id}</code>, and <code>GET|POST|DELETE /api/v2/devices</code>.
+
+- [ ] Write failing tests for PKCE/state/nonce, redirect allowlists, issuer/audience, one-time callback use, account-linking rejection, cookie flags, rotation, revocation, and redaction.
+- [ ] Run the two focused files; expect route/import failures.
+- [ ] Implement Authlib exchange behind an HTTP transport port, transaction digests, durable sessions, CSRF binding, compose the modular v2 router in <code>corvus/platform/api/app.py</code>, and include it once from the legacy app factory.
+- [ ] Run focused tests, Bandit on new modules, and mypy; expect success.
+
+### Task 1.5: Implement ordered workspace synchronization
+
+**Files:**
+- Create: <code>corvus/domain/sync.py</code>, <code>corvus/application/sync.py</code>, <code>corvus/infrastructure/repositories/sync.py</code>, <code>corvus/infrastructure/migrations/versions/m2_002_workspace_sync.py</code>, <code>corvus/platform/api/sync.py</code>
+- Test: <code>tests/unit/domain/test_sync.py</code>, <code>tests/integration/test_sync_repository.py</code>, <code>tests/security/test_sync_replay.py</code>
+
+**Interfaces:**
+- Produces: <code>SyncMutation</code>, <code>SyncPage</code>, <code>SyncService.apply()</code>, <code>GET /api/v2/workspaces/{workspace_id}/sync</code>, and <code>POST /api/v2/workspaces/{workspace_id}/sync/mutations</code>.
+
+- [ ] Write failing tests for monotonic cursors, idempotent replay, explicit version conflict, resync boundary, tenant isolation, and recursive secret rejection.
+- [ ] Run the focused files and confirm missing contracts.
+- [ ] Implement append-only changes/outbox, acknowledgements, canonical payload hashing, 409 conflict bodies, and tenant-scoped transactions.
+- [ ] Rerun focused tests and both database repository contracts.
+
+### Task 1.6: Put Google first in onboarding and synchronize the profile
+
+**Files:**
+- Create: <code>apps/web/src/auth/AuthProvider.tsx</code>, <code>apps/web/src/auth/authApi.ts</code>, <code>apps/web/src/sync/SyncProvider.tsx</code>
+- Modify: <code>apps/web/src/app/OnboardingFlow.tsx</code>, <code>apps/web/src/app/preferences.ts</code>, <code>apps/web/src/app/workspaceProfiles.ts</code>, <code>apps/web/src/components/WorkspaceSwitcher.tsx</code>
+- Test: <code>apps/web/src/auth/AuthProvider.test.tsx</code>, <code>apps/web/src/app/OnboardingFlow.test.tsx</code>, <code>apps/web/src/sync/SyncProvider.test.tsx</code>
+
+**Interfaces:**
+- Produces: <code>useAuth() -&gt; AuthState</code>, <code>useWorkspaceSync() -&gt; WorkspaceSyncState</code>, server-backed profile choices, and read-only <code>WorkspaceIdentityBlock</code>.
+
+- [ ] Write failing Vitest journeys proving Google precedes profile selection, legacy personal storage migrates to individual, API persistence works, and top-left controls cannot switch identity.
+- [ ] Run <code>pnpm --dir apps/web test -- --run src/auth src/app/OnboardingFlow.test.tsx src/sync</code>; expect failures.
+- [ ] Implement authenticated boot, resumable onboarding, offline/retry views, and server sync without OAuth material in localStorage.
+- [ ] Run focused tests and <code>pnpm --dir apps/web build</code>; expect success.
+
+### Milestone 1 Gate and Commit
+
+- [ ] Run identity/sync/security tests on SQLite and PostgreSQL.
+- [ ] Run all web tests and build.
+- [ ] Run Ruff check/format, mypy, Bandit, and <code>git diff --check</code>.
+- [ ] Update <code>PROJECT_LOG.md</code>, <code>HACKATHON_STATUS.md</code>, OpenAPI output, generated TypeScript, and these checkboxes.
+- [ ] Commit: <code>feat(identity): add Google-backed workspace continuity</code>.
+
+---
+
+## Milestone 2 — Threads and Live Agent Execution
+
+### Task 2.1: Persist threads, messages, attachments, runs, events, and artifacts
+
+**Files:**
+- Create: <code>corvus/domain/conversations.py</code>, <code>corvus/application/conversations.py</code>, <code>corvus/infrastructure/repositories/conversations.py</code>, <code>corvus/infrastructure/migrations/versions/m2_003_conversations.py</code>
+- Test: <code>tests/unit/domain/test_conversations.py</code>, <code>tests/integration/test_conversation_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>Thread</code>, <code>Message</code>, <code>AttachmentRef</code>, <code>AgentRunRecord</code>, <code>RunEventRecord</code>, <code>RunArtifact</code>, and <code>ConversationService</code>.
+
+- [ ] Write failing tests for append-only message ordering, immutable author/workspace binding, attachment digest validation, run idempotency, ordered event cursor, artifact lineage, and cross-tenant denial.
+- [ ] Run the focused files and confirm missing models/migration failures.
+- [ ] Implement domain validation, repository transactions, unique/idempotency constraints, indexes, retention-safe cursors, and reversible migration.
+- [ ] Run focused tests against SQLite and PostgreSQL.
+
+### Task 2.2: Add provider-neutral registry and process sessions
+
+**Files:**
+- Create: <code>corvus/infrastructure/agent_runtimes/registry.py</code>, <code>corvus/infrastructure/agent_runtimes/process_session.py</code>
+- Modify: <code>corvus/application/ports.py</code>, <code>corvus/application/agent_runtime.py</code>
+- Test: <code>tests/unit/infrastructure/test_provider_registry.py</code>, <code>tests/unit/infrastructure/test_process_session.py</code>
+
+**Interfaces:**
+- Produces: <code>ProviderAdapterFactory</code>, <code>ProviderRegistry.discover()</code>, <code>ProcessSession.start()</code>, <code>ProcessSession.events()</code>, <code>ProcessSession.cancel()</code>, and <code>ProcessSession.resume()</code>.
+
+- [ ] Write failing tests for deterministic discovery order, duplicate provider rejection, capability fail-closed behavior, bounded stdout/stderr, process-tree cancellation, invalid UTF-8, malformed JSON frames, and secret redaction.
+- [ ] Run the focused tests and confirm missing adapters.
+- [ ] Implement immutable registry entries and one bounded, interruptible process-session abstraction using the existing safe-process utilities.
+- [ ] Run focused tests on Windows and the existing Linux/macOS CI matrix.
+
+### Task 2.3: Implement local CLI adapters
+
+**Files:**
+- Create: <code>corvus/infrastructure/agent_runtimes/codex.py</code>, <code>claude.py</code>, <code>gemini.py</code>, <code>cursor.py</code>
+- Test: <code>tests/contract/providers/test_local_cli_adapters.py</code>
+- Test fixtures: <code>tests/fixtures/providers/codex/</code>, <code>tests/fixtures/providers/claude/</code>, <code>tests/fixtures/providers/gemini/</code>, <code>tests/fixtures/providers/cursor/</code>
+
+**Interfaces:**
+- Each adapter implements the existing <code>AgentRuntimePort</code> and returns normalized <code>AgentRunEvent</code> values.
+
+- [ ] Capture sanitized fixture streams from installed/help-documented CLIs and write failing parameterized conformance tests for discovery, health, start, streaming, cancellation, and unsupported resume.
+- [ ] Run <code>uv run --python 3.13 pytest tests/contract/providers/test_local_cli_adapters.py -q</code>; expect adapter import failures.
+- [ ] Implement typed command builders, environment allowlists, cwd/root checks, event parsers, and normalized reason codes. Never pass shell-composed command strings.
+- [ ] Rerun fixture tests; run live smoke probes only for installed CLIs and assert skipped capability instead of false success when absent.
+
+### Task 2.4: Implement API provider adapters
+
+**Files:**
+- Create: <code>corvus/infrastructure/agent_runtimes/openai_compatible.py</code>, <code>anthropic.py</code>, <code>google.py</code>, <code>xai.py</code>
+- Test: <code>tests/contract/providers/test_api_adapters.py</code>
+- Test: <code>tests/security/test_provider_stream_limits.py</code>
+
+**Interfaces:**
+- Produces streaming adapters for OpenAI/Codex-compatible, OpenRouter-compatible, Anthropic, Gemini, and xAI/Grok endpoints through injected <code>httpx.AsyncClient</code> transports.
+
+- [ ] Write failing MockTransport tests for request mapping, SSE framing, usage accounting, tool calls, retry classification, provider request IDs, cancellation, oversized frames, and redaction.
+- [ ] Run the focused files and confirm missing adapters.
+- [ ] Implement explicit endpoint allowlists, timeouts, response-size limits, bounded retries, schema validation, and provider-neutral events. Resolve credential references at send time only.
+- [ ] Rerun focused tests, Bandit, and mypy.
+
+### Task 2.5: Expose conversation and run APIs with resumable SSE
+
+**Files:**
+- Create: <code>corvus/platform/api/conversations.py</code>, <code>corvus/platform/api/agent_runs.py</code>
+- Modify: <code>corvus/mvp/api.py</code>, <code>corvus/mvp/openapi.py</code>
+- Test: <code>tests/integration/test_conversation_api.py</code>, <code>tests/security/test_agent_run_api.py</code>
+
+**Interfaces:**
+- Produces routes for thread CRUD, message append, run start/cancel/retry/fork/continue, approvals, artifacts, provider catalog, and <code>GET /api/v2/agent-runs/{run_id}/events</code> with opaque replay cursor.
+
+- [ ] Write failing API tests for CSRF, idempotency, workspace scope, stale authority, cursor replay, disconnect/resume, event authorization, cancellation races, and stable error envelopes.
+- [ ] Run the focused files and confirm 404 failures.
+- [ ] Implement thin routers over <code>ConversationService</code> and <code>AgentRuntimeCoordinator</code>; authorize every SSE event before emission.
+- [ ] Regenerate <code>openapi/corvus-mvp.json</code> and <code>apps/web/src/generated/api.ts</code>; rerun contract tests.
+
+### Task 2.6: Build the real thread list, conversation, composer, and run inspector
+
+**Files:**
+- Create: <code>apps/web/src/threads/ThreadLayout.tsx</code>, <code>ThreadList.tsx</code>, <code>Conversation.tsx</code>, <code>MessageView.tsx</code>, <code>Composer.tsx</code>, <code>RunFlightpath.tsx</code>, <code>RunInspector.tsx</code>, <code>ApprovalsPanel.tsx</code>, <code>threadApi.ts</code>, <code>useRunEvents.ts</code>
+- Modify: <code>apps/web/src/App.tsx</code>, <code>apps/web/src/app/AppShell.tsx</code>, <code>apps/web/src/app/WorkspaceRouter.tsx</code>
+- Test: <code>apps/web/src/threads/ThreadLayout.test.tsx</code>, <code>Composer.test.tsx</code>, <code>useRunEvents.test.ts</code>
+
+**Interfaces:**
+- Produces routes <code>/new</code>, <code>/threads/:threadId</code>, persistent composer controls, ordered flightpath, and profile-adaptive inspector.
+
+- [ ] Write failing tests for new thread, send/stop, attachment validation, model/provider/runtime selection, slash commands, approval focus restoration, SSE reconnect, and Everyday versus Developer detail.
+- [ ] Run the focused Vitest files and confirm missing component failures.
+- [ ] Implement React Router/TanStack Query composition, optimistic message append with idempotency, accessible streaming announcements, responsive inspector, and real empty/error/retry states.
+- [ ] Run focused tests, all web tests, and production build.
+
+### Milestone 2 Gate and Commit
+
+- [ ] Run provider conformance, conversation repository/API, agent runtime, security, and all web tests.
+- [ ] Verify a local simulator thread end-to-end in web and Tauri with start, stream, approval, cancel, retry, and artifact.
+- [ ] Run Ruff, mypy, Bandit, Rust tests, web build, and diff check.
+- [ ] Update logs/status/OpenAPI/generated types/plan checkboxes.
+- [ ] Commit: <code>feat(agents): add threads and live provider execution</code>.
+
+---
+
+## Milestone 3 — Scheduling and Unattended Execution
+
+### Task 3.1: Add schedule domain, recurrence, and persistence
+
+**Files:**
+- Create: <code>corvus/domain/scheduling.py</code>, <code>corvus/application/scheduling.py</code>, <code>corvus/infrastructure/repositories/scheduling.py</code>, <code>corvus/infrastructure/migrations/versions/m2_004_scheduling.py</code>
+- Test: <code>tests/unit/domain/test_scheduling.py</code>, <code>tests/integration/test_scheduling_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>Schedule</code>, <code>RecurrenceRule</code>, <code>MissedRunPolicy</code>, <code>ScheduleExecution</code>, <code>ExecutionClaim</code>, and <code>ScheduleService</code>.
+
+- [ ] Write failing clock-controlled tests for once/interval/cron/event schedules, timezone/DST transitions, immutable authorization snapshot, bounded catch-up, version conflicts, pause/resume, and tenant scope.
+- [ ] Run focused tests and confirm missing contracts.
+- [ ] Implement recurrence calculation, repository, indexes, reversible migration, and default grace-window-then-skip policy.
+- [ ] Rerun tests against SQLite and PostgreSQL.
+
+### Task 3.2: Implement the fenced scheduler worker
+
+**Files:**
+- Create: <code>corvus/platform/worker/__init__.py</code>, <code>corvus/platform/worker/scheduler.py</code>
+- Modify: <code>corvus/cli.py</code>
+- Test: <code>tests/integration/test_scheduler_worker.py</code>, <code>tests/security/test_scheduler_fencing.py</code>
+
+**Interfaces:**
+- Produces: <code>SchedulerWorker.tick(now)</code>, lease renewal, fenced completion, retry calculation, and CLI command <code>corvus platform-worker</code>.
+
+- [ ] Write failing tests for two-worker claims, stale fencing rejection, restart recovery, bounded retry, successful-effect deduplication, offline local node, expired authority, and kill switch.
+- [ ] Run focused tests and confirm missing worker.
+- [ ] Implement transactional claim/heartbeat/complete/fail methods and dispatch through the existing authoritative coordinator.
+- [ ] Rerun focused tests including forced process interruption.
+
+### Task 3.3: Add schedule APIs and idempotent notifications
+
+**Files:**
+- Create: <code>corvus/platform/api/schedules.py</code>, <code>corvus/domain/notifications.py</code>, <code>corvus/application/notifications.py</code>, <code>corvus/infrastructure/repositories/notifications.py</code>
+- Test: <code>tests/integration/test_schedule_api.py</code>, <code>tests/integration/test_notifications.py</code>
+
+**Interfaces:**
+- Produces schedule list/create/update/pause/resume/run-now/history routes and <code>NotificationService.deliver_once(delivery)</code>.
+
+- [ ] Write failing API tests for recurrence preview, expected versions, runtime readiness, authorization, run-now idempotency, history privacy, and notification deduplication.
+- [ ] Run focused tests and confirm missing routes.
+- [ ] Implement routes, notification outbox consumption, in-app delivery, and signed webhook/email adapter ports.
+- [ ] Rerun tests and regenerate OpenAPI/client types.
+
+### Task 3.4: Build schedules UI and desktop background status
+
+**Files:**
+- Create: <code>apps/web/src/schedules/SchedulesPage.tsx</code>, <code>ScheduleList.tsx</code>, <code>ScheduleCalendar.tsx</code>, <code>ScheduleEditor.tsx</code>, <code>ScheduleHistory.tsx</code>, <code>scheduleApi.ts</code>
+- Create: <code>apps/desktop/src-tauri/src/background.rs</code>
+- Modify: <code>apps/desktop/src-tauri/src/lib.rs</code>
+- Test: <code>apps/web/src/schedules/SchedulesPage.test.tsx</code>, <code>ScheduleEditor.test.tsx</code>
+- Test: Rust unit tests in <code>background.rs</code>
+
+**Interfaces:**
+- Produces <code>/schedules</code>, list/calendar modes, recurrence preview, runtime warning, recovery actions, and tray/background status model.
+
+- [ ] Write failing tests for create/edit/pause/run-now, timezone preview, validation, offline node warnings, failure recovery, keyboard operation, and profile language.
+- [ ] Write failing Rust tests for sanitized tray state, worker lifecycle, and shutdown.
+- [ ] Implement data-backed UI and Tauri background-status commands without exposing credentials or opening a listener.
+- [ ] Run web/Rust focused tests and builds.
+
+### Milestone 3 Gate and Commit
+
+- [ ] Run scheduler/domain/repository/API/security tests with frozen clocks and PostgreSQL.
+- [ ] Run web/Rust tests and simulate restart, DST, offline-node, retry, cancellation, and notification cases.
+- [ ] Run repository quality gates and diff check.
+- [ ] Update logs/status/OpenAPI/generated types/plan checkboxes.
+- [ ] Commit: <code>feat(scheduling): add unattended agent execution</code>.
+
+---
+
+## Milestone 4 — Settings, Customization, MCP, and Integrations
+
+### Task 4.1: Add typed settings with explicit scope and precedence
+
+**Files:**
+- Create: <code>corvus/domain/settings.py</code>, <code>corvus/application/settings.py</code>, <code>corvus/infrastructure/repositories/settings.py</code>, <code>corvus/infrastructure/migrations/versions/m2_005_settings.py</code>
+- Test: <code>tests/unit/domain/test_settings.py</code>, <code>tests/integration/test_settings_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>SettingScope</code>, <code>SettingDocument</code>, <code>EffectiveSettings</code>, <code>SettingsService.resolve()</code>, and versioned typed schemas for account, user, device, workspace, thread, and team policy.
+
+- [ ] Write failing tests for schema rejection, account/user/device/workspace/thread precedence, enforced team-policy ceilings, version conflict, reset, migration, and tenant isolation.
+- [ ] Run focused tests and confirm missing types.
+- [ ] Implement discriminated Pydantic setting documents, repository/version history, deterministic merge rules, policy explanations, and reversible migration.
+- [ ] Rerun focused tests against SQLite/PostgreSQL and mypy.
+
+### Task 4.2: Implement local and hosted secret vault boundaries
+
+**Files:**
+- Create: <code>corvus/application/secret_vault.py</code>, <code>corvus/infrastructure/vaults/__init__.py</code>, <code>keyring.py</code>, <code>encrypted_database.py</code>
+- Modify: <code>corvus/security.py</code>
+- Test: <code>tests/unit/infrastructure/test_secret_vaults.py</code>, <code>tests/security/test_vault_boundary.py</code>
+
+**Interfaces:**
+- Produces: <code>SecretVaultPort.put(scope, value) -&gt; CredentialRef</code>, <code>resolve(ref, effect_context) -&gt; SecretValue</code>, <code>revoke(ref)</code>, and implementations for OS keyring and encrypted hosted storage.
+
+- [ ] Write failing tests proving ciphertext differs across writes, vault keys are configuration-only, references are scope-bound, plaintext is absent from database/events/logs/exceptions, and revocation fails closed.
+- [ ] Run focused tests and confirm missing vault interfaces.
+- [ ] Implement keyring storage and authenticated encryption using existing cryptography primitives with rotation metadata and zero secret serialization.
+- [ ] Run focused tests, Bandit, repository secret-flow tests, and a recursive artifact/log redaction scan.
+
+### Task 4.3: Implement MCP registration, health, and tool authorization
+
+**Files:**
+- Create: <code>corvus/domain/mcp.py</code>, <code>corvus/application/mcp.py</code>, <code>corvus/infrastructure/mcp/__init__.py</code>, <code>stdio.py</code>, <code>http.py</code>
+- Test: <code>tests/contract/test_mcp_transports.py</code>, <code>tests/security/test_mcp_permissions.py</code>
+
+**Interfaces:**
+- Produces: <code>McpServerDefinition</code>, <code>McpToolCapability</code>, <code>McpTransportPort</code>, <code>McpService.health()</code>, and <code>McpService.invoke_authorized()</code>.
+
+- [ ] Write failing transport fixtures for initialization, capability discovery, health, cancellation, malformed messages, oversized frames, remote redirects, and disconnected servers.
+- [ ] Write failing security tests for environment reference resolution, tool allow/deny, elevated approval, argument redaction, workspace scope, and server identity changes.
+- [ ] Implement bounded JSON-RPC stdio and allowlisted HTTPS streaming transports; keep invalid servers disabled and route every invocation through current authorization/audit.
+- [ ] Run contract/security tests on Windows and CI platforms.
+
+### Task 4.4: Implement integration connections and signed deliveries
+
+**Files:**
+- Create: <code>corvus/domain/integrations.py</code>, <code>corvus/application/integrations.py</code>, <code>corvus/infrastructure/integrations/__init__.py</code>, <code>github.py</code>, <code>webhook.py</code>, <code>email.py</code>, <code>google.py</code>
+- Test: <code>tests/contract/test_integrations.py</code>, <code>tests/security/test_integration_signatures.py</code>
+
+**Interfaces:**
+- Produces: <code>IntegrationConnection</code>, <code>IntegrationHealth</code>, <code>IntegrationPort.test()</code>, <code>sync()</code>, <code>deliver()</code>, <code>revoke()</code>, and adapters for GitHub, signed generic/Slack/Discord-compatible webhooks, SMTP/API email, and Google Calendar/Drive contracts.
+
+- [ ] Write failing MockTransport tests for connect/status/test/reconnect/revoke, pagination, rate limits, retry classification, signature generation/verification, replay windows, and redaction.
+- [ ] Run focused tests and confirm missing contracts.
+- [ ] Implement injected transports, vault-backed credentials, outbound idempotency, inbound nonce/timestamp replay checks, health timestamps, and stable errors.
+- [ ] Rerun contract/security tests and mypy.
+
+### Task 4.5: Expose settings, vault, MCP, and integration APIs
+
+**Files:**
+- Create: <code>corvus/platform/api/settings.py</code>, <code>vaults.py</code>, <code>mcp.py</code>, <code>integrations.py</code>
+- Test: <code>tests/integration/test_settings_api.py</code>
+
+**Interfaces:**
+- Produces typed CRUD/test/revoke routes with expected versions, scope metadata, policy explanations, and credential write-only inputs.
+
+- [ ] Write failing API tests for every scope, write-only secret responses, MCP health/invoke authorization, integration test/revoke, CSRF, idempotency, and cross-tenant denial.
+- [ ] Run the focused file and confirm route failures.
+- [ ] Implement thin routers over services; never echo submitted credential material.
+- [ ] Regenerate OpenAPI/client types and rerun API/security tests.
+
+### Task 4.6: Build the complete Settings product
+
+**Files:**
+- Create: <code>apps/web/src/settings/SettingsLayout.tsx</code>, <code>AccountSettings.tsx</code>, <code>AppearanceSettings.tsx</code>, <code>BehaviorSettings.tsx</code>, <code>RulesSettings.tsx</code>, <code>ProviderSettings.tsx</code>, <code>RuntimeSettings.tsx</code>, <code>McpSettings.tsx</code>, <code>IntegrationSettings.tsx</code>, <code>NotificationSettings.tsx</code>, <code>PrivacySettings.tsx</code>, <code>TeamPolicySettings.tsx</code>, <code>BillingPreview.tsx</code>, <code>settingsApi.ts</code>
+- Modify: <code>apps/web/src/app/AppShell.tsx</code>, <code>apps/web/src/styles.css</code>
+- Test: <code>apps/web/src/settings/SettingsLayout.test.tsx</code>, <code>ProviderSettings.test.tsx</code>, <code>McpSettings.test.tsx</code>
+
+**Interfaces:**
+- Produces searchable <code>/settings/*</code> routes, live previews, scope labels, validation, unsaved-change guard, reset, policy explanation, and synchronized status.
+
+- [ ] Write failing tests for navigation/search, theme/reduced-motion preview, behavior sample, custom rules, write-only credential form, provider test, MCP health/permissions, integration revoke, export/delete confirmation, and policy-disabled controls.
+- [ ] Run focused Vitest files and confirm missing UI.
+- [ ] Implement data-backed forms with Zod validation, accessible error summaries, focus restoration, query invalidation, and no fake controls.
+- [ ] Run all web tests, axe component checks, and production build.
+
+### Milestone 4 Gate and Commit
+
+- [ ] Run settings/vault/MCP/integration unit, contract, API, and security suites.
+- [ ] Prove recursive secret absence across SQLite/PostgreSQL rows, events, logs, API responses, localStorage, and artifacts.
+- [ ] Run all web tests/build and repository quality gates.
+- [ ] Update logs/status/OpenAPI/generated types/plan checkboxes.
+- [ ] Commit: <code>feat(settings): add customization tools and integrations</code>.
+
+---
+
+## Milestone 5 — Teams and Collaboration
+
+### Task 5.1: Persist organizations, memberships, invitations, and roles
+
+**Files:**
+- Create: <code>corvus/domain/collaboration.py</code>, <code>corvus/infrastructure/repositories/collaboration.py</code>, <code>corvus/infrastructure/migrations/versions/m2_006_collaboration.py</code>
+- Test: <code>tests/unit/domain/test_collaboration.py</code>, <code>tests/integration/test_collaboration_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>Organization</code>, <code>WorkspaceMembership</code>, <code>Invitation</code>, <code>WorkspaceRole</code>, <code>PolicyBinding</code>, and tenant-scoped repository methods.
+
+- [ ] Write failing tests for Owner/Admin/Manager/Member/Viewer capabilities, single-use invitation digest, expiry, resend/revoke, last-owner protection, membership versioning, and tenant isolation.
+- [ ] Run focused tests and confirm missing models/migration failures.
+- [ ] Implement frozen models, explicit capability sets, repository constraints/indexes, invitation hashing, and reversible migration.
+- [ ] Rerun tests on SQLite/PostgreSQL.
+
+### Task 5.2: Add authoritative collaboration authorization
+
+**Files:**
+- Create: <code>corvus/application/collaboration_authorization.py</code>
+- Modify: <code>corvus/application/authorization.py</code>, <code>corvus/domain/access.py</code>
+- Test: <code>tests/security/test_collaboration_authorization.py</code>
+
+**Interfaces:**
+- Produces <code>CollaborationAuthorizationService.authorize(principal, workspace, capability, resource_version)</code> and revocation propagation.
+
+- [ ] Write failing tests for profile-selection non-authority, role downgrade during active run, removed-member session/subscription/approval revocation, stale cached capability, policy ceiling, and cross-tenant resource IDs.
+- [ ] Run the focused file and confirm missing service.
+- [ ] Implement capability derivation only from current memberships/policies and bind decisions to authority snapshots consumed by existing run authorization.
+- [ ] Rerun security and existing authorization suites.
+
+### Task 5.3: Implement assignments, comments, approvals, presence, and activity
+
+**Files:**
+- Create: <code>corvus/application/collaboration.py</code>, <code>corvus/platform/api/collaboration.py</code>
+- Extend: <code>corvus/domain/collaboration.py</code>, <code>corvus/infrastructure/repositories/collaboration.py</code>
+- Test: <code>tests/integration/test_collaboration_api.py</code>, <code>tests/security/test_collaboration_privacy.py</code>
+
+**Interfaces:**
+- Produces organization/workspace/member/invitation routes plus <code>Assignment</code>, <code>Comment</code>, <code>Mention</code>, <code>Watcher</code>, <code>PresenceSession</code>, <code>ActivityEvent</code>, and approval inbox queries.
+
+- [ ] Write failing tests for assignment ownership, comment/mention visibility, private drafts, watcher notifications, approval capability, presence expiry, activity audit linkage, cursor ordering, and removed-member disconnect.
+- [ ] Run focused files and confirm missing routes.
+- [ ] Implement services, outbox-backed notifications, short-lived presence, tenant-filtered SSE, and immutable activity/audit linkage.
+- [ ] Regenerate OpenAPI/types and rerun integration/security tests.
+
+### Task 5.4: Build team administration and collaboration views
+
+**Files:**
+- Create: <code>apps/web/src/teams/TeamLayout.tsx</code>, <code>MembersPage.tsx</code>, <code>InviteDialog.tsx</code>, <code>AssignmentsPage.tsx</code>, <code>ApprovalInbox.tsx</code>, <code>ActivityFeed.tsx</code>, <code>Presence.tsx</code>, <code>teamApi.ts</code>
+- Create: <code>apps/web/src/components/Inbox.tsx</code>
+- Modify: <code>apps/web/src/app/workspaceProfiles.ts</code>, <code>apps/web/src/app/WorkspaceRouter.tsx</code>
+- Test: <code>apps/web/src/teams/TeamLayout.test.tsx</code>, <code>ApprovalInbox.test.tsx</code>, <code>apps/web/src/components/Inbox.test.tsx</code>
+
+**Interfaces:**
+- Produces team routes, member/invite/role controls, assignments, comments, approvals, activity, presence, and universal Inbox.
+
+- [ ] Write failing tests for role-based visibility, invite lifecycle, disabled unauthorized actions, assignment/comment/mention flows, approval decisions, removed-member handling, and Everyday/Developer wording.
+- [ ] Run focused Vitest files and confirm missing UI.
+- [ ] Implement responsive data-backed views; always revalidate mutations server-side and show stable denial/recovery states.
+- [ ] Run all web tests, axe checks, and build.
+
+### Milestone 5 Gate and Commit
+
+- [ ] Run collaboration repository/API/security tests with a cross-tenant attack matrix.
+- [ ] Run all web tests and four-profile team journeys.
+- [ ] Verify membership removal terminates sessions, SSE, pending approvals, and runtime authority.
+- [ ] Run repository quality gates and update logs/status/OpenAPI/types/plan.
+- [ ] Commit: <code>feat(teams): add governed collaboration workspaces</code>.
+
+---
+
+## Milestone 6 — Paired Local Nodes and E2B Cloud Runtime
+
+### Task 6.1: Persist runtime nodes, placements, leases, and cloud sandboxes
+
+**Files:**
+- Create: <code>corvus/domain/runtime_placement.py</code>, <code>corvus/infrastructure/repositories/runtime_placement.py</code>, <code>corvus/infrastructure/migrations/versions/m2_007_runtime_placement.py</code>
+- Test: <code>tests/unit/domain/test_runtime_placement.py</code>, <code>tests/integration/test_runtime_placement_repository.py</code>
+
+**Interfaces:**
+- Produces: <code>RuntimeNode</code>, <code>NodeCapabilityReport</code>, <code>PlacementPolicy</code>, <code>RuntimePlacement</code>, <code>SandboxLease</code>, and tenant-scoped repository methods.
+
+- [ ] Write failing tests for node identity binding, capability report expiry, allowed roots, placement-policy validation, lease fencing, sandbox state transitions, idempotent completion, and tenant isolation.
+- [ ] Run focused files and confirm missing models/migration failures.
+- [ ] Implement frozen models, repository constraints/indexes, monotonic state machine, canonical digests, and reversible migration.
+- [ ] Rerun tests against SQLite/PostgreSQL.
+
+### Task 6.2: Implement the authenticated outbound local-node bridge
+
+**Files:**
+- Create: <code>corvus/infrastructure/runtime_nodes/__init__.py</code>, <code>bridge.py</code>, <code>protocol.py</code>
+- Create: <code>corvus/platform/api/runtime_nodes.py</code>
+- Test: <code>tests/contract/test_runtime_node_protocol.py</code>, <code>tests/security/test_runtime_node_spoofing.py</code>
+
+**Interfaces:**
+- Produces single-use pairing challenge/proof, authenticated WebSocket protocol, <code>NodeHello</code>, <code>RunAssignment</code>, <code>NodeRunEvent</code>, <code>NodeAck</code>, heartbeat, reconnect cursor, and revocation.
+
+- [ ] Write failing tests for challenge replay, forged node ID, origin/token confusion, stale capability report, sequence replay/gap, disconnect/reconnect, assignment acknowledgement, oversized frame, and secret redaction.
+- [ ] Run focused tests and confirm missing protocol.
+- [ ] Implement binary-safe schema-validated frames, channel binding, monotonic sequence/ack, bounded buffers, heartbeats, and server-side authority recheck before assignment.
+- [ ] Rerun contract/security tests and existing loopback spoof tests.
+
+### Task 6.3: Turn the Tauri sidecar into a paired execution node
+
+**Files:**
+- Create: <code>apps/desktop/src-tauri/src/node_identity.rs</code>, <code>keychain.rs</code>, <code>provider_discovery.rs</code>, <code>node_connection.rs</code>, <code>commands.rs</code>
+- Modify: <code>apps/desktop/src-tauri/src/lib.rs</code>
+- Test: Rust unit tests colocated in each module
+
+**Interfaces:**
+- Produces Tauri commands <code>node_status</code>, <code>pair_node</code>, <code>revoke_node</code>, <code>discover_providers</code>, <code>select_roots</code>, and an outbound assignment/event loop.
+
+- [ ] Write failing Rust tests for key persistence, pairing replay, HMAC/proof spoofing, canonical-root traversal/symlink rejection, provider capability sanitation, reconnect cursor, buffered event deduplication, process cancellation, and diagnostic redaction.
+- [ ] Run <code>cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml</code>; expect missing modules.
+- [ ] Split existing sidecar responsibilities without changing startup safety; implement keychain-backed node identity, outbound TLS connection, root allowlist, provider discovery, and bounded offline buffering.
+- [ ] Run Rust tests, Clippy with warnings denied, and Tauri build.
+
+### Task 6.4: Implement authoritative runtime placement
+
+**Files:**
+- Create: <code>corvus/application/runtime_placement.py</code>
+- Modify: <code>corvus/application/agent_runtime.py</code>
+- Test: <code>tests/unit/application/test_runtime_placement.py</code>, <code>tests/security/test_runtime_fallback.py</code>
+
+**Interfaces:**
+- Produces <code>RuntimePlacementService.select(request, policy, nodes, cloud) -&gt; PlacementDecision</code> for this-device, ask, any-local, prefer-local, and cloud-only modes.
+
+- [ ] Write failing tests for provider/tool/root/data-residency/credential mismatch, stale node, explicit fallback, no silent local/cloud switch, budget ceiling, and deterministic denial reasons.
+- [ ] Run focused tests and confirm missing service.
+- [ ] Implement fail-closed placement and bind the decision digest into the existing run authorization request/audit event.
+- [ ] Rerun focused tests and the complete agent-runtime security suite.
+
+### Task 6.5: Implement secure E2B lifecycle and cleanup reconciliation
+
+**Files:**
+- Create: <code>corvus/infrastructure/e2b/__init__.py</code>, <code>client.py</code>, <code>runtime.py</code>, <code>cleanup.py</code>
+- Test: <code>tests/contract/test_e2b_runtime.py</code>, <code>tests/security/test_e2b_sandbox.py</code>
+
+**Interfaces:**
+- Produces: <code>E2bClientPort</code>, <code>E2bRuntime.start()</code>, <code>events()</code>, <code>cancel()</code>, <code>resume()</code>, and <code>E2bCleanupReconciler.run_once()</code>.
+
+- [ ] Write failing fake-SDK tests for pinned template, secure access, resource/time limits, scoped upload/download, network/tool envelope, short-lived secret injection, heartbeat, timeout, cancellation, artifact digest, destroy, and orphan cleanup.
+- [ ] Run focused files and confirm missing adapter.
+- [ ] Implement an injected wrapper around the official <code>e2b</code> v2 SDK; never disable secure access, expose access tokens, or trust sandbox-reported authority.
+- [ ] Rerun contract/security tests, including create/connect/destroy failures and repeated cleanup.
+
+### Task 6.6: Expose runtime APIs and build Runtime Center
+
+**Files:**
+- Create: <code>corvus/platform/api/runtimes.py</code>
+- Create: <code>apps/web/src/runtimes/RuntimeCenter.tsx</code>, <code>PlacementPicker.tsx</code>, <code>NodePairing.tsx</code>, <code>NodeStatus.tsx</code>, <code>ProviderDiscovery.tsx</code>, <code>E2bStatus.tsx</code>, <code>runtimeApi.ts</code>
+- Create: <code>apps/web/src/desktop/bridge.ts</code>
+- Test: <code>tests/integration/test_runtime_api.py</code>, <code>apps/web/src/runtimes/RuntimeCenter.test.tsx</code>
+
+**Interfaces:**
+- Produces node list/pair/revoke, provider capability, placement preview, cloud availability, sandbox status, and cleanup-status routes plus <code>/runtimes</code>.
+
+- [ ] Write failing API/UI tests for pairing lifecycle, read-only capability display, root selection, readiness, fallback explanation, cloud-preview truth, sandbox progress, revoke, and hosted-web refusal to probe loopback.
+- [ ] Run focused Python/Vitest files and confirm missing routes/components.
+- [ ] Implement thin API routes, Tauri bridge detection, responsive Runtime Center, composer placement picker, and schedule readiness integration.
+- [ ] Regenerate OpenAPI/types; run focused tests and web/Tauri builds.
+
+### Milestone 6 Gate and Commit
+
+- [ ] Run node protocol/spoofing, placement, E2B lifecycle/cleanup, agent-runtime, API, web, and Rust suites.
+- [ ] Prove local-node disconnect/reconnect and fake-E2B create/run/cancel/destroy without duplicate effects or secret leakage.
+- [ ] Run all repository quality gates and diff check.
+- [ ] Update logs/status/OpenAPI/types/plan checkboxes.
+- [ ] Commit: <code>feat(runtime): add paired local and E2B execution</code>.
+
+---
+
+## Milestone 7 — Complete Product UX and Integrated Verification
+
+### Task 7.1: Replace placeholder navigation with the complete product shell
+
+**Files:**
+- Create: <code>apps/web/src/components/ProductNavigation.tsx</code>, <code>WorkspaceIdentityBlock.tsx</code>, <code>SearchCommand.tsx</code>, <code>NotificationCenter.tsx</code>, <code>MobileNavigation.tsx</code>
+- Create: <code>apps/web/src/styles/tokens.css</code>, <code>shell.css</code>, <code>conversation.css</code>, <code>responsive.css</code>
+- Modify: <code>apps/web/src/App.tsx</code>, <code>apps/web/src/app/AppShell.tsx</code>, <code>apps/web/src/components/NavigationRail.tsx</code>, <code>apps/web/src/components/ResponsiveNavigation.tsx</code>, <code>apps/web/src/styles.css</code>
+- Test: <code>apps/web/src/components/ProductNavigation.test.tsx</code>, <code>SearchCommand.test.tsx</code>
+
+**Interfaces:**
+- Produces universal New thread, Search, Inbox, Schedules, workspace navigation, read-only identity, Settings footer, mobile bottom navigation, and three-pane responsive shell.
+
+- [ ] Write failing tests for every route/control, keyboard shortcuts, focus return, active state, mobile sheets, unread state, profile labels, and unavailable capability explanations.
+- [ ] Run focused Vitest files and confirm missing UI.
+- [ ] Implement the shell with Corvus tokens, real routes, 44px targets, logical focus order, reduced motion, and design-packet source/component hooks.
+- [ ] Run focused tests, axe, and build at desktop/tablet/mobile widths.
+
+### Task 7.2: Complete profile-specific routes and product states
+
+**Files:**
+- Modify: <code>apps/web/src/app/WorkspaceRouter.tsx</code>, <code>apps/web/src/app/workspaceProfiles.ts</code>
+- Create: focused views under <code>apps/web/src/views/</code> for Everyday outcomes/automations/knowledge and Developer repositories/changes/environments/policies.
+- Test: <code>apps/web/src/app/WorkspaceRouter.test.tsx</code>, <code>apps/web/src/views/ProfileJourneys.test.tsx</code>
+
+**Interfaces:**
+- Produces real data-backed destinations for all profile routes and consistent loading, empty, error, offline, conflict, approval, and recovery states.
+
+- [ ] Write failing tests that enumerate every profile route and assert a functional primary action, accessible heading, non-placeholder data state, and correct capability gate.
+- [ ] Run focused tests and observe current placeholder-route failures.
+- [ ] Implement outcome-oriented Everyday views and detailed Developer views over existing thread/schedule/team/settings/runtime APIs.
+- [ ] Rerun focused tests and all web tests.
+
+### Task 7.3: Add Playwright, axe, responsive screenshots, and cross-device fixtures
+
+**Files:**
+- Create: <code>apps/web/playwright.config.ts</code>, <code>apps/web/e2e/fixtures.ts</code>, <code>oauth-onboarding.spec.ts</code>, <code>chat-run.spec.ts</code>, <code>schedules.spec.ts</code>, <code>settings.spec.ts</code>, <code>teams.spec.ts</code>, <code>runtime-placement.spec.ts</code>, <code>sync-two-device.spec.ts</code>, <code>accessibility.spec.ts</code>
+- Create: <code>apps/web/src/test/server.ts</code>
+
+**Interfaces:**
+- Produces deterministic fake Google/provider/E2B services, two-browser-device sessions, and projects for Chromium acceptance.
+
+- [ ] Configure webServer startup, isolated databases, deterministic clocks/IDs, trace/video on failure, and projects at 1440x1000, 1024x900, and 390x844.
+- [ ] Write journeys covering all four profiles, Google onboarding, thread/run/approval/stop/recovery, schedule, settings/MCP, team invite/approval/removal, node pairing, E2B placement, and sync conflict.
+- [ ] Add axe scans, keyboard-only paths, aria-live assertions, reduced-motion project, screenshot baselines, and secret-pattern checks on traces.
+- [ ] Run <code>pnpm --dir apps/web exec playwright test</code>; require zero unexpected failures and inspect every first-run baseline.
+
+### Task 7.4: Run the visual blueprint build and audit gate
+
+**Files:**
+- Create/update: <code>.antigravity/website-blueprint/DESIGN_AUDIT_REPORT.md</code>, <code>DESIGN_SCORECARD_RESULT.json</code>
+
+- [ ] Start the local production preview and run:
+
+~~~powershell
+ag design build --project-root .
+ag design audit --project-root . --url "http://127.0.0.1:4173"
+~~~
+
+- [ ] Confirm every visible control, section source, component source, motion timeline, reduced-motion path, and responsive screenshot passes.
+- [ ] Fix all packet/audit failures and repeat until the score gate passes; do not waive generic-layout, missing-interaction, or stale-hash failures.
+
+### Task 7.5: Perform Windows desktop computer-use acceptance
+
+**Files:**
+- Update test evidence in <code>HACKATHON_STATUS.md</code> and <code>PROJECT_LOG.md</code>.
+
+- [ ] Build and launch the unsigned Windows alpha installer on a clean local profile.
+- [ ] Using the bundled Computer-use capability, verify Google-first onboarding with the deterministic OAuth service, profile/workspace display, New thread, streaming run, approval, Stop, schedule creation/run-now, settings persistence, MCP health, team invite/approval, local node pairing, runtime switching, reconnect, and tray/background status.
+- [ ] Exercise keyboard-only navigation, 125% scaling, narrow window, offline/reconnect, crash/relaunch recovery, and secret-free diagnostics.
+- [ ] Record screenshots and observed state transitions; repair and rerun every failed journey.
+
+### Task 7.6: Run complete release-candidate verification
+
+**Files:**
+- Modify: <code>README.md</code>, <code>ROADMAP.md</code>, <code>PROJECT_LOG.md</code>, <code>HACKATHON_STATUS.md</code>, <code>.env.example</code>
+- Update: OpenAPI, generated TypeScript, supply-chain outputs, installer/release documentation.
+
+- [ ] Run the locked Python suite on 3.12 and 3.13, Ruff, format check, mypy, Bandit, pip-audit, Gitleaks, Semgrep, migration upgrade/downgrade, and PostgreSQL contracts.
+- [ ] Run all web unit/E2E/axe/screenshot tests, TypeScript build, Rust tests, Clippy, Tauri build, sidecar packaging, and unsigned installer smoke tests.
+- [ ] Run a clean-install cross-device scenario with local execution and fake E2B, then verify audit chains, no orphan sandboxes, no leaked secrets, and no unresolved plan checkbox.
+- [ ] Verify Linux/macOS GitHub CI definitions cover Python, web, Rust, and installer compilation without PR-triggered privileged release publishing.
+- [ ] Update documentation with truthful implemented capability, required environment variables, local/Railway/Vercel/E2B setup, limitations, and recovery.
+
+### Task 7.7: Commit, push, and open the single review PR
+
+- [ ] Commit: <code>feat(product): complete Corvus web and desktop experience</code>.
+- [ ] Confirm the design and plan commits plus seven verified milestone commits are on <code>codex/full-product-platform</code> and the worktree is clean.
+- [ ] Push <code>codex/full-product-platform</code> without force.
+- [ ] Open one non-draft PR to <code>main</code> summarizing all seven milestones, verification evidence, screenshots, migration notes, security invariants, and deployment requirements.
+- [ ] Request the configured human and bot reviewers once. Do not resolve new findings, merge, deploy production migrations, enable billing, or tag a release in this plan run.
+
+### Milestone 7 and Final Stop Gate
+
+- [ ] All local integrated gates pass with fresh evidence.
+- [ ] Required GitHub checks have started on the one PR.
+- [ ] The PR is open, unmerged, and ready for independent review.
+- [ ] Stop execution and report the PR URL, commit list, verification matrix, known credential-gated live checks, and reviewer handoff.
+
+---
+
+# Preserved Foundation Plan (unchanged)
+
 # Plan: Corvus CLI V2 and Shared Web/Desktop Platform
 _Maintained by Codex/Hermes and gated by recorded independent review._
 
