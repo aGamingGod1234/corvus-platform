@@ -103,7 +103,7 @@ ag design approve-packet --project-root . --approved-by "Lucas" --approval-note 
 **Interfaces:**
 - Produces: <code>PlatformSettings.from_env() -&gt; PlatformSettings</code>, <code>create_platform_engine(database_url: str) -&gt; Engine</code>, and URL-based Alembic upgrades.
 
-- [ ] Write a failing test that rejects reused signing secrets and verifies PostgreSQL URL handling:
+- [x] Write a failing test that rejects reused signing secrets and verifies PostgreSQL URL handling:
 
 ~~~python
 def test_platform_settings_require_distinct_secrets(monkeypatch):
@@ -114,9 +114,9 @@ def test_platform_settings_require_distinct_secrets(monkeypatch):
         PlatformSettings.from_env()
 ~~~
 
-- [ ] Run <code>uv run --python 3.13 pytest tests/unit/platform/test_config.py tests/integration/test_postgres_database.py -q</code>; confirm missing imports fail.
-- [ ] Implement immutable settings, URL-based engine creation, redacted configuration errors, PostgreSQL-aware Alembic configuration, and the test compose service.
-- [ ] Rerun focused tests and <code>uv run --python 3.13 mypy corvus/platform corvus/infrastructure/db.py</code>; expect success.
+- [x] Run <code>uv run --python 3.13 pytest tests/unit/platform/test_config.py tests/integration/test_postgres_database.py -q</code>; confirm missing imports fail.
+- [x] Implement immutable settings, URL-based engine creation, redacted configuration errors, PostgreSQL-aware Alembic configuration, and the test compose service.
+- [x] Rerun focused tests and <code>uv run --python 3.13 mypy corvus/platform corvus/infrastructure/db.py</code>; expect success.
 
 ### Task 1.3: Persist accounts, workspaces, memberships, sessions, and devices
 
