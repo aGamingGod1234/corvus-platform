@@ -258,6 +258,25 @@ def _assert_runtime_constraints(connection: Connection) -> None:
         ),
         {"prior_root": "d" * 64, "mutation": "e" * 64, "proposed_root": "f" * 64},
     )
+    quarantined_statement = (
+        "INSERT INTO authority_commit_intents "
+        "(id, workspace_id, epoch, deployment_instance_id, prior_generation, "
+        "next_generation, prior_state_root, mutation_digest, proposed_state_root, "
+        "state, created_at, payload_json) VALUES "
+        "(:id, 'workspace-3', 1, 'instance-1', 0, 1, :prior_root, "
+        ":mutation, :proposed_root, 'quarantined', '2026-07-16T00:00:03Z', '{}')"
+    )
+    quarantined_parameters = {
+        "id": "intent-quarantined-1",
+        "prior_root": "1" * 64,
+        "mutation": "2" * 64,
+        "proposed_root": "3" * 64,
+    }
+    connection.execute(text(quarantined_statement), quarantined_parameters)
+    connection.execute(
+        text(quarantined_statement),
+        {**quarantined_parameters, "id": "intent-quarantined-2"},
+    )
 
 
 def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> None:

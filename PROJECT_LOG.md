@@ -1324,3 +1324,28 @@
 ### Suggested Next Steps
 - Start `compose.platform-test.yaml`, set `CORVUS_TEST_POSTGRES_RESET_ALLOWED=reset-disposable-database`, and run the focused PostgreSQL test for live evidence.
 - Continue to the next Milestone 1 task only after the follow-up commit is reviewed.
+
+## 2026-07-16 — Close Task 1.2 PostgreSQL query-override gap
+
+### What Was Implemented
+- Rejected every PostgreSQL test URL query parameter except one bounded `connect_timeout` value, including libpq routing, database, identity, password, service, and encoded-host overrides.
+- Kept effective PostgreSQL test routing fixed to the validated URL authority and path before engine creation.
+- Added a live contract assertion that two distinct quarantined commit-intent rows for one workspace both succeed, proving the documented finalized/quarantined partial-index exclusion.
+
+### Files Modified
+- `tests/postgres_safety.py` — adds the strict query allowlist and bounded timeout validation with secret-free errors.
+- `tests/unit/platform/test_postgres_safety.py` — proves routing/identity overrides, arbitrary keys, encoded keys, and ambiguous timeout values fail closed.
+- `tests/integration/test_postgres_database.py` — adds same-workspace quarantined-row acceptance to the service-gated live contract.
+- `compose.platform-test.yaml` — documents the only allowed query key and timeout range.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.2-report.md` — supersede the earlier host-only safety claim with the complete effective-target rule.
+
+### Assumptions Made (flag these for review)
+- None. The strict allowlist, effective-target validation, distinct quarantined-row assertion, and retained prior safety rules came directly from the final Task 1.2 review.
+
+### Known Issues / Deferred
+- The previous `fc2fe56` guard validated the URL driver, authority host, and database path but did not reject libpq query overrides; this entry records and closes that gap.
+- Live PostgreSQL remains unavailable locally, so the strengthened quarantined predicate assertion remains service-gated behind the unchanged opt-in and disposable-target controls.
+
+### Suggested Next Steps
+- Run the guarded live PostgreSQL test against the disposable Compose service for server-backed evidence.
+- Treat this strict query allowlist as part of the destructive-test safety boundary in future changes.

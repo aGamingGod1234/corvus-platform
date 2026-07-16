@@ -50,6 +50,59 @@ def test_postgres_reset_accepts_local_and_compose_service_hosts(host: str) -> No
     validate_disposable_postgres_url(url, environ=_opted_in_environment())
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "host=database.example.com",
+        "hostaddr=203.0.113.10",
+        "port=5432",
+        "dbname=production",
+        "user=production-user",
+        "password=production-password",
+        "service=production-service",
+        "servicefile=production-service-file",
+        "database=production",
+        "passfile=production-pass-file",
+        "options=production-options",
+        "target_session_attrs=read-write",
+        "application_name=arbitrary-value",
+        "ho%73t=encoded-host-override",
+    ],
+)
+def test_postgres_reset_rejects_all_non_allowlisted_query_parameters(query: str) -> None:
+    url = f"{LOCAL_TEST_URL}?{query}"
+
+    with pytest.raises(PostgresTestSafetyError, match="postgres_test_query_not_allowed") as error:
+        validate_disposable_postgres_url(url, environ=_opted_in_environment())
+
+    assert query not in str(error.value)
+
+
+def test_postgres_reset_accepts_bounded_connect_timeout() -> None:
+    validate_disposable_postgres_url(
+        f"{LOCAL_TEST_URL}?connect_timeout=2",
+        environ=_opted_in_environment(),
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "connect_timeout=0",
+        "connect_timeout=-1",
+        "connect_timeout=not-a-number",
+        "connect_timeout=31",
+        "connect_timeout=2&connect_timeout=3",
+    ],
+)
+def test_postgres_reset_rejects_unbounded_or_ambiguous_connect_timeout(query: str) -> None:
+    with pytest.raises(PostgresTestSafetyError, match="postgres_test_connect_timeout_invalid"):
+        validate_disposable_postgres_url(
+            f"{LOCAL_TEST_URL}?{query}",
+            environ=_opted_in_environment(),
+        )
+
+
 def test_postgres_reset_safety_errors_do_not_expose_url_secrets() -> None:
     secret_url = (
         "postgresql+psycopg://visible-user:visible-password@database.example.com/"  # noqa: S105

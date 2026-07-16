@@ -1,7 +1,8 @@
 # Destructive integration tests require:
 # CORVUS_TEST_POSTGRES_RESET_ALLOWED=reset-disposable-database
 # Only loopback hosts and the Compose service hostname `postgres` are accepted,
-# and the database name must end in `_test`.
+# the database name must end in `_test`, and the only allowed URL query key is
+# a single connect_timeout value from 1 through 30 seconds.
 services:
   postgres:
     image: postgres:17-alpine
