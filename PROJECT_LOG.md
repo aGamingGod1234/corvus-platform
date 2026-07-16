@@ -1176,3 +1176,24 @@
 
 ### Suggested Next Steps
 - Run full verification, push the repair, resolve all bot threads, and obtain fresh code-owner approval before merge.
+
+## 2026-07-16 — Specify the complete Corvus product platform
+
+### What Was Implemented
+- Consolidated the seven user-approved design sections into one decision-complete architecture specification.
+- Fixed the delivery boundary at seven milestone commits on one branch followed by one unmerged review pull request.
+- Documented authoritative state ownership, security invariants, data flow, UX adaptation, error handling, and integrated verification.
+
+### Files Modified
+- `docs/superpowers/specs/2026-07-16-corvus-full-product-platform-design.md` — records the approved modular Railway/PostgreSQL control-plane design.
+- `PROJECT_LOG.md` — records the design milestone and review gate.
+
+### Assumptions Made (flag these for review)
+- None beyond the decisions explicitly approved in the design conversation and recorded in the specification.
+
+### Known Issues / Deferred
+- Implementation has not started; the mandatory written-spec review and detailed `PLAN.md` remain the next gates.
+- Production database migration, paid billing activation, and automatic PR merge remain outside the authorized boundary.
+
+### Suggested Next Steps
+- Complete the specification self-review, commit it, obtain user approval of the written file, and then generate the seven-milestone implementation plan.
