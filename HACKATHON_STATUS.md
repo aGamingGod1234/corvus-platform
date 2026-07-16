@@ -17,13 +17,14 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Credentials persist only as `env://` or `keyring://` references and are resolved only by the broker at an effect boundary.
 - Signed connector/channel envelopes remain proposals or untrusted input; server-side identity and authorization decide what is accepted.
 
-## Adaptive application shell (Milestone 1)
+## Google identity and cross-device continuity (Full-product Milestone 1)
 
-- The shared React client now starts with a versioned three-step chooser for Everyday/Developer, Personal/Team, and Local/Corvus Cloud.
-- Local is operational on the existing authoritative same-machine API and supervised Tauri sidecar. Corvus Cloud is explicitly labeled Preview and exposes no fake identity, purchase, or payment success.
-- One shell composes four distinct navigation/copy profiles without duplicating workflow, authority, approval, budget, audit, or credential logic.
-- Team selection is capability-honest and grants no membership or permissions; real shared collaboration remains deferred to its authorized database milestone.
-- Responsive behavior includes desktop rail/inspector, mobile bottom navigation and profile sheet, full-screen mobile inspector, focus restoration, skip navigation, and reduced-motion handling.
+- Hosted Corvus now starts with Google OAuth and keeps session, CSRF, authorized workspace selection, and ordered sync state in memory as server-owned authority.
+- Resumable onboarding persists Everyday/Developer with exact versions, requires explicit Individual or Team workspace creation, and never treats a persona choice as membership or permission.
+- The shell presents experience and workspace type as read-only identity, supports only authorized workspace selection, and routes profile changes to a truthful Settings surface.
+- Workspace synchronization is ordered, idempotent, conflict-aware, provenance-bound, secret-safe, and acknowledgement-after-reduction; stale workspace/auth operations cannot acknowledge or restore superseded state.
+- Real loopback Local mode remains authority-neutral and consumes the legacy pairing/session/project API without fabricating hosted account, workspace, CSRF, or migration truth. Corvus Cloud remains visibly disabled Preview.
+- Desktop, tablet, and mobile layouts preserve keyboard focus, nested dialog containment, reduced motion, 44px targets, and the four profile-specific navigation/copy adaptations.
 
 ## Agent runtime foundation (M2A candidate)
 
