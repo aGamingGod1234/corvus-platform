@@ -1116,3 +1116,23 @@
 
 ### Suggested Next Steps
 - Run the focused and full verification suites, push the reviewed delta, and request exact-head security approval.
+
+## 2026-07-16 — Complete PR #4 security-scan review repair
+
+### What Was Implemented
+- Made Semgrep scan the repository root while writing a real JSON artifact through its dedicated JSON-output option.
+- Added regression coverage for the scan target and artifact-output contract.
+
+### Files Modified
+- `.github/workflows/security-scan.yml` — uses `--json-output` instead of treating the artifact path as a scan target or writing default text output.
+- `tests/security/test_release_surface.py` — guards the Semgrep invocation against both failure modes.
+- `PROJECT_LOG.md` — records the review repair.
+
+### Assumptions Made (flag these for review)
+- The alpha security workflow should remain inform-only as documented in the PR rather than becoming a merge-blocking Semgrep gate in this repair.
+
+### Known Issues / Deferred
+- Action SHA pinning, SARIF upload, dependency auditing, and blocking Semgrep remain the explicitly documented post-alpha hardening work.
+
+### Suggested Next Steps
+- Push a verified-account commit, confirm the Vercel author check and GitHub Actions pass, and request final review without merging the PR.

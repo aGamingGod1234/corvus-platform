@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "desktop-release.yml"
+SECURITY_SCAN_WORKFLOW = ROOT / ".github" / "workflows" / "security-scan.yml"
 VERCEL_CONFIG = ROOT / "apps" / "web" / "vercel.json"
 HOSTED_RUNTIME_POLICY = ROOT / "apps" / "web" / "HOSTED_RUNTIME_SECURITY.md"
 
@@ -21,6 +22,14 @@ def test_desktop_packaging_cannot_be_started_by_pull_requests() -> None:
     assert "  pull_request_target:" not in triggers
     assert "  workflow_dispatch:" in triggers
     assert '      - "v*"' in triggers
+
+
+def test_semgrep_scans_repository_and_writes_json_artifact() -> None:
+    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+    normalized_workflow = " ".join(workflow.split())
+
+    assert "--json-output=semgrep.json ." in normalized_workflow
+    assert "--json semgrep.json" not in normalized_workflow
 
 
 def test_hosted_alpha_keeps_a_documented_same_origin_network_policy() -> None:
