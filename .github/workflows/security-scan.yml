@@ -1,21 +1,22 @@
 name: security-scan
 
-# Self-scanning guardrail for every PR + pushes to main.
-# Runs in GitHub cloud. Token-free.
+# Self-scanning guardrail for every PR plus pushes to main.
+# Runs in GitHub cloud.
 #   - gitleaks: hunts leaked secrets/keys
 #   - semgrep : hunts insecure code patterns
 # This does NOT replace human review — it removes the mechanical scan.
 
-# TODO(pin actions): pin action SHAs, then add SARIF upload, dependency audit job, blocking semgrep after demo.
+# TODO(pin actions): pin action SHAs, then add SARIF upload, dependency audit job, flip semgrep to blocking.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 
-# Least-privilege. Scanning needs read-only checkout.
+# Least-privilege for scanning. Gitleaks PR scans need token access.
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   gitleaks:
@@ -23,9 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+          GITHUB_TOKEN: ${{ github.token }}
 
   semgrep:
     name: Semgrep - SAST
