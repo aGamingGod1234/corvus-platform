@@ -1,30 +1,69 @@
-# Visual Composition Draft
+# Corvus Visual Composition Draft
 
-## First Viewport Composition
+## Composition thesis
 
-The shell uses three stable zones: a 240px navigation rail with wordmark, workspace switcher, and profile-specific routes; a flexible content surface with a compact context/status header; and an optional 360px contextual inspector. A thin flight-path line can connect active progress or activity, but it must represent real state. The primary work surface changes composition by profile rather than filling the screen with interchangeable cards.
+One adaptive field desk holds seven product surfaces. Navigation and identity stay stable; the center changes from conversation to schedule, settings, or collaboration; the contextual plane appears only when selected work needs evidence. The flightpath connects request, execution, approval, and result across those planes.
 
-On first run, replace the shell with a centered, max-width setup field: step count and “Change anytime” eyebrow, one serif heading, one supporting sentence, two large semantic radio choices, and restrained Back/Continue actions. Runtime step uses full text labels beside local/computer and sourced cloud iconography.
+## Desktop shell
 
-## Spacing And Typography
+```text
++----------------------+-----------------------------------------+----------------------+
+| Corvus               | Workspace / profile       Runtime truth | Contextual inspector |
+| New thread           +-----------------------------------------+                      |
+| Search               | Thread title + share state              | artifact / approval  |
+| Inbox                |                                         | evidence / run detail|
+| Schedules            | Conversation and flightpath             |                      |
+| workspace routes     |                                         |                      |
+|                      |                                         |                      |
+| Settings             +-----------------------------------------+                      |
+| account              | attach  model runtime autonomy [Send]   |                      |
++----------------------+-----------------------------------------+----------------------+
+```
 
-Use existing Corvus tokens. Everyday surfaces use more vertical breathing room, sentence-case headings, and Fraunces for a few high-value page moments. Developer surfaces tighten row density and use IBM Plex Mono for repository, ID, branch, log, diff, and environment metadata. Inter Tight remains the primary UI face.
+The inspector column is absent when no context is selected. It does not reserve an empty generic panel.
 
-## Profile Differences
+## Tablet shell
 
-- Everyday Personal: cobalt accent, Today-led narrative, progress and outcomes.
-- Developer Personal: cobalt accent, repository-led split pane, change/check density.
-- Everyday Team: teal accent plus owner labels, assigned work and approval flow.
-- Developer Team: teal accent plus explicit policy/audit context, queue and review density.
+```text
++------------------+------------------------------------------------+
+| compact rail     | identity / runtime                              |
+|                  +------------------------------------------------+
+| routes           | primary surface                                |
+|                  |                                                |
+|                  +------------------------------------------------+
+|                  | persistent composer                            |
++------------------+------------------------------------------------+
+                                         inspector opens as drawer ->
+```
 
-## Motion Timeline
+## Mobile shell
 
-At setup, the selected card settles in 160ms; Continue replaces the step in 160ms and focuses the next heading. In the shell, route selection and affected live rows tint in 160ms. Inspector enters in 280ms and restores focus on close. Reduced motion removes translation and cross-fade.
+```text
++--------------------------------------+
+| workspace · profile        runtime   |
+| thread title                         |
+|                                      |
+| conversation / selected surface      |
+| flightpath becomes compact timeline  |
+|                                      |
+| attach  controls...          Send    |
++--------------------------------------+
+| New | Search | Inbox | Schedule | More|
++--------------------------------------+
+```
 
-## Mobile Simplification
+The composer remains above the bottom navigation and respects safe-area insets. Inspector, filters, profile details, and More use semantic sheets with focus restoration.
 
-At 390x844, navigation becomes a compact top bar plus four primary bottom items and More. Workspace/project context opens as a drawer. Inspector becomes a full-screen dialog with a persistent close control and Escape support. Keep runtime status beside the workspace name; never place the entire desktop rail above content.
+## Seven treatment map
 
-## Failure Conditions
+1. Identity entry: centered decision lane with a narrow evidence rail and no dashboard shell.
+2. Conversation: open reading plane anchored by the persistent composer.
+3. Run flightpath: horizontal route on desktop, vertical/compact route on mobile, extending into evidence.
+4. Schedules: time ruler plus calendar/list, not repeated cards.
+5. Settings and integrations: indexed settings rail with an editable document plane and health ledger.
+6. Team collaboration: assignment lanes and a review queue tied to presence and immutable activity.
+7. Runtime continuity: local-to-control-plane-to-cloud topology with explicit readiness and recovery actions.
 
-Avoid glassmorphism, decorative dashboards, fake data, color-only role meaning, dense engineering controls in Everyday views, hidden Local/Cloud truth, or layout shifts during connection updates.
+## Source hooks
+
+Every surface root uses `data-source-refs="..."`. Primary/secondary action implementations adapted from shadcn use `data-component-source="shadcn-button"`. The composer send glyph uses `data-component-source="lucide-send"`. These hooks support audits but do not replace the visible source-influence explanation.

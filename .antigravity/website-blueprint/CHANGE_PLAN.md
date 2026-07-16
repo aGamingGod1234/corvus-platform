@@ -1,33 +1,45 @@
 # Change Plan
 
-## Allowed Files
-- apps/web/**
-- apps/desktop/**
-- corvus/mvp/**
-- openapi/**
-- tests/**
-- docs/**
-- scripts/**
-- .antigravity/website-blueprint/**
-- pyproject.toml
-- uv.lock
-- README.md
-- HACKATHON_STATUS.md
-- PROJECT_LOG.md
-- .env.example
+## Allowed files
 
-## Forbidden Files
-- corvus/core/**
+- `apps/web/src/**`
+- `apps/desktop/src-tauri/src/**`
 
-## Expected Edits
-- Describe the exact implementation edits before approval.
+## Forbidden files
 
-## Dependency Changes
-- Add e2b>=2.3,<3 for E2B sandbox lifecycle and Authlib>=1.3,<2 for Google/OIDC authorization-code flows.
+- `corvus/domain/**`
 
-## Test Commands
-- ag design verify-packet --require-approval
-- ag design audit-packet --url <local-url>
+## Approved frontend boundary
 
-## Rollback Strategy
-- Revert only the files listed under Allowed Files.
+Future frontend tasks may implement the seven approved surfaces, source hooks, component hooks, responsive layouts, focus behavior, error/recovery states, and truthful capability presentation. Tauri tasks may add only the native client commands required by approved frontend flows. Task 1.1 itself changes no product code.
+
+## Explicitly out of scope
+
+- Domain authority, policy, membership, audit, budget, credential, or runtime semantics.
+- Dependency additions or upgrades.
+- Production credentials, billing activation, database mutations, deployment, or merge.
+- Renaming or refactoring existing logic unless a later task explicitly requires it.
+
+## Expected implementation selectors
+
+- Surface roots: `[data-corvus-surface]` and `[data-source-refs]`.
+- Sourced controls: `[data-component-source="shadcn-button"]` and `[data-component-source="lucide-send"]`.
+- Conversation: `[data-ui="thread-view"]`, `[data-ui="composer"]`, `[data-ui="composer-send"]`.
+- Run: `[data-ui="flightpath"]`, `[data-run-stage]`, `[data-ui="approval-gate"]`.
+- Responsive overlays: semantic dialog/sheet roots with trigger focus restoration.
+
+## Dependency changes
+
+- None.
+
+## Verification commands
+
+- `ag design verify-packet --project-root . --require-approval`
+- Frontend unit, accessibility, and API-contract tests named by each implementation task.
+- Browser journeys and fixed screenshots at `1440x1000`, `1024x900`, and `390x844`.
+- Reduced-motion and active-motion runtime evidence.
+- Tauri verification only when native files are changed.
+
+## Rollback strategy
+
+Revert only files changed by the relevant frontend task. Do not roll back or replace `corvus/domain/**` to repair presentation behavior.

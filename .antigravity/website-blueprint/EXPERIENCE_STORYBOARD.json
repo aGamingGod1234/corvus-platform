@@ -2,72 +2,65 @@
   "version": 1,
   "cardBudget": {
     "maximumGenericCards": 3,
-    "implementedGenericCards": 0
+    "allowedUses": ["onboarding choice summary", "recoverable runtime choice", "empty-state action"],
+    "prohibitedUses": ["navigation", "settings index", "run metrics", "schedule collection", "team members"]
   },
   "sections": [
     {
-      "id": "onboarding",
-      "treatment": "three-step accessible choice sequence",
-      "primaryMedia": "work style, workspace scope, and runtime radio cards",
-      "interactionModel": "Choose one option per step, move with keyboard or pointer, and confirm a versioned preference",
-      "motionTimeline": "Content cross-fades for 160ms; reduced motion replaces the transition with an immediate update",
-      "failureConditions": ["API workspace data loads before runtime selection", "Team selection grants authority", "Cloud selection implies billing or live synchronization"]
+      "id": "identity-entry",
+      "treatment": "Centered decision lane cut by one vertical identity rule",
+      "primaryMedia": "Google identity confirmation, profile choice, runtime truth, and workspace create/join progression",
+      "interactionModel": "A linear keyboard-complete sequence with Back, explicit selected state, and no workspace fetch before runtime choice",
+      "motionTimeline": "Current step settles once; progress rule advances; reduced motion swaps instantly",
+      "failureConditions": ["Profile choice appears to grant authority", "Fake sign-in or Cloud readiness is shown", "Technical density obscures the decision", "Focus is lost between steps"]
     },
     {
-      "id": "adaptive-shell",
-      "treatment": "one config-driven shell with four information architectures",
-      "primaryMedia": "workspace navigation, active context, content, and optional inspector",
-      "interactionModel": "Switch work style or scope without changing project identity or duplicating durable data",
-      "motionTimeline": "Navigation selection tints in 160ms and route focus moves to the new heading",
-      "failureConditions": ["Four separate apps drift", "Presentation exposes forbidden capabilities", "Mobile stacks the desktop rail above content"]
+      "id": "conversation",
+      "treatment": "Open reading plane anchored by a persistent bottom composer",
+      "primaryMedia": "User and agent messages, attachments, provider/runtime/autonomy state, and thread history",
+      "interactionModel": "New thread, select history, compose, attach, choose governed run controls, Send, Stop, retry, fork, or continue",
+      "motionTimeline": "Message settles, streaming text updates without layout jumps, composer changes Send to Stop",
+      "failureConditions": ["Composer is displaced by secondary controls", "Provider or runtime truth is hidden", "Send is unlabeled", "History competes with message reading"]
     },
     {
-      "id": "everyday-personal",
-      "treatment": "spacious outcome-first personal workspace",
-      "primaryMedia": "today view, work, automations, files, progress, and results",
-      "interactionModel": "Describe an outcome, review the plain-language plan, approve consequential steps, and inspect the result",
-      "motionTimeline": "Only affected progress rows and status labels update",
-      "failureConditions": ["Developer jargon dominates", "Technical metadata cannot be expanded", "A local-only result is labeled synced"]
+      "id": "run-flightpath",
+      "treatment": "Cobalt route spine with a copper human-decision gate",
+      "primaryMedia": "Plan, Work, Approval, and Result stages connected to selected artifacts and evidence",
+      "interactionModel": "Select a stage, inspect evidence, approve or reject when authorized, stop or retry from typed recovery states",
+      "motionTimeline": "Route advances only on persisted events; copper pauses at approval; result resolves without celebratory motion",
+      "failureConditions": ["Progress is decorative or optimistic", "Approval is color-only", "Event ordering is unclear", "Every stage is rendered as a generic card"]
     },
     {
-      "id": "developer-personal",
-      "treatment": "dense repository and execution workbench",
-      "primaryMedia": "repositories, threads, changes, runs, skills, logs, and diffs",
-      "interactionModel": "Choose a repository context, run governed work, inspect exact changes and checks, and approve effects",
-      "motionTimeline": "Run and file state updates in place without decorative movement",
-      "failureConditions": ["Diffs or logs are replaced with vague summaries", "Controls exceed server-authorized capabilities"]
+      "id": "schedules",
+      "treatment": "Time ruler joined to calendar and execution ledger",
+      "primaryMedia": "Upcoming runs, recurrence preview, readiness, last/next execution, and recovery history",
+      "interactionModel": "Create, preview, save, pause, resume, run now, cancel, retry, and inspect an immutable authorization snapshot",
+      "motionTimeline": "Time cursor updates discretely; status changes announce; no ambient calendar animation",
+      "failureConditions": ["Timezone or missed-run policy is hidden", "Run now can duplicate a confirmed effect", "Offline local runtime looks ready", "Schedules become a repeated card grid"]
     },
     {
-      "id": "everyday-team",
-      "treatment": "assignment and decision-centered team workspace",
-      "primaryMedia": "assigned work, approvals, shared knowledge, people, and activity",
-      "interactionModel": "Create shared work, assign owners, request review, comment, approve, and follow handoffs when capabilities exist",
-      "motionTimeline": "New activity appears on the shared spine and preserves reading position",
-      "failureConditions": ["A selected Team profile pretends a team exists", "Owner or role meaning relies on color alone"]
+      "id": "settings-integrations",
+      "treatment": "Indexed settings document beside a health-and-permissions ledger",
+      "primaryMedia": "Scoped settings, provider/MCP/integration health, vault references, policy locks, and truthful billing placeholder",
+      "interactionModel": "Navigate scope, edit typed values, save, test, reconnect, revoke, and inspect enforced policy",
+      "motionTimeline": "Changed fields mark quietly; save status announces; reconnect progress remains local to the row",
+      "failureConditions": ["Scope is ambiguous", "Secret values are rendered", "Lower scope can override team policy", "Unavailable billing appears actionable"]
     },
     {
-      "id": "developer-team",
-      "treatment": "governed engineering queue and review workspace",
-      "primaryMedia": "repositories, work queue, reviews, environments, policies, checks, and audit",
-      "interactionModel": "Assign engineering work, inspect diffs and checks, review governed actions, and enforce policies",
-      "motionTimeline": "Queue, check, and review status updates in place with stable sorting",
-      "failureConditions": ["Environment secrets are displayed", "Client labels are treated as authorization"]
+      "id": "team-collaboration",
+      "treatment": "Assignment lanes intersecting a review queue and immutable activity rail",
+      "primaryMedia": "Assignments, comments, mentions, presence, approval inbox, roles, and audit-linked activity",
+      "interactionModel": "Invite, assign, comment, mention, watch, review, approve, and switch workspaces through server-returned capabilities",
+      "motionTimeline": "Presence updates fade without reordering work; new activity is announced but does not steal focus",
+      "failureConditions": ["Team profile grants capabilities", "Cross-tenant data appears", "Role change lacks consequence copy", "Presence replaces durable activity truth"]
     },
     {
-      "id": "runtime-gate",
-      "treatment": "truthful connection and entitlement boundary",
-      "primaryMedia": "Local state, Cloud Preview, Google entry capability, and recovery actions",
-      "interactionModel": "Use this computer now or inspect Cloud Preview; sign in only when the backend advertises support",
-      "motionTimeline": "Connection states announce in place; reconnect does not move focus",
-      "failureConditions": ["Cloud Preview shows card inputs or purchase success", "Offline writes are enabled without a durable queue", "Credentials enter browser persistence"]
-    },
-    {
-      "id": "responsive-inspector",
-      "treatment": "optional desktop pane and full-screen mobile dialog",
-      "primaryMedia": "selected work, files, decisions, checks, and artifacts",
-      "interactionModel": "Open contextual detail, act within authority, close with button or Escape, and return focus",
-      "motionTimeline": "Inspector enters in 280ms or appears immediately under reduced motion",
-      "failureConditions": ["Inspector obscures context without a close path", "Focus is lost after close"]
+      "id": "runtime-continuity",
+      "treatment": "Device-to-control-plane topology with explicit readiness and recovery checkpoints",
+      "primaryMedia": "Paired local nodes, runtime placement policy, E2B lifecycle, heartbeats, capability mismatch, and cleanup state",
+      "interactionModel": "Pair, select placement, authorize fallback, wake, retry, cancel, and inspect node/sandbox health",
+      "motionTimeline": "Topology pulses only for a real heartbeat; lifecycle transitions step discretely; reduced motion uses text and shape",
+      "failureConditions": ["Hosted web probes loopback", "Fallback changes authority or credential context silently", "Cloud is labeled ready before lifecycle gates pass", "Cleanup failure is hidden"]
     }
   ]
 }

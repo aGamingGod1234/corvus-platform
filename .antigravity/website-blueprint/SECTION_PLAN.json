@@ -2,112 +2,293 @@
   "version": 2,
   "approval": {
     "status": "approved",
-    "approvedBy": "lucas",
-    "approvedAt": "2026-07-14T16:39:53.414414+00:00",
-    "approvedPacketHash": "846d9bd124b7139164f01c3dca630286dbece00c249bd747bde38fc9c3477197",
-    "approvalNote": "Approved adaptive Corvus implementation plan, same-machine Local mode, E2B Cloud mode, Google account continuity, and milestone execution."
+    "approvedBy": "Lucas",
+    "approvedAt": "2026-07-16T09:35:31.938042+00:00",
+    "approvedPacketHash": "cfd46ffbc8228eff7b606a71415553f5a692ab92892be8699e3240756e475438",
+    "approvalNote": "Approved seven-section Corvus product design in the 2026-07-16 Codex thread"
   },
   "sections": [
     {
-      "id": "onboarding",
-      "purpose": "Select work style, workspace scope, and Local or Cloud runtime before loading a workspace.",
+      "id": "identity-entry",
+      "purpose": "Authenticate the person, explain continuity, collect presentation choices, select runtime policy, and create or join a real workspace.",
       "copy": {
-        "headline": "How do you want Corvus to work with you?",
-        "supporting": "Three short choices. Change them anytime."
+        "heading": "Start with your Corvus identity",
+        "primaryAction": "Continue with Google",
+        "continuity": "Use the same governed workspace on your signed-in devices."
       },
-      "visualHierarchy": [
-        "step heading",
-        "two semantic choice cards",
-        "plain-language consequence",
-        "Back and Continue"
-      ],
       "inspirationSources": [
-        "linear-app",
-        "github-com"
+        "corvus-platform",
+        "corvus-product-site",
+        "chatgpt-conversion",
+        "chatgpt-ux-pattern"
       ],
       "componentSources": [
-        "shadcn-tabs",
-        "lucide-cloud"
+        "shadcn-button"
       ],
-      "motionBehavior": "160ms choice and step transition; immediate under reduced motion.",
-      "mobileBehavior": "One-column choices with sticky Back and Continue actions.",
-      "accessibilityRisks": [
-        "custom cards losing radio semantics",
-        "focus not moving after step change"
+      "sourceHooks": [
+        "[data-corvus-surface=\"identity-entry\"]",
+        "[data-source-refs]",
+        "[data-component-source=\"shadcn-button\"]"
       ],
-      "customJustification": "Corvus needs three product decisions before it can load the correct runtime and information architecture.",
+      "responsiveBehavior": "Desktop uses a narrow decision lane with explanatory rail; tablet centers the lane; mobile uses one full-width decision per step with persistent Back and progress text.",
+      "interactionIds": [
+        "sign-in-google",
+        "choose-experience",
+        "choose-workspace-type",
+        "choose-runtime-policy",
+        "create-workspace",
+        "join-workspace"
+      ],
+      "customJustification": "The sequence must separate identity, presentation, runtime, and workspace authority instead of compressing them into a generic signup form.",
       "failureConditions": [
-        "Team choice grants authority",
-        "Cloud looks purchasable",
-        "Local is described as cross-device"
+        "Client choices imply membership or authority",
+        "Cloud or billing claims exceed capability",
+        "Workspace data loads before runtime selection",
+        "Focus or selected state is lost"
       ]
     },
     {
-      "id": "adaptive-shell",
-      "purpose": "Compose one authorized product shell into four genuinely tailored workspaces.",
+      "id": "conversation",
+      "purpose": "Make a governed agent conversation the default product surface and keep the next useful action always reachable.",
       "copy": {
-        "headline": "Your Corvus workspace",
-        "supporting": "Work style and scope can change without moving your work."
+        "emptyHeading": "What should Corvus move forward?",
+        "composerPlaceholder": "Describe the outcome, constraints, and proof you need",
+        "primaryAction": "Send"
       },
-      "visualHierarchy": [
-        "workspace and runtime status",
-        "profile-specific navigation",
-        "primary work surface",
-        "optional contextual inspector"
-      ],
       "inspirationSources": [
-        "github-com",
-        "github-com-2",
-        "linear-app"
+        "corvus-platform",
+        "t3code-visual",
+        "t3code-similar-product",
+        "chatgpt-conversion",
+        "chatgpt-ux-pattern"
       ],
       "componentSources": [
-        "shadcn-tabs"
+        "shadcn-button",
+        "lucide-send"
       ],
-      "motionBehavior": "Selection and status updates only; no ornamental page choreography.",
-      "mobileBehavior": "Compact top bar, four-item bottom navigation plus More, full-screen inspector.",
-      "accessibilityRisks": [
-        "color-only scope cues",
-        "forbidden routes remaining focusable",
-        "desktop rail stacked on mobile"
+      "sourceHooks": [
+        "[data-corvus-surface=\"conversation\"]",
+        "[data-ui=\"composer\"]",
+        "[data-component-source=\"shadcn-button\"]",
+        "[data-component-source=\"lucide-send\"]"
       ],
-      "customJustification": "Different users need distinct language and density while sharing one domain and permission model.",
+      "responsiveBehavior": "Desktop preserves thread history and optional inspector; tablet moves inspector to a drawer; mobile is thread-first with composer above bottom navigation.",
+      "interactionIds": [
+        "new-thread",
+        "search-threads",
+        "select-thread",
+        "attach-file",
+        "open-slash-menu",
+        "choose-provider-model",
+        "choose-thread-runtime",
+        "choose-autonomy",
+        "schedule-from-composer",
+        "send-message",
+        "stop-run",
+        "retry-run",
+        "fork-thread",
+        "continue-thread"
+      ],
+      "customJustification": "Corvus adds provider, runtime, autonomy, approval, and audit truth to a composer-led interaction without overwhelming Everyday profiles.",
       "failureConditions": [
-        "four duplicated apps",
-        "generic card-grid sameness",
-        "profile switch loses active entity"
+        "Composer loses primacy",
+        "Send or Stop state is ambiguous",
+        "Secrets enter visible or synchronized text",
+        "Developer evidence crowds Everyday reading"
       ]
     },
     {
-      "id": "runtime-gate",
-      "purpose": "Make Local operational and Cloud Preview accurate before identity and E2B provisioning ship.",
+      "id": "run-flightpath",
+      "purpose": "Expose persisted run progress, approval gates, results, and evidence as one legible governed route.",
       "copy": {
-        "headline": "Where should Corvus run?",
-        "supporting": "Use this computer now or review Corvus Cloud Preview."
+        "stages": [
+          "Plan",
+          "Work",
+          "Approval",
+          "Result"
+        ],
+        "approvalAction": "Approve once",
+        "rejectAction": "Reject and explain"
       },
-      "visualHierarchy": [
-        "Local operational choice",
-        "Cloud Preview choice",
-        "capability-aware status",
-        "safe recovery action"
-      ],
       "inspirationSources": [
-        "linear-app",
-        "github-com-2"
+        "corvus-platform",
+        "t3code-visual"
       ],
       "componentSources": [
-        "lucide-cloud"
+        "shadcn-button"
       ],
-      "motionBehavior": "Connection state announces in place without moving focus.",
-      "mobileBehavior": "Runtime choices stack; status and fallback remain visible without horizontal scroll.",
-      "accessibilityRisks": [
-        "status not announced",
-        "disabled billing control lacks explanation"
+      "sourceHooks": [
+        "[data-corvus-surface=\"run-flightpath\"]",
+        "[data-ui=\"flightpath\"]",
+        "[data-run-stage]",
+        "[data-ui=\"approval-gate\"]"
       ],
-      "customJustification": "The current desktop sidecar is Local-only, so Preview must be visually useful without claiming a Cloud connection.",
+      "responsiveBehavior": "Horizontal route at desktop, compact stacked route at tablet/mobile, inspector becomes a full-screen semantic dialog on mobile.",
+      "interactionIds": [
+        "select-run-stage",
+        "open-artifact",
+        "approve-run",
+        "reject-run",
+        "close-inspector"
+      ],
+      "customJustification": "The flightpath is Corvus's unique operational signature and binds user-visible progress to authoritative events.",
       "failureConditions": [
-        "fake checkout",
-        "Google button without auth capability",
-        "offline edits enabled without durable queue"
+        "Optimistic client progress",
+        "Approval shown without server capability",
+        "Color-only state",
+        "Inspector fails to restore focus"
+      ]
+    },
+    {
+      "id": "schedules",
+      "purpose": "Create and supervise unattended work with clear recurrence, readiness, authorization snapshot, and recovery policy.",
+      "copy": {
+        "heading": "Schedules",
+        "primaryAction": "New schedule",
+        "runAction": "Run now"
+      },
+      "inspirationSources": [
+        "corvus-platform",
+        "t3code-visual"
+      ],
+      "componentSources": [
+        "shadcn-button"
+      ],
+      "sourceHooks": [
+        "[data-corvus-surface=\"schedules\"]",
+        "[data-ui=\"schedule-timeline\"]",
+        "[data-ui=\"execution-ledger\"]"
+      ],
+      "responsiveBehavior": "Calendar and ledger share desktop space; tablet defaults to list with filter drawer; mobile uses chronological list and full-screen editor.",
+      "interactionIds": [
+        "new-schedule",
+        "preview-recurrence",
+        "save-schedule",
+        "pause-schedule",
+        "resume-schedule",
+        "run-schedule-now",
+        "cancel-execution",
+        "retry-execution"
+      ],
+      "customJustification": "A time ruler and execution ledger communicate recurrence and effects more truthfully than a tile dashboard.",
+      "failureConditions": [
+        "Timezone, missed-run, runtime, budget, or authorization snapshot is hidden",
+        "Duplicate effects can appear successful",
+        "Offline runtime is misrepresented"
+      ]
+    },
+    {
+      "id": "settings-integrations",
+      "purpose": "Make account, user, device, workspace, thread, and team-policy scope explicit while safely configuring providers, MCP, integrations, and runtime defaults.",
+      "copy": {
+        "heading": "Settings",
+        "saveAction": "Save changes",
+        "testAction": "Test connection"
+      },
+      "inspirationSources": [
+        "corvus-platform",
+        "t3code-visual"
+      ],
+      "componentSources": [
+        "shadcn-button"
+      ],
+      "sourceHooks": [
+        "[data-corvus-surface=\"settings-integrations\"]",
+        "[data-settings-scope]",
+        "[data-ui=\"integration-health\"]"
+      ],
+      "responsiveBehavior": "Indexed settings rail and document plane at desktop; scoped index drawer at tablet/mobile; destructive actions stay separated.",
+      "interactionIds": [
+        "open-settings-section",
+        "save-settings",
+        "test-connection",
+        "reconnect-integration",
+        "revoke-integration",
+        "change-workspace-profile"
+      ],
+      "customJustification": "Scope and policy inheritance must remain visible beside each editable value rather than hidden in a generic settings form.",
+      "failureConditions": [
+        "Plaintext secret is rendered",
+        "Scope or policy owner is unclear",
+        "Unavailable capability is actionable",
+        "Billing placeholder behaves like checkout"
+      ]
+    },
+    {
+      "id": "team-collaboration",
+      "purpose": "Coordinate assignments, reviews, approvals, comments, presence, and shared knowledge through server-returned membership capabilities.",
+      "copy": {
+        "heading": "Team workspace",
+        "inviteAction": "Invite people",
+        "reviewAction": "Review request"
+      },
+      "inspirationSources": [
+        "corvus-platform",
+        "t3code-visual"
+      ],
+      "componentSources": [
+        "shadcn-button"
+      ],
+      "sourceHooks": [
+        "[data-corvus-surface=\"team-collaboration\"]",
+        "[data-ui=\"review-queue\"]",
+        "[data-ui=\"activity-rail\"]"
+      ],
+      "responsiveBehavior": "Assignment lanes and review queue share desktop; tablet toggles queue/activity; mobile uses ordered work and review sheets.",
+      "interactionIds": [
+        "invite-member",
+        "change-member-role",
+        "assign-work",
+        "comment-on-work",
+        "watch-work",
+        "review-request",
+        "switch-workspace"
+      ],
+      "customJustification": "Assignments, review, presence, and audit activity need distinct but connected structures; a member-card grid would hide authority and work state.",
+      "failureConditions": [
+        "Team profile manufactures capability",
+        "Tenant scope is absent",
+        "Member removal leaves active authority",
+        "Presence is presented as audit truth"
+      ]
+    },
+    {
+      "id": "runtime-continuity",
+      "purpose": "Pair local nodes, choose explicit placement, supervise local/E2B lifecycle, and recover without silent authority or data-context changes.",
+      "copy": {
+        "heading": "Where Corvus runs",
+        "pairAction": "Pair this device",
+        "recoveryAction": "Retry connection"
+      },
+      "inspirationSources": [
+        "corvus-platform",
+        "t3code-visual",
+        "t3code-similar-product"
+      ],
+      "componentSources": [
+        "shadcn-button"
+      ],
+      "sourceHooks": [
+        "[data-corvus-surface=\"runtime-continuity\"]",
+        "[data-ui=\"runtime-topology\"]",
+        "[data-runtime-state]"
+      ],
+      "responsiveBehavior": "Topology plus health ledger at desktop; stacked checkpoints at tablet; text-first readiness and recovery sequence at mobile.",
+      "interactionIds": [
+        "pair-local-node",
+        "choose-placement-policy",
+        "authorize-cloud-fallback",
+        "wake-cloud-runtime",
+        "retry-runtime",
+        "cancel-runtime-operation",
+        "inspect-runtime-health"
+      ],
+      "customJustification": "The topology must show control-plane ownership, node/sandbox generation, and fallback consequences without exposing credentials or raw endpoints.",
+      "failureConditions": [
+        "Hosted web probes loopback",
+        "Fallback is implicit",
+        "Cloud lifecycle or cleanup is hidden",
+        "Runtime change silently migrates or merges data"
       ]
     }
   ]

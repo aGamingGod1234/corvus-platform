@@ -2,24 +2,24 @@
   "version": 1,
   "components": [
     {
-      "sourceId": "shadcn-tabs",
+      "sourceId": "shadcn-button",
       "implementationStatus": "applied",
-      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-tabs.json",
-      "evidenceHash": "4cc6a1de2c60051b9a80ef5934b4229f26a38d98895a167d283b9c1ac4437f04",
-      "adoptedPatterns": ["roving keyboard selection", "explicit selected state", "focus-visible treatment"],
-      "customizationBoundaries": ["Use native typed React controls", "Do not add Radix for the adaptive shell milestone", "Labels and routes come from the Corvus workspace profile"],
-      "implementationSelectors": ["[data-component-source=\"shadcn-tabs\"]", "[role=\"tablist\"]"],
-      "visibleSections": ["onboarding", "adaptive-shell"]
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
+      "evidenceHash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
+      "adoptedPatterns": ["semantic default, secondary, destructive, and ghost states", "visible focus ring", "disabled state", "consistent icon sizing"],
+      "customizationBoundaries": ["Use existing typed React buttons", "Do not add Radix or shadcn dependencies", "Use Corvus color, type, radius, and authority copy", "Never use visual state as authorization"],
+      "implementationSelectors": ["[data-component-source=\"shadcn-button\"]", "[data-ui=\"primary-action\"]", "[data-ui=\"secondary-action\"]"],
+      "visibleSections": ["identity-entry", "conversation", "schedules", "settings-integrations", "team-collaboration", "runtime-continuity"]
     },
     {
-      "sourceId": "lucide-cloud",
+      "sourceId": "lucide-send",
       "implementationStatus": "applied",
-      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-cloud.json",
-      "evidenceHash": "33f3c171c87c68b476fdac96651c0ba8f144eeec4b147f0ff28a7e15089cb326",
-      "adoptedPatterns": ["cloud SVG path"],
-      "customizationBoundaries": ["Stroke inherits currentColor", "Always pair with Local or Cloud text", "Never use the icon alone to imply synchronized state"],
-      "implementationSelectors": ["[data-component-source=\"lucide-cloud\"]"],
-      "visibleSections": ["runtime-gate"]
+      "evidenceLocalFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-send.json",
+      "evidenceHash": "db4e8ca86ef9393357b25b71bdf1eee757999448df4fadf38d38db4d3cc156c2",
+      "adoptedPatterns": ["send SVG path", "currentColor stroke", "20px optical size"],
+      "customizationBoundaries": ["Pair with the accessible name Send", "Swap to Stop while a run is active", "Do not use as decoration", "No icon library dependency is added"],
+      "implementationSelectors": ["[data-component-source=\"lucide-send\"]", "[data-ui=\"composer-send\"]"],
+      "visibleSections": ["conversation"]
     }
   ]
 }

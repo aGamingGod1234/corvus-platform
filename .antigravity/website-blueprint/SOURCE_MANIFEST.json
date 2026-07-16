@@ -1,115 +1,123 @@
 {
   "version": 2,
-  "generatedAt": "2026-07-14T16:24:05.955073+00:00",
-  "projectRoot": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration",
-  "mcpUrl": "http://100.90.87.7:3000/mcp",
+  "generatedAt": "2026-07-16T09:20:00Z",
+  "projectRoot": "C:\\Users\\lucas\\Documents\\corvus\\corvus-platform-pr4",
   "sources": [
     {
-      "id": "github-com",
+      "id": "corvus-platform",
       "kind": "direct-business-source",
-      "tool": null,
-      "sourceUrl": "https://github.com/pingdotgg/t3code",
-      "localFile": ".antigravity/website-blueprint/research/direct/direct-business-source-https-github-com-pingdotgg-t3code.html",
+      "sourceUrl": "https://github.com/aGamingGod1234/corvus-platform",
+      "localFile": ".antigravity/website-blueprint/research/direct/corvus-platform-product-evidence.md",
       "evidenceStatus": "fetched",
-      "hash": "1912b9981023e133dea6231565b55c0cbe57f3d270d97723376beee8ed3dd3ec",
+      "hash": "2d168cd1dd5181d681d39d5b954ab9f008a1170610720790c2831063287cc72d",
       "relevanceScore": 10,
-      "usedIn": [
-        "onboarding",
-        "adaptive-shell"
-      ],
-      "contributes": [
-        "direct business/domain positioning"
-      ],
-      "doNotCopy": [
-        "exact layout or private details"
-      ],
+      "usedIn": ["identity-entry", "conversation", "run-flightpath", "schedules", "settings-integrations", "team-collaboration", "runtime-continuity"],
+      "contributes": ["authoritative product truth", "profile model", "authority boundary", "runtime truth"],
+      "doNotCopy": ["incidental repository layout", "README prose as interface copy"],
       "dependencies": []
     },
     {
-      "id": "github-com-2",
+      "id": "corvus-product-site",
+      "kind": "business-specific-site",
+      "sourceUrl": "https://github.com/aGamingGod1234/corvus-platform",
+      "localFile": ".antigravity/website-blueprint/research/direct/corvus-platform-product-evidence.md",
+      "evidenceStatus": "fetched",
+      "hash": "2d168cd1dd5181d681d39d5b954ab9f008a1170610720790c2831063287cc72d",
+      "relevanceScore": 10,
+      "usedIn": ["identity-entry", "conversation"],
+      "contributes": ["Corvus-specific vocabulary", "truthful capability language"],
+      "doNotCopy": ["documentation formatting", "implementation status claims without capability checks"],
+      "dependencies": []
+    },
+    {
+      "id": "t3code-visual",
       "kind": "high-end-visual-reference",
-      "tool": null,
-      "sourceUrl": "https://github.com/NousResearch/hermes-agent",
-      "localFile": ".antigravity/website-blueprint/research/direct/high-end-visual-reference-https-github-com-nousresearch-hermes-agent.html",
+      "sourceUrl": "https://github.com/pingdotgg/t3code",
+      "localFile": ".antigravity/website-blueprint/research/direct/t3code-product-evidence.md",
       "evidenceStatus": "fetched",
-      "hash": "ea572ce3fde93f7cf57b49e4a9cac0af7c5ee78f3e8b60d12a333606c23863e9",
+      "hash": "83500a203c93aad1b1c714e1a1cd0b815b0868e2c4c49890b542c8716505cb94",
       "relevanceScore": 8,
-      "usedIn": [
-        "adaptive-shell",
-        "runtime-gate"
-      ],
-      "contributes": [
-        "visual quality bar and composition pattern"
-      ],
-      "doNotCopy": [
-        "protected brand assets or exact creative"
-      ],
+      "usedIn": ["conversation", "run-flightpath", "runtime-continuity"],
+      "contributes": ["minimal agent-workspace hierarchy", "provider-neutral work context"],
+      "doNotCopy": ["application chrome", "layout geometry", "theme", "brand assets"],
       "dependencies": []
     },
     {
-      "id": "linear-app",
+      "id": "t3code-similar-product",
+      "kind": "similar-business-site",
+      "sourceUrl": "https://github.com/pingdotgg/t3code",
+      "localFile": ".antigravity/website-blueprint/research/direct/t3code-product-evidence.md",
+      "evidenceStatus": "fetched",
+      "hash": "83500a203c93aad1b1c714e1a1cd0b815b0868e2c4c49890b542c8716505cb94",
+      "relevanceScore": 8,
+      "usedIn": ["conversation", "runtime-continuity"],
+      "contributes": ["real multi-provider agent product comparison"],
+      "doNotCopy": ["provider presentation", "source-specific commands", "desktop styling"],
+      "dependencies": []
+    },
+    {
+      "id": "chatgpt-conversion",
       "kind": "conversion-ux-reference",
-      "tool": null,
-      "sourceUrl": "https://linear.app",
-      "localFile": ".antigravity/website-blueprint/research/direct/conversion-ux-reference-https-linear-app.html",
+      "sourceUrl": "https://chatgpt.com/",
+      "localFile": ".antigravity/website-blueprint/research/direct/chatgpt-conversion-evidence.md",
       "evidenceStatus": "fetched",
-      "hash": "2cec000492121e4d247befe54ee0db62318db6e27627e80fdc2cf229672f428b",
-      "relevanceScore": 8,
-      "usedIn": [
-        "onboarding",
-        "adaptive-shell",
-        "runtime-gate"
-      ],
-      "contributes": [
-        "conversion flow and CTA pattern"
-      ],
-      "doNotCopy": [
-        "exact copy or brand-specific claims"
-      ],
+      "hash": "ce0553a957426d36aabcc0b03c62cb78462d6ed1be67c45ce75c4587bf8470b3",
+      "relevanceScore": 9,
+      "usedIn": ["identity-entry", "conversation"],
+      "contributes": ["stable new-thread entry", "composer-led conversion", "progressive disclosure"],
+      "doNotCopy": ["copy", "layout measurements", "navigation order", "trade dress"],
       "dependencies": []
     },
     {
-      "id": "shadcn-tabs",
-      "kind": "component",
-      "tool": "fetch_component_source",
-      "sourceUrl": "https://ui.shadcn.com/r/styles/new-york/tabs.json",
-      "localFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-tabs.json",
+      "id": "chatgpt-ux-pattern",
+      "kind": "ui-ux-best-practice",
+      "sourceUrl": "https://chatgpt.com/",
+      "localFile": ".antigravity/website-blueprint/research/direct/chatgpt-conversion-evidence.md",
       "evidenceStatus": "fetched",
-      "hash": "4cc6a1de2c60051b9a80ef5934b4229f26a38d98895a167d283b9c1ac4437f04",
-      "relevanceScore": 8,
-      "usedIn": [
-        "onboarding",
-        "adaptive-shell"
-      ],
-      "contributes": [
-        "shadcn tabs implementation source and API shape"
-      ],
-      "doNotCopy": [
-        "incompatible imports or dependency changes without declaration"
-      ],
-      "dependencies": [
-        "@radix-ui/react-tabs"
-      ]
+      "hash": "ce0553a957426d36aabcc0b03c62cb78462d6ed1be67c45ce75c4587bf8470b3",
+      "relevanceScore": 9,
+      "usedIn": ["identity-entry", "conversation"],
+      "contributes": ["clear sign-in continuity benefit", "history separated from composition"],
+      "doNotCopy": ["authentication copy", "composer styling", "feature names"],
+      "dependencies": []
     },
     {
-      "id": "lucide-cloud",
-      "kind": "icon",
-      "tool": "fetch_icon_source",
-      "sourceUrl": "https://unpkg.com/lucide-static@1.24.0/icons/cloud.svg",
-      "localFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-cloud.json",
+      "id": "shadcn-button",
+      "kind": "component",
+      "sourceUrl": "https://ui.shadcn.com/r/styles/new-york/button.json",
+      "localFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
       "evidenceStatus": "fetched",
-      "hash": "33f3c171c87c68b476fdac96651c0ba8f144eeec4b147f0ff28a7e15089cb326",
+      "hash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
+      "relevanceScore": 8,
+      "usedIn": ["identity-entry", "conversation", "schedules", "settings-integrations", "team-collaboration", "runtime-continuity"],
+      "contributes": ["semantic variants", "focus-visible", "disabled state", "icon sizing"],
+      "doNotCopy": ["dependency imports", "default radius", "default palette"],
+      "dependencies": ["@radix-ui/react-slot"]
+    },
+    {
+      "id": "shadcn-pattern-reference",
+      "kind": "template-or-pattern-reference",
+      "sourceUrl": "https://ui.shadcn.com/docs/components/button",
+      "localFile": ".antigravity/website-blueprint/research/mcp/component-shadcn-button.json",
+      "evidenceStatus": "fetched",
+      "hash": "e7a48ab2dd1aa7f3c295fa6b16e9d60218c7f7478a6593bea749d4db3743dbb4",
+      "relevanceScore": 8,
+      "usedIn": ["identity-entry", "conversation"],
+      "contributes": ["button state pattern reference"],
+      "doNotCopy": ["registry code verbatim", "dependency changes"],
+      "dependencies": []
+    },
+    {
+      "id": "lucide-send",
+      "kind": "icon",
+      "sourceUrl": "https://unpkg.com/lucide-static@1.24.0/icons/send.svg",
+      "localFile": ".antigravity/website-blueprint/research/mcp/icon-lucide-send.json",
+      "evidenceStatus": "fetched",
+      "hash": "db4e8ca86ef9393357b25b71bdf1eee757999448df4fadf38d38db4d3cc156c2",
       "relevanceScore": 7,
-      "usedIn": [
-        "onboarding",
-        "runtime-gate"
-      ],
-      "contributes": [
-        "cloud interface icon source"
-      ],
-      "doNotCopy": [
-        "decorative icon use without semantic label"
-      ],
+      "usedIn": ["conversation"],
+      "contributes": ["recognizable send glyph path"],
+      "doNotCopy": ["unlabeled icon-only action", "decorative duplication"],
       "dependencies": []
     }
   ]

@@ -3,17 +3,17 @@
   "phase": "before",
   "viewports": {
     "desktop": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\before\\before-desktop.png",
+      "path": "C:\\Users\\lucas\\Documents\\corvus\\corvus-platform-pr4\\.antigravity\\website-blueprint\\screenshots\\before\\before-desktop.png",
       "width": 1440,
       "height": 1000
     },
     "tablet": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\before\\before-tablet.png",
+      "path": "C:\\Users\\lucas\\Documents\\corvus\\corvus-platform-pr4\\.antigravity\\website-blueprint\\screenshots\\before\\before-tablet.png",
       "width": 1024,
       "height": 900
     },
     "mobile": {
-      "path": "C:\\Users\\lucas\\Desktop\\Projects\\corvus-platform-main-integration\\.antigravity\\website-blueprint\\screenshots\\before\\before-mobile.png",
+      "path": "C:\\Users\\lucas\\Documents\\corvus\\corvus-platform-pr4\\.antigravity\\website-blueprint\\screenshots\\before\\before-mobile.png",
       "width": 390,
       "height": 844
     }
@@ -37,7 +37,13 @@
     }
   },
   "motion": {
-    "animations": [],
+    "animations": [
+      {
+        "playState": "running",
+        "currentTime": 133.34699999742483,
+        "playbackRate": 1
+      }
+    ],
     "reducedMotionVerified": true
   }
 }

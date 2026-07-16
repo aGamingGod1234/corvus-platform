@@ -1,27 +1,38 @@
-# Project Context
+# Corvus Frontend Project Context
 
-- Generated: 2026-07-14T16:23:12.558966+00:00
-- Project root: `C:\Users\lucas\Desktop\Projects\corvus-platform-main-integration`
-- Business goal: Deliver one Corvus product with four tailored Everyday/Developer and Personal/Team workspaces, a same-machine Local runtime, an E2B-backed Corvus Cloud runtime, Google account continuity, and truthful Cloud Preview entitlement pages.
-- Target audience: Everyday users, developers, individuals, and teams choosing local or cloud execution.
-- Primary conversion action: Choose a runtime and workspace, then safely start or resume meaningful work.
-- Site type: dashboard-app
+- Generated: 2026-07-16
+- Project root: `C:\Users\lucas\Documents\corvus\corvus-platform-pr4`
+- Product goal: Complete the Corvus identity-backed agent platform.
+- Audience: Everyday and developer individuals and teams.
+- Primary conversion: Sign in and start a governed agent thread.
+- Product type: authenticated web and Tauri desktop application.
+- Approved design authority: `docs/superpowers/specs/2026-07-16-corvus-full-product-platform-design.md`.
 
-## Local Rules Read
-- None found at project root.
+## Product truth
 
-## Stack And Framework
-- React 19, TypeScript, Vite, Vitest/Testing Library, Python/FastAPI, and a Tauri v2 desktop shell.
+Corvus is one governed agent product composed along two presentation axes: Everyday or Developer experience, and Individual or Team workspace. These choices alter language, density, and information architecture but never create authority. Google identity, workspace membership, policies, approvals, budgets, credentials, audit state, and runtime placement remain server-authoritative.
 
-## Opening / Page Transition Ownership
-- No PageOpening-like files found in common UI directories.
+The seven designed surfaces are identity and onboarding, conversation, live run flightpath, scheduling, settings and integrations, team collaboration, and runtime continuity. The persistent conversion path is: sign in, choose a workspace, create a thread, and send a governed request.
 
-## Implementation Constraints
-- Visual website work must use MCP/source gateway research before implementation.
-- Local rules override global Antigravity defaults.
-- Baseline screenshots are required before implementation unless explicitly waived.
-- Dependencies may not change unless declared in `CHANGE_PLAN.md`.
-- This authenticated application is not a marketing or commerce site and must not fabricate business listings, reviews, checkout, or social proof.
+## Existing implementation baseline
 
-## Blockers
-- None identified during intake.
+- React 19, TypeScript, Vite, and Vitest live in `apps/web`.
+- Tauri v2 Rust commands live in `apps/desktop/src-tauri/src`.
+- The current visual identity uses warm paper, ink, signal blue, copper, accessible teal, Fraunces, Inter Tight, IBM Plex Mono, graph lines, and a flightpath motif.
+- The current app already has responsive navigation, onboarding, runtime truth states, keyboard focus treatment, and reduced-motion handling.
+
+## Authority and delivery constraints
+
+- Preserve existing domain contracts and truthful capability gates.
+- Hosted web must never silently probe loopback.
+- Profile labels are read-only identity context outside Settings.
+- Team presentation never grants membership or capabilities.
+- Cloud remains Preview until identity, placement, lifecycle, and cleanup gates pass.
+- No dependency change is authorized by this packet.
+- Product implementation is outside Task 1.1; this packet establishes selectors, interactions, responsive targets, provenance hooks, and the allowed change boundary.
+
+## Approved responsive targets
+
+- Desktop: `1440x1000`, three panes where useful: 240px navigation, fluid conversation, up to 360px inspector.
+- Tablet: `1024x900`, navigation plus primary surface; inspector becomes a drawer.
+- Mobile: `390x844`, thread-first surface, four bottom actions plus More, and full-screen sheets/inspector.

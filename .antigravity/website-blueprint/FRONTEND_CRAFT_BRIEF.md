@@ -1,105 +1,87 @@
-# Corvus Adaptive Workspace Craft Brief
+# Corvus Frontend Craft Brief
 
-This packet explicitly applies `website-design-blueprint`, `impeccable`, and `design-motion-principles` to the authenticated Corvus application while preserving local product rules and truthful capability gates.
+This packet explicitly applies `website-design-blueprint` for provenance and approval, `impeccable` for finish and hierarchy, `design-motion-principles` for purposeful state motion, and the `frontend-design` skill for a subject-specific visual point of view.
 
 ## Viewer intent
 
-Start or resume meaningful agent work with the right level of explanation, team context, and runtime truth for the current user.
+The viewer wants to begin useful agent work quickly while understanding who owns the workspace, where the run executes, what authority it has, and when human approval is required. Everyday users should see outcomes before machinery. Developer users should reach precise evidence without changing products.
 
 ## Scene sentence
 
-A warm, flight-path-inspired workspace becomes spacious and outcome-led for Everyday work or dense and exact for Developer work while Local/Cloud status stays visible and honest.
+Corvus is a quiet field desk for governed agents: paper, graph lines, ink, a cobalt route, and copper approval marks organize one live flight from request to result.
+
+## Aesthetic decision and signature
+
+The single memorable move is the **live flightpath spine**. It begins at the composer, travels through Plan, Work, Approval, and Result, and can extend into the inspector to connect an event to its artifact or decision. This is operational structure, not decoration. All other surfaces stay restrained.
+
+This direction preserves the approved warm-paper identity but avoids the generic cream-and-serif landing-page default: the paper is cool mineral rather than nostalgic, Fraunces appears only at decisive orientation moments, and the dominant experience is a precise sans conversation workspace.
 
 ## Color strategy
 
-Warm paper and ink establish calm; cobalt marks Personal action and connection; accessible teal marks Team scope alongside text and owner cues; copper is reserved for consequential approvals.
+- Flight Paper `#F3F5F2`: primary canvas.
+- Raised White `#FFFFFF`: composer, menus, and focused work surfaces.
+- Raven Ink `#182330`: primary text and structural marks.
+- Signal Cobalt `#2F6FED`: selected state, route progress, and primary action.
+- Approval Copper `#C96C1A`: human decision points only.
+- Team Teal `#167C78`: team scope accent, always paired with text/labels.
+- Danger Red `#A63E37`: destructive and terminal states only.
+- Rule Grey `#D8DEDB`: graph lines and separators.
+
+No gradient is used as empty atmosphere. Color never grants authority or carries status without text, shape, and accessible semantics.
 
 ## Typography lane
 
-Inter Tight carries interface language, Fraunces marks a few outcome-led headings, and IBM Plex Mono exposes code, IDs, branches, logs, diffs, and environment metadata.
+- Display and orientation: `Fraunces Variable`, weight 520-620, used for onboarding decisions, empty-thread welcome, and major recovery headings only.
+- Product body and controls: `Inter Tight Variable`, weight 450-700, optimized for readable conversation and compact action labels.
+- Evidence and utility: `IBM Plex Mono`, used for run IDs, times, budgets, providers, reason codes, and flightpath labels.
+
+The composer, messages, schedules, and settings use sans typography. Developer density comes from spacing and evidence disclosure, not tiny type.
+
+## Layout system
+
+- Desktop: 240px navigation, fluid conversation, optional inspector up to 360px; the composer stays within the conversation column.
+- Tablet: navigation and primary surface; inspector and secondary filters become drawers.
+- Mobile: thread-first, compact identity bar, persistent composer, four bottom actions plus More, and full-screen semantic sheets.
+- Content uses rules, split planes, timelines, and lists before containers. Maximum generic cards: 3.
 
 ## Media hierarchy
 
-Real work state, progress/activity spines, files/diffs, artifacts, and owner context are primary. Decorative iconography is secondary and always labeled. There is no stock imagery or fabricated data.
-
-## Card budget
-
-Maximum generic cards: 3. Corvus uses continuous work surfaces, indexed rows, activity spines, and contextual panes instead of a generic dashboard card grid.
+This is a product application, so the primary media is live state: conversation text, the flightpath spine, artifact previews, schedule calendar marks, presence cursors, and runtime topology. Decorative stock imagery is prohibited. Avatars are optional identity aids, never the primary proof.
 
 ## Motion intent
 
-Motion explains selection, route change, connection state, and inspector context; it never decorates loading or hides authority changes.
+One orchestrated sequence explains each run: the new user message settles, the cobalt path advances to Plan and Work, copper pauses at Approval, and the route resolves into Result. Streaming uses restrained opacity and position changes of 4px or less. Hover motion is limited to stateful controls. Drawers and inspector transitions preserve focus.
+
+`prefers-reduced-motion: reduce` removes travel and transforms; state changes remain immediate and understandable. Motion evidence must include active animations plus a reduced-motion verification log, not screenshots alone.
+
+## Source-derived choices
+
+- Corvus sources define authority language, profile compositions, runtime truth, and the flightpath.
+- ChatGPT informs a stable New thread entry, persistent history, and composer-led conversion.
+- T3Code informs keeping provider/runtime context close to agent work without copying its chrome.
+- shadcn Button informs semantic action states; Lucide Send informs the send glyph and accessible labeling.
+
+Every major surface exposes `data-source-refs`. Adapted shadcn/Lucide controls additionally expose `data-component-source`.
+
+## Interaction and accessibility floor
+
+- Every control has an accessible name, visible focus, keyboard activation, and documented state change.
+- Minimum target size is 44x44 CSS pixels on touch layouts.
+- Status uses live regions without stealing focus.
+- Closing sheets and inspectors restores focus to the trigger.
+- Disabled controls state why they are unavailable.
+- Error text names the problem, gives the next action, and preserves the last known-good state.
 
 ## Anti-patterns
 
-Avoid generic SaaS card grids, glass panels, fake collaboration, fake checkout, hidden runtime truth, color-only roles, developer jargon in Everyday views, and desktop navigation stacked on mobile.
+- Generic dashboard card grids, KPI tiles, gradient blobs, glass panels, decorative command-line text, and fake terminal chrome.
+- Profile switching in the top-left identity block.
+- Technical density in Everyday profiles or hidden evidence in Developer profiles.
+- Fake cloud readiness, fake sign-in, fake billing, optimistic authority, or silent loopback probing.
+- Source notes, provenance language, internal process copy, TODOs, or implementation explanations in visible UI.
+- Repeated treatment across adjacent surfaces.
+- Motion that does not communicate run, approval, navigation, or recovery state.
 
-## Product job
+## Self-critique before build
 
-Corvus is one agent workspace that changes its information density, language, and navigation for two independent choices: Everyday or Developer work style, and Personal or Team scope. The first release keeps the existing local Python core authoritative, presents E2B-backed Corvus Cloud as a truthful preview until its control plane exists, and preserves one recognizable Corvus identity across web and desktop.
-
-## Experience promise
-
-- Everyday users see goals, progress, decisions, owners, and results before implementation detail.
-- Developers see repositories, runs, diffs, logs, policies, environments, and precise controls.
-- Personal work emphasizes focus and private automations.
-- Team work emphasizes assignments, approvals, knowledge, people, and audit context without implying collaboration before the backend grants it.
-- Local means this computer only. Corvus Cloud means a signed-in E2B workspace shared across the user's desktop and web sessions.
-
-## First-run sequence
-
-1. **How do you want Corvus to work with you?** Choose Everyday or Developer.
-2. **Who is this workspace for?** Choose Just me or My team. Team selection says invitations come after setup and does not grant team permissions.
-3. **Where should Corvus run?** Choose On this computer or Corvus Cloud (E2B). Local is operational. Cloud is clearly labeled Preview and has no payment collection.
-
-Every step includes Back, a visible step count, keyboard radio-card behavior, and “Change anytime.” Completion moves focus to the workspace heading.
-
-## Four workspace compositions
-
-| Composition | Navigation | Default surface | Detail treatment |
-|---|---|---|---|
-| Everyday Personal | Home, My Work, Automations, Files | Today, suggested help, recent outcomes, scheduled routines | Plan, sources, progress, result; technical metadata under Details |
-| Developer Personal | Repositories, Threads, Changes, Runs, Skills | Repositories, active agents, checks, branches | Tool calls, logs, changed files, diffs, tests, artifacts, budget |
-| Everyday Team | Team Home, Assigned Work, Approvals, Knowledge, People | Assigned work, review requests, team outcomes | Owners, decisions, comments, sources, handoff history |
-| Developer Team | Repositories, Work Queue, Reviews, Environments, Policies | Engineering queue, failing checks, reviews, agent activity | Diffs, checks, review comments, approvals, audit, ownership, cost |
-
-Routes and actions are filtered by server capabilities before render. A direct forbidden route opens an explanatory access page. Presentation changes never create authority or duplicate domain data.
-
-## Visual direction
-
-Keep the existing warm paper, ink, cobalt signal, copper approval, Fraunces/Inter Tight/IBM Plex Mono typography, graph-line texture, and flight-path activity spine. Everyday views are spacious and sentence-case with outcome-led grouping. Developer views are denser, use split panes and tabular rhythm, and expose mono metadata. Personal uses cobalt emphasis. Team adds accessible teal plus explicit owner/scope labels; color is never the only cue.
-
-Desktop uses a 240px navigation rail, flexible content, and optional 360px inspector. At 390x844, use a compact top bar, four-item bottom navigation plus More, a context drawer, and a full-screen semantic inspector. Never stack the complete desktop rail above mobile content.
-
-## Runtime and identity truthfulness
-
-- Local status: “Local · Connected.” Data remains on the current machine and may be opened by a browser on that same machine.
-- Cloud status: “Cloud · Synced” only after real authenticated synchronization exists.
-- Cloud Preview: “Corvus Cloud is in preview. Cloud workspaces run in isolated E2B environments and sync across your signed-in devices. No payment will be collected.”
-- Show “Sign in with Google” only when the auth capability is present. Otherwise show “Cloud setup is not available in this build” and “Use local workspace.”
-- Plans show Preview, “Cloud plans are coming later,” “Not yet available,” and disabled “Billing not enabled.” Never collect payment details or show fake success.
-- Never promise queued offline edits until durable queuing exists. Until then: “Editing is unavailable until connection returns.”
-
-## Motion and accessibility
-
-Use 160–280ms state transitions only for selection, navigation, inspector entry, and live status. Respect reduced motion. Provide visible focus, skip-to-main, semantic radio-card selection, `aria-live` status, focus restoration after route/sheet changes, Escape to close the mobile inspector, and high-contrast-safe borders and text.
-
-## Source application
-
-- T3Code: adopt project/thread hierarchy, changed-file readability, and developer density; reject a developer-only IA for Everyday users.
-- Hermes Agent: adopt the idea of tool-rich agent capability and restrained dark-workbench confidence; preserve Corvus’s own warm identity and do not copy branding.
-- Linear: adopt concise setup choices and calm hierarchy; reject marketing claims and product-specific copy.
-- shadcn Tabs: adapt roving-keyboard and selected-state behavior with native typed React components; add no Radix dependency in the shell milestone.
-- Lucide Cloud: adapt the cloud path as a decorative icon beside a full semantic label.
-
-## Failure conditions
-
-- Four duplicated applications, route trees, or data models.
-- A cosmetic Team toggle that implies membership or permissions.
-- Cloud, synchronization, payment, invitations, or offline mutation claims without matching capabilities.
-- Pairing secrets, Google tokens, Corvus refresh tokens, or E2B credentials in React state persistence or localStorage.
-- Generic card-grid sameness, desktop rails stacked on mobile, inaccessible custom selection controls, or process/blueprint text shown to users.
-
-## Tool-contract applicability notes
-
-This is an authenticated application workspace, not a marketing, ecommerce, local-business, bilingual, or reviews surface. Business reviews, Places imagery, marketing hero copy, checkout forms, and fabricated social proof are intentionally inapplicable and must not be rendered.
+The warm-paper/Fraunces combination risks reading like a fashionable editorial template. The correction is to reserve Fraunces for orientation, keep the core work surface sans and operational, and make the flightpath a real state machine. The three-pane layout risks reading like generic developer tooling; the correction is profile-controlled density, outcome-first Everyday copy, a conversation-first center, and a right pane that appears only for selected context.
