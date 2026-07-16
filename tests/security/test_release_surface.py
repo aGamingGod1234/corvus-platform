@@ -16,16 +16,29 @@ def _workflow_trigger_block() -> str:
     return workflow.split("\non:\n", maxsplit=1)[1].split("\njobs:\n", maxsplit=1)[0]
 
 
-def _semgrep_command_arguments() -> list[str]:
-    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+def _strip_yaml_run_prefix(line: str) -> str:
+    stripped_line = line.strip()
+    for prefix in ("- run:", "run:"):
+        if stripped_line.startswith(prefix):
+            return stripped_line.removeprefix(prefix).strip()
+    return stripped_line
+
+
+def _semgrep_command_arguments(workflow: str | None = None) -> list[str]:
+    workflow_text = (
+        workflow if workflow is not None else SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+    )
     command_line = next(
-        (line.strip() for line in workflow.splitlines() if line.lstrip().startswith("semgrep ")),
+        (
+            candidate
+            for line in workflow_text.splitlines()
+            if (candidate := _strip_yaml_run_prefix(line)).startswith("semgrep ")
+        ),
         None,
     )
     if command_line is None:
         raise AssertionError("security workflow must contain a Semgrep command")
-    command = command_line.split("||", maxsplit=1)[0].strip()
-    return shlex.split(command)
+    return shlex.split(command_line)
 
 
 def test_desktop_packaging_cannot_be_started_by_pull_requests() -> None:
@@ -45,6 +58,31 @@ def test_semgrep_scans_repository_and_writes_json_artifact() -> None:
     assert "--json-output=semgrep.json" in arguments
     assert "--json" not in arguments
     assert "semgrep.json" not in arguments
+
+
+def test_semgrep_parser_accepts_inline_yaml_run_forms() -> None:
+    command = "semgrep --json-output=semgrep.json ."
+    expected_arguments = shlex.split(command)
+
+    assert _semgrep_command_arguments(f"run: {command}") == expected_arguments
+    assert _semgrep_command_arguments(f"- run: {command}") == expected_arguments
+
+
+def test_security_scan_uses_node24_actions() -> None:
+    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("actions/checkout@v6") == 2
+    assert "gitleaks/gitleaks-action@v3" in workflow
+    assert "gitleaks/gitleaks-action@v2" not in workflow
+
+
+def test_semgrep_failures_are_not_silenced() -> None:
+    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+    semgrep_line = next(
+        line.strip() for line in workflow.splitlines() if line.lstrip().startswith("semgrep ")
+    )
+
+    assert "|| true" not in semgrep_line
 
 
 def test_hosted_alpha_keeps_a_documented_same_origin_network_policy() -> None:

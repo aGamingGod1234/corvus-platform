@@ -23,10 +23,10 @@ jobs:
     name: Gitleaks - secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
           GITHUB_TOKEN: ${{ github.token }}
@@ -35,7 +35,7 @@ jobs:
     name: Semgrep - SAST
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -43,7 +43,7 @@ jobs:
       - name: Scan with public registry rules # alpha inform-only
         continue-on-error: true
         run: |
-          semgrep --config r/python --config r/typescript --config r/rust --error --json-output=semgrep.json . || true
+          semgrep --config r/python --config r/typescript --config r/rust --error --json-output=semgrep.json .
           echo "Semgrep scan complete."
       - uses: actions/upload-artifact@v4
         if: always()
