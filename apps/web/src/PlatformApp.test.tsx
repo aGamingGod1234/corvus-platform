@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CorvusApi } from "./api";
+import type { CorvusApi, Project } from "./api";
 import { AuthApiError, type PlatformApi, type Workspace } from "./auth/authApi";
 import { PlatformApp } from "./PlatformApp";
 import { MemoryStorage } from "./test/memoryStorage";
@@ -36,6 +36,33 @@ const WORKSPACES: Workspace[] = [
     version: 1
   }
 ];
+const LOCAL_PROJECT: Project = {
+  id: "local-project",
+  name: "Local launch control",
+  tenant_id: "local",
+  created_at: "2026-07-17T00:00:00Z"
+};
+
+function readyLoopbackApi(): CorvusApi {
+  return {
+    session: vi.fn().mockResolvedValue({
+      csrf_token: "legacy-csrf",
+      username: "real-operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-18T00:00:00Z"
+    }),
+    listProjects: vi.fn().mockResolvedValue([LOCAL_PROJECT]),
+    listOutcomes: vi.fn().mockResolvedValue([]),
+    listTeams: vi.fn().mockResolvedValue([]),
+    listProviders: vi.fn().mockResolvedValue([]),
+    listMemories: vi.fn().mockResolvedValue([]),
+    listSkills: vi.fn().mockResolvedValue([]),
+    listRoutines: vi.fn().mockResolvedValue([]),
+    listOfflineIntents: vi.fn().mockResolvedValue([]),
+    listChannelEvents: vi.fn().mockResolvedValue([])
+  } as unknown as CorvusApi;
+}
 
 function platformApi(overrides: Partial<PlatformApi> = {}): PlatformApi {
   return {
@@ -80,6 +107,35 @@ describe("PlatformApp composition", () => {
     render(<PlatformApp hostedApi={hostedApi} preferenceStorage={new MemoryStorage()} />);
 
     expect(await screen.findByLabelText("One-time pairing value")).toBeVisible();
+    expect(hostedApi.getSession).not.toHaveBeenCalled();
+    expect(hostedApi.listWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it("uses only the successful legacy session on loopback and preserves hosted migration input", async () => {
+    const hostedApi = platformApi();
+    const loopbackApi = readyLoopbackApi();
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "developer",
+      scope: "personal",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+
+    render(
+      <PlatformApp
+        hostedApi={hostedApi}
+        locationHostname="127.0.0.1"
+        loopbackApi={loopbackApi}
+        preferenceStorage={storage}
+      />
+    );
+
+    expect(await screen.findByText("real-operator")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Local launch control/ })).toBeVisible();
+    expect(screen.queryByText("local-runtime@corvus.invalid")).not.toBeInTheDocument();
+    expect(storage.getItem("corvus.workspace-preference")).not.toBeNull();
     expect(hostedApi.getSession).not.toHaveBeenCalled();
     expect(hostedApi.listWorkspaces).not.toHaveBeenCalled();
   });

@@ -87,7 +87,7 @@ export function WorkspaceIdentityBlock({
           </select>
         </label>
       )}
-      {selectionRequired && (
+      {selectionRequired && workspaces.length > 0 && (
         <button
           className="button button--quiet"
           data-action="switch-workspace"
@@ -103,6 +103,11 @@ export function WorkspaceIdentityBlock({
             : "Re-select workspace"}
         </button>
       )}
+      {selectionRequired && workspaces.length === 0 && (
+        <p role="status">
+          No authorized workspaces are available. Ask a workspace owner to restore access.
+        </p>
+      )}
       <span aria-live="polite" className="sr-only">{status}</span>
       {open && (
         <div
@@ -110,7 +115,11 @@ export function WorkspaceIdentityBlock({
           aria-modal="true"
           className="workspace-identity-dialog"
           onKeyDown={(event) => {
-            if (event.key === "Escape") close();
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
             else trapDialogFocus(event, dialogRef.current);
           }}
           ref={dialogRef}

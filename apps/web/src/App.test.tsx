@@ -157,6 +157,15 @@ describe("Corvus operator console", () => {
 
   it("pairs once and reveals the real project workspace", async () => {
     const api = fakeApi([PROJECT]);
+    api.session = vi.fn()
+      .mockRejectedValueOnce(new Error("authentication_required"))
+      .mockResolvedValue({
+        csrf_token: "paired-csrf",
+        username: "paired-operator",
+        user_id: "operator-1",
+        tenant_id: "local",
+        expires_at: "2026-07-15T00:00:00Z"
+      });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
 
@@ -164,12 +173,23 @@ describe("Corvus operator console", () => {
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
 
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
+    expect(api.session).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("paired-operator")).toBeVisible();
     expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
     expect(screen.getByText("Define the next durable outcome.")).toBeVisible();
   });
 
   it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
     const api = fakeApi([PROJECT]);
+    api.session = vi.fn()
+      .mockRejectedValueOnce(new Error("authentication_required"))
+      .mockResolvedValue({
+        csrf_token: "desktop-csrf",
+        username: "desktop-operator",
+        user_id: "operator-1",
+        tenant_id: "local",
+        expires_at: "2026-07-15T00:00:00Z"
+      });
     window.history.replaceState(null, "", "/#pair=desktop-ephemeral-token");
 
     renderApp(api, preferenceStorage);

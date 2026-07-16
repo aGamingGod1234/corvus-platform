@@ -43,10 +43,12 @@ const WORKSPACE: components["schemas"]["Workspace"] = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function change(
@@ -151,8 +153,8 @@ function SyncProbe() {
       <button onClick={() => void sync.refresh()} type="button">Refresh workspace</button>
       <button onClick={() => void sync.updateWorkspaceProfile("Renamed field desk")} type="button">Rename workspace</button>
       <button onClick={() => void sync.saveExperience("everyday", 2).catch(() => undefined)} type="button">Save experience</button>
-      <button onClick={() => void sync.reloadConflict()} type="button">Reload conflict</button>
-      <button onClick={() => void sync.retryConflict()} type="button">Retry conflict</button>
+      <button onClick={() => void sync.reloadConflict().catch(() => undefined)} type="button">Reload conflict</button>
+      <button onClick={() => void sync.retryConflict().catch(() => undefined)} type="button">Retry conflict</button>
     </div>
   );
 }
@@ -474,6 +476,140 @@ describe("SyncProvider", () => {
       }),
       "csrf-opaque"
     );
+  });
+
+  it("ignores a late workspace A profile update after workspace B is selected", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const mutation = deferred<Awaited<ReturnType<PlatformApi["applySync"]>>>();
+    const applySync = vi.fn().mockReturnValue(mutation.promise);
+    const getWorkspace = vi.fn().mockImplementation(async (id: string) => id === DEVICE_ID ? second : WORKSPACE);
+    renderSync(completeApi({ applySync, getWorkspace, listWorkspaces: vi.fn().mockResolvedValue([WORKSPACE, second]) }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("selection_required"));
+    await user.click(screen.getByRole("button", { name: "Select field desk" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("ready"));
+    await user.click(screen.getByRole("button", { name: "Rename workspace" }));
+    await user.click(screen.getByRole("button", { name: "Select second workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+
+    await act(async () => { mutation.resolve({ acknowledged_cursor: 0, results: [] }); });
+
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+    expect(screen.getByLabelText("sync status")).toHaveTextContent("ready");
+  });
+
+  it("ignores a late workspace A mutation 403 after workspace B is selected", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const mutation = deferred<Awaited<ReturnType<PlatformApi["applySync"]>>>();
+    const listWorkspaces = vi.fn().mockResolvedValue([WORKSPACE, second]);
+    renderSync(completeApi({
+      applySync: vi.fn().mockReturnValue(mutation.promise),
+      getWorkspace: vi.fn().mockImplementation(async (id: string) => id === DEVICE_ID ? second : WORKSPACE),
+      listWorkspaces
+    }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("selection_required"));
+    await user.click(screen.getByRole("button", { name: "Select field desk" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("ready"));
+    await user.click(screen.getByRole("button", { name: "Rename workspace" }));
+    await user.click(screen.getByRole("button", { name: "Select second workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+
+    await act(async () => { mutation.reject(new AuthApiError(403, "membership_forbidden")); });
+
+    expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace");
+    expect(screen.getByLabelText("sync status")).toHaveTextContent("ready");
+    expect(listWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a late workspace A conflict retry after workspace B is selected", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const retry = deferred<Awaited<ReturnType<PlatformApi["applySync"]>>>();
+    const applySync = vi.fn()
+      .mockRejectedValueOnce(new AuthApiError(409, "sync_version_conflict", "conflict-correlation", {
+        submitted_expected_version: 1,
+        current_version: 3,
+        current_profile: { ...WORKSPACE, entity_id: WORKSPACE_ID, version: 3 }
+      }))
+      .mockReturnValueOnce(retry.promise);
+    renderSync(completeApi({
+      applySync,
+      getWorkspace: vi.fn().mockImplementation(async (id: string) => id === DEVICE_ID ? second : WORKSPACE),
+      listWorkspaces: vi.fn().mockResolvedValue([WORKSPACE, second])
+    }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("selection_required"));
+    await user.click(screen.getByRole("button", { name: "Select field desk" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("ready"));
+    await user.click(screen.getByRole("button", { name: "Rename workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("conflict"));
+    await user.click(screen.getByRole("button", { name: "Retry conflict" }));
+    await user.click(screen.getByRole("button", { name: "Select second workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+
+    await act(async () => { retry.resolve({ acknowledged_cursor: 0, results: [] }); });
+
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+    expect(screen.getByLabelText("sync status")).toHaveTextContent("ready");
+  });
+
+  it("ignores a late workspace A conflict reload after workspace B is selected", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const reload = deferred<typeof WORKSPACE>();
+    let firstWorkspaceLoads = 0;
+    const getWorkspace = vi.fn().mockImplementation((id: string) => {
+      if (id === DEVICE_ID) return Promise.resolve(second);
+      firstWorkspaceLoads += 1;
+      return firstWorkspaceLoads === 1 ? Promise.resolve(WORKSPACE) : reload.promise;
+    });
+    const applySync = vi.fn().mockRejectedValue(new AuthApiError(409, "sync_version_conflict", "conflict-correlation", {
+      submitted_expected_version: 1,
+      current_version: 3,
+      current_profile: { ...WORKSPACE, entity_id: WORKSPACE_ID, version: 3 }
+    }));
+    renderSync(completeApi({
+      applySync,
+      getWorkspace,
+      listWorkspaces: vi.fn().mockResolvedValue([WORKSPACE, second])
+    }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("selection_required"));
+    await user.click(screen.getByRole("button", { name: "Select field desk" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("ready"));
+    await user.click(screen.getByRole("button", { name: "Rename workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("conflict"));
+    await user.click(screen.getByRole("button", { name: "Reload conflict" }));
+    await user.click(screen.getByRole("button", { name: "Select second workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+
+    await act(async () => { reload.resolve(WORKSPACE); });
+
+    expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace");
+    expect(screen.getByLabelText("sync status")).toHaveTextContent("ready");
+  });
+
+  it("routes retry-conflict 403 through fresh membership and explicit re-selection", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const applySync = vi.fn()
+      .mockRejectedValueOnce(new AuthApiError(409, "sync_version_conflict", "conflict-correlation", {
+        submitted_expected_version: 1,
+        current_version: 3,
+        current_profile: { ...WORKSPACE, entity_id: WORKSPACE_ID, version: 3 }
+      }))
+      .mockRejectedValueOnce(new AuthApiError(403, "membership_forbidden"));
+    const listWorkspaces = vi.fn().mockResolvedValueOnce([WORKSPACE]).mockResolvedValueOnce([second]);
+    renderSync(completeApi({ applySync, listWorkspaces }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("ready"));
+    await user.click(screen.getByRole("button", { name: "Rename workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("conflict"));
+
+    await user.click(screen.getByRole("button", { name: "Retry conflict" }));
+
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("forbidden"));
+    expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Corvus field desk");
+    expect(screen.getByLabelText("authorized workspaces")).toHaveTextContent("Second workspace");
+    expect(screen.getByLabelText("mutation authority")).toHaveTextContent("blocked");
   });
 
   it("performs explicit resync by refetching session and workspace before the boundary", async () => {

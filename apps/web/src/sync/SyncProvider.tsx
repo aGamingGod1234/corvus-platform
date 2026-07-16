@@ -219,6 +219,35 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
     workspaces: []
   });
 
+  const refreshForbiddenMembership = useCallback(
+    async (error: AuthApiError, operation: number) => {
+      try {
+        const workspaces = await api.listWorkspaces();
+        if (operation !== operationRef.current) return false;
+        setSnapshot((current) => ({
+          ...current,
+          canMutate: false,
+          conflict: null,
+          error,
+          status: "forbidden",
+          workspaces
+        }));
+      } catch (listReason) {
+        if (operation !== operationRef.current) return false;
+        setSnapshot((current) => ({
+          ...current,
+          canMutate: false,
+          conflict: null,
+          error: syncError(listReason),
+          status: "forbidden",
+          workspaces: []
+        }));
+      }
+      return true;
+    },
+    [api]
+  );
+
   const resyncWorkspace = useCallback(
     async (candidate: Workspace, error: AuthApiError, operation: number) => {
       const resumeCursor = error.detail.resume_cursor;
@@ -354,26 +383,7 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
           return false;
         }
         if (error instanceof AuthApiError && error.status === 403) {
-          try {
-            const workspaces = await api.listWorkspaces();
-            if (operation !== operationRef.current) return false;
-            setSnapshot((current) => ({
-              ...current,
-              canMutate: false,
-              error,
-              status: "forbidden",
-              workspaces
-            }));
-          } catch (listReason) {
-            if (operation !== operationRef.current) return false;
-            setSnapshot((current) => ({
-              ...current,
-              canMutate: false,
-              error: syncError(listReason),
-              status: "forbidden",
-              workspaces: []
-            }));
-          }
+          await refreshForbiddenMembership(error, operation);
           return false;
         }
         if (operation !== operationRef.current) return false;
@@ -390,7 +400,7 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
       }
       return true;
     },
-    [api, auth, resyncWorkspace]
+    [api, auth, refreshForbiddenMembership, resyncWorkspace]
   );
 
   const discoverWorkspaces = useCallback(async () => {
@@ -454,6 +464,7 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
 
   const selectWorkspace = useCallback(
     async (workspaceId: string) => {
+      pendingConflictNameRef.current = null;
       const candidate = snapshot.workspaces.find((workspace) => workspace.id === workspaceId);
       if (candidate === undefined) {
         operationRef.current += 1;
@@ -542,12 +553,16 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
       ) {
         throw new AuthApiError(403, "workspace_mutation_blocked");
       }
+      const operation = ++operationRef.current;
+      const selectedWorkspace = snapshot.selectedWorkspace;
+      const ledger = snapshot.ledger;
+      const csrfToken = auth.session.csrf_token;
       try {
         pendingConflictNameRef.current = name;
         await api.applySync(
-          snapshot.selectedWorkspace.id,
+          selectedWorkspace.id,
           {
-            acknowledged_cursor: snapshot.ledger.cursor,
+            acknowledged_cursor: ledger.cursor,
             mutations: [
               {
                 idempotency_key: crypto.randomUUID(),
@@ -559,11 +574,13 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
               }
             ]
           },
-          auth.session.csrf_token
+          csrfToken
         );
-        await loadWorkspace(snapshot.selectedWorkspace, snapshot.ledger);
-        pendingConflictNameRef.current = null;
+        if (operation !== operationRef.current) return;
+        await loadWorkspace(selectedWorkspace, ledger, operation);
+        if (operation === operationRef.current) pendingConflictNameRef.current = null;
       } catch (reason) {
+        if (operation !== operationRef.current) return;
         const error = syncError(reason);
         if (
           error instanceof AuthApiError &&
@@ -598,8 +615,7 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
           error.status === 409 &&
           error.code === "sync_resync_required"
         ) {
-          const operation = ++operationRef.current;
-          await resyncWorkspace(snapshot.selectedWorkspace, error, operation);
+          await resyncWorkspace(selectedWorkspace, error, operation);
           return;
         }
         if (error instanceof AuthApiError && error.status === 401) {
@@ -607,24 +623,7 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
           return;
         }
         if (error instanceof AuthApiError && error.status === 403) {
-          try {
-            const workspaces = await api.listWorkspaces();
-            setSnapshot((value) => ({
-              ...value,
-              canMutate: false,
-              error,
-              status: "forbidden",
-              workspaces
-            }));
-          } catch (listReason) {
-            setSnapshot((value) => ({
-              ...value,
-              canMutate: false,
-              error: syncError(listReason),
-              status: "forbidden",
-              workspaces: []
-            }));
-          }
+          await refreshForbiddenMembership(error, operation);
           return;
         }
         setSnapshot((value) => ({
@@ -638,13 +637,14 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
         }));
       }
     },
-    [api, auth, loadWorkspace, resyncWorkspace, snapshot]
+    [api, auth, loadWorkspace, refreshForbiddenMembership, resyncWorkspace, snapshot]
   );
 
   const reloadConflict = useCallback(async () => {
     if (snapshot.selectedWorkspace === null) return;
+    const operation = ++operationRef.current;
     pendingConflictNameRef.current = null;
-    await loadWorkspace(snapshot.selectedWorkspace, emptySyncLedger());
+    await loadWorkspace(snapshot.selectedWorkspace, emptySyncLedger(), operation);
   }, [loadWorkspace, snapshot.selectedWorkspace]);
 
   const retryConflict = useCallback(async () => {
@@ -657,30 +657,44 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
       throw new AuthApiError(409, "sync_conflict_retry_unavailable");
     }
     const name = pendingConflictNameRef.current;
+    const operation = ++operationRef.current;
+    const selectedWorkspace = snapshot.selectedWorkspace;
+    const conflict = snapshot.conflict;
+    const cursor = snapshot.ledger.cursor;
+    const csrfToken = auth.session.csrf_token;
     try {
       await api.applySync(
-        snapshot.selectedWorkspace.id,
+        selectedWorkspace.id,
         {
-          acknowledged_cursor: snapshot.ledger.cursor,
+          acknowledged_cursor: cursor,
           mutations: [{
             idempotency_key: crypto.randomUUID(),
             kind: "workspace_profile",
             operation: "update",
-            entity_id: snapshot.selectedWorkspace.id,
-            expected_version: snapshot.conflict.currentVersion,
+            entity_id: selectedWorkspace.id,
+            expected_version: conflict.currentVersion,
             payload: { name }
           }]
         },
-        auth.session.csrf_token
+        csrfToken
       );
+      if (operation !== operationRef.current) return;
       pendingConflictNameRef.current = null;
-      await loadWorkspace(snapshot.selectedWorkspace, emptySyncLedger());
+      await loadWorkspace(selectedWorkspace, emptySyncLedger(), operation);
     } catch (reason) {
+      if (operation !== operationRef.current) return;
       const error = syncError(reason);
-      if (error instanceof AuthApiError && error.status === 401) auth.invalidateAuthority();
+      if (error instanceof AuthApiError && error.status === 401) {
+        auth.invalidateAuthority();
+        return;
+      }
+      if (error instanceof AuthApiError && error.status === 403) {
+        await refreshForbiddenMembership(error, operation);
+        return;
+      }
       throw error;
     }
-  }, [api, auth, loadWorkspace, snapshot.conflict, snapshot.ledger.cursor, snapshot.selectedWorkspace]);
+  }, [api, auth, loadWorkspace, refreshForbiddenMembership, snapshot.conflict, snapshot.ledger.cursor, snapshot.selectedWorkspace]);
 
   const value = useMemo<WorkspaceSyncState>(
     () => ({
@@ -735,54 +749,12 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
   return <WorkspaceSyncContext.Provider value={value}>{children}</WorkspaceSyncContext.Provider>;
 }
 
-const LOCAL_WORKSPACE: Workspace = {
-  id: "00000000-0000-4000-8000-000000000003",
-  name: "Local workspace",
-  workspace_kind: "individual",
-  status: "active",
-  created_at: "1970-01-01T00:00:00Z",
-  updated_at: "1970-01-01T00:00:00Z",
-  version: 1
-};
-
-export function LocalSyncProvider({ children }: { children: ReactNode }) {
-  const value = useMemo<WorkspaceSyncState>(() => ({
-    accountProfile: {
-      entity_id: "00000000-0000-4000-8000-000000000001",
-      experience_kind: "developer",
-      version: 1
-    },
-    canMutate: false,
-    conflict: null,
-    createWorkspace: async () => { throw new AuthApiError(403, "hosted_identity_unavailable"); },
-    cursor: 0,
-    error: null,
-    refresh: async () => undefined,
-    reloadConflict: async () => undefined,
-    retryConflict: async () => { throw new AuthApiError(409, "sync_conflict_retry_unavailable"); },
-    saveExperience: async () => { throw new AuthApiError(403, "hosted_identity_unavailable"); },
-    selectedWorkspace: LOCAL_WORKSPACE,
-    selectWorkspace: async (workspaceId) => {
-      if (workspaceId !== LOCAL_WORKSPACE.id) {
-        throw new AuthApiError(403, "workspace_selection_forbidden");
-      }
-    },
-    status: "ready",
-    updateWorkspaceProfile: async () => { throw new AuthApiError(403, "hosted_identity_unavailable"); },
-    workspaceProfile: {
-      entity_id: LOCAL_WORKSPACE.id,
-      name: LOCAL_WORKSPACE.name,
-      status: LOCAL_WORKSPACE.status,
-      version: LOCAL_WORKSPACE.version,
-      workspace_kind: LOCAL_WORKSPACE.workspace_kind
-    },
-    workspaces: [LOCAL_WORKSPACE]
-  }), []);
-  return <WorkspaceSyncContext.Provider value={value}>{children}</WorkspaceSyncContext.Provider>;
+export function useOptionalWorkspaceSync(): WorkspaceSyncState | null {
+  return useContext(WorkspaceSyncContext);
 }
 
 export function useWorkspaceSync(): WorkspaceSyncState {
-  const state = useContext(WorkspaceSyncContext);
+  const state = useOptionalWorkspaceSync();
   if (state === null) throw new Error("workspace_sync_provider_missing");
   return state;
 }

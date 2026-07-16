@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createCorvusApi,
@@ -16,6 +16,7 @@ import {
   type ProviderConnection,
   type RetrievedMemory,
   type Routine,
+  type Session,
   type SkillVersion,
   type Team,
   type WorkItem,
@@ -34,9 +35,9 @@ import {
   type LegacyPreferenceCandidate
 } from "./app/preferences";
 import { getWorkspaceProfile } from "./app/workspaceProfiles";
-import { useAuth } from "./auth/AuthProvider";
+import { useOptionalAuth } from "./auth/AuthProvider";
 import { AuthApiError } from "./auth/authApi";
-import { useWorkspaceSync } from "./sync/SyncProvider";
+import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncProvider";
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 import { SyncConflictPanel } from "./components/SyncConflictPanel";
@@ -75,6 +76,7 @@ const DEFAULT_WORK_ITEMS: WorkItemDefinition[] = [
 
 interface AppProps {
   api?: CorvusApi;
+  authorityMode?: "auto" | "hosted" | "local";
   locationHostname?: string;
   preferenceStorage?: Storage;
 }
@@ -130,17 +132,21 @@ const EMPTY_OPERATIONS: OperationsDetail = {
 
 export function App({
   api = browserApi,
+  authorityMode = "auto",
   locationHostname = window.location.hostname,
   preferenceStorage = window.localStorage
 }: AppProps) {
-  const auth = useAuth();
-  const workspaceSync = useWorkspaceSync();
+  const auth = useOptionalAuth();
+  const workspaceSync = useOptionalWorkspaceSync();
+  const localRuntime =
+    authorityMode === "local" ||
+    (authorityMode === "auto" && isLoopbackRuntimeHost(locationHostname));
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
   const workspaceGenerationRef = useRef(0);
   const [legacyPreference, setLegacyPreference] = useState<LegacyPreferenceCandidate | null>(null);
   const experience =
-    workspaceSync.accountProfile?.experience_kind ?? auth.session?.experience_kind ?? null;
-  const selectedWorkspace = workspaceSync.selectedWorkspace;
+    workspaceSync?.accountProfile?.experience_kind ?? auth?.session?.experience_kind ?? null;
+  const selectedWorkspace = workspaceSync?.selectedWorkspace ?? null;
   const profile =
     experience === null || selectedWorkspace === null
       ? null
@@ -159,20 +165,22 @@ export function App({
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [localSession, setLocalSession] = useState<Session | null>(null);
   const hostedLocalHandoff =
     selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
 
   useEffect(() => {
-    if (auth.status !== "authenticated") return;
+    if (localRuntime || auth?.status !== "authenticated") return;
     setLegacyPreference(loadLegacyWorkspacePreference(preferenceStorage).candidate);
-  }, [auth.status, preferenceStorage]);
+  }, [auth?.status, localRuntime, preferenceStorage]);
 
   useEffect(() => {
     if (
       legacyPreference === null ||
+      localRuntime ||
       experience === null ||
       selectedWorkspace === null ||
-      workspaceSync.status !== "ready"
+      workspaceSync?.status !== "ready"
     ) return;
     if (
       legacyPreference.experience === experience &&
@@ -184,7 +192,7 @@ export function App({
       });
       setLegacyPreference(null);
     }
-  }, [experience, legacyPreference, preferenceStorage, selectedWorkspace, workspaceSync.status]);
+  }, [experience, legacyPreference, localRuntime, preferenceStorage, selectedWorkspace, workspaceSync?.status]);
 
   const loadProjects = useCallback(async (generation = workspaceGenerationRef.current) => {
     const loaded = await api.listProjects();
@@ -195,10 +203,57 @@ export function App({
   }, [api]);
 
   useEffect(() => {
+    if (!localRuntime) return;
+    const generation = ++workspaceGenerationRef.current;
+    setPhase("checking");
+    setActiveRoute("execution");
+    setProjects([]);
+    setActiveProject(null);
+    setLocalSession(null);
+    setError("");
+    let active = true;
+
+    api.session()
+      .then(async (session) => {
+        if (!active || generation !== workspaceGenerationRef.current) return;
+        setLocalSession(session);
+        await loadProjects(generation);
+        if (active && generation === workspaceGenerationRef.current) setPhase("ready");
+      })
+      .catch(async () => {
+        if (!active || generation !== workspaceGenerationRef.current) return;
+        const pairingValue = takeDesktopPairingValue();
+        if (pairingValue === null) {
+          setPhase("pairing");
+          return;
+        }
+        try {
+          desktopPairingAttempt.current ??= api.pair(pairingValue);
+          await desktopPairingAttempt.current;
+          const session = await api.session();
+          if (!active || generation !== workspaceGenerationRef.current) return;
+          setLocalSession(session);
+          await loadProjects(generation);
+          if (active && generation === workspaceGenerationRef.current) setPhase("ready");
+        } catch (reason: unknown) {
+          if (!active || generation !== workspaceGenerationRef.current) return;
+          setError(messageFor(reason));
+          setPhase("pairing");
+        }
+      });
+
+    return () => {
+      active = false;
+      if (generation === workspaceGenerationRef.current) workspaceGenerationRef.current += 1;
+    };
+  }, [api, loadProjects, localRuntime]);
+
+  useEffect(() => {
     if (
+      localRuntime ||
       profile === null ||
       selectedWorkspace === null ||
-      workspaceSync.status !== "ready" ||
+      workspaceSync?.status !== "ready" ||
       hostedLocalHandoff
     ) return;
     const generation = ++workspaceGenerationRef.current;
@@ -243,7 +298,7 @@ export function App({
       active = false;
       if (generation === workspaceGenerationRef.current) workspaceGenerationRef.current += 1;
     };
-  }, [api, hostedLocalHandoff, loadProjects, profile, selectedWorkspace, workspaceSync.status]);
+  }, [api, hostedLocalHandoff, loadProjects, localRuntime, profile, selectedWorkspace, workspaceSync?.status]);
 
   useEffect(() => {
     if (profile === null) return;
@@ -408,6 +463,9 @@ export function App({
   async function pair(value: string) {
     await perform(async (generation) => {
       await api.pair(value);
+      const session = await api.session();
+      if (generation !== workspaceGenerationRef.current) return;
+      setLocalSession(session);
       await loadProjects(generation);
       if (generation === workspaceGenerationRef.current) setPhase("ready");
     });
@@ -575,6 +633,88 @@ export function App({
     }
   }
 
+  const executionSurface = (
+    <ExecutionCanvas
+      activity={activity}
+      busy={busy}
+      detail={detail}
+      onApprove={approve}
+      onControl={controlWorkflow}
+      onCreate={createWorkflow}
+      onReject={reject}
+      onRun={() => mutateWorkflow("run")}
+      onSelectItem={setSelectedItem}
+      onStart={() => mutateWorkflow("start")}
+      outcome={outcomes.at(-1) ?? null}
+      project={activeProject}
+      selectedItem={selectedItem}
+      workflow={workflow}
+    />
+  );
+  const operationsSurface = (
+    <OperationsPanel
+      autonomy={autonomy}
+      busy={busy}
+      detail={operations}
+      onCreateProvider={createProvider}
+      onCreateRoutine={createRoutine}
+      onCreateSkill={createSkill}
+      onCreateTeam={createTeam}
+      onEvaluateAutonomy={evaluateAutonomy}
+      onRunRoutine={runRoutine}
+      onSearchMemory={searchMemory}
+      onStoreMemory={storeMemory}
+      project={activeProject}
+      retrievedMemories={retrievedMemories}
+    />
+  );
+
+  if (localRuntime) {
+    if (phase === "checking") return <LoadingScreen />;
+    if (phase === "pairing" || localSession === null) {
+      return <PairingScreen busy={busy} error={error} onPair={pair} />;
+    }
+    return (
+      <LocalRuntimeShell
+        activeRoute={activeRoute || "execution"}
+        error={error}
+        inspector={(
+          <Inspector
+            artifacts={detail.artifacts}
+            budget={detail.budget}
+            effects={detail.effects}
+            item={selectedItem}
+            onApprove={approve}
+            onClose={() => setSelectedItem(null)}
+            onReject={reject}
+            onUpdateBudget={updateBudget}
+            conversation={detail.conversation}
+          />
+        )}
+        onNavigate={(routeId) => {
+          setActiveRoute(routeId);
+          setSelectedItem(null);
+        }}
+        projectContext={(
+          <ProjectRail
+            activeProject={activeProject}
+            busy={busy}
+            onCreate={createProject}
+            onSelect={setActiveProject}
+            projects={projects}
+          />
+        )}
+        session={localSession}
+      >
+        {activeRoute === "skills" ? operationsSurface : executionSurface}
+      </LocalRuntimeShell>
+    );
+  }
+
+  if (auth === null || workspaceSync === null) {
+    throw new Error("Hosted Corvus requires authenticated workspace providers");
+  }
+
   if (auth.status === "checking") return <LoadingScreen label="Checking your Corvus identity…" />;
   if (auth.status === "retryable_error") {
     return <RetryScreen message={auth.error?.message ?? "Corvus could not verify your identity."} onRetry={auth.retry} />;
@@ -641,42 +781,6 @@ export function App({
   if (profile === null || selectedWorkspace === null) {
     return <RetryScreen message={workspaceSync.error?.message ?? "No authorized workspace is available."} onRetry={workspaceSync.refresh} />;
   }
-
-  const executionSurface = (
-    <ExecutionCanvas
-      activity={activity}
-      busy={busy}
-      detail={detail}
-      onApprove={approve}
-      onControl={controlWorkflow}
-      onCreate={createWorkflow}
-      onReject={reject}
-      onRun={() => mutateWorkflow("run")}
-      onSelectItem={setSelectedItem}
-      onStart={() => mutateWorkflow("start")}
-      outcome={outcomes.at(-1) ?? null}
-      project={activeProject}
-      selectedItem={selectedItem}
-      workflow={workflow}
-    />
-  );
-  const operationsSurface = (
-    <OperationsPanel
-      autonomy={autonomy}
-      busy={busy}
-      detail={operations}
-      onCreateProvider={createProvider}
-      onCreateRoutine={createRoutine}
-      onCreateSkill={createSkill}
-      onCreateTeam={createTeam}
-      onEvaluateAutonomy={evaluateAutonomy}
-      onRunRoutine={runRoutine}
-      onSearchMemory={searchMemory}
-      onStoreMemory={storeMemory}
-      project={activeProject}
-      retrievedMemories={retrievedMemories}
-    />
-  );
 
   return (
     <AppShell
@@ -760,6 +864,59 @@ export function App({
   );
 }
 
+function LocalRuntimeShell({
+  activeRoute,
+  children,
+  error,
+  inspector,
+  onNavigate,
+  projectContext,
+  session
+}: {
+  activeRoute: string;
+  children: ReactNode;
+  error: string;
+  inspector: ReactNode;
+  onNavigate(routeId: "execution" | "skills"): void;
+  projectContext: ReactNode;
+  session: Session;
+}) {
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="wordmark">Corvus</div>
+        <nav aria-label="Local runtime navigation" className="view-switcher">
+          <a
+            aria-current={activeRoute !== "skills" ? "page" : undefined}
+            href="#execution"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("execution");
+            }}
+          >
+            Repositories
+          </a>
+          <a
+            aria-current={activeRoute === "skills" ? "page" : undefined}
+            href="#skills"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("skills");
+            }}
+          >
+            Skills
+          </a>
+        </nav>
+        <div className="connection-state"><span />{session.username}</div>
+        {error && <p className="header-error" role="alert">{error}</p>}
+      </header>
+      {projectContext}
+      <main id="main-content">{children}</main>
+      {inspector}
+    </div>
+  );
+}
+
 function LoadingScreen({ label = "Opening local workspace…" }: { label?: string }) {
   return <div className="loading-screen" role="status">{label}</div>;
 }
@@ -784,7 +941,7 @@ function WorkspaceSelection({
 }: {
   accountEmail: string;
   onSelect(workspaceId: string): Promise<void>;
-  workspaces: ReturnType<typeof useWorkspaceSync>["workspaces"];
+  workspaces: WorkspaceSyncState["workspaces"];
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
 

@@ -1627,3 +1627,32 @@
 ### Suggested Next Steps
 - Independently review the separate Task 1.6 consolidated-fix commit.
 - Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Close Task 1.6 authority and stale-operation re-review
+
+### What Was Implemented
+- Removed fabricated loopback account, workspace, profile, and CSRF authority; loopback now consumes only the legacy session/pairing/project API while hosted composition remains Google-first.
+- Added generation fencing to stale authentication reloads, workspace profile mutations, conflict reload/retry actions, and their 401/403 recovery paths.
+- Centralized mutation and retry 403 membership refresh so the last-safe workspace remains visible but immutable until an explicit fresh selection.
+- Added truthful no-access guidance for empty refreshed membership and contained nested identity Escape handling so the parent More dialog stays open with focus restored locally.
+- Added direct transport tests for credentialed session/pairing requests and session-derived CSRF mutation headers.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/PlatformApp.tsx`, and their tests — provide authority-neutral loopback composition backed by real legacy session truth.
+- `apps/web/src/auth/AuthProvider.tsx` and tests — ignore stale reload failures after newer authenticated truth wins.
+- `apps/web/src/sync/SyncProvider.tsx` and tests — fence mutation/conflict operations and centralize fresh-membership recovery.
+- `apps/web/src/components/WorkspaceSwitcher.tsx`, responsive navigation tests, and identity tests — provide truthful empty membership and nested Escape behavior.
+- `apps/web/src/api.test.ts` — prove credential and CSRF transport consumption.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record final repair evidence and scope boundaries.
+
+### Assumptions Made (flag these for review)
+- None. Loopback authority ownership, operation generations, 403 recovery, accessibility behavior, required gates, separate commit, and no-push/no-Task-2 boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy still reports the same five pre-existing migration typing errors in `m1_006` through `m1_009` and migration `env.py`; no changed Task 1.6 file is implicated.
+- Four destructive PostgreSQL tests remain guarded before engine creation because disposable reset authorization is unavailable.
+- Invitations, organization roles, durable active selection, offline mutation queues, native desktop OAuth, real cloud execution, billing, deployment, editable Settings, and Task 2 remain deferred.
+
+### Suggested Next Steps
+- Independently review the separate Task 1.6 authority/stale-operation repair commit and retained browser captures.
+- Begin Task 2 only after explicit authorization.

@@ -101,6 +101,7 @@ export function AuthProvider({ api = browserAuthApi, children }: AuthProviderPro
       return null;
     } catch (reason) {
       const error = normalizedError(reason);
+      if (generation !== generationRef.current) return null;
       if (error.status === 401) invalidateAuthority();
       else if (generation === generationRef.current) {
         setSnapshot((current) => ({ ...current, error, status: "retryable_error" }));
@@ -172,33 +173,12 @@ export function AuthProvider({ api = browserAuthApi, children }: AuthProviderPro
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-const LOCAL_SESSION: SessionResponse = {
-  account_id: "00000000-0000-4000-8000-000000000001",
-  principal_id: "00000000-0000-4000-8000-000000000002",
-  email: "local-runtime@corvus.invalid",
-  experience_kind: "developer",
-  account_version: 1,
-  session_version: 1,
-  csrf_token: "local-runtime-only"
-};
-
-export function LocalAuthProvider({ children }: { children: ReactNode }) {
-  const value = useMemo<AuthState>(() => ({
-    error: null,
-    invalidateAuthority: () => undefined,
-    logout: async () => undefined,
-    reloadSession: async () => LOCAL_SESSION,
-    refresh: async () => undefined,
-    retry: async () => undefined,
-    session: LOCAL_SESSION,
-    startGoogle: () => undefined,
-    status: "authenticated"
-  }), []);
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+export function useOptionalAuth(): AuthState | null {
+  return useContext(AuthContext);
 }
 
 export function useAuth(): AuthState {
-  const state = useContext(AuthContext);
+  const state = useOptionalAuth();
   if (state === null) throw new Error("auth_provider_missing");
   return state;
 }

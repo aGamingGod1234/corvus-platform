@@ -151,4 +151,22 @@ describe("WorkspaceIdentityBlock", () => {
     expect(screen.queryByRole("dialog", { name: "Workspace identity" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
+
+  it("shows truthful no-access guidance without a no-op re-selection control", () => {
+    render(
+      <WorkspaceIdentityBlock
+        accountEmail="person@example.com"
+        experience="developer"
+        onWorkspaceSelect={vi.fn()}
+        selectedWorkspace={FIRST}
+        selectionRequired
+        workspaces={[]}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "Re-select workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No authorized workspaces are available. Ask a workspace owner to restore access."
+    );
+  });
 });

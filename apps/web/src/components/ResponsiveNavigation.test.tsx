@@ -48,4 +48,30 @@ describe("ResponsiveNavigation", () => {
     await user.keyboard("{Escape}");
     expect(more).toHaveFocus();
   });
+
+  it("closes only nested identity on Escape and keeps More open", async () => {
+    const user = userEvent.setup();
+    render(
+      <ResponsiveNavigation
+        accountEmail="person@example.com"
+        activeRoute="home"
+        onNavigate={vi.fn()}
+        onWorkspaceSelect={vi.fn()}
+        profile={getWorkspaceProfile("everyday", "individual")}
+        selectedWorkspace={WORKSPACE}
+        workspaces={[WORKSPACE]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const identityTrigger = screen.getByRole("button", { name: "Open workspace identity" });
+    await user.click(identityTrigger);
+    expect(screen.getByRole("dialog", { name: "Workspace identity" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Workspace identity" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "More navigation" })).toBeVisible();
+    expect(identityTrigger).toHaveFocus();
+  });
 });

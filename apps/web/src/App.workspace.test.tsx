@@ -222,7 +222,7 @@ describe("adaptive Corvus bootstrap", () => {
     render(
       <AuthProvider api={hostedApi(WORKSPACES)}>
         <SyncProvider api={hostedApi(WORKSPACES)}>
-          <App api={loopback} locationHostname="localhost" preferenceStorage={new MemoryStorage()} />
+          <App authorityMode="hosted" api={loopback} locationHostname="localhost" preferenceStorage={new MemoryStorage()} />
         </SyncProvider>
       </AuthProvider>
     );

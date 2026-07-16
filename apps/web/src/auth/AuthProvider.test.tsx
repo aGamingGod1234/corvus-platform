@@ -51,6 +51,7 @@ function Probe({ children }: { children?: ReactNode }) {
       <button onClick={() => void auth.refresh()} type="button">Refresh session</button>
       <button onClick={() => void auth.logout()} type="button">Log out</button>
       <button onClick={() => void auth.retry()} type="button">Retry session</button>
+      <button onClick={() => void auth.reloadSession().catch(() => undefined)} type="button">Reload session truth</button>
       <button onClick={() => auth.invalidateAuthority()} type="button">Invalidate authority</button>
       {children}
     </div>
@@ -159,5 +160,26 @@ describe("AuthProvider", () => {
 
     expect(screen.getByLabelText("auth status")).toHaveTextContent("unauthenticated");
     expect(screen.getByLabelText("session email")).toHaveTextContent("none");
+  });
+
+  it("ignores a stale reload 401 after a newer reload establishes authority", async () => {
+    const firstReload = deferred<SessionResponse>();
+    const secondReload = deferred<SessionResponse>();
+    const getSession = vi.fn()
+      .mockResolvedValueOnce(SESSION)
+      .mockReturnValueOnce(firstReload.promise)
+      .mockReturnValueOnce(secondReload.promise);
+    render(<AuthProvider api={completeApi({ getSession })}><Probe /></AuthProvider>);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("auth status")).toHaveTextContent("authenticated"));
+
+    await user.click(screen.getByRole("button", { name: "Reload session truth" }));
+    await user.click(screen.getByRole("button", { name: "Reload session truth" }));
+    await act(async () => { secondReload.resolve({ ...SESSION, email: "new@example.com" }); });
+    await waitFor(() => expect(screen.getByLabelText("session email")).toHaveTextContent("new@example.com"));
+    await act(async () => { firstReload.reject(new AuthApiError(401, "session_invalid")); });
+
+    expect(screen.getByLabelText("auth status")).toHaveTextContent("authenticated");
+    expect(screen.getByLabelText("session email")).toHaveTextContent("new@example.com");
   });
 });
