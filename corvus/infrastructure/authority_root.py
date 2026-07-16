@@ -61,8 +61,11 @@ _FAMILY_SELECT_ALL = {
     "deployment_instance_leases": "SELECT * FROM deployment_instance_leases",
     "deployment_instances": "SELECT * FROM deployment_instances",
     "device_registrations": "SELECT * FROM device_registrations",
+    "device_sync_acknowledgements": "SELECT * FROM device_sync_acknowledgements",
     "idempotency_envelopes": "SELECT * FROM idempotency_envelopes",
     "identity_workspaces": "SELECT * FROM identity_workspaces",
+    "outbox_events": "SELECT * FROM outbox_events",
+    "platform_idempotency": "SELECT * FROM platform_idempotency",
     "external_identities": "SELECT * FROM external_identities",
     "principals": "SELECT * FROM principals",
     "projects": "SELECT * FROM projects",
@@ -70,8 +73,10 @@ _FAMILY_SELECT_ALL = {
     "scopes": "SELECT * FROM scopes",
     "session_records": "SELECT * FROM session_records",
     "workspace_authorities": "SELECT * FROM workspace_authorities",
+    "workspace_changes": "SELECT * FROM workspace_changes",
     "workspace_memberships": "SELECT * FROM workspace_memberships",
     "workspace_signing_key_versions": "SELECT * FROM workspace_signing_key_versions",
+    "workspace_sync_heads": "SELECT * FROM workspace_sync_heads",
 }
 if frozenset(_FAMILY_SELECT_ALL) != M1_AUTHORITY_FAMILY_NAMES:
     raise RuntimeError("authority root query allowlist does not match the active manifest families")
@@ -240,7 +245,15 @@ class AuthorityRootCalculator:
         with self._connect() as connection:
             columns = self._table_columns(connection, family_name)
             rows = connection.execute(_FAMILY_SELECT_ALL[family_name]).fetchall()
-            if "workspace_id" in columns:
+            if family_name == "platform_idempotency":
+                account_ids = self._workspace_account_ids(connection, workspace_id)
+                rows = [
+                    row
+                    for row in rows
+                    if row["workspace_id"] == str(workspace_id)
+                    or (row["workspace_id"] is None and row["account_id"] in account_ids)
+                ]
+            elif "workspace_id" in columns:
                 rows = [row for row in rows if row["workspace_id"] == str(workspace_id)]
             elif family_name == "identity_workspaces":
                 rows = [row for row in rows if row["id"] == str(workspace_id)]
@@ -338,8 +351,14 @@ class AuthorityRootCalculator:
             normalized_row = dict(row)
             if set(normalized_row) != expected_columns:
                 raise AuthorityRootCalculationError("authority_projection_columns_mismatch")
-            if "workspace_id" in expected_columns and normalized_row["workspace_id"] != str(
-                workspace_id
+            if (
+                "workspace_id" in expected_columns
+                and normalized_row["workspace_id"] != str(workspace_id)
+                and not (
+                    family_name == "platform_idempotency"
+                    and normalized_row["workspace_id"] is None
+                    and normalized_row["account_id"] in account_ids
+                )
             ):
                 raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
             if family_name == "identity_workspaces" and normalized_row["id"] != str(workspace_id):

@@ -98,6 +98,25 @@ class PlatformIdentityRepository:
             yield connection
 
     @staticmethod
+    def _lock_account_profile(connection: Connection, account_id: UUID) -> None:
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text("SELECT id FROM accounts WHERE id = :account_id FOR UPDATE"),
+                {"account_id": str(account_id)},
+            ).one_or_none()
+
+    @staticmethod
+    def _lock_workspace_profile(connection: Connection, workspace_id: UUID) -> None:
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    "SELECT id FROM identity_workspaces "
+                    "WHERE id = :workspace_id AND version = 1 FOR UPDATE"
+                ),
+                {"workspace_id": str(workspace_id)},
+            ).one_or_none()
+
+    @staticmethod
     def _onboarding(
         connection: Connection,
         account_id: UUID,
@@ -160,6 +179,7 @@ class PlatformIdentityRepository:
         now: datetime,
     ) -> tuple[ExperienceKind, int]:
         with self._transaction() as connection:
+            self._lock_account_profile(connection, account_id)
             _current_kind, current_version = self._onboarding(connection, account_id)
             if current_version != expected_version:
                 raise PlatformIdentityRepositoryError("account_version_conflict")
@@ -235,8 +255,9 @@ class PlatformIdentityRepository:
     ) -> dict[str, Any] | None:
         row = connection.execute(
             text(
-                "SELECT request_digest, result_json FROM identity_idempotency "
-                "WHERE account_id = :account_id AND operation = :operation "
+                "SELECT request_digest, result_json FROM platform_idempotency "
+                "WHERE account_id = :account_id AND scope_key = 'account' "
+                "AND operation = :operation "
                 "AND idempotency_key = :idempotency_key"
             ),
             {
@@ -267,9 +288,11 @@ class PlatformIdentityRepository:
     ) -> None:
         connection.execute(
             text(
-                "INSERT INTO identity_idempotency "
-                "(account_id, operation, idempotency_key, request_digest, result_json, created_at) "
-                "VALUES (:account_id, :operation, :key, :request_digest, :result_json, :created_at)"
+                "INSERT INTO platform_idempotency "
+                "(account_id, scope_key, workspace_id, device_id, device_version, operation, "
+                "idempotency_key, request_digest, result_json, created_at) "
+                "VALUES (:account_id, 'account', NULL, NULL, NULL, :operation, :key, "
+                ":request_digest, :result_json, :created_at)"
             ),
             {
                 "account_id": str(account_id),
@@ -435,6 +458,12 @@ class PlatformIdentityRepository:
         now: datetime,
     ) -> Workspace:
         with self._transaction() as connection:
+            self._workspace_for_update(
+                connection,
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+            )
+            self._lock_workspace_profile(connection, workspace_id)
             current = self._workspace_for_update(
                 connection,
                 principal_id=principal_id,

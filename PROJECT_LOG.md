@@ -1489,3 +1489,34 @@
 ### Suggested Next Steps
 - Review the Task 1.4 remediation commit and run the guarded PostgreSQL proof when disposable reset authorization is available.
 - Keep the branch/worktree intact for review; begin Task 1.5 only after explicit authorization.
+
+## 2026-07-16 — Implement Task 1.5 ordered workspace synchronization
+
+### What Was Implemented
+- Added the two-command typed sync protocol, exact-version conflicts, atomic batches of at most 100 mutations, generalized scoped idempotency, versioned device acknowledgements, bounded frozen-high-watermark pages, and explicit resync responses.
+- Added serialized per-workspace sequence allocation, canonical request/change hashing, append-only workspace changes and outbox records, hash-chain validation, stable account/workspace writer locks, and tenant/version-bound foreign keys across SQLite and PostgreSQL-compatible paths.
+- Added `m2_002_workspace_sync`, migrated Task 1.4 idempotency rows into the platform-wide contract, extended current-schema classification and authority-root manifest families, and made populated downgrade refuse before mutation.
+- Reused the existing session, CSRF, Origin, device, membership, and redacted error boundaries while composing the sync router exactly once in the platform API.
+- Added adversarial domain, repository, API/security, migration, concurrency, replay, tamper, tenant-isolation, downgrade, and guarded PostgreSQL contract coverage.
+
+### Files Modified
+- `corvus/domain/sync.py` and `corvus/application/sync.py` — define the closed mutation union, sync results/pages/errors, bounds, and service boundary.
+- `corvus/infrastructure/repositories/sync.py` and `corvus/infrastructure/repositories/platform_identity.py` — implement transactional sync and the shared platform idempotency authority.
+- `corvus/infrastructure/migrations/versions/m2_002_workspace_sync.py`, `corvus/database.py`, `corvus/infrastructure/db.py`, and `corvus/infrastructure/migrations/manifest_history.py` — add, classify, migrate, and safely downgrade the sync schema.
+- `corvus/infrastructure/authority_root.py` — projects the five new authority families into workspace/account roots.
+- `corvus/platform/api/sync.py`, `corvus/platform/api/app.py`, `corvus/platform/api/dependencies.py`, and `corvus/platform/api/identity.py` — add the authenticated sync API while reusing identity security controls.
+- `corvus/security.py` — adds recursive secret rejection and stable canonical JSON normalization for persisted sync material.
+- `tests/unit/domain/test_sync.py`, `tests/integration/test_sync_repository.py`, `tests/security/test_sync_replay.py`, and `tests/integration/test_sync_migration.py` — prove protocol, persistence, API, concurrency, integrity, and migration behavior.
+- Existing account, PostgreSQL, authority-manifest, and real-project contract tests — update expected current-schema and manifest behavior without weakening earlier coverage.
+- `PLAN.md` — records the completed Task 1.5 checklist.
+
+### Assumptions Made (flag these for review)
+- None. The mutation vocabulary, transaction boundary, lock ordering, cursor/acknowledgement semantics, idempotency scope, hash inputs, migration behavior, router composition, and stop boundary were explicitly resolved in the approved Task 1.5 brief.
+
+### Known Issues / Deferred
+- The two destructive PostgreSQL sync cases and the existing PostgreSQL migration contract remain locally skipped before engine creation because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; their server-backed assertions and expected controls are retained.
+- SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment remain intentionally outside the Task 1.5 scope guard.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL contracts against the approved disposable service for live row-lock and DDL evidence.
+- Review the Task 1.5 commit before authorizing Task 1.6 onboarding and client sync work.

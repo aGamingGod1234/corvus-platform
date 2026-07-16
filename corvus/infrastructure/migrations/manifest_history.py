@@ -65,6 +65,18 @@ M2_001_FAMILY_NAMES = tuple(
         }
     )
 )
+M2_002_FAMILY_NAMES = tuple(
+    sorted(
+        {
+            *M2_001_FAMILY_NAMES,
+            "device_sync_acknowledgements",
+            "outbox_events",
+            "platform_idempotency",
+            "workspace_changes",
+            "workspace_sync_heads",
+        }
+    )
+)
 
 
 def family_proof_metadata(family_name: str) -> tuple[str, str | None]:

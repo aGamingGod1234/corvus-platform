@@ -869,7 +869,7 @@ def test_m2_identity_migration_is_reversible_and_manifest_covers_revocation_hist
     ("mutation", "target"),
     [
         ("DROP TRIGGER web_session_bindings_no_update", "trigger"),
-        ("DROP TABLE identity_idempotency", "table"),
+        ("DROP TABLE platform_idempotency", "table"),
         ("ALTER TABLE account_onboarding_versions DROP COLUMN payload_json", "column"),
     ],
 )
@@ -985,9 +985,11 @@ def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
         else:
             assert account is not None
             connection.execute(
-                "INSERT INTO identity_idempotency "
-                "(account_id, operation, idempotency_key, request_digest, result_json, "
-                "created_at) VALUES (?, 'test.create', 'key', ?, '{}', ?)",
+                "INSERT INTO platform_idempotency "
+                "(account_id, scope_key, workspace_id, workspace_version, device_id, "
+                "device_version, operation, idempotency_key, request_digest, result_json, "
+                "created_at) VALUES (?, 'account', NULL, NULL, NULL, NULL, "
+                "'test.create', 'key', ?, '{}', ?)",
                 (str(account.id), "f" * 64, _NOW.isoformat()),
             )
         before_tables = {
@@ -1002,8 +1004,11 @@ def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
                 "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
             )
         }
+        before_family = (
+            "platform_idempotency" if history_family == "identity_idempotency" else history_family
+        )
         before_count = connection.execute(
-            f"SELECT COUNT(*) FROM {history_family}"  # noqa: S608
+            f"SELECT COUNT(*) FROM {before_family}"  # noqa: S608
         ).fetchone()[0]
 
     with pytest.raises(RuntimeError, match="oauth_session_history_present"):
@@ -1025,8 +1030,23 @@ def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
         after_count = connection.execute(
             f"SELECT COUNT(*) FROM {history_family}"  # noqa: S608
         ).fetchone()[0]
-    assert before_tables == after_tables
-    assert before_triggers == after_triggers
+    sync_tables = {
+        "workspace_sync_heads",
+        "workspace_changes",
+        "outbox_events",
+        "device_sync_acknowledgements",
+        "platform_idempotency",
+    }
+    assert after_tables == (before_tables - sync_tables) | {"identity_idempotency"}
+    assert all(
+        not trigger.startswith(tuple(f"{table}_" for table in sync_tables))
+        for trigger in after_triggers
+    )
+    assert {
+        "identity_idempotency_no_delete",
+        "identity_idempotency_no_update",
+    }.issubset(after_triggers)
+    assert before_triggers != after_triggers
     assert before_count == after_count == 1
     assert classify_database(database).state is DatabaseState.CURRENT
 

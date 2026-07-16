@@ -85,6 +85,35 @@ def _map_error(error: Exception) -> HTTPException:
     return _error("platform_identity_failure", status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
+def authenticate_session(
+    dependencies: IdentityApiDependencies,
+    session_token: str | None,
+) -> WebSessionAuthentication:
+    if session_token is None:
+        raise _error("session_required", status.HTTP_401_UNAUTHORIZED)
+    try:
+        return dependencies.accounts.authenticate_web_session(
+            session_token=session_token,
+            session_secret=dependencies.session_secret,
+            now=dependencies.clock(),
+        )
+    except AccountRepositoryError as exc:
+        raise _map_error(exc) from None
+
+
+def authenticate_mutation(
+    dependencies: IdentityApiDependencies,
+    request: Request,
+    session: WebSessionAuthentication,
+    csrf_token: str | None,
+) -> WebSessionAuthentication:
+    if request.headers.get("origin") != dependencies.public_origin:
+        raise _error("origin_forbidden", status.HTTP_403_FORBIDDEN)
+    if csrf_token is None or not hmac.compare_digest(csrf_token, session.csrf_token):
+        raise _error("csrf_invalid", status.HTTP_403_FORBIDDEN)
+    return session
+
+
 def _set_cookie(response: Response, name: str, value: str) -> None:
     response.set_cookie(
         key=name,
@@ -149,27 +178,14 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
     def authenticated(
         session_token: Annotated[str | None, Cookie(alias=_SESSION_COOKIE)] = None,
     ) -> WebSessionAuthentication:
-        if session_token is None:
-            raise _error("session_required", status.HTTP_401_UNAUTHORIZED)
-        try:
-            return dependencies.accounts.authenticate_web_session(
-                session_token=session_token,
-                session_secret=dependencies.session_secret,
-                now=dependencies.clock(),
-            )
-        except AccountRepositoryError as exc:
-            raise _map_error(exc) from None
+        return authenticate_session(dependencies, session_token)
 
     def mutation_authenticated(
         request: Request,
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> WebSessionAuthentication:
-        if request.headers.get("origin") != dependencies.public_origin:
-            raise _error("origin_forbidden", status.HTTP_403_FORBIDDEN)
-        if csrf_token is None or not hmac.compare_digest(csrf_token, session.csrf_token):
-            raise _error("csrf_invalid", status.HTTP_403_FORBIDDEN)
-        return session
+        return authenticate_mutation(dependencies, request, session, csrf_token)
 
     @router.get("/auth/google/start", status_code=302)
     def google_start() -> RedirectResponse:

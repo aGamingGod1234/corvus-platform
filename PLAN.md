@@ -157,10 +157,10 @@ def test_platform_settings_require_distinct_secrets(monkeypatch):
 **Interfaces:**
 - Produces: <code>SyncMutation</code>, <code>SyncPage</code>, <code>SyncService.apply()</code>, <code>GET /api/v2/workspaces/{workspace_id}/sync</code>, and <code>POST /api/v2/workspaces/{workspace_id}/sync/mutations</code>.
 
-- [ ] Write failing tests for monotonic cursors, idempotent replay, explicit version conflict, resync boundary, tenant isolation, and recursive secret rejection.
-- [ ] Run the focused files and confirm missing contracts.
-- [ ] Implement append-only changes/outbox, acknowledgements, canonical payload hashing, 409 conflict bodies, and tenant-scoped transactions.
-- [ ] Rerun focused tests and both database repository contracts.
+- [x] Write failing tests for monotonic cursors, idempotent replay, explicit version conflict, resync boundary, tenant isolation, and recursive secret rejection.
+- [x] Run the focused files and confirm missing contracts.
+- [x] Implement append-only changes/outbox, acknowledgements, canonical payload hashing, 409 conflict bodies, and tenant-scoped transactions.
+- [x] Rerun focused tests and both database repository contracts.
 
 ### Task 1.6: Put Google first in onboarding and synchronize the profile
 

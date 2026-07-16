@@ -54,12 +54,15 @@ _IMMUTABLE_TABLES = frozenset(
         "device_registrations",
         "external_identities",
         "identity_workspaces",
-        "identity_idempotency",
+        "device_sync_acknowledgements",
+        "outbox_events",
+        "platform_idempotency",
         "principals",
         "restore_validation_receipts",
         "scopes",
         "session_records",
         "workspace_memberships",
+        "workspace_changes",
         "web_session_bindings",
         "workspace_signing_key_versions",
     }
@@ -74,6 +77,7 @@ _DELETE_ONLY_TABLES = frozenset(
         "deployment_instance_leases",
         "deployment_instances",
         "idempotency_envelopes",
+        "workspace_sync_heads",
         "workspace_authorities",
     }
 )
@@ -431,11 +435,13 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
             )
         with pytest.raises(RuntimeError, match="oauth_session_history_present"):
             downgrade_database_url(database_url, M2_IDENTITY_CONTINUITY_REVISION)
-        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        assert current_revision_url(database_url) == M2_IDENTITY_CONTINUITY_REVISION
         with engine.begin() as connection:
             assert connection.scalar(text("SELECT COUNT(*) FROM oauth_transactions")) == 1
-            _assert_head_schema_controls(connection)
             connection.execute(text("DELETE FROM oauth_transactions"))
+        assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
+        with engine.connect() as connection:
+            _assert_head_schema_controls(connection)
         team_workspace = Workspace(
             name="PostgreSQL team-only metadata",
             workspace_kind=WorkspaceKind.TEAM,
@@ -448,7 +454,7 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
             match="identity_continuity_workspace_metadata_present",
         ):
             downgrade_database_url(database_url, M1_AUDIT_PROOF_MANIFEST_REVISION)
-        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        assert current_revision_url(database_url) == M2_IDENTITY_CONTINUITY_REVISION
         with engine.connect() as connection:
             persisted_workspace = connection.execute(
                 text(
@@ -462,13 +468,15 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
                 Workspace.model_validate_json(persisted_workspace.payload_json).workspace_kind
                 is WorkspaceKind.TEAM
             )
+        assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
+        with engine.connect() as connection:
             _assert_head_schema_controls(connection)
         _assert_postgres_identity_repository_contract(engine)
         with engine.connect() as connection:
             before_counts = _identity_history_counts(connection)
         with pytest.raises(RuntimeError, match="identity_continuity_history_present"):
             downgrade_database_url(database_url, M1_AUDIT_PROOF_MANIFEST_REVISION)
-        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        assert current_revision_url(database_url) == M2_IDENTITY_CONTINUITY_REVISION
         with engine.connect() as connection:
             after_counts = _identity_history_counts(connection)
             assert before_counts == after_counts
@@ -482,6 +490,8 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
                 )
                 == 1
             )
+        assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
+        with engine.connect() as connection:
             _assert_head_schema_controls(connection)
     finally:
         engine.dispose()

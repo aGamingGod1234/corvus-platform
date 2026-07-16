@@ -19,6 +19,7 @@ from corvus.database import M1_REGISTRY_REVISION as _M1_REGISTRY_REVISION
 from corvus.database import M1_ROOT_MANIFEST_REVISION as _M1_ROOT_MANIFEST_REVISION
 from corvus.database import M2_IDENTITY_CONTINUITY_REVISION as _M2_IDENTITY_CONTINUITY_REVISION
 from corvus.database import M2_OAUTH_SESSIONS_REVISION as _M2_OAUTH_SESSIONS_REVISION
+from corvus.database import M2_WORKSPACE_SYNC_REVISION as _M2_WORKSPACE_SYNC_REVISION
 from corvus.database import DatabaseState, classify_database
 from corvus.platform import create_platform_engine
 
@@ -33,7 +34,8 @@ M1_ROOT_MANIFEST_REVISION: Final = _M1_ROOT_MANIFEST_REVISION
 M1_AUDIT_PROOF_MANIFEST_REVISION: Final = _M1_AUDIT_PROOF_MANIFEST_REVISION
 M2_IDENTITY_CONTINUITY_REVISION: Final = _M2_IDENTITY_CONTINUITY_REVISION
 M2_OAUTH_SESSIONS_REVISION: Final = _M2_OAUTH_SESSIONS_REVISION
-M1_CURRENT_REVISION: Final = M2_OAUTH_SESSIONS_REVISION
+M2_WORKSPACE_SYNC_REVISION: Final = _M2_WORKSPACE_SYNC_REVISION
+M1_CURRENT_REVISION: Final = M2_WORKSPACE_SYNC_REVISION
 
 
 class InfrastructureDatabaseError(RuntimeError):
@@ -77,6 +79,7 @@ def upgrade_database_url(database_url: str) -> str:
         M1_ROOT_MANIFEST_REVISION,
         M1_AUDIT_PROOF_MANIFEST_REVISION,
         M2_IDENTITY_CONTINUITY_REVISION,
+        M2_OAUTH_SESSIONS_REVISION,
         M1_CURRENT_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
@@ -102,6 +105,7 @@ def downgrade_database_url(database_url: str, revision: str) -> str:
         M1_ROOT_MANIFEST_REVISION,
         M1_AUDIT_PROOF_MANIFEST_REVISION,
         M2_IDENTITY_CONTINUITY_REVISION,
+        M2_OAUTH_SESSIONS_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
     command.downgrade(_alembic_config_url(database_url), revision)
@@ -141,6 +145,7 @@ def upgrade_database(database: Path) -> str:
         M1_ROOT_MANIFEST_REVISION,
         M1_AUDIT_PROOF_MANIFEST_REVISION,
         M2_IDENTITY_CONTINUITY_REVISION,
+        M2_OAUTH_SESSIONS_REVISION,
         M1_CURRENT_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
@@ -166,6 +171,7 @@ def downgrade_database(database: Path, revision: str) -> str:
         M1_ROOT_MANIFEST_REVISION,
         M1_AUDIT_PROOF_MANIFEST_REVISION,
         M2_IDENTITY_CONTINUITY_REVISION,
+        M2_OAUTH_SESSIONS_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
     command.downgrade(_alembic_config(database), revision)

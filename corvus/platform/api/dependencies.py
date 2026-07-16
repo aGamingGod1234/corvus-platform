@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from corvus.application.oauth import OAuthClient
+from corvus.application.sync import SyncService
 from corvus.infrastructure.oauth.google import (
     GoogleOAuthClient,
     GoogleOAuthConfig,
@@ -15,6 +16,7 @@ from corvus.infrastructure.oauth.google import (
 from corvus.infrastructure.oauth.repository import OAuthTransactionRepository
 from corvus.infrastructure.repositories.accounts import AccountRepository
 from corvus.infrastructure.repositories.platform_identity import PlatformIdentityRepository
+from corvus.infrastructure.repositories.sync import SyncRepository
 from corvus.platform.config import PlatformSettings, create_platform_engine
 
 
@@ -35,6 +37,7 @@ class IdentityApiDependencies:
     accounts: AccountRepository
     platform: PlatformIdentityRepository
     oauth_client: OAuthClient
+    sync: SyncService
     public_origin: str
     session_secret: str
     clock: Callable[[], datetime]
@@ -53,6 +56,7 @@ def build_identity_dependencies(
         accounts=accounts,
         platform=PlatformIdentityRepository(accounts.engine),
         oauth_client=oauth_client,
+        sync=SyncService(SyncRepository(accounts.engine)),
         public_origin=public_origin.rstrip("/"),
         session_secret=session_secret,
         clock=clock,
@@ -89,6 +93,7 @@ def build_hosted_identity_dependencies(
         accounts=accounts,
         platform=PlatformIdentityRepository(engine),
         oauth_client=oauth_client,
+        sync=SyncService(SyncRepository(engine)),
         public_origin=hosted.public_origin,
         session_secret=settings.session_secret,
         clock=clock,

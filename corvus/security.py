@@ -9,8 +9,11 @@ import re
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
+from uuid import UUID
 
 _SENSITIVE_FIELD_TOKENS = (
     "apikey",
@@ -43,6 +46,7 @@ _SAFE_TOKEN_COUNTER_FIELDS = frozenset(
         "reasoningtokens",
         "rejectedpredictiontokens",
         "thoughtstokencount",
+        "tokencount",
         "totaltokens",
         "totaltokencount",
         "tooluseprompttokencount",
@@ -58,6 +62,110 @@ def is_sensitive_field_name(key: str) -> bool:
     if normalized in _SAFE_TOKEN_COUNTER_FIELDS:
         return False
     return any(token in normalized for token in _SENSITIVE_FIELD_TOKENS)
+
+
+def _normalize_json_value(value: Any, *, active: set[int]) -> Any:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise SecurityError("non-finite numbers are not JSON-safe")
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise SecurityError("naive datetimes are not canonical")
+        return value.astimezone(UTC).isoformat()
+    if isinstance(value, Enum):
+        return _normalize_json_value(value.value, active=active)
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active:
+            raise SecurityError("cyclic structured value rejected")
+        active.add(identity)
+        try:
+            normalized: dict[str, Any] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise SecurityError("JSON object keys must be strings")
+                normalized[key] = _normalize_json_value(item, active=active)
+            return normalized
+        finally:
+            active.remove(identity)
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in active:
+            raise SecurityError("cyclic structured value rejected")
+        active.add(identity)
+        try:
+            return [_normalize_json_value(item, active=active) for item in value]
+        finally:
+            active.remove(identity)
+    raise SecurityError(f"unsupported structured value type: {type(value).__name__}")
+
+
+def reject_sensitive_payload(value: Any) -> None:
+    """Reject secret-bearing or non-canonical client state before persistence."""
+
+    redactor = SecretRedactor()
+    active: set[int] = set()
+
+    def inspect(item: Any) -> None:
+        if isinstance(item, Enum):
+            inspect(item.value)
+            return
+        if item is None or isinstance(item, (bool, int, float, UUID, datetime)):
+            _normalize_json_value(item, active=set())
+            return
+        if isinstance(item, str):
+            if redactor.redact(item) != item:
+                raise SecurityError("sensitive payload value rejected")
+            return
+        if isinstance(item, Mapping):
+            identity = id(item)
+            if identity in active:
+                raise SecurityError("cyclic structured value rejected")
+            active.add(identity)
+            try:
+                for key, nested in item.items():
+                    if not isinstance(key, str):
+                        raise SecurityError("JSON object keys must be strings")
+                    if is_sensitive_field_name(key):
+                        raise SecurityError("sensitive payload field rejected")
+                    inspect(nested)
+            finally:
+                active.remove(identity)
+            return
+        if isinstance(item, (list, tuple)):
+            identity = id(item)
+            if identity in active:
+                raise SecurityError("cyclic structured value rejected")
+            active.add(identity)
+            try:
+                for nested in item:
+                    inspect(nested)
+            finally:
+                active.remove(identity)
+            return
+        raise SecurityError(f"unsupported structured value type: {type(item).__name__}")
+
+    inspect(value)
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """Encode supported protocol values using Corvus canonical JSON."""
+
+    normalized = _normalize_json_value(value, active=set())
+    return json.dumps(
+        normalized,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 class SecurityError(RuntimeError):
