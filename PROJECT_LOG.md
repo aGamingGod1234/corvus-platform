@@ -1136,3 +1136,22 @@
 
 ### Suggested Next Steps
 - Push a verified-account commit, confirm the Vercel author check and GitHub Actions pass, and request final review without merging the PR.
+
+## 2026-07-16 — Harden PR #4 Semgrep regression parsing
+
+### What Was Implemented
+- Replaced the order-sensitive Semgrep workflow assertion with shell-token parsing.
+- Preserved independent checks for the repository target, JSON-output option, and absence of the prior positional-output failure.
+
+### Files Modified
+- `tests/security/test_release_surface.py` — validates Semgrep arguments independently of spacing, quoting, or option order.
+- `PROJECT_LOG.md` — records the final review repair.
+
+### Assumptions Made (flag these for review)
+- The Semgrep invocation remains a single shell command line in the alpha workflow.
+
+### Known Issues / Deferred
+- PR #4 still requires an approving code-owner review under the protected-main policy after this commit.
+
+### Suggested Next Steps
+- Push the final repair, resolve the Gemini thread, wait for exact-head checks, and obtain the required code-owner approval before merge.

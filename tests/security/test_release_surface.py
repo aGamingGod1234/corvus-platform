@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,18 @@ def _workflow_trigger_block() -> str:
     return workflow.split("\non:\n", maxsplit=1)[1].split("\njobs:\n", maxsplit=1)[0]
 
 
+def _semgrep_command_arguments() -> list[str]:
+    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
+    command_line = next(
+        (line.strip() for line in workflow.splitlines() if line.lstrip().startswith("semgrep ")),
+        None,
+    )
+    if command_line is None:
+        raise AssertionError("security workflow must contain a Semgrep command")
+    command = command_line.split("||", maxsplit=1)[0].strip()
+    return shlex.split(command)
+
+
 def test_desktop_packaging_cannot_be_started_by_pull_requests() -> None:
     triggers = _workflow_trigger_block()
 
@@ -25,11 +38,13 @@ def test_desktop_packaging_cannot_be_started_by_pull_requests() -> None:
 
 
 def test_semgrep_scans_repository_and_writes_json_artifact() -> None:
-    workflow = SECURITY_SCAN_WORKFLOW.read_text(encoding="utf-8")
-    normalized_workflow = " ".join(workflow.split())
+    arguments = _semgrep_command_arguments()
 
-    assert "--json-output=semgrep.json ." in normalized_workflow
-    assert "--json semgrep.json" not in normalized_workflow
+    assert arguments[0] == "semgrep"
+    assert "." in arguments
+    assert "--json-output=semgrep.json" in arguments
+    assert "--json" not in arguments
+    assert "semgrep.json" not in arguments
 
 
 def test_hosted_alpha_keeps_a_documented_same_origin_network_policy() -> None:
