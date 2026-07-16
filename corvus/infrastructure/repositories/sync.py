@@ -10,12 +10,14 @@ from typing import Any, cast
 from uuid import UUID
 
 from alembic.runtime.migration import MigrationContext
+from pydantic import ValidationError
 from sqlalchemy import Connection, Engine, create_engine, text
 
 from corvus.database import DatabaseState, classify_database
 from corvus.domain.account import DeviceRegistration, DeviceStatus
 from corvus.domain.identity import MembershipStatus, Workspace
 from corvus.domain.sync import (
+    AccountProfile,
     AccountProfilePayload,
     SyncApplyResult,
     SyncConflictDetail,
@@ -25,10 +27,11 @@ from corvus.domain.sync import (
     SyncPage,
     SyncProtocolError,
     WorkspaceChange,
+    WorkspaceProfile,
     WorkspaceProfilePayload,
 )
 from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
-from corvus.security import canonical_json_bytes, reject_sensitive_payload
+from corvus.security import SecurityError, canonical_json_bytes, reject_sensitive_payload
 
 _GENESIS_DIGEST = "0" * 64
 _WORKSPACE_UPDATE_ROLES = frozenset({"owner", "admin", "manager"})
@@ -97,7 +100,7 @@ class SyncRepository:
         principal_id: UUID,
         device_id: UUID,
         device_version: int,
-    ) -> tuple[Workspace, str]:
+    ) -> tuple[Workspace, str, int]:
         account_principal = connection.scalar(
             text("SELECT principal_id FROM accounts WHERE id = :account_id"),
             {"account_id": str(account_id)},
@@ -119,7 +122,7 @@ class SyncRepository:
             raise SyncProtocolError("device_not_found")
         membership = connection.execute(
             text(
-                "SELECT role, status FROM workspace_memberships "
+                "SELECT role, status, version FROM workspace_memberships "
                 "WHERE workspace_id = :workspace_id AND principal_id = :principal_id "
                 "ORDER BY version DESC LIMIT 1"
             ),
@@ -136,7 +139,11 @@ class SyncRepository:
         )
         if workspace_payload is None:
             raise SyncProtocolError("workspace_not_found")
-        return Workspace.model_validate_json(workspace_payload), str(membership[0]).casefold()
+        return (
+            Workspace.model_validate_json(workspace_payload),
+            str(membership[0]).casefold(),
+            int(membership[2]),
+        )
 
     @staticmethod
     def _lock_workspace_profile(connection: Connection, workspace_id: UUID) -> None:
@@ -199,8 +206,9 @@ class SyncRepository:
             return 0, 0, _GENESIS_DIGEST, 0
         return int(row[0]), int(row[1]), str(row[2]), int(row[3])
 
-    @staticmethod
+    @classmethod
     def _validate_head_tail(
+        cls,
         connection: Connection,
         *,
         workspace_id: UUID,
@@ -211,15 +219,31 @@ class SyncRepository:
             if chain_digest != _GENESIS_DIGEST:
                 raise SyncProtocolError("sync_change_integrity_invalid")
             return
-        tail_digest = connection.scalar(
+        tail = connection.execute(
             text(
-                "SELECT change_digest FROM workspace_changes "
+                "SELECT workspace_id, workspace_version, sequence, previous_digest, "
+                "change_digest, kind, operation, entity_id, entity_version, payload_json, "
+                "account_id, principal_id, membership_version, device_id, device_version, "
+                "created_at FROM workspace_changes "
                 "WHERE workspace_id = :workspace_id AND sequence = :sequence"
             ),
             {"workspace_id": str(workspace_id), "sequence": current_sequence},
-        )
-        if tail_digest != chain_digest:
+        ).one_or_none()
+        if tail is None or tail.change_digest != chain_digest:
             raise SyncProtocolError("sync_change_integrity_invalid")
+        if current_sequence == 1:
+            expected_previous = _GENESIS_DIGEST
+        else:
+            expected_previous = connection.scalar(
+                text(
+                    "SELECT change_digest FROM workspace_changes "
+                    "WHERE workspace_id = :workspace_id AND sequence = :sequence"
+                ),
+                {"workspace_id": str(workspace_id), "sequence": current_sequence - 1},
+            )
+            if expected_previous is None:
+                raise SyncProtocolError("sync_change_integrity_invalid")
+        cls._validated_change(tail, str(expected_previous))
 
     @staticmethod
     def _latest_ack(connection: Connection, workspace_id: UUID, device_id: UUID) -> tuple[int, int]:
@@ -240,6 +264,8 @@ class SyncRepository:
         *,
         workspace: Workspace,
         account_id: UUID,
+        principal_id: UUID,
+        membership_version: int,
         device_id: UUID,
         device_version: int,
         acknowledged_cursor: int,
@@ -256,8 +282,9 @@ class SyncRepository:
                 text(
                     "INSERT INTO device_sync_acknowledgements "
                     "(workspace_id, workspace_version, device_id, version, account_id, "
-                    "device_version, acknowledged_sequence, created_at) VALUES "
-                    "(:workspace_id, :workspace_version, :device_id, :version, :account_id, "
+                    "principal_id, membership_version, device_version, acknowledged_sequence, "
+                    "created_at) VALUES (:workspace_id, :workspace_version, :device_id, "
+                    ":version, :account_id, :principal_id, :membership_version, "
                     ":device_version, :acknowledged_sequence, :created_at)"
                 ),
                 {
@@ -266,6 +293,8 @@ class SyncRepository:
                     "device_id": str(device_id),
                     "version": version + 1,
                     "account_id": str(account_id),
+                    "principal_id": str(principal_id),
+                    "membership_version": membership_version,
                     "device_version": device_version,
                     "acknowledged_sequence": acknowledged_cursor,
                     "created_at": now.isoformat(),
@@ -284,13 +313,17 @@ class SyncRepository:
         *,
         workspace_id: UUID,
         account_id: UUID,
+        principal_id: UUID,
+        membership_version: int,
         device_id: UUID,
+        device_version: int,
         mutation: SyncMutation,
         request_digest: str,
     ) -> SyncMutationResult | None:
         row = connection.execute(
             text(
-                "SELECT request_digest, result_json FROM platform_idempotency "
+                "SELECT request_digest, result_json, principal_id, membership_version, "
+                "device_version FROM platform_idempotency "
                 "WHERE account_id = :account_id AND scope_key = :scope_key "
                 "AND operation = :operation AND idempotency_key = :idempotency_key "
                 "AND workspace_id = :workspace_id AND device_id = :device_id"
@@ -306,7 +339,12 @@ class SyncRepository:
         ).one_or_none()
         if row is None:
             return None
-        if row[0] != request_digest:
+        if (
+            row[0] != request_digest
+            or row[2] != str(principal_id)
+            or int(row[3]) != membership_version
+            or int(row[4]) != device_version
+        ):
             raise SyncProtocolError("idempotency_payload_mismatch")
         try:
             return SyncMutationResult.model_validate_json(row[1])
@@ -320,6 +358,8 @@ class SyncRepository:
         *,
         workspace: Workspace,
         account_id: UUID,
+        principal_id: UUID,
+        membership_version: int,
         device_id: UUID,
         device_version: int,
         mutation: SyncMutation,
@@ -330,17 +370,20 @@ class SyncRepository:
         connection.execute(
             text(
                 "INSERT INTO platform_idempotency "
-                "(account_id, scope_key, workspace_id, workspace_version, device_id, "
-                "device_version, operation, idempotency_key, request_digest, result_json, "
-                "created_at) VALUES (:account_id, :scope_key, :workspace_id, "
-                ":workspace_version, :device_id, :device_version, :operation, "
-                ":idempotency_key, :request_digest, :result_json, :created_at)"
+                "(account_id, principal_id, scope_key, workspace_id, workspace_version, "
+                "membership_version, device_id, device_version, operation, idempotency_key, "
+                "request_digest, result_json, created_at) VALUES (:account_id, :principal_id, "
+                ":scope_key, :workspace_id, :workspace_version, :membership_version, "
+                ":device_id, :device_version, :operation, :idempotency_key, :request_digest, "
+                ":result_json, :created_at)"
             ),
             {
                 "account_id": str(account_id),
+                "principal_id": str(principal_id),
                 "scope_key": cls._idempotency_scope(workspace.id, device_id),
                 "workspace_id": str(workspace.id),
                 "workspace_version": workspace.version,
+                "membership_version": membership_version,
                 "device_id": str(device_id),
                 "device_version": device_version,
                 "operation": f"{mutation.kind}.{mutation.operation}",
@@ -491,6 +534,7 @@ class SyncRepository:
         profile: dict[str, Any],
         account_id: UUID,
         principal_id: UUID,
+        membership_version: int,
         device_id: UUID,
         device_version: int,
         now: datetime,
@@ -507,6 +551,7 @@ class SyncRepository:
             "payload": profile,
             "account_id": account_id,
             "principal_id": principal_id,
+            "membership_version": membership_version,
             "device_id": device_id,
             "device_version": device_version,
             "created_at": now,
@@ -518,10 +563,11 @@ class SyncRepository:
                 "INSERT INTO workspace_changes "
                 "(workspace_id, workspace_version, sequence, previous_digest, change_digest, "
                 "kind, operation, entity_id, entity_version, payload_json, account_id, "
-                "principal_id, device_id, device_version, created_at) VALUES (:workspace_id, "
+                "principal_id, membership_version, device_id, device_version, created_at) "
+                "VALUES (:workspace_id, "
                 ":workspace_version, :sequence, :previous_digest, :change_digest, :kind, "
                 ":operation, :entity_id, :entity_version, :payload_json, :account_id, "
-                ":principal_id, :device_id, :device_version, :created_at)"
+                ":principal_id, :membership_version, :device_id, :device_version, :created_at)"
             ),
             {
                 "workspace_id": str(workspace.id),
@@ -536,9 +582,10 @@ class SyncRepository:
                 "payload_json": payload_json,
                 "account_id": str(account_id),
                 "principal_id": str(principal_id),
+                "membership_version": membership_version,
                 "device_id": str(device_id),
                 "device_version": device_version,
-                "created_at": now.isoformat(),
+                "created_at": json.loads(canonical_json_bytes(now)),
             },
         )
         event = {**body, "change_digest": digest}
@@ -557,6 +604,11 @@ class SyncRepository:
                 "created_at": now.isoformat(),
             },
         )
+        profile_model: AccountProfile | WorkspaceProfile
+        if mutation.kind == "account_profile":
+            profile_model = AccountProfile.model_validate(profile)
+        else:
+            profile_model = WorkspaceProfile.model_validate(profile)
         return (
             SyncMutationResult(
                 idempotency_key=mutation.idempotency_key,
@@ -565,7 +617,7 @@ class SyncRepository:
                 entity_id=mutation.entity_id,
                 entity_version=cast(int, profile["version"]),
                 sequence=sequence,
-                profile=profile,
+                profile=profile_model,
             ),
             digest,
         )
@@ -596,7 +648,7 @@ class SyncRepository:
             self._lock_workspace_profile(connection, workspace_id)
             if any(mutation.kind == "account_profile" for mutation in mutations):
                 self._lock_account_profile(connection, account_id)
-            workspace, role = self._authorize(
+            workspace, role, membership_version = self._authorize(
                 connection,
                 workspace_id=workspace_id,
                 account_id=account_id,
@@ -611,11 +663,19 @@ class SyncRepository:
                 sequence, _retention_floor, chain_digest, head_version = self._head(
                     connection, workspace=workspace, now=now, create=True
                 )
+            self._validate_head_tail(
+                connection,
+                workspace_id=workspace_id,
+                current_sequence=sequence,
+                chain_digest=chain_digest,
+            )
             initial_sequence = sequence
             acknowledged = self._acknowledge(
                 connection,
                 workspace=workspace,
                 account_id=account_id,
+                principal_id=principal_id,
+                membership_version=membership_version,
                 device_id=device_id,
                 device_version=device_version,
                 acknowledged_cursor=acknowledged_cursor,
@@ -630,6 +690,7 @@ class SyncRepository:
                             "workspace_id": workspace_id,
                             "account_id": account_id,
                             "principal_id": principal_id,
+                            "membership_version": membership_version,
                             "device_id": device_id,
                             "device_version": device_version,
                             "mutation": mutation.model_dump(mode="python"),
@@ -640,7 +701,10 @@ class SyncRepository:
                     connection,
                     workspace_id=workspace_id,
                     account_id=account_id,
+                    principal_id=principal_id,
+                    membership_version=membership_version,
                     device_id=device_id,
+                    device_version=device_version,
                     mutation=mutation,
                     request_digest=request_digest,
                 )
@@ -666,6 +730,7 @@ class SyncRepository:
                     profile=profile,
                     account_id=account_id,
                     principal_id=principal_id,
+                    membership_version=membership_version,
                     device_id=device_id,
                     device_version=device_version,
                     now=now,
@@ -674,6 +739,8 @@ class SyncRepository:
                     connection,
                     workspace=workspace,
                     account_id=account_id,
+                    principal_id=principal_id,
+                    membership_version=membership_version,
                     device_id=device_id,
                     device_version=device_version,
                     mutation=mutation,
@@ -704,50 +771,104 @@ class SyncRepository:
     @classmethod
     def _validated_change(cls, row: Any, expected_previous: str | None) -> WorkspaceChange:
         try:
-            payload = json.loads(row.payload_json)
+
+            def reject_constant(_value: str) -> None:
+                raise ValueError("payload_nonfinite")
+
+            def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                result: dict[str, Any] = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("payload_duplicate_key")
+                    result[key] = value
+                return result
+
+            if not isinstance(row.payload_json, str):
+                raise ValueError("payload_not_text")
+            payload = json.loads(
+                row.payload_json,
+                object_pairs_hook=unique_object,
+                parse_constant=reject_constant,
+            )
             if not isinstance(payload, dict):
                 raise ValueError("payload_not_object")
+            if canonical_json_bytes(payload).decode("utf-8") != row.payload_json:
+                raise ValueError("payload_not_canonical")
+            reject_sensitive_payload(payload)
+            if row.kind == "account_profile" and row.operation == "set_experience":
+                profile: AccountProfile | WorkspaceProfile = AccountProfile.model_validate(payload)
+            elif row.kind == "workspace_profile" and row.operation == "update":
+                profile = WorkspaceProfile.model_validate(payload)
+            else:
+                raise ValueError("change_kind_operation_invalid")
+            typed_payload = profile.model_dump(mode="json")
+            if typed_payload != payload:
+                raise ValueError("profile_not_canonical")
             if (
-                payload.get("entity_id") != row.entity_id
-                or payload.get("version") != row.entity_version
+                typed_payload["entity_id"] != row.entity_id
+                or typed_payload["version"] != row.entity_version
             ):
                 raise ValueError("payload_column_mismatch")
+            workspace_id = UUID(row.workspace_id)
+            entity_id = UUID(row.entity_id)
+            account_id = UUID(row.account_id)
+            principal_id = UUID(row.principal_id)
+            device_id = UUID(row.device_id)
+            if any(
+                canonical != raw
+                for canonical, raw in (
+                    (str(workspace_id), row.workspace_id),
+                    (str(entity_id), row.entity_id),
+                    (str(account_id), row.account_id),
+                    (str(principal_id), row.principal_id),
+                    (str(device_id), row.device_id),
+                )
+            ):
+                raise ValueError("identifier_not_canonical")
+            created_at = datetime.fromisoformat(row.created_at)
+            canonical_created_at = json.loads(canonical_json_bytes(created_at))
+            if canonical_created_at != row.created_at:
+                raise ValueError("created_at_not_canonical")
             body = {
-                "workspace_id": UUID(row.workspace_id),
+                "workspace_id": workspace_id,
                 "workspace_version": row.workspace_version,
                 "sequence": row.sequence,
                 "previous_digest": row.previous_digest,
                 "kind": row.kind,
                 "operation": row.operation,
-                "entity_id": UUID(row.entity_id),
+                "entity_id": entity_id,
                 "entity_version": row.entity_version,
-                "payload": payload,
-                "account_id": UUID(row.account_id),
-                "principal_id": UUID(row.principal_id),
-                "device_id": UUID(row.device_id),
+                "payload": typed_payload,
+                "account_id": account_id,
+                "principal_id": principal_id,
+                "membership_version": row.membership_version,
+                "device_id": device_id,
                 "device_version": row.device_version,
-                "created_at": datetime.fromisoformat(row.created_at),
+                "created_at": created_at,
             }
             if cls._change_digest(body) != row.change_digest:
                 raise ValueError("change_digest_mismatch")
             if expected_previous is not None and row.previous_digest != expected_previous:
                 raise ValueError("change_chain_mismatch")
             return WorkspaceChange(
-                workspace_id=UUID(row.workspace_id),
+                workspace_id=workspace_id,
+                workspace_version=row.workspace_version,
                 sequence=row.sequence,
                 previous_digest=row.previous_digest,
                 change_digest=row.change_digest,
                 kind=row.kind,
                 operation=row.operation,
-                entity_id=UUID(row.entity_id),
+                entity_id=entity_id,
                 entity_version=row.entity_version,
-                payload=payload,
-                account_id=UUID(row.account_id),
-                principal_id=UUID(row.principal_id),
-                device_id=UUID(row.device_id),
-                created_at=datetime.fromisoformat(row.created_at),
+                payload=profile,
+                account_id=account_id,
+                principal_id=principal_id,
+                membership_version=row.membership_version,
+                device_id=device_id,
+                device_version=row.device_version,
+                created_at=created_at,
             )
-        except (TypeError, ValueError, KeyError) as exc:
+        except (SecurityError, ValidationError, TypeError, ValueError, KeyError) as exc:
             raise SyncProtocolError("sync_change_integrity_invalid") from exc
 
     def page(
@@ -762,7 +883,7 @@ class SyncRepository:
         limit: int,
     ) -> SyncPage:
         with self._read_transaction() as connection:
-            workspace, _role = self._authorize(
+            workspace, _role, _membership_version = self._authorize(
                 connection,
                 workspace_id=workspace_id,
                 account_id=account_id,
@@ -801,7 +922,8 @@ class SyncRepository:
                 text(
                     "SELECT workspace_id, workspace_version, sequence, previous_digest, "
                     "change_digest, kind, operation, entity_id, entity_version, payload_json, "
-                    "account_id, principal_id, device_id, device_version, created_at "
+                    "account_id, principal_id, membership_version, device_id, device_version, "
+                    "created_at "
                     "FROM workspace_changes WHERE workspace_id = :workspace_id "
                     "AND sequence > :cursor AND sequence <= :high_watermark "
                     "ORDER BY sequence LIMIT :limit"

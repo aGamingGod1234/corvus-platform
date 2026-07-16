@@ -138,12 +138,20 @@ def _insert_manifest(bind: sa.Connection) -> None:
 
 
 def upgrade() -> None:
+    op.create_index(
+        "uq_accounts_id_principal",
+        "accounts",
+        ["id", "principal_id"],
+        unique=True,
+    )
     op.create_table(
         "platform_idempotency",
         sa.Column("account_id", sa.String(length=36), nullable=False),
+        sa.Column("principal_id", sa.String(length=36), nullable=True),
         sa.Column("scope_key", sa.String(length=200), nullable=False),
         sa.Column("workspace_id", sa.String(length=36), nullable=True),
         sa.Column("workspace_version", sa.Integer(), nullable=True),
+        sa.Column("membership_version", sa.Integer(), nullable=True),
         sa.Column("device_id", sa.String(length=36), nullable=True),
         sa.Column("device_version", sa.Integer(), nullable=True),
         sa.Column("operation", sa.String(length=64), nullable=False),
@@ -152,10 +160,12 @@ def upgrade() -> None:
         sa.Column("result_json", sa.Text(), nullable=False),
         sa.Column("created_at", sa.String(length=40), nullable=False),
         sa.CheckConstraint(
-            "(scope_key = 'account' AND workspace_id IS NULL AND workspace_version IS NULL "
+            "(scope_key = 'account' AND principal_id IS NULL AND workspace_id IS NULL "
+            "AND workspace_version IS NULL AND membership_version IS NULL "
             "AND device_id IS NULL AND device_version IS NULL) OR "
             "(scope_key = workspace_id || ':' || device_id AND workspace_id IS NOT NULL "
-            "AND workspace_version IS NOT NULL AND device_id IS NOT NULL "
+            "AND workspace_version IS NOT NULL AND principal_id IS NOT NULL "
+            "AND membership_version IS NOT NULL AND device_id IS NOT NULL "
             "AND device_version IS NOT NULL)",
             name="ck_platform_idempotency_scope",
         ),
@@ -167,7 +177,26 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["account_id"], ["accounts.id"], name="fk_platform_idempotency_account"
+            ["account_id"],
+            ["accounts.id"],
+            name="fk_platform_idempotency_account",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["account_id", "principal_id"],
+            ["accounts.id", "accounts.principal_id"],
+            name="fk_platform_idempotency_account_principal",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["workspace_id", "principal_id", "membership_version"],
+            [
+                "workspace_memberships.workspace_id",
+                "workspace_memberships.principal_id",
+                "workspace_memberships.version",
+            ],
+            name="fk_platform_idempotency_membership",
+            ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["device_id", "device_version", "account_id"],
@@ -235,6 +264,7 @@ def upgrade() -> None:
         sa.Column("payload_json", sa.Text(), nullable=False),
         sa.Column("account_id", sa.String(length=36), nullable=False),
         sa.Column("principal_id", sa.String(length=36), nullable=False),
+        sa.Column("membership_version", sa.Integer(), nullable=False),
         sa.Column("device_id", sa.String(length=36), nullable=False),
         sa.Column("device_version", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.String(length=40), nullable=False),
@@ -250,6 +280,20 @@ def upgrade() -> None:
             ["workspace_id", "workspace_version"],
             ["identity_workspaces.id", "identity_workspaces.version"],
             name="fk_workspace_change_workspace",
+        ),
+        sa.ForeignKeyConstraint(
+            ["workspace_id", "principal_id", "membership_version"],
+            [
+                "workspace_memberships.workspace_id",
+                "workspace_memberships.principal_id",
+                "workspace_memberships.version",
+            ],
+            name="fk_workspace_change_membership",
+        ),
+        sa.ForeignKeyConstraint(
+            ["account_id", "principal_id"],
+            ["accounts.id", "accounts.principal_id"],
+            name="fk_workspace_change_account_principal",
         ),
         sa.ForeignKeyConstraint(
             ["device_id", "device_version", "account_id"],
@@ -298,6 +342,8 @@ def upgrade() -> None:
         sa.Column("device_id", sa.String(length=36), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("account_id", sa.String(length=36), nullable=False),
+        sa.Column("principal_id", sa.String(length=36), nullable=False),
+        sa.Column("membership_version", sa.Integer(), nullable=False),
         sa.Column("device_version", sa.Integer(), nullable=False),
         sa.Column("acknowledged_sequence", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.String(length=40), nullable=False),
@@ -307,6 +353,20 @@ def upgrade() -> None:
             ["workspace_id", "workspace_version"],
             ["identity_workspaces.id", "identity_workspaces.version"],
             name="fk_device_sync_ack_workspace",
+        ),
+        sa.ForeignKeyConstraint(
+            ["workspace_id", "principal_id", "membership_version"],
+            [
+                "workspace_memberships.workspace_id",
+                "workspace_memberships.principal_id",
+                "workspace_memberships.version",
+            ],
+            name="fk_device_sync_ack_membership",
+        ),
+        sa.ForeignKeyConstraint(
+            ["account_id", "principal_id"],
+            ["accounts.id", "accounts.principal_id"],
+            name="fk_device_sync_ack_account_principal",
         ),
         sa.ForeignKeyConstraint(
             ["device_id", "device_version", "account_id"],
@@ -388,3 +448,4 @@ def downgrade() -> None:
     create_immutable_triggers("identity_idempotency", "identity idempotency records")
     drop_immutable_triggers("platform_idempotency")
     op.drop_table("platform_idempotency")
+    op.drop_index("uq_accounts_id_principal", table_name="accounts")

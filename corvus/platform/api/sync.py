@@ -131,7 +131,7 @@ def create_sync_router(dependencies: IdentityApiDependencies | None) -> APIRoute
             )
         except SecurityError:
             raise _sync_error(
-                "sync_payload_rejected", status.HTTP_422_UNPROCESSABLE_ENTITY
+                "sync_payload_rejected", status.HTTP_422_UNPROCESSABLE_CONTENT
             ) from None
         except SyncProtocolError as exc:
             raise _map_sync_error(exc) from None

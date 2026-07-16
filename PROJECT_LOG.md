@@ -1520,3 +1520,31 @@
 ### Suggested Next Steps
 - Run the guarded PostgreSQL contracts against the approved disposable service for live row-lock and DDL evidence.
 - Review the Task 1.5 commit before authorizing Task 1.6 onboarding and client sync work.
+
+## 2026-07-16 — Harden Task 1.5 independent review findings
+
+### What Was Implemented
+- Validated the locked workspace head and fully recomputed its typed canonical tail before every apply-path acknowledgement, replay, entity, outbox, or idempotency write; forged, missing, and broken previous-link tails now fail atomically with `sync_change_integrity_invalid`.
+- Required exact canonical payload bytes, duplicate-free finite JSON, timezone-aware canonical timestamps, closed profile schemas, kind/operation coherence, recursive sensitive-value rejection, and stable integrity-error mapping even when a page is empty at the high watermark.
+- Added one value-free `RequestValidationError` boundary for malformed or rejected requests: v2 returns only a stable code and correlation ID, while legacy routes retain a stable value-free envelope.
+- Bound sync changes, acknowledgements, and scoped idempotency rows to the exact account/principal pair and current workspace membership version while retaining workspace/version, device/account, and account-scope foreign keys.
+- Included membership version in request/change hashes, outbox evidence, replay authority checks, and returned change provenance; generalized schema classification now also requires the Task 1.5 account/principal unique index.
+- Added adversarial apply/replay/ack rollback, empty-page tail, canonical JSON, typed-profile, secret/nonfinite/naive-time, API canary, migration, direct SQLite transplant, offline PostgreSQL DDL, and guarded PostgreSQL transplant coverage.
+
+### Files Modified
+- `corvus/infrastructure/repositories/sync.py` — performs pre-write head/tail integrity checks, typed canonical read validation, stable replay authority checks, and exact membership provenance persistence.
+- `corvus/infrastructure/migrations/versions/m2_002_workspace_sync.py` and `corvus/database.py` — add and classify exact membership/account-principal constraints and safely remove the supporting index on downgrade.
+- `corvus/domain/sync.py` — adds closed account/workspace profile contracts and workspace, membership, and device provenance to changes.
+- `corvus/mvp/api.py` and `corvus/platform/api/sync.py` — provide value-free request validation responses and use the non-deprecated 422 status alias.
+- `tests/integration/test_sync_repository.py`, `tests/security/test_sync_replay.py`, and `tests/integration/test_sync_migration.py` — reproduce and prevent every confirmed review finding across repository, API, SQLite, PostgreSQL-guarded, and offline-DDL boundaries.
+
+### Assumptions Made (flag these for review)
+- None. The four repair areas, exact binding requirements, required adversarial cases, stop boundary, separate-commit requirement, and no-push boundary came directly from the confirmed independent review.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL migration contract and three guarded sync PostgreSQL cases remain locally skipped before engine creation because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; their exact FK, DDL, and row-lock assertions are retained.
+- The original Task 1.5 scope guard still defers SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment.
+
+### Suggested Next Steps
+- Run the four guarded PostgreSQL cases against the approved disposable service for live constraint and lock evidence.
+- Re-review the separate Task 1.5 hardening commit before authorizing Task 1.6.

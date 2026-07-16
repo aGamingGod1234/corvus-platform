@@ -931,6 +931,7 @@ M2_WORKSPACE_SYNC_REQUIRED_COLUMNS = {
             "payload_json",
             "account_id",
             "principal_id",
+            "membership_version",
             "device_id",
             "device_version",
             "created_at",
@@ -953,6 +954,8 @@ M2_WORKSPACE_SYNC_REQUIRED_COLUMNS = {
             "device_id",
             "version",
             "account_id",
+            "principal_id",
+            "membership_version",
             "device_version",
             "acknowledged_sequence",
             "created_at",
@@ -961,9 +964,11 @@ M2_WORKSPACE_SYNC_REQUIRED_COLUMNS = {
     "platform_idempotency": frozenset(
         {
             "account_id",
+            "principal_id",
             "scope_key",
             "workspace_id",
             "workspace_version",
+            "membership_version",
             "device_id",
             "device_version",
             "operation",
@@ -1287,7 +1292,22 @@ def _m2_workspace_sync_controls_match(connection: sqlite3.Connection) -> bool:
             "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
         )
     )
-    return M2_WORKSPACE_SYNC_TRIGGERS.issubset(triggers)
+    account_binding_index = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'uq_accounts_id_principal'"
+    ).fetchone()
+    normalized_index = (
+        ""
+        if account_binding_index is None
+        else " ".join(str(account_binding_index[0] or "").casefold().split())
+    )
+    return M2_WORKSPACE_SYNC_TRIGGERS.issubset(triggers) and all(
+        fragment in normalized_index
+        for fragment in (
+            "create unique index",
+            "on accounts",
+            "id, principal_id",
+        )
+    )
 
 
 @contextmanager

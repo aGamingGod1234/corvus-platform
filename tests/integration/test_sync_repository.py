@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from corvus.application.sync import SyncService
 from corvus.domain.account import Account, DeviceRegistration, ExperienceKind
-from corvus.domain.identity import Principal, PrincipalKind, WorkspaceKind
+from corvus.domain.identity import Principal, PrincipalKind, WorkspaceKind, WorkspaceMembership
 from corvus.domain.sync import SyncConflictError, SyncMutation, SyncProtocolError
 from corvus.infrastructure.db import M1_CURRENT_REVISION, upgrade_database, upgrade_database_url
 from corvus.infrastructure.repositories.accounts import AccountRepository
+from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
 from corvus.infrastructure.repositories.platform_identity import (
     PlatformIdentityRepository,
     PlatformIdentityRepositoryError,
@@ -27,6 +29,40 @@ from corvus.store import TraceStore
 from tests.postgres_safety import PostgresTestSafetyError, validate_disposable_postgres_url
 
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+_SYNC_COUNT_STATEMENTS = {
+    "account_onboarding_versions": "SELECT COUNT(*) FROM account_onboarding_versions",
+    "workspace_changes": "SELECT COUNT(*) FROM workspace_changes",
+    "outbox_events": "SELECT COUNT(*) FROM outbox_events",
+    "device_sync_acknowledgements": "SELECT COUNT(*) FROM device_sync_acknowledgements",
+    "platform_idempotency": "SELECT COUNT(*) FROM platform_idempotency",
+}
+_SYNC_TRANSPLANT_STATEMENTS = {
+    "platform_idempotency": (
+        "INSERT INTO platform_idempotency "
+        "(account_id, principal_id, scope_key, workspace_id, workspace_version, "
+        "membership_version, device_id, device_version, operation, idempotency_key, "
+        "request_digest, result_json, created_at) VALUES (:account_id, :principal_id, "
+        ":scope_key, :workspace_id, :workspace_version, :membership_version, :device_id, "
+        ":device_version, 'account_profile.set_experience', 'transplant', :digest, '{}', "
+        ":created_at)"
+    ),
+    "workspace_changes": (
+        "INSERT INTO workspace_changes "
+        "(workspace_id, workspace_version, sequence, previous_digest, change_digest, kind, "
+        "operation, entity_id, entity_version, payload_json, account_id, principal_id, "
+        "membership_version, device_id, device_version, created_at) VALUES (:workspace_id, "
+        ":workspace_version, 1, :genesis, :digest, 'account_profile', 'set_experience', "
+        ":account_id, 2, '{}', :account_id, :principal_id, :membership_version, "
+        ":device_id, :device_version, :created_at)"
+    ),
+    "device_sync_acknowledgements": (
+        "INSERT INTO device_sync_acknowledgements "
+        "(workspace_id, workspace_version, device_id, version, account_id, principal_id, "
+        "membership_version, device_version, acknowledged_sequence, created_at) VALUES "
+        "(:workspace_id, :workspace_version, :device_id, 1, :account_id, :principal_id, "
+        ":membership_version, :device_version, 1, :created_at)"
+    ),
+}
 
 
 def _database(tmp_path: Path) -> Path:
@@ -34,6 +70,13 @@ def _database(tmp_path: Path) -> Path:
     TraceStore(database).engine.dispose()
     assert upgrade_database(database) == M1_CURRENT_REVISION
     return database
+
+
+def _sync_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    return {
+        table: connection.execute(statement).fetchone()[0]
+        for table, statement in _SYNC_COUNT_STATEMENTS.items()
+    }
 
 
 def _identity(
@@ -222,6 +265,7 @@ def test_atomic_batch_appends_ordered_changes_outbox_and_versioned_ack(tmp_path:
     assert page.next_cursor == 1 and page.has_more is True
     assert second.next_cursor == 2 and second.has_more is False
     assert [change.sequence for change in (*page.changes, *second.changes)] == [1, 2]
+    assert {change.membership_version for change in (*page.changes, *second.changes)} == {1}
     assert acknowledged.acknowledged_cursor == 2
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM outbox_events").fetchone() == (2,)
@@ -282,6 +326,42 @@ def test_idempotent_replay_returns_original_results_without_new_rows(tmp_path: P
         assert connection.execute("SELECT COUNT(*) FROM workspace_changes").fetchone() == (1,)
         assert connection.execute("SELECT COUNT(*) FROM outbox_events").fetchone() == (1,)
         assert connection.execute("SELECT COUNT(*) FROM platform_idempotency").fetchone() == (2,)
+
+
+def test_replay_key_is_stably_rejected_after_membership_version_changes(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix="membership-replay")
+    service = SyncService(SyncRepository(database))
+    mutation = _account_mutation(account, key="membership-bound")
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(mutation,),
+    )
+    IdentityScopeRepository(database).append_membership(
+        WorkspaceMembership(
+            workspace_id=workspace.id,
+            principal_id=principal.id,
+            role="owner",
+            version=2,
+            created_at=_NOW,
+            updated_at=_NOW + timedelta(seconds=1),
+        )
+    )
+
+    with pytest.raises(SyncProtocolError, match="idempotency_payload_mismatch"):
+        _apply(
+            service,
+            account=account,
+            principal=principal,
+            device=device,
+            workspace=workspace,
+            mutations=(mutation,),
+            now=_NOW + timedelta(seconds=2),
+        )
 
 
 def test_same_key_different_request_and_version_conflict_abort_whole_batch(tmp_path: Path) -> None:
@@ -700,6 +780,291 @@ def test_read_detects_non_genesis_digest_at_zero_sequence(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize("apply_kind", ["mutation", "ack_only", "replay_only"])
+def test_apply_validates_existing_tail_before_any_write_or_replay(
+    tmp_path: Path,
+    apply_kind: str,
+) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix=f"apply-tail-{apply_kind}")
+    service = SyncService(SyncRepository(database))
+    original = _account_mutation(account, key="original")
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(original,),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE workspace_sync_heads SET current_sequence = 2, chain_digest = ? "
+            "WHERE workspace_id = ?",
+            ("b" * 64, str(workspace.id)),
+        )
+        before = _sync_counts(connection)
+
+    mutations = {
+        "mutation": (_account_mutation(account, key="new", version=2),),
+        "ack_only": (),
+        "replay_only": (original,),
+    }[apply_kind]
+    acknowledged_cursor = 1 if apply_kind == "ack_only" else 0
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        _apply(
+            service,
+            account=account,
+            principal=principal,
+            device=device,
+            workspace=workspace,
+            mutations=mutations,
+            acknowledged_cursor=acknowledged_cursor,
+            now=_NOW + timedelta(seconds=1),
+        )
+
+    with sqlite3.connect(database) as connection:
+        after = _sync_counts(connection)
+        profile_version = connection.execute(
+            "SELECT MAX(version) FROM account_onboarding_versions WHERE account_id = ?",
+            (str(account.id),),
+        ).fetchone()[0]
+    assert after == before
+    assert profile_version == 2
+
+
+def _rewrite_tail_change(
+    database: Path,
+    *,
+    workspace_id: object,
+    payload_json: str | None = None,
+    kind: str | None = None,
+    operation: str | None = None,
+    created_at: str | None = None,
+    previous_digest: str | None = None,
+    recompute_digest: bool = False,
+) -> None:
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("DROP TRIGGER workspace_changes_no_update")
+        row = connection.execute(
+            "SELECT * FROM workspace_changes WHERE workspace_id = ? ORDER BY sequence DESC LIMIT 1",
+            (str(workspace_id),),
+        ).fetchone()
+        assert row is not None
+        updated = dict(row)
+        updated["payload_json"] = payload_json or str(row["payload_json"])
+        updated["kind"] = kind or str(row["kind"])
+        updated["operation"] = operation or str(row["operation"])
+        updated["created_at"] = created_at or str(row["created_at"])
+        updated["previous_digest"] = previous_digest or str(row["previous_digest"])
+        digest = str(row["change_digest"])
+        if recompute_digest:
+            body = {
+                "workspace_id": UUID(str(row["workspace_id"])),
+                "workspace_version": int(row["workspace_version"]),
+                "sequence": int(row["sequence"]),
+                "previous_digest": updated["previous_digest"],
+                "kind": updated["kind"],
+                "operation": updated["operation"],
+                "entity_id": UUID(str(row["entity_id"])),
+                "entity_version": int(row["entity_version"]),
+                "payload": json.loads(updated["payload_json"]),
+                "account_id": UUID(str(row["account_id"])),
+                "principal_id": UUID(str(row["principal_id"])),
+                "device_id": UUID(str(row["device_id"])),
+                "device_version": int(row["device_version"]),
+                "created_at": datetime.fromisoformat(updated["created_at"]),
+            }
+            if "membership_version" in row.keys():
+                body["membership_version"] = int(row["membership_version"])
+            digest = SyncRepository._change_digest(body)
+        connection.execute(
+            "UPDATE workspace_changes SET payload_json = ?, kind = ?, operation = ?, "
+            "created_at = ?, previous_digest = ?, change_digest = ? "
+            "WHERE workspace_id = ? AND sequence = ?",
+            (
+                updated["payload_json"],
+                updated["kind"],
+                updated["operation"],
+                updated["created_at"],
+                updated["previous_digest"],
+                digest,
+                str(workspace_id),
+                int(row["sequence"]),
+            ),
+        )
+        connection.execute(
+            "UPDATE workspace_sync_heads SET chain_digest = ? WHERE workspace_id = ?",
+            (digest, str(workspace_id)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("tamper", "cursor"),
+    [
+        ("noncanonical", 0),
+        ("duplicate", 0),
+        ("nonfinite", 1),
+        ("naive_time", 1),
+        ("secret", 0),
+        ("extra_profile_field", 0),
+        ("kind_profile_mismatch", 0),
+    ],
+)
+def test_read_rejects_noncanonical_untyped_or_sensitive_tail_rows(
+    tmp_path: Path,
+    tamper: str,
+    cursor: int,
+) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix=f"read-{tamper}")
+    service = SyncService(SyncRepository(database))
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(_account_mutation(account, key="tail"),),
+    )
+    canonical = f'{{"entity_id":"{account.id}","experience_kind":"developer","version":2}}'
+    if tamper == "noncanonical":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            payload_json=f'{{ "version": 2, "experience_kind": "developer", "entity_id": "{account.id}" }}',
+        )
+    elif tamper == "duplicate":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            payload_json=canonical[:-1] + ',"version":2}',
+        )
+    elif tamper == "nonfinite":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            payload_json=canonical[:-1] + ',"score":NaN}',
+        )
+    elif tamper == "naive_time":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            created_at="2026-07-16T12:00:00",
+        )
+    elif tamper == "secret":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            payload_json=canonical[:-1] + ',"refresh_token":"sync-tail-canary"}',
+            recompute_digest=True,
+        )
+    elif tamper == "extra_profile_field":
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            payload_json=canonical[:-1] + ',"nickname":"unexpected"}',
+            recompute_digest=True,
+        )
+    else:
+        _rewrite_tail_change(
+            database,
+            workspace_id=workspace.id,
+            kind="workspace_profile",
+            operation="update",
+            recompute_digest=True,
+        )
+
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        service.page(
+            workspace_id=workspace.id,
+            account_id=account.id,
+            principal_id=principal.id,
+            device_id=device.id,
+            device_version=device.version,
+            cursor=cursor,
+            limit=100,
+        )
+
+
+def test_empty_page_validates_tail_immediate_previous_link(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix="previous-link")
+    service = SyncService(SyncRepository(database))
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(
+            _account_mutation(account, key="first"),
+            _workspace_mutation(workspace, key="second"),
+        ),
+    )
+    _rewrite_tail_change(
+        database,
+        workspace_id=workspace.id,
+        previous_digest="c" * 64,
+        recompute_digest=True,
+    )
+
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        service.page(
+            workspace_id=workspace.id,
+            account_id=account.id,
+            principal_id=principal.id,
+            device_id=device.id,
+            device_version=device.version,
+            cursor=2,
+            limit=100,
+        )
+
+
+@pytest.mark.parametrize(
+    ("table_name", "principal_source"),
+    [
+        ("platform_idempotency", "foreign_membership"),
+        ("platform_idempotency", "account_principal_mismatch"),
+        ("workspace_changes", "foreign_membership"),
+        ("workspace_changes", "account_principal_mismatch"),
+        ("device_sync_acknowledgements", "foreign_membership"),
+        ("device_sync_acknowledgements", "account_principal_mismatch"),
+    ],
+)
+def test_sync_authority_rows_reject_workspace_and_account_principal_transplants(
+    tmp_path: Path,
+    table_name: str,
+    principal_source: str,
+) -> None:
+    database = _database(tmp_path)
+    account_a, principal_a, _device_a, workspace_a = _identity(database, suffix="binding-a")
+    account_b, principal_b, device_b, _workspace_b = _identity(database, suffix="binding-b")
+    principal_id = principal_b.id if principal_source == "foreign_membership" else principal_a.id
+    common = {
+        "workspace_id": str(workspace_a.id),
+        "workspace_version": workspace_a.version,
+        "account_id": str(account_b.id),
+        "principal_id": str(principal_id),
+        "membership_version": 1,
+        "device_id": str(device_b.id),
+        "device_version": device_b.version,
+        "created_at": _NOW.isoformat(),
+    }
+    parameters = {
+        **common,
+        "scope_key": f"{workspace_a.id}:{device_b.id}",
+        "digest": "d" * 64,
+        "genesis": "0" * 64,
+    }
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(_SYNC_TRANSPLANT_STATEMENTS[table_name], parameters)
+
+
 def test_guarded_postgres_sync_repository_contract() -> None:
     engine = _guarded_postgres_engine()
     try:
@@ -731,6 +1096,37 @@ def test_guarded_postgres_sync_repository_contract() -> None:
         assert [item.sequence for item in page.changes] == [1, 2]
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT COUNT(*) FROM outbox_events")) == 2
+    finally:
+        engine.dispose()
+
+
+def test_guarded_postgres_sync_authority_transplant_constraints() -> None:
+    engine = _guarded_postgres_engine()
+    try:
+        _account_a, _principal_a, _device_a, workspace_a = _identity(
+            engine, suffix="postgres-binding-a"
+        )
+        account_b, principal_b, device_b, _workspace_b = _identity(
+            engine, suffix="postgres-binding-b"
+        )
+        parameters = {
+            "workspace_id": str(workspace_a.id),
+            "workspace_version": workspace_a.version,
+            "account_id": str(account_b.id),
+            "principal_id": str(principal_b.id),
+            "membership_version": 1,
+            "device_id": str(device_b.id),
+            "device_version": device_b.version,
+            "created_at": _NOW.isoformat(),
+            "scope_key": f"{workspace_a.id}:{device_b.id}",
+            "digest": "d" * 64,
+            "genesis": "0" * 64,
+        }
+        with engine.begin() as connection:
+            for statement in _SYNC_TRANSPLANT_STATEMENTS.values():
+                with pytest.raises(IntegrityError):
+                    with connection.begin_nested():
+                        connection.execute(text(statement), parameters)
     finally:
         engine.dispose()
 

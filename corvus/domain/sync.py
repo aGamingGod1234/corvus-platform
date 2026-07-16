@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_core import PydanticCustomError
 
 from corvus.domain.account import ExperienceKind
-from corvus.domain.identity import WorkspaceKind
+from corvus.domain.identity import RecordStatus, WorkspaceKind
 
 
 def _now_utc() -> datetime:
@@ -76,6 +76,20 @@ class SyncMutation(_SyncModel):
         return self
 
 
+class AccountProfile(_SyncModel):
+    entity_id: UUID
+    experience_kind: ExperienceKind
+    version: int = Field(ge=1)
+
+
+class WorkspaceProfile(_SyncModel):
+    entity_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    workspace_kind: WorkspaceKind
+    status: RecordStatus
+    version: int = Field(ge=1)
+
+
 class SyncMutationResult(_SyncModel):
     idempotency_key: str
     kind: Literal["account_profile", "workspace_profile"]
@@ -83,7 +97,7 @@ class SyncMutationResult(_SyncModel):
     entity_id: UUID
     entity_version: int = Field(ge=1)
     sequence: int = Field(ge=1)
-    profile: dict[str, Any]
+    profile: AccountProfile | WorkspaceProfile
 
 
 class SyncApplyResult(_SyncModel):
@@ -93,6 +107,7 @@ class SyncApplyResult(_SyncModel):
 
 class WorkspaceChange(_SyncModel):
     workspace_id: UUID
+    workspace_version: int = Field(ge=1)
     sequence: int = Field(ge=1)
     previous_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     change_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -100,10 +115,12 @@ class WorkspaceChange(_SyncModel):
     operation: Literal["set_experience", "update"]
     entity_id: UUID
     entity_version: int = Field(ge=1)
-    payload: dict[str, Any]
+    payload: AccountProfile | WorkspaceProfile
     account_id: UUID
     principal_id: UUID
+    membership_version: int = Field(ge=1)
     device_id: UUID
+    device_version: int = Field(ge=1)
     created_at: datetime = Field(default_factory=_now_utc)
 
 

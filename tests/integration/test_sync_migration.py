@@ -82,12 +82,14 @@ def test_sync_migration_generalizes_existing_identity_idempotency_without_data_l
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         migrated = connection.execute(
-            "SELECT account_id, scope_key, operation, idempotency_key, request_digest, "
-            "result_json FROM platform_idempotency"
+            "SELECT account_id, principal_id, membership_version, scope_key, operation, "
+            "idempotency_key, request_digest, result_json FROM platform_idempotency"
         ).fetchone()
     assert "identity_idempotency" not in tables
     assert migrated == (
         account_id,
+        None,
+        None,
         "account",
         "workspace.create",
         "legacy-key",
@@ -120,6 +122,44 @@ def test_fresh_sync_schema_classifies_current_and_requires_root_and_append_only_
     assert revision == (M1_CURRENT_REVISION,)
     assert _SYNC_TABLES.issubset(family_names)
     assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_sync_classifier_requires_account_principal_binding_index(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    assert upgrade_database(database) == M1_CURRENT_REVISION
+    with sqlite3.connect(database) as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
+        assert "uq_accounts_id_principal" in indexes
+        connection.execute("DROP INDEX uq_accounts_id_principal")
+
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_account_scoped_platform_idempotency_retains_account_foreign_key(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    assert upgrade_database(database) == M1_CURRENT_REVISION
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO platform_idempotency "
+                "(account_id, scope_key, operation, idempotency_key, request_digest, "
+                "result_json, created_at) VALUES (?, 'account', 'workspace.create', "
+                "'missing-account', ?, '{}', ?)",
+                (
+                    "00000000-0000-4000-8000-000000000404",
+                    "a" * 64,
+                    "2026-07-16T12:00:00+00:00",
+                ),
+            )
 
 
 def test_populated_sync_downgrade_refuses_before_mutating_schema(tmp_path: Path) -> None:
@@ -163,8 +203,13 @@ def test_empty_sync_downgrade_upgrade_cycle_restores_legacy_table_name(tmp_path:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
+        indexes = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
     assert "identity_idempotency" in tables
     assert not _SYNC_TABLES.intersection(tables)
+    assert "uq_accounts_id_principal" not in indexes
     assert upgrade_database(database) == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
 
@@ -184,4 +229,10 @@ def test_sync_migration_renders_deterministic_offline_postgres_ddl(
         in rendered
     )
     assert "create table platform_idempotency" in rendered
+    assert "create unique index uq_accounts_id_principal on accounts (id, principal_id)" in rendered
+    assert (
+        "foreign key(workspace_id, principal_id, membership_version) "
+        "references workspace_memberships" in rendered
+    )
+    assert "foreign key(account_id, principal_id) references accounts" in rendered
     assert "drop table identity_idempotency" in rendered

@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -342,9 +343,30 @@ def create_app(
     async def conflict_handler(_request: Request, error: DomainConflict) -> JSONResponse:
         return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_handler(
+        request: Request,
+        _error: RequestValidationError,
+    ) -> JSONResponse:
+        if request.url.path.startswith("/api/v2/"):
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                content={
+                    "detail": {
+                        "code": "invalid_request",
+                        "correlation_id": str(uuid4()),
+                    }
+                },
+            )
+        return _error_response(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "invalid_request",
+            "request_validation_failed",
+        )
+
     @app.exception_handler(ValueError)
     async def value_error_handler(_request: Request, error: ValueError) -> JSONResponse:
-        return _error_response(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_request", str(error))
+        return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_request", str(error))
 
     def authenticated(request: Request) -> SessionPrincipal:
         return auth.authenticate(request.cookies.get(_SESSION_COOKIE))

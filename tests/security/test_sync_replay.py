@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from corvus.application.oauth import OAuthCallback, OAuthStart, VerifiedIdentity
 from corvus.infrastructure.db import M1_CURRENT_REVISION, upgrade_database
+from corvus.infrastructure.repositories.sync import SyncRepository
 from corvus.mvp.api import create_app
 from corvus.platform.api.dependencies import build_identity_dependencies
 from corvus.store import TraceStore
@@ -199,6 +203,138 @@ def test_sync_api_rejects_unknown_unbounded_or_sensitive_commands_before_persist
 
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM workspace_changes").fetchone() == (0,)
+
+
+def test_request_validation_errors_never_echo_submitted_values(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, _database = _client(tmp_path)
+    session, headers = _login(client)
+    workspace = _workspace(client, headers)
+    path = f"/api/v2/workspaces/{workspace['id']}/sync/mutations"
+    canaries = (
+        "unknown-refresh-canary",
+        "malformed-json-canary",
+        "sk-ABCDEFGHIJKLMNOPQRSTUVWX",
+    )
+    responses = (
+        client.post(
+            path,
+            headers=headers,
+            json={
+                "acknowledged_cursor": 0,
+                "mutations": [
+                    {
+                        **_mutation(str(session["account_id"]), key="unknown-field"),
+                        "payload": {
+                            "experience_kind": "developer",
+                            "refresh_token": canaries[0],
+                        },
+                    }
+                ],
+            },
+        ),
+        client.post(
+            path,
+            headers={**headers, "Content-Type": "application/json"},
+            content=('{"acknowledged_cursor":0,"mutations":["' + canaries[1] + '"'),
+        ),
+        client.post(
+            path,
+            headers=headers,
+            json={
+                "acknowledged_cursor": 0,
+                "mutations": [_mutation(str(session["account_id"]), key=canaries[2])],
+            },
+        ),
+    )
+
+    assert [response.status_code for response in responses] == [422, 422, 422]
+    assert responses[0].json()["detail"]["code"] == "invalid_request"
+    assert responses[1].json()["detail"]["code"] == "invalid_request"
+    assert responses[2].json()["detail"]["code"] == "sync_payload_rejected"
+    rendered = "\n".join(response.text for response in responses) + caplog.text
+    for canary in canaries:
+        assert canary not in rendered
+
+
+def test_legacy_request_validation_uses_value_free_envelope(tmp_path: Path) -> None:
+    client, _database = _client(tmp_path)
+    canary = "legacy-refresh-canary"
+
+    response = client.post(
+        "/api/auth/pair",
+        json={"token": "valid-shape", "refresh_token": canary},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": {"code": "invalid_request", "message": "request_validation_failed"}
+    }
+    assert canary not in response.text
+
+
+def test_sync_api_maps_secret_bearing_tail_corruption_without_echo(
+    tmp_path: Path,
+) -> None:
+    client, database = _client(tmp_path)
+    session, headers = _login(client)
+    workspace = _workspace(client, headers)
+    path = f"/api/v2/workspaces/{workspace['id']}/sync/mutations"
+    assert (
+        client.post(
+            path,
+            headers=headers,
+            json={
+                "acknowledged_cursor": 0,
+                "mutations": [_mutation(str(session["account_id"]), key="corrupt-tail")],
+            },
+        ).status_code
+        == 200
+    )
+    canary = "sync-integrity-canary"
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("DROP TRIGGER workspace_changes_no_update")
+        row = connection.execute("SELECT * FROM workspace_changes").fetchone()
+        assert row is not None
+        payload = json.loads(row["payload_json"])
+        payload["refresh_token"] = canary
+        body = {
+            "workspace_id": UUID(row["workspace_id"]),
+            "workspace_version": row["workspace_version"],
+            "sequence": row["sequence"],
+            "previous_digest": row["previous_digest"],
+            "kind": row["kind"],
+            "operation": row["operation"],
+            "entity_id": UUID(row["entity_id"]),
+            "entity_version": row["entity_version"],
+            "payload": payload,
+            "account_id": UUID(row["account_id"]),
+            "principal_id": UUID(row["principal_id"]),
+            "device_id": UUID(row["device_id"]),
+            "device_version": row["device_version"],
+            "created_at": datetime.fromisoformat(row["created_at"]),
+        }
+        if "membership_version" in row.keys():
+            body["membership_version"] = row["membership_version"]
+        digest = SyncRepository._change_digest(body)
+        payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        connection.execute(
+            "UPDATE workspace_changes SET payload_json = ?, change_digest = ?",
+            (payload_json, digest),
+        )
+        connection.execute(
+            "UPDATE workspace_sync_heads SET chain_digest = ? WHERE workspace_id = ?",
+            (digest, workspace["id"]),
+        )
+
+    response = client.get(f"/api/v2/workspaces/{workspace['id']}/sync", params={"cursor": 0})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "sync_change_integrity_invalid"
+    assert canary not in response.text
 
 
 def test_sync_api_exposes_explicit_resync_and_cursor_ahead_errors(tmp_path: Path) -> None:
