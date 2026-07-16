@@ -34,6 +34,7 @@ from corvus.infrastructure.db import (
     M1_AUDIT_PROOF_MANIFEST_REVISION,
     M1_CURRENT_REVISION,
     M2_IDENTITY_CONTINUITY_REVISION,
+    current_revision,
     downgrade_database,
     upgrade_database,
 )
@@ -1010,6 +1011,7 @@ def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
         before_count = connection.execute(
             f"SELECT COUNT(*) FROM {before_family}"  # noqa: S608
         ).fetchone()[0]
+    before_revision = current_revision(database)
 
     with pytest.raises(RuntimeError, match="oauth_session_history_present"):
         downgrade_database(database, M2_IDENTITY_CONTINUITY_REVISION)
@@ -1028,26 +1030,12 @@ def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
             )
         }
         after_count = connection.execute(
-            f"SELECT COUNT(*) FROM {history_family}"  # noqa: S608
+            f"SELECT COUNT(*) FROM {before_family}"  # noqa: S608
         ).fetchone()[0]
-    sync_tables = {
-        "workspace_sync_heads",
-        "workspace_changes",
-        "outbox_events",
-        "device_sync_acknowledgements",
-        "platform_idempotency",
-    }
-    assert after_tables == (before_tables - sync_tables) | {"identity_idempotency"}
-    assert all(
-        not trigger.startswith(tuple(f"{table}_" for table in sync_tables))
-        for trigger in after_triggers
-    )
-    assert {
-        "identity_idempotency_no_delete",
-        "identity_idempotency_no_update",
-    }.issubset(after_triggers)
-    assert before_triggers != after_triggers
+    assert after_tables == before_tables
+    assert after_triggers == before_triggers
     assert before_count == after_count == 1
+    assert current_revision(database) == before_revision == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Protocol, runtime_checkable
@@ -26,6 +26,14 @@ from corvus.domain.agent_runtime import (
     compute_agent_run_request_digest,
 )
 from corvus.domain.client import ClientSurface
+from corvus.domain.conversations import (
+    AgentRunRecord,
+    AttachmentRef,
+    Message,
+    RunArtifact,
+    RunEventRecord,
+    Thread,
+)
 from corvus.domain.identity import Project
 from corvus.domain.request import IdempotencyEnvelope, RequestContext
 
@@ -129,6 +137,84 @@ class ProjectIdempotencyPort(Protocol):
 
 class ProjectAuditPort(Protocol):
     def record(self, event: ProjectAuditEvent) -> None: ...
+
+
+type ConversationMutationResult = (
+    Thread | AttachmentRef | Message | AgentRunRecord | RunEventRecord | RunArtifact
+)
+
+
+class ConversationAuthorizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    context: RequestContext
+    client_surface: ClientSurface
+    action: str = Field(pattern=r"^conversation\.[a-z_]+$", max_length=100)
+    workspace_id: UUID
+    resource_id: UUID
+
+    @model_validator(mode="after")
+    def validate_workspace(self) -> ConversationAuthorizationRequest:
+        if self.workspace_id != self.context.workspace_id:
+            raise ValueError("conversation_request_workspace_mismatch")
+        return self
+
+
+class ConversationAuthorizationDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    allowed: bool
+    reason_code: str = Field(pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", max_length=200)
+    authorization_snapshot_id: UUID
+    authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConversationMutationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    context: RequestContext
+    client_surface: ClientSurface
+    action: str = Field(pattern=r"^conversation\.[a-z_]+$", max_length=100)
+    workspace_id: UUID
+    resource_id: UUID
+    authorization_snapshot_id: UUID
+    authorization_snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    payload_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_authority_binding(self) -> ConversationMutationRequest:
+        if (
+            self.workspace_id != self.context.workspace_id
+            or self.authorization_snapshot_id != self.context.authorization_snapshot_id
+            or self.authorization_snapshot_digest != self.context.authorization_snapshot_digest
+        ):
+            raise ValueError("conversation_mutation_authority_binding_mismatch")
+        return self
+
+
+class ConversationMutationReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    prior_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    proposed_state_root: str = Field(pattern=r"^[0-9a-f]{64}$")
+    audit_receipt_id: UUID
+    audit_receipt_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    finalized_result_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    result: ConversationMutationResult
+
+
+class ConversationAuthorizationPort(Protocol):
+    def authorize(
+        self, request: ConversationAuthorizationRequest
+    ) -> ConversationAuthorizationDecision: ...
+
+
+class ConversationMutationLifecyclePort(Protocol):
+    def execute(
+        self,
+        request: ConversationMutationRequest,
+        mutation: Callable[[], ConversationMutationResult],
+    ) -> ConversationMutationReceipt: ...
 
 
 class AgentRunOperation(StrEnum):

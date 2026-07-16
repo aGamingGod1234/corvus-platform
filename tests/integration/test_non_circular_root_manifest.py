@@ -7,6 +7,7 @@ from corvus.database import (
     M1_AUDIT_PROOF_V6_AUTHORITY_FAMILY_NAMES,
     M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES,
     M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES,
+    M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES,
     DatabaseState,
     classify_database,
 )
@@ -26,6 +27,7 @@ _V5_MANIFEST_ID = "00000000-0000-4000-8000-000000000008"
 _V6_MANIFEST_ID = "00000000-0000-4000-8000-000000000009"
 _V7_MANIFEST_ID = "00000000-0000-4000-8000-000000000010"
 _V8_MANIFEST_ID = "00000000-0000-4000-8000-000000000011"
+_V9_MANIFEST_ID = "00000000-0000-4000-8000-000000000012"
 _DERIVED_POST_COMMIT_FAMILIES = {
     "audit_anchor_recovery_checkpoints",
     "audit_result_bindings",
@@ -61,6 +63,7 @@ def test_non_circular_manifest_preserves_history_and_excludes_derived_rows(
     v6_families = _families(database, _V6_MANIFEST_ID)
     v7_families = _families(database, _V7_MANIFEST_ID)
     v8_families = _families(database, _V8_MANIFEST_ID)
+    v9_families = _families(database, _V9_MANIFEST_ID)
 
     assert _DERIVED_POST_COMMIT_FAMILIES <= set(v4_families)
     assert set(v5_families) == M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES
@@ -71,8 +74,10 @@ def test_non_circular_manifest_preserves_history_and_excludes_derived_rows(
     assert v6_families == sorted(v6_families)
     assert set(v7_families) == M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES
     assert v7_families == sorted(v7_families)
-    assert set(v8_families) == M1_AUTHORITY_FAMILY_NAMES
+    assert set(v8_families) == M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES
     assert v8_families == sorted(v8_families)
+    assert set(v9_families) == M1_AUTHORITY_FAMILY_NAMES
+    assert v9_families == sorted(v9_families)
     with sqlite3.connect(database) as connection:
         manifests = connection.execute(
             "SELECT schema_version, canonicalization_version FROM "
@@ -86,7 +91,7 @@ def test_non_circular_manifest_preserves_history_and_excludes_derived_rows(
                 (_V6_MANIFEST_ID,),
             ).fetchall()
         )
-    assert manifests[-5:] == [(4, 1), (5, 1), (6, 1), (7, 1), (8, 1)]
+    assert manifests[-6:] == [(4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1)]
     assert audit_external == {
         "audit_anchor_recovery_checkpoints": "sealed_audit_checkpoint_history",
         "audit_result_bindings": "sealed_audit_result_binding_history",
@@ -108,6 +113,7 @@ def test_non_circular_manifest_downgrades_and_reapplies_without_history_loss(
     assert _families(database, _V6_MANIFEST_ID) == []
     assert _families(database, _V7_MANIFEST_ID) == []
     assert _families(database, _V8_MANIFEST_ID) == []
+    assert _families(database, _V9_MANIFEST_ID) == []
 
     assert upgrade_database(database) == M1_CURRENT_REVISION
     assert _families(database, _V6_MANIFEST_ID)
@@ -119,6 +125,7 @@ def test_non_circular_manifest_downgrades_and_reapplies_without_history_loss(
     assert _families(database, _V6_MANIFEST_ID) == []
     assert _families(database, _V7_MANIFEST_ID) == []
     assert _families(database, _V8_MANIFEST_ID) == []
+    assert _families(database, _V9_MANIFEST_ID) == []
 
     assert upgrade_database(database) == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
@@ -128,4 +135,7 @@ def test_non_circular_manifest_downgrades_and_reapplies_without_history_loss(
     assert set(_families(database, _V7_MANIFEST_ID)) == (
         M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES
     )
-    assert set(_families(database, _V8_MANIFEST_ID)) == M1_AUTHORITY_FAMILY_NAMES
+    assert set(_families(database, _V8_MANIFEST_ID)) == (
+        M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES
+    )
+    assert set(_families(database, _V9_MANIFEST_ID)) == M1_AUTHORITY_FAMILY_NAMES

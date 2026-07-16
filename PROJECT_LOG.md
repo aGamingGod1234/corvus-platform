@@ -1679,3 +1679,37 @@
 ### Suggested Next Steps
 - Independently review the final explicit-resync fence commit.
 - Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 - Persist workspace-scoped conversations, runs, events, and artifacts
+
+### What Was Implemented
+- Added frozen, extra-forbid conversation domain contracts for threads, attachment metadata, messages, immutable run records, hash-chained run events, numeric event pages, artifacts, and canonical lineage.
+- Added a fail-closed conversation application service and authority/audit lifecycle ports. Mutations bind request context, client surface, authorization snapshot, idempotency digest, live roots, audit receipt, and finalized result before repository writes are exposed.
+- Added a dual-dialect `ConversationRepository` with transaction-time active-membership checks, SQLite `BEGIN IMMEDIATE`, PostgreSQL row locks, exact idempotency replay, gap-free sequence allocation, frozen event paging, artifact DAG validation, and stable tenant-safe errors.
+- Added `m2_003_conversations`, manifest schema version 9, nine in-root authority families, classifier/root coverage, immutable triggers, portable composite foreign keys, partial provider-event uniqueness, and deterministic empty downgrade/re-upgrade behavior.
+- Generalized head-level downgrade preflight so populated conversation, sync, OAuth, identity, or incompatible identity-workspace history refuses before any newer schema layer is mutated.
+- Added domain, SQLite/PostgreSQL repository, migration/root, and security regression coverage, including tamper, tenant transplant, replay mismatch, revoked membership, cursor, event-chain, and artifact-lineage cases.
+
+### Files Modified
+- `corvus/domain/conversations.py` - defines the immutable conversation persistence contracts and canonical validation helpers.
+- `corvus/application/conversations.py` and `corvus/application/ports.py` - provide the fail-closed service boundary and generalized mutation lifecycle contracts.
+- `corvus/infrastructure/repositories/conversations.py` - implements tenant-safe transactional persistence and paging.
+- `corvus/infrastructure/migrations/versions/m2_003_conversations.py` - creates the nine conversation authority families and manifest version 9.
+- `corvus/database.py`, `corvus/infrastructure/db.py`, `corvus/infrastructure/migrations/manifest_history.py`, and `corvus/infrastructure/authority_root.py` - register the new current revision, classifier, downgrade preflight, history, and root projections.
+- `tests/unit/domain/test_conversations.py`, `tests/integration/test_conversation_repository.py`, `tests/integration/test_conversation_migration.py`, and `tests/security/test_conversation_isolation.py` - cover the new domain, repository, migration, and security contracts.
+- `tests/contract/test_real_project_vertical.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_non_circular_root_manifest.py` - advance active-manifest expectations and preserve whole-path downgrade atomicity.
+- `.superpowers/sdd/task-2.1-report.md` and `PROJECT_LOG.md` - record Task 2.1 scope, TDD evidence, verification, and stop boundaries.
+
+### Assumptions Made (flag these for review)
+- Provider binding and authorization snapshot identifiers are immutable value bindings only; Task 2.1 does not introduce provider or authorization authority tables.
+- PostgreSQL destructive runtime checks remain guarded unless an explicit disposable reset opt-in is present; portable PostgreSQL DDL is still verified offline.
+- No API, SSE, provider runtime, process execution, binary blob storage, retention worker, web UI, deployment, push, or Task 2.2 work is included.
+
+### Known Issues / Deferred
+- Full `mypy corvus` retains five pre-existing errors in untouched certified migration files: migration `env.py` and revisions `m1_006`, `m1_007`, `m1_008`, and `m1_009`. All changed/new Task 2.1 source modules pass targeted mypy.
+- Five PostgreSQL destructive tests are skipped by the existing `postgres_reset_opt_in_required` guard because disposable reset authorization is unavailable.
+- Opaque authenticated API cursors, provider adapters, runtime execution, retention deletion, API/SSE transport, and UI remain deferred to later authorized tasks.
+
+### Suggested Next Steps
+- Independently review the separate Task 2.1 commit and the evidence in `.superpowers/sdd/task-2.1-report.md`.
+- Progress to Task 2.2 after independent Task 2.1 approval.
