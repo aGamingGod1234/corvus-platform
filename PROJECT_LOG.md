@@ -1116,3 +1116,63 @@
 
 ### Suggested Next Steps
 - Run the focused and full verification suites, push the reviewed delta, and request exact-head security approval.
+
+## 2026-07-16 — Complete PR #4 security-scan review repair
+
+### What Was Implemented
+- Made Semgrep scan the repository root while writing a real JSON artifact through its dedicated JSON-output option.
+- Added regression coverage for the scan target and artifact-output contract.
+
+### Files Modified
+- `.github/workflows/security-scan.yml` — uses `--json-output` instead of treating the artifact path as a scan target or writing default text output.
+- `tests/security/test_release_surface.py` — guards the Semgrep invocation against both failure modes.
+- `PROJECT_LOG.md` — records the review repair.
+
+### Assumptions Made (flag these for review)
+- The alpha security workflow should remain inform-only as documented in the PR rather than becoming a merge-blocking Semgrep gate in this repair.
+
+### Known Issues / Deferred
+- Action SHA pinning, SARIF upload, dependency auditing, and blocking Semgrep remain the explicitly documented post-alpha hardening work.
+
+### Suggested Next Steps
+- Push a verified-account commit, confirm the Vercel author check and GitHub Actions pass, and request final review without merging the PR.
+
+## 2026-07-16 — Harden PR #4 Semgrep regression parsing
+
+### What Was Implemented
+- Replaced the order-sensitive Semgrep workflow assertion with shell-token parsing.
+- Preserved independent checks for the repository target, JSON-output option, and absence of the prior positional-output failure.
+
+### Files Modified
+- `tests/security/test_release_surface.py` — validates Semgrep arguments independently of spacing, quoting, or option order.
+- `PROJECT_LOG.md` — records the final review repair.
+
+### Assumptions Made (flag these for review)
+- The Semgrep invocation remains a single shell command line in the alpha workflow.
+
+### Known Issues / Deferred
+- PR #4 still requires an approving code-owner review under the protected-main policy after this commit.
+
+### Suggested Next Steps
+- Push the final repair, resolve the Gemini thread, wait for exact-head checks, and obtain the required code-owner approval before merge.
+
+## 2026-07-16 — Close PR #5 security workflow review findings
+
+### What Was Implemented
+- Upgraded the security workflow to the Node 24 releases of checkout and Gitleaks Action.
+- Removed Semgrep's shell-level error suppression while retaining the documented inform-only `continue-on-error` policy.
+- Made Semgrep command parsing accept block and inline YAML `run:` forms without matching comments or step names.
+
+### Files Modified
+- `.github/workflows/security-scan.yml` — upgrades Node runtimes and preserves Semgrep failure visibility.
+- `tests/security/test_release_surface.py` — covers action versions, failure propagation, and YAML command forms.
+- `PROJECT_LOG.md` — records the final bot-review repair.
+
+### Assumptions Made (flag these for review)
+- The repository remains a personal-account repository, so Gitleaks Action v3 does not require an organization license secret.
+
+### Known Issues / Deferred
+- Action SHA pinning, SARIF upload, dependency auditing, and blocking Semgrep remain the documented post-alpha hardening work.
+
+### Suggested Next Steps
+- Run full verification, push the repair, resolve all bot threads, and obtain fresh code-owner approval before merge.
