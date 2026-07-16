@@ -34,8 +34,8 @@ def _validated_database_url(database_url: str) -> URL:
     return parsed
 
 
-def _redacted_database_url(database_url: str) -> str:
-    return _validated_database_url(database_url).render_as_string(hide_password=True)
+def _database_driver(database_url: str) -> str:
+    return _validated_database_url(database_url).drivername
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +50,8 @@ class PlatformSettings:
             (_SESSION_SECRET_ENV, self.session_secret),
             (_OAUTH_STATE_SECRET_ENV, self.oauth_state_secret),
         ):
+            if not secret.strip():
+                raise ValueError(f"secret_blank:{name}")
             if len(secret) < _MINIMUM_SECRET_LENGTH:
                 raise ValueError(f"secret_too_short:{name}")
         if hmac.compare_digest(self.session_secret, self.oauth_state_secret):
@@ -69,7 +71,7 @@ class PlatformSettings:
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}("
-            f"database_url={_redacted_database_url(self.database_url)!r}, "
+            f"database_driver={_database_driver(self.database_url)!r}, "
             "session_secret='***', oauth_state_secret='***')"
         )
 

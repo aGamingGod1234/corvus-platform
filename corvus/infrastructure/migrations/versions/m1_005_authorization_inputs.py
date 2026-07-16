@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.manifest_history import M1_005_FAMILY_NAMES
 from corvus.infrastructure.migrations.trigger_ddl import (
     create_immutable_triggers,
     create_reject_trigger,
@@ -26,31 +27,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _SEED_MANIFEST_ID = "00000000-0000-4000-8000-000000000005"
-_FAMILY_NAMES = (
-    "access_bundles",
-    "agent_grants",
-    "audit_anchor_recovery_checkpoints",
-    "audit_receipts",
-    "audit_result_bindings",
-    "audience_policy_snapshots",
-    "authority_commit_intents",
-    "authority_epoch_credentials",
-    "authority_registries",
-    "authority_registry_freshness_proofs",
-    "authority_registry_trust_states",
-    "authority_registry_verifier_keys",
-    "authority_state_root_manifests",
-    "authority_trust_anchors",
-    "authorization_decision_snapshots",
-    "capability_grants",
-    "delegation_grants",
-    "deployment_instance_leases",
-    "deployment_instances",
-    "idempotency_envelopes",
-    "projects",
-    "workspace_authorities",
-    "workspace_signing_key_versions",
-)
+_FAMILY_NAMES = M1_005_FAMILY_NAMES
 
 
 def _immutable(table_name: str, label: str) -> None:

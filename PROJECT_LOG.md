@@ -1294,3 +1294,33 @@
 ### Suggested Next Steps
 - Run the PostgreSQL integration test against `compose.platform-test.yaml` in CI or on a workstation with Docker.
 - Continue with the next approved Milestone 1 task after Task 1.2 review.
+
+## 2026-07-16 — Harden Task 1.2 review findings
+
+### What Was Implemented
+- Reduced hosted-settings representation to the validated database driver so authority credentials and every query value remain absent.
+- Made direct settings construction reject all-whitespace secrets before minimum-length checks.
+- Added a destructive PostgreSQL test guard requiring an exact opt-in value, a database ending in `_test`, and a loopback or Compose-service host.
+- Strengthened the live PostgreSQL contract to verify all 59 triggers and functions, both partial unique indexes and behaviors, immutable update/delete rejection, downgrade cleanup, and re-upgrade restoration.
+- Added PostgreSQL offline Alembic rendering without a connection and deterministic offline manifest history for data-dependent migrations.
+- Added URL-based downgrade support and guaranteed disposal of internally created Alembic engines on connection or migration failure.
+
+### Files Modified
+- `corvus/platform/config.py` — uses driver-only redacted representations and rejects blank direct-constructor secrets.
+- `corvus/infrastructure/db.py` — adds the tested URL-based downgrade API.
+- `corvus/infrastructure/migrations/env.py` — supports offline SQL rendering and unconditional engine disposal.
+- `corvus/infrastructure/migrations/manifest_history.py` and M1-005 through M1-009 — provide deterministic offline manifest inputs while retaining online database validation.
+- `tests/postgres_safety.py`, `tests/unit/platform/test_postgres_safety.py`, and `compose.platform-test.yaml` — implement, prove, and document destructive-test authorization.
+- `tests/unit/platform/test_config.py` and `tests/integration/test_postgres_database.py` — add redaction, blank-secret, offline, disposal, downgrade, exact PostgreSQL DDL, and runtime-constraint coverage.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.2-report.md` — record the review repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The opt-in, disposable-name, host-policy, exact PostgreSQL proof, offline migration, disposal, and redaction requirements came directly from the Task 1.2 review.
+
+### Known Issues / Deferred
+- Docker, PostgreSQL client tools, and a test-service URL remain unavailable locally. The destructive integration test therefore stops before connecting with the explicit `postgres_reset_opt_in_required` skip; it does not accept or reset an arbitrary remote database.
+- The live exact-trigger/runtime/downgrade contract must still run in CI or a Docker-enabled workstation using the documented disposable service and explicit opt-in.
+
+### Suggested Next Steps
+- Start `compose.platform-test.yaml`, set `CORVUS_TEST_POSTGRES_RESET_ALLOWED=reset-disposable-database`, and run the focused PostgreSQL test for live evidence.
+- Continue to the next Milestone 1 task only after the follow-up commit is reviewed.

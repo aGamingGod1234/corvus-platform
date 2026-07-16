@@ -81,6 +81,28 @@ def upgrade_database_url(database_url: str) -> str:
     return upgraded
 
 
+def downgrade_database_url(database_url: str, revision: str) -> str:
+    current = current_revision_url(database_url)
+    if current != M1_CURRENT_REVISION:
+        raise InfrastructureDatabaseError(f"database_revision_mismatch:{current or 'unstamped'}")
+    if revision not in {
+        M1_PROJECT_REVISION,
+        M1_AUDIT_REVISION,
+        M1_AUTHORITY_REVISION,
+        M1_REGISTRY_REVISION,
+        M1_AUTHORIZATION_INPUT_REVISION,
+        M1_HANDOFF_REVISION,
+        M1_IDENTITY_SCOPE_REVISION,
+        M1_ROOT_MANIFEST_REVISION,
+    }:
+        raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
+    command.downgrade(_alembic_config_url(database_url), revision)
+    downgraded = current_revision_url(database_url)
+    if downgraded != revision:
+        raise InfrastructureDatabaseError(f"database_revision_mismatch:{downgraded or 'unstamped'}")
+    return downgraded
+
+
 def current_revision(database: Path) -> str | None:
     if not database.is_file():
         return None

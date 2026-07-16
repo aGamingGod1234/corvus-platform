@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.manifest_history import M1_006_FAMILY_NAMES
 from corvus.infrastructure.migrations.trigger_ddl import (
     create_immutable_triggers,
     drop_immutable_triggers,
@@ -124,13 +125,16 @@ def upgrade() -> None:
         _immutable(table_name, label)
 
     bind = op.get_bind()
-    prior = bind.execute(
-        sa.text(
-            "SELECT family_name FROM authority_state_root_leaf_families "
-            "WHERE manifest_version_id = :id ORDER BY ordinal"
-        ),
-        {"id": _PRIOR_MANIFEST_ID},
-    ).fetchall()
+    if op.get_context().as_sql:
+        prior = [(name,) for name in M1_006_FAMILY_NAMES]
+    else:
+        prior = bind.execute(
+            sa.text(
+                "SELECT family_name FROM authority_state_root_leaf_families "
+                "WHERE manifest_version_id = :id ORDER BY ordinal"
+            ),
+            {"id": _PRIOR_MANIFEST_ID},
+        ).fetchall()
     names = {str(row[0]) for row in prior} | _NEW_FAMILIES
     families = [
         {

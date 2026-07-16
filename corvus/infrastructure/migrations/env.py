@@ -6,6 +6,18 @@ from sqlalchemy import engine_from_config, pool
 config = context.config
 
 
+def run_migrations_offline() -> None:
+    database_url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=database_url,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        render_as_batch=database_url.startswith("sqlite"),
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
     supplied_connection = config.attributes.get("connection")
     if supplied_connection is not None:
@@ -22,14 +34,19 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            render_as_batch=connection.dialect.name == "sqlite",
-        )
-        with context.begin_transaction():
-            context.run_migrations()
-    connectable.dispose()
+    try:
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection,
+                render_as_batch=connection.dialect.name == "sqlite",
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+    finally:
+        connectable.dispose()
 
 
-run_migrations_online()
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
