@@ -165,7 +165,25 @@ class SyncRepository:
             ).one_or_none()
 
     @staticmethod
+    def _has_workspace_sync_history(connection: Connection, workspace_id: UUID) -> bool:
+        return bool(
+            connection.scalar(
+                text(
+                    "SELECT CASE WHEN "
+                    "EXISTS (SELECT 1 FROM workspace_changes WHERE workspace_id = :workspace_id) "
+                    "OR EXISTS (SELECT 1 FROM outbox_events WHERE workspace_id = :workspace_id) "
+                    "OR EXISTS (SELECT 1 FROM device_sync_acknowledgements "
+                    "WHERE workspace_id = :workspace_id) "
+                    "OR EXISTS (SELECT 1 FROM platform_idempotency "
+                    "WHERE workspace_id = :workspace_id) THEN 1 ELSE 0 END"
+                ),
+                {"workspace_id": str(workspace_id)},
+            )
+        )
+
+    @classmethod
     def _head(
+        cls,
         connection: Connection,
         *,
         workspace: Workspace,
@@ -203,6 +221,8 @@ class SyncRepository:
             {"workspace_id": str(workspace.id)},
         ).one_or_none()
         if row is None:
+            if cls._has_workspace_sync_history(connection, workspace.id):
+                raise SyncProtocolError("sync_change_integrity_invalid")
             return 0, 0, _GENESIS_DIGEST, 0
         return int(row[0]), int(row[1]), str(row[2]), int(row[3])
 
@@ -216,7 +236,9 @@ class SyncRepository:
         chain_digest: str,
     ) -> None:
         if current_sequence == 0:
-            if chain_digest != _GENESIS_DIGEST:
+            if chain_digest != _GENESIS_DIGEST or cls._has_workspace_sync_history(
+                connection, workspace_id
+            ):
                 raise SyncProtocolError("sync_change_integrity_invalid")
             return
         tail = connection.execute(
@@ -825,6 +847,12 @@ class SyncRepository:
                 )
             ):
                 raise ValueError("identifier_not_canonical")
+            if row.kind == "account_profile" and entity_id != account_id:
+                raise ValueError("account_profile_entity_mismatch")
+            if row.kind == "workspace_profile" and (
+                entity_id != workspace_id or row.entity_version != row.workspace_version
+            ):
+                raise ValueError("workspace_profile_entity_mismatch")
             created_at = datetime.fromisoformat(row.created_at)
             canonical_created_at = json.loads(canonical_json_bytes(created_at))
             if canonical_created_at != row.created_at:

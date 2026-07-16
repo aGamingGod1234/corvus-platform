@@ -833,6 +833,108 @@ def test_apply_validates_existing_tail_before_any_write_or_replay(
     assert profile_version == 2
 
 
+@pytest.mark.parametrize("operation", ["page", "ack_only", "replay", "new_mutation"])
+def test_missing_head_with_workspace_history_fails_closed_before_any_write(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix=f"missing-head-{operation}")
+    service = SyncService(SyncRepository(database))
+    original = _account_mutation(account, key="orphaned-original")
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(original,),
+    )
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(),
+        acknowledged_cursor=1,
+        now=_NOW + timedelta(seconds=1),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER workspace_sync_heads_no_delete")
+        connection.execute(
+            "DELETE FROM workspace_sync_heads WHERE workspace_id = ?",
+            (str(workspace.id),),
+        )
+        before = _sync_counts(connection)
+
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        if operation == "page":
+            service.page(
+                workspace_id=workspace.id,
+                account_id=account.id,
+                principal_id=principal.id,
+                device_id=device.id,
+                device_version=device.version,
+                cursor=0,
+                limit=100,
+            )
+        else:
+            mutations = {
+                "ack_only": (),
+                "replay": (original,),
+                "new_mutation": (_account_mutation(account, key="orphaned-new", version=2),),
+            }[operation]
+            _apply(
+                service,
+                account=account,
+                principal=principal,
+                device=device,
+                workspace=workspace,
+                mutations=mutations,
+                acknowledged_cursor=1 if operation == "ack_only" else 0,
+                now=_NOW + timedelta(seconds=2),
+            )
+
+    with sqlite3.connect(database) as connection:
+        assert _sync_counts(connection) == before
+        assert connection.execute(
+            "SELECT COUNT(*) FROM workspace_sync_heads WHERE workspace_id = ?",
+            (str(workspace.id),),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT MAX(version) FROM account_onboarding_versions WHERE account_id = ?",
+            (str(account.id),),
+        ).fetchone() == (2,)
+
+
+def test_missing_head_without_workspace_history_allows_genesis(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix="true-genesis")
+    service = SyncService(SyncRepository(database))
+
+    empty_page = service.page(
+        workspace_id=workspace.id,
+        account_id=account.id,
+        principal_id=principal.id,
+        device_id=device.id,
+        device_version=device.version,
+        cursor=0,
+        limit=100,
+    )
+    applied = _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(_account_mutation(account, key="genesis"),),
+    )
+
+    assert empty_page.high_watermark == 0 and empty_page.changes == ()
+    assert [result.sequence for result in applied.results] == [1]
+
+
 def _rewrite_tail_change(
     database: Path,
     *,
@@ -840,6 +942,9 @@ def _rewrite_tail_change(
     payload_json: str | None = None,
     kind: str | None = None,
     operation: str | None = None,
+    entity_id: object | None = None,
+    entity_version: int | None = None,
+    workspace_version: int | None = None,
     created_at: str | None = None,
     previous_digest: str | None = None,
     recompute_digest: bool = False,
@@ -856,19 +961,22 @@ def _rewrite_tail_change(
         updated["payload_json"] = payload_json or str(row["payload_json"])
         updated["kind"] = kind or str(row["kind"])
         updated["operation"] = operation or str(row["operation"])
+        updated["entity_id"] = str(entity_id or row["entity_id"])
+        updated["entity_version"] = entity_version or int(row["entity_version"])
+        updated["workspace_version"] = workspace_version or int(row["workspace_version"])
         updated["created_at"] = created_at or str(row["created_at"])
         updated["previous_digest"] = previous_digest or str(row["previous_digest"])
         digest = str(row["change_digest"])
         if recompute_digest:
             body = {
                 "workspace_id": UUID(str(row["workspace_id"])),
-                "workspace_version": int(row["workspace_version"]),
+                "workspace_version": updated["workspace_version"],
                 "sequence": int(row["sequence"]),
                 "previous_digest": updated["previous_digest"],
                 "kind": updated["kind"],
                 "operation": updated["operation"],
-                "entity_id": UUID(str(row["entity_id"])),
-                "entity_version": int(row["entity_version"]),
+                "entity_id": UUID(updated["entity_id"]),
+                "entity_version": updated["entity_version"],
                 "payload": json.loads(updated["payload_json"]),
                 "account_id": UUID(str(row["account_id"])),
                 "principal_id": UUID(str(row["principal_id"])),
@@ -880,13 +988,17 @@ def _rewrite_tail_change(
                 body["membership_version"] = int(row["membership_version"])
             digest = SyncRepository._change_digest(body)
         connection.execute(
-            "UPDATE workspace_changes SET payload_json = ?, kind = ?, operation = ?, "
-            "created_at = ?, previous_digest = ?, change_digest = ? "
+            "UPDATE workspace_changes SET workspace_version = ?, payload_json = ?, kind = ?, "
+            "operation = ?, entity_id = ?, entity_version = ?, created_at = ?, "
+            "previous_digest = ?, change_digest = ? "
             "WHERE workspace_id = ? AND sequence = ?",
             (
+                updated["workspace_version"],
                 updated["payload_json"],
                 updated["kind"],
                 updated["operation"],
+                updated["entity_id"],
+                updated["entity_version"],
                 updated["created_at"],
                 updated["previous_digest"],
                 digest,
@@ -1018,6 +1130,108 @@ def test_empty_page_validates_tail_immediate_previous_link(tmp_path: Path) -> No
             device_id=device.id,
             device_version=device.version,
             cursor=2,
+            limit=100,
+        )
+
+
+def test_empty_page_rejects_recomputed_account_entity_substitution(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(database, suffix="account-provenance")
+    other_account, _other_principal, _other_device, _other_workspace = _identity(
+        database, suffix="account-provenance-other"
+    )
+    service = SyncService(SyncRepository(database))
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(_account_mutation(account, key="account-provenance"),),
+    )
+    substituted_payload = json.dumps(
+        {
+            "entity_id": str(other_account.id),
+            "experience_kind": "developer",
+            "version": 2,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    _rewrite_tail_change(
+        database,
+        workspace_id=workspace.id,
+        entity_id=other_account.id,
+        payload_json=substituted_payload,
+        recompute_digest=True,
+    )
+
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        service.page(
+            workspace_id=workspace.id,
+            account_id=account.id,
+            principal_id=principal.id,
+            device_id=device.id,
+            device_version=device.version,
+            cursor=1,
+            limit=100,
+        )
+
+
+@pytest.mark.parametrize("tamper", ["entity", "version"])
+def test_empty_page_rejects_recomputed_workspace_entity_provenance_substitution(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    database = _database(tmp_path)
+    account, principal, device, workspace = _identity(
+        database, suffix=f"workspace-provenance-{tamper}"
+    )
+    other_workspace = _additional_workspace(
+        database,
+        account=account,
+        principal=principal,
+        key=f"workspace-provenance-other-{tamper}",
+    )
+    service = SyncService(SyncRepository(database))
+    _apply(
+        service,
+        account=account,
+        principal=principal,
+        device=device,
+        workspace=workspace,
+        mutations=(_workspace_mutation(workspace, key="workspace-provenance"),),
+    )
+    substituted_entity_id = other_workspace.id if tamper == "entity" else workspace.id
+    substituted_version = 3 if tamper == "version" else 2
+    substituted_payload = json.dumps(
+        {
+            "entity_id": str(substituted_entity_id),
+            "name": "Renamed",
+            "status": "active",
+            "version": substituted_version,
+            "workspace_kind": "team",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    _rewrite_tail_change(
+        database,
+        workspace_id=workspace.id,
+        entity_id=substituted_entity_id,
+        entity_version=substituted_version,
+        payload_json=substituted_payload,
+        recompute_digest=True,
+    )
+
+    with pytest.raises(SyncProtocolError, match="sync_change_integrity_invalid"):
+        service.page(
+            workspace_id=workspace.id,
+            account_id=account.id,
+            principal_id=principal.id,
+            device_id=device.id,
+            device_version=device.version,
+            cursor=1,
             limit=100,
         )
 

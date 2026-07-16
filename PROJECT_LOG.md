@@ -1548,3 +1548,27 @@
 ### Suggested Next Steps
 - Run the four guarded PostgreSQL cases against the approved disposable service for live constraint and lock evidence.
 - Re-review the separate Task 1.5 hardening commit before authorizing Task 1.6.
+
+## 2026-07-17 — Close Task 1.5 residual integrity findings
+
+### What Was Implemented
+- Distinguished a truly new workspace from a deleted or missing sync head by checking all workspace-scoped change, outbox, acknowledgement, and idempotency history before treating sequence zero as genesis.
+- Made page, acknowledgement-only apply, idempotent replay, and new mutation paths fail before writes with the stable redacted `sync_change_integrity_invalid` error when a head is missing but scoped history remains.
+- Bound account-profile entity and payload provenance to the recorded authenticated account, and workspace-profile entity/payload identity and version to the authoritative workspace/version columns already protected by foreign keys.
+- Added recomputed canonical substitution attacks against account IDs, workspace IDs, and workspace versions, including empty-page high-watermark reads where only the tail validator runs.
+
+### Files Modified
+- `corvus/infrastructure/repositories/sync.py` — rejects orphan-history genesis and enforces kind-specific account/workspace entity provenance during full tail recomputation.
+- `tests/integration/test_sync_repository.py` — proves four missing-head request paths roll back without writes, true genesis remains available, and recomputed account/workspace substitutions fail closed.
+- `PROJECT_LOG.md` — records this consolidated residual review closure and evidence boundary.
+
+### Assumptions Made (flag these for review)
+- None. The orphan-history families, request paths, stable error, entity/version bindings, TDD order, separate-commit requirement, and no-push boundary were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- The existing PostgreSQL migration contract and three sync PostgreSQL cases remain guarded before engine creation because disposable reset authorization is unavailable; this residual repair changes repository validation only and adds no DDL.
+- The original Task 1.5 scope guard continues to defer SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment.
+
+### Suggested Next Steps
+- Run the four guarded PostgreSQL cases against the approved disposable service when reset authorization is available.
+- Re-run independent review on the complete Task 1.5 commit chain before authorizing Task 1.6.
