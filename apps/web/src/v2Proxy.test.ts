@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { proxyV2Request } from "../api/v2/[...path]";
 
 const ORIGIN = "https://corvus-control.up.railway.app";
+const PRODUCTION = "production";
 
 describe("same-origin v2 proxy", () => {
   it("returns a redacted 503 when the Railway origin is absent or invalid", async () => {
@@ -19,6 +20,7 @@ describe("same-origin v2 proxy", () => {
         new Request("https://corvus.example/api/v2/session"),
         configuredOrigin,
         fetchImpl,
+        PRODUCTION,
       );
       expect(response.status).toBe(503);
       expect(await response.text()).not.toContain(canary);
@@ -52,7 +54,7 @@ describe("same-origin v2 proxy", () => {
       },
     );
 
-    const response = await proxyV2Request(request, ORIGIN, fetchImpl);
+    const response = await proxyV2Request(request, ORIGIN, fetchImpl, PRODUCTION);
 
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledOnce();
@@ -85,6 +87,7 @@ describe("same-origin v2 proxy", () => {
       new Request(`https://corvus.example${path}`),
       ORIGIN,
       fetchImpl,
+      PRODUCTION,
     );
 
     expect(response.status).toBe(400);
@@ -108,6 +111,7 @@ describe("same-origin v2 proxy", () => {
       new Request("https://corvus.example/api/v2/auth/google/callback?code=opaque"),
       ORIGIN,
       fetchImpl,
+      PRODUCTION,
     );
 
     expect(response.status).toBe(303);
@@ -129,9 +133,100 @@ describe("same-origin v2 proxy", () => {
       new Request("https://corvus.example/api/v2/auth/google/callback"),
       ORIGIN,
       fetchImpl,
+      PRODUCTION,
     );
 
     expect(response.status).toBe(303);
     expect(response.headers.has("location")).toBe(false);
+  });
+
+  it("proxies the real start-route redirect to the fixed Google authorization endpoint", async () => {
+    const googleLocation =
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=client&state=opaque";
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 302, headers: { location: googleLocation } }));
+
+    const response = await proxyV2Request(
+      new Request("https://corvus.example/api/v2/auth/google/start"),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(googleLocation);
+  });
+
+  it.each([
+    "https://accounts.google.com.evil.example/o/oauth2/v2/auth?state=x",
+    "https://user@accounts.google.com/o/oauth2/v2/auth?state=x",
+    "https://accounts.google.com/o/oauth2/v2/auth/extra?state=x",
+    "https://accounts.google.com/o/oauth2/v2/auth?state=x#fragment",
+    "//evil.example/capture",
+    "/safe#fragment",
+    "/safe\\capture",
+  ])("suppresses unsafe upstream redirect %s", async (location) => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 302, headers: { location } }));
+
+    const response = await proxyV2Request(
+      new Request("https://corvus.example/api/v2/auth/google/start"),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.headers.has("location")).toBe(false);
+  });
+
+  it.each([
+    "https://evil.example",
+    "https://railway.app",
+    "https://corvus.up.railway.app.evil.example",
+    "https://127.0.0.1",
+    "https://[::1]",
+    "https://10.0.0.1",
+    "https://169.254.169.254",
+    "https://corvus.up.railway.app:444",
+    "http://corvus.up.railway.app",
+  ])("rejects non-Railway production origin %s", async (configuredOrigin) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    const response = await proxyV2Request(
+      new Request("https://corvus.example/api/v2/session"),
+      configuredOrigin,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(503);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("allows loopback HTTP only in an explicit development or test environment", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    for (const deploymentEnvironment of ["development", "test"]) {
+      const response = await proxyV2Request(
+        new Request("http://localhost:5173/api/v2/session"),
+        "http://127.0.0.1:8080",
+        fetchImpl,
+        deploymentEnvironment,
+      );
+      expect(response.status).toBe(200);
+    }
+    for (const deploymentEnvironment of ["production", "preview", undefined]) {
+      const response = await proxyV2Request(
+        new Request("https://corvus.example/api/v2/session"),
+        "http://127.0.0.1:8080",
+        fetchImpl,
+        deploymentEnvironment,
+      );
+      expect(response.status).toBe(503);
+    }
   });
 });

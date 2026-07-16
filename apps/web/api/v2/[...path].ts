@@ -1,5 +1,8 @@
 const API_PREFIX = "/api/v2";
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+const GOOGLE_AUTHORIZATION_URL = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+const RAILWAY_HOST_SUFFIX = ".up.railway.app";
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+const LOOPBACK_ENVIRONMENTS = new Set(["development", "test"]);
 const ALLOWED_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 const FORWARDED_REQUEST_HEADERS = [
   "accept",
@@ -25,7 +28,10 @@ function errorResponse(status: number, code: string): Response {
   return Response.json({ detail: { code } }, { status });
 }
 
-function validatedOrigin(configuredOrigin: string | undefined): URL | null {
+function validatedOrigin(
+  configuredOrigin: string | undefined,
+  deploymentEnvironment: string | undefined,
+): URL | null {
   if (configuredOrigin === undefined || configuredOrigin.trim() === "") return null;
   let parsed: URL;
   try {
@@ -33,10 +39,16 @@ function validatedOrigin(configuredOrigin: string | undefined): URL | null {
   } catch {
     return null;
   }
-  const secure = parsed.protocol === "https:";
-  const loopback = parsed.protocol === "http:" && LOOPBACK_HOSTS.has(parsed.hostname);
+  const railwayHost =
+    parsed.hostname.endsWith(RAILWAY_HOST_SUFFIX) &&
+    parsed.hostname.length > RAILWAY_HOST_SUFFIX.length;
+  const secureRailway = parsed.protocol === "https:" && parsed.port === "" && railwayHost;
+  const loopback =
+    LOOPBACK_ENVIRONMENTS.has(deploymentEnvironment ?? "") &&
+    parsed.protocol === "http:" &&
+    LOOPBACK_HOSTS.has(parsed.hostname);
   if (
-    (!secure && !loopback) ||
+    (!secureRailway && !loopback) ||
     parsed.username !== "" ||
     parsed.password !== "" ||
     parsed.pathname !== "/" ||
@@ -46,6 +58,26 @@ function validatedOrigin(configuredOrigin: string | undefined): URL | null {
     return null;
   }
   return parsed;
+}
+
+function safeRedirectLocation(location: string): boolean {
+  if (/[\u0000-\u001f\u007f]/.test(location) || location.includes("\\")) return false;
+  if (location.startsWith("/")) {
+    return !location.startsWith("//") && !location.includes("#");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(location);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.origin === GOOGLE_AUTHORIZATION_URL.origin &&
+    parsed.pathname === GOOGLE_AUTHORIZATION_URL.pathname &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.hash === ""
+  );
 }
 
 function safeApiPath(requestUrl: URL): string | null {
@@ -88,10 +120,7 @@ function responseHeaders(upstream: Response): Headers {
   const location = upstream.headers.get("location");
   if (
     location !== null &&
-    location.startsWith("/") &&
-    !location.startsWith("//") &&
-    !location.includes("\\") &&
-    !/[\u0000-\u001f\u007f]/.test(location)
+    safeRedirectLocation(location)
   ) {
     forwarded.set("location", location);
   }
@@ -110,8 +139,9 @@ export async function proxyV2Request(
   request: Request,
   configuredOrigin: string | undefined,
   fetchImpl: typeof fetch = fetch,
+  deploymentEnvironment: string | undefined = process.env.VERCEL_ENV,
 ): Promise<Response> {
-  const origin = validatedOrigin(configuredOrigin);
+  const origin = validatedOrigin(configuredOrigin, deploymentEnvironment);
   if (origin === null) return errorResponse(503, "platform_proxy_unavailable");
   if (!ALLOWED_METHODS.has(request.method)) {
     return errorResponse(405, "platform_proxy_method_forbidden");
@@ -142,6 +172,11 @@ export async function proxyV2Request(
 
 export default {
   fetch(request: Request): Promise<Response> {
-    return proxyV2Request(request, process.env.CORVUS_RAILWAY_ORIGIN);
+    return proxyV2Request(
+      request,
+      process.env.CORVUS_RAILWAY_ORIGIN,
+      fetch,
+      process.env.VERCEL_ENV,
+    );
   },
 };

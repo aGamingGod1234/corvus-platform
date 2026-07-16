@@ -8,9 +8,16 @@ requests and a same-origin `EventSource` endpoint only after the browser has nav
 Vercel to the local Corvus origin. Therefore the deployed Content Security Policy deliberately
 keeps `connect-src 'self'`.
 
-Adding Railway, E2B, Google OAuth, or any other hosted API, SSE, or WebSocket origin requires an
-explicit CSP change, a security review, and regression coverage. Wildcard network origins are not
-permitted.
+The full-product `/api/v2/**` identity surface remains same-origin in the browser and is forwarded
+by a Vercel function to one configured Railway service. Production and preview accept only a
+credential-free HTTPS hostname ending in `.up.railway.app`; arbitrary custom domains, IP literals,
+private/link-local addresses, userinfo, paths, queries, and fragments are rejected. Custom Railway
+domains remain unsupported until an explicit deployment allowlist is designed and reviewed.
+
+Loopback proxy origins are accepted only when the function receives an explicit `development` or
+`test` environment. They are rejected in production, preview, and unspecified environments.
+Adding E2B or any other hosted API, SSE, or WebSocket origin still requires an explicit CSP change,
+a security review, and regression coverage. Wildcard network origins are not permitted.
 
 ## Loopback handoff trust status
 

@@ -89,7 +89,7 @@ def _valid_state(state: str, secret: str) -> bool:
         payload = base64.urlsafe_b64decode(state + "=" * (-len(state) % 4))
     except (ValueError, binascii.Error, UnicodeEncodeError):
         return False
-    if len(payload) != 64:
+    if len(payload) != 64 or not hmac.compare_digest(_b64url(payload), state):
         return False
     random_state, supplied_mac = payload[:32], payload[32:]
     expected_mac = hmac.digest(secret.encode(), random_state, "sha256")
@@ -202,6 +202,11 @@ class GoogleOAuthClient:
             email_verified=True,
             display_name=display_name,
         )
+
+    def abort(self, state: str) -> None:
+        if not state or not _valid_state(state, self.config.state_secret):
+            raise OAuthError("oauth_state_invalid")
+        self.transactions.consume(state=state, now=self.clock())
 
     def _verify_id_token(self, id_token: str, *, now: datetime) -> Mapping[str, Any]:
         header = _header(id_token)

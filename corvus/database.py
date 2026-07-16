@@ -267,6 +267,17 @@ M2_IDENTITY_CONTINUITY_TRIGGERS = frozenset(
         for operation in ("no_delete", "no_update")
     }
 )
+M2_OAUTH_SESSIONS_TRIGGERS = frozenset(
+    {
+        f"{table_name}_{operation}"
+        for table_name in (
+            "web_session_bindings",
+            "account_onboarding_versions",
+            "identity_idempotency",
+        )
+        for operation in ("no_delete", "no_update")
+    }
+)
 V1_REQUIRED_COLUMNS = {
     "deliveries": frozenset(
         {
@@ -1134,6 +1145,16 @@ def _m2_identity_continuity_controls_match(connection: sqlite3.Connection) -> bo
     return M2_IDENTITY_CONTINUITY_TRIGGERS.issubset(triggers)
 
 
+def _m2_oauth_sessions_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    return M2_OAUTH_SESSIONS_TRIGGERS.issubset(triggers)
+
+
 @contextmanager
 def _classification_path(path: Path) -> Iterator[Path]:
     """Avoid touching live WAL shared-memory bytes while classifying a database."""
@@ -1386,6 +1407,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_identity_continuity_current_tables,
                         m2_oauth_sessions_current_tables,
                     } or _m2_identity_continuity_controls_match(connection)
+                    oauth_sessions_controls_match = (
+                        tables != m2_oauth_sessions_current_tables
+                        or _m2_oauth_sessions_controls_match(connection)
+                    )
                     if (
                         tables
                         in {
@@ -1410,6 +1435,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         and handoff_controls_match
                         and identity_scope_controls_match
                         and identity_continuity_controls_match
+                        and oauth_sessions_controls_match
                     ):
                         if tables == m2_oauth_sessions_current_tables:
                             detail = "database schema is current with M2 OAuth sessions"

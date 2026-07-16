@@ -1460,3 +1460,32 @@
 ### Suggested Next Steps
 - Review the Task 1.4 commit and configure disposable hosted OAuth/proxy credentials before any authorized live integration exercise.
 - Run the guarded PostgreSQL test against the approved disposable service, then begin Task 1.5 only after explicit authorization.
+
+## 2026-07-16 — Harden Task 1.4 review findings
+
+### What Was Implemented
+- Restricted the Vercel proxy to credential-free, default-port HTTPS Railway-generated `*.up.railway.app` origins in production/preview, with loopback HTTP available only under an explicitly injected development/test environment; custom domains and IP/private/link-local targets fail closed.
+- Preserved only safe relative response redirects and the exact Google authorization endpoint, including a real proxied start-route test; external, authority-bearing, fragmented, credentialed, wrong-path, control-character, and backslash redirects are suppressed.
+- Added a terminal OAuth abort/consume path so provider denial and missing/malformed callback codes return one value-free `oauth_callback_rejected` response after valid state consumption; HMAC-invalid and non-canonical state representations fail before transaction lookup.
+- Converted only recognized optimistic version uniqueness and SQLite lock races for onboarding, workspace updates, and device revocation into stable `409` conflicts after rollback and authorized current-state reload; unrelated integrity failures remain unmodified.
+- Added Task 1.4 immutable-trigger classification, guarded PostgreSQL control expectations, populated-family downgrade preservation proofs, and empty downgrade/re-upgrade coverage.
+- Added adversarial nonce, signature, algorithm, time-claim, encrypted-transaction corruption, token/JWKS transport, recursive redaction, SSRF, and deterministic concurrent-writer coverage.
+
+### Files Modified
+- `apps/web/api/v2/[...path].ts`, `apps/web/src/v2Proxy.test.ts`, `.env.example`, and `apps/web/HOSTED_RUNTIME_SECURITY.md` — harden and document the same-origin redirect and Railway-origin boundary.
+- `corvus/application/oauth.py`, `corvus/infrastructure/oauth/google.py`, and `corvus/platform/api/identity.py` — add terminal callback consumption, canonical state validation, and stable API rejection.
+- `corvus/infrastructure/repositories/platform_identity.py` — normalize only recognized optimistic races after scoped state reload.
+- `corvus/database.py` — require all Task 1.4 immutable controls for current-schema classification.
+- `tests/security/test_google_oauth.py`, `tests/integration/test_identity_api.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_postgres_database.py` — prove the reviewed security, race, classifier, and rollback behavior.
+
+### Assumptions Made (flag these for review)
+- None. Callback error code, state-consumption boundary, redirect rules, Vercel environment policy, race translation scope, classifier controls, and stop boundary were explicitly confirmed before remediation.
+
+### Known Issues / Deferred
+- The guarded destructive PostgreSQL proof remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; expected Task 1.4 controls and populated downgrade assertions are retained for the approved disposable service.
+- Custom Railway domains remain unsupported pending an explicit deployment allowlist design and security review.
+- Live Google, Vercel/Railway deployment, desktop handoff, and Task 1.5 remain outside this remediation boundary.
+
+### Suggested Next Steps
+- Review the Task 1.4 remediation commit and run the guarded PostgreSQL proof when disposable reset authorization is available.
+- Keep the branch/worktree intact for review; begin Task 1.5 only after explicit authorization.

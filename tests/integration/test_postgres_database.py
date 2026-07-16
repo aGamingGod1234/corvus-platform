@@ -15,6 +15,7 @@ from corvus.infrastructure.db import (
     M1_AUDIT_PROOF_MANIFEST_REVISION,
     M1_CURRENT_REVISION,
     M1_PROJECT_REVISION,
+    M2_IDENTITY_CONTINUITY_REVISION,
     current_revision_url,
     downgrade_database_url,
     upgrade_database_url,
@@ -33,6 +34,7 @@ _IMMUTABLE_TABLES = frozenset(
         "accounts",
         "agent_grants",
         "agent_identities",
+        "account_onboarding_versions",
         "audit_receipts",
         "audit_result_bindings",
         "audience_policy_snapshots",
@@ -52,11 +54,13 @@ _IMMUTABLE_TABLES = frozenset(
         "device_registrations",
         "external_identities",
         "identity_workspaces",
+        "identity_idempotency",
         "principals",
         "restore_validation_receipts",
         "scopes",
         "session_records",
         "workspace_memberships",
+        "web_session_bindings",
         "workspace_signing_key_versions",
     }
 )
@@ -406,6 +410,32 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
         assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
         with engine.connect() as connection:
             _assert_head_schema_controls(connection)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO oauth_transactions "
+                    "(id, state_digest, nonce_digest, redirect_uri, encrypted_pkce_verifier, "
+                    "created_at, expires_at, consumed_at, version) "
+                    "VALUES (:id, :state, :nonce, :redirect, :verifier, :created, :expires, "
+                    "NULL, 1)"
+                ),
+                {
+                    "id": "00000000-0000-4000-8000-000000000099",
+                    "state": "a" * 64,
+                    "nonce": "b" * 64,
+                    "redirect": "https://corvus.example/api/v2/auth/google/callback",
+                    "verifier": "encrypted",
+                    "created": datetime(2026, 7, 16, 12, 0, tzinfo=UTC).isoformat(),
+                    "expires": datetime(2026, 7, 16, 12, 10, tzinfo=UTC).isoformat(),
+                },
+            )
+        with pytest.raises(RuntimeError, match="oauth_session_history_present"):
+            downgrade_database_url(database_url, M2_IDENTITY_CONTINUITY_REVISION)
+        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        with engine.begin() as connection:
+            assert connection.scalar(text("SELECT COUNT(*) FROM oauth_transactions")) == 1
+            _assert_head_schema_controls(connection)
+            connection.execute(text("DELETE FROM oauth_transactions"))
         team_workspace = Workspace(
             name="PostgreSQL team-only metadata",
             workspace_kind=WorkspaceKind.TEAM,

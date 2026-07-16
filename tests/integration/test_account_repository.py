@@ -33,6 +33,7 @@ from corvus.domain.identity import (
 from corvus.infrastructure.db import (
     M1_AUDIT_PROOF_MANIFEST_REVISION,
     M1_CURRENT_REVISION,
+    M2_IDENTITY_CONTINUITY_REVISION,
     downgrade_database,
     upgrade_database,
 )
@@ -861,6 +862,172 @@ def test_m2_identity_migration_is_reversible_and_manifest_covers_revocation_hist
         }
     assert required_tables.isdisjoint(downgraded_tables)
     assert upgrade_database(database) == M1_CURRENT_REVISION
+    assert classify_database(database).state is DatabaseState.CURRENT
+
+
+@pytest.mark.parametrize(
+    ("mutation", "target"),
+    [
+        ("DROP TRIGGER web_session_bindings_no_update", "trigger"),
+        ("DROP TABLE identity_idempotency", "table"),
+        ("ALTER TABLE account_onboarding_versions DROP COLUMN payload_json", "column"),
+    ],
+)
+def test_m2_oauth_classifier_requires_exact_tables_columns_and_immutable_triggers(
+    tmp_path: Path,
+    mutation: str,
+    target: str,
+) -> None:
+    database = _database(tmp_path)
+    assert classify_database(database).state is DatabaseState.CURRENT
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(mutation)
+
+    status = classify_database(database)
+    assert status.state is DatabaseState.PARTIAL, target
+
+
+def test_m2_oauth_empty_downgrade_and_reupgrade_remain_supported(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+
+    assert (
+        downgrade_database(database, M2_IDENTITY_CONTINUITY_REVISION)
+        == M2_IDENTITY_CONTINUITY_REVISION
+    )
+    with sqlite3.connect(database) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            )
+        }
+    assert {
+        "oauth_transactions",
+        "web_session_bindings",
+        "account_onboarding_versions",
+        "identity_idempotency",
+    }.isdisjoint(tables)
+    assert upgrade_database(database) == M1_CURRENT_REVISION
+    assert classify_database(database).state is DatabaseState.CURRENT
+
+
+@pytest.mark.parametrize(
+    "history_family",
+    [
+        "oauth_transactions",
+        "web_session_bindings",
+        "account_onboarding_versions",
+        "identity_idempotency",
+    ],
+)
+def test_m2_oauth_populated_downgrade_refuses_before_mutating_schema(
+    tmp_path: Path,
+    history_family: str,
+) -> None:
+    database = _database(tmp_path)
+    repository = AccountRepository(database)
+    account: Account | None = None
+    session: SessionRecord | None = None
+    if history_family != "oauth_transactions":
+        account = _preprovisioned_account(repository)
+    if history_family == "web_session_bindings":
+        assert account is not None
+        device = DeviceRegistration(
+            account_id=account.id,
+            name="Downgrade browser",
+            public_key_digest="d" * 64,
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+        repository.append_device(device)
+        session = SessionRecord(
+            account_id=account.id,
+            device_id=device.id,
+            device_version=device.version,
+            token_digest="e" * 64,
+            issued_at=_NOW,
+            expires_at=_NOW + timedelta(hours=1),
+        )
+        repository.create_session(session)
+    with sqlite3.connect(database) as connection:
+        if history_family == "oauth_transactions":
+            connection.execute(
+                "INSERT INTO oauth_transactions "
+                "(id, state_digest, nonce_digest, redirect_uri, encrypted_pkce_verifier, "
+                "created_at, expires_at, consumed_at, version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 1)",
+                (
+                    str(uuid4()),
+                    "a" * 64,
+                    "b" * 64,
+                    "https://corvus.example/api/v2/auth/google/callback",
+                    "encrypted",
+                    _NOW.isoformat(),
+                    (_NOW + timedelta(minutes=10)).isoformat(),
+                ),
+            )
+        elif history_family == "web_session_bindings":
+            assert session is not None
+            connection.execute(
+                "INSERT INTO web_session_bindings "
+                "(session_id, session_version, csrf_digest, created_at) VALUES (?, ?, ?, ?)",
+                (str(session.id), session.version, "c" * 64, _NOW.isoformat()),
+            )
+        elif history_family == "account_onboarding_versions":
+            assert account is not None
+            connection.execute(
+                "INSERT INTO account_onboarding_versions "
+                "(account_id, version, experience_kind, updated_at, payload_json) "
+                "VALUES (?, 2, 'developer', ?, '{}')",
+                (str(account.id), _NOW.isoformat()),
+            )
+        else:
+            assert account is not None
+            connection.execute(
+                "INSERT INTO identity_idempotency "
+                "(account_id, operation, idempotency_key, request_digest, result_json, "
+                "created_at) VALUES (?, 'test.create', 'key', ?, '{}', ?)",
+                (str(account.id), "f" * 64, _NOW.isoformat()),
+            )
+        before_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            )
+        }
+        before_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+            )
+        }
+        before_count = connection.execute(
+            f"SELECT COUNT(*) FROM {history_family}"  # noqa: S608
+        ).fetchone()[0]
+
+    with pytest.raises(RuntimeError, match="oauth_session_history_present"):
+        downgrade_database(database, M2_IDENTITY_CONTINUITY_REVISION)
+
+    with sqlite3.connect(database) as connection:
+        after_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            )
+        }
+        after_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+            )
+        }
+        after_count = connection.execute(
+            f"SELECT COUNT(*) FROM {history_family}"  # noqa: S608
+        ).fetchone()[0]
+    assert before_tables == after_tables
+    assert before_triggers == after_triggers
+    assert before_count == after_count == 1
     assert classify_database(database).state is DatabaseState.CURRENT
 
 

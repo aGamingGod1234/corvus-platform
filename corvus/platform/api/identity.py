@@ -185,19 +185,27 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
     def google_callback(
         code: Annotated[str | None, Query()] = None,
         state_value: Annotated[str | None, Query(alias="state")] = None,
+        provider_error: Annotated[str | None, Query(alias="error")] = None,
         device_token: Annotated[str | None, Cookie(alias=_DEVICE_COOKIE)] = None,
     ) -> RedirectResponse:
-        if (
-            code is None
-            or state_value is None
-            or not 1 <= len(code) <= 4096
-            or not 1 <= len(state_value) <= 4096
-        ):
-            raise _error("oauth_callback_invalid", status.HTTP_400_BAD_REQUEST)
+        if state_value is None or not 1 <= len(state_value) <= 4096:
+            raise _error("oauth_state_invalid", status.HTTP_400_BAD_REQUEST)
+        if provider_error is not None or code is None or not 1 <= len(code) <= 4096:
+            try:
+                dependencies.oauth_client.abort(state_value)
+            except OAuthError as exc:
+                if str(exc) == "oauth_state_invalid":
+                    raise _map_error(exc) from None
+            raise _error("oauth_callback_rejected", status.HTTP_400_BAD_REQUEST)
         try:
             identity = dependencies.oauth_client.exchange(
                 OAuthCallback(code=code, state=state_value)
             )
+        except (OAuthError, ValueError) as exc:
+            if str(exc) == "oauth_state_invalid":
+                raise _map_error(exc) from None
+            raise _error("oauth_callback_rejected", status.HTTP_400_BAD_REQUEST) from None
+        try:
             now = dependencies.clock()
             login = dependencies.accounts.complete_web_login(
                 issuer=identity.issuer,
@@ -209,7 +217,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
                 now=now,
                 expires_at=now + _SESSION_TTL,
             )
-        except (OAuthError, AccountRepositoryError, ValueError) as exc:
+        except (AccountRepositoryError, ValueError) as exc:
             raise _map_error(exc) from None
         response = RedirectResponse(
             _ONBOARDING_DESTINATION,

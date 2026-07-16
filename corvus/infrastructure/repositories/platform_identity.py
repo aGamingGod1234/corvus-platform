@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -9,7 +10,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import Connection, Engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from corvus.domain.account import DeviceRegistration, DeviceStatus, ExperienceKind
 from corvus.domain.identity import (
@@ -22,6 +23,49 @@ from corvus.domain.identity import (
 
 class PlatformIdentityRepositoryError(RuntimeError):
     pass
+
+
+_SQLITE_LOCK_ERRORS = frozenset({"database is locked", "database table is locked"})
+_ONBOARDING_VERSION_CONSTRAINTS = frozenset({"pk_account_onboarding_versions"})
+_WORKSPACE_VERSION_CONSTRAINTS = frozenset({"pk_identity_workspaces"})
+_DEVICE_VERSION_CONSTRAINTS = frozenset(
+    {"pk_device_registrations", "uq_device_registrations_identity_account"}
+)
+_ONBOARDING_SQLITE_UNIQUE = (
+    "unique constraint failed: "
+    "account_onboarding_versions.account_id, account_onboarding_versions.version"
+)
+_WORKSPACE_SQLITE_UNIQUE = (
+    "unique constraint failed: identity_workspaces.id, identity_workspaces.version"
+)
+_DEVICE_SQLITE_UNIQUE = (
+    "unique constraint failed: device_registrations.id, device_registrations.version"
+)
+
+
+def _constraint_name(error: IntegrityError) -> str | None:
+    diagnostic = getattr(error.orig, "diag", None)
+    value = getattr(diagnostic, "constraint_name", None)
+    return value if isinstance(value, str) else None
+
+
+def _recognized_version_race(
+    error: IntegrityError | OperationalError,
+    *,
+    constraint_names: frozenset[str],
+    sqlite_unique: str,
+) -> bool:
+    if isinstance(error, IntegrityError):
+        if _constraint_name(error) in constraint_names:
+            return True
+        return (
+            isinstance(error.orig, sqlite3.IntegrityError)
+            and sqlite_unique in str(error.orig).casefold()
+        )
+    if not isinstance(error.orig, sqlite3.OperationalError):
+        return False
+    message = str(error.orig).casefold()
+    return any(known in message for known in _SQLITE_LOCK_ERRORS)
 
 
 def _canonical_digest(value: dict[str, Any]) -> str:
@@ -81,6 +125,33 @@ class PlatformIdentityRepository:
             return self._onboarding(connection, account_id)
 
     def update_onboarding(
+        self,
+        *,
+        account_id: UUID,
+        experience_kind: ExperienceKind,
+        expected_version: int,
+        now: datetime,
+    ) -> tuple[ExperienceKind, int]:
+        try:
+            return self._update_onboarding_once(
+                account_id=account_id,
+                experience_kind=experience_kind,
+                expected_version=expected_version,
+                now=now,
+            )
+        except (IntegrityError, OperationalError) as exc:
+            if not _recognized_version_race(
+                exc,
+                constraint_names=_ONBOARDING_VERSION_CONSTRAINTS,
+                sqlite_unique=_ONBOARDING_SQLITE_UNIQUE,
+            ):
+                raise
+            _current_kind, current_version = self.get_onboarding(account_id)
+            if current_version != expected_version:
+                raise PlatformIdentityRepositoryError("account_version_conflict") from None
+            raise
+
+    def _update_onboarding_once(
         self,
         *,
         account_id: UUID,
@@ -303,24 +374,72 @@ class PlatformIdentityRepository:
         expected_version: int,
         now: datetime,
     ) -> Workspace:
+        try:
+            return self._update_workspace_once(
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+                name=name,
+                expected_version=expected_version,
+                now=now,
+            )
+        except (IntegrityError, OperationalError) as exc:
+            if not _recognized_version_race(
+                exc,
+                constraint_names=_WORKSPACE_VERSION_CONSTRAINTS,
+                sqlite_unique=_WORKSPACE_SQLITE_UNIQUE,
+            ):
+                raise
+            with self._connection() as connection:
+                current = self._workspace_for_update(
+                    connection,
+                    principal_id=principal_id,
+                    workspace_id=workspace_id,
+                )
+            if current.version != expected_version:
+                raise PlatformIdentityRepositoryError("workspace_version_conflict") from None
+            raise
+
+    @classmethod
+    def _workspace_for_update(
+        cls,
+        connection: Connection,
+        *,
+        principal_id: UUID,
+        workspace_id: UUID,
+    ) -> Workspace:
+        role = cls._membership_role(
+            connection, workspace_id=workspace_id, principal_id=principal_id
+        )
+        if role is None:
+            raise PlatformIdentityRepositoryError("workspace_not_found")
+        if role not in {"owner", "admin", "manager"}:
+            raise PlatformIdentityRepositoryError("workspace_update_forbidden")
+        payload = connection.scalar(
+            text(
+                "SELECT payload_json FROM identity_workspaces WHERE id = :id "
+                "ORDER BY version DESC LIMIT 1"
+            ),
+            {"id": str(workspace_id)},
+        )
+        if payload is None:
+            raise PlatformIdentityRepositoryError("workspace_not_found")
+        return Workspace.model_validate_json(payload)
+
+    def _update_workspace_once(
+        self,
+        *,
+        principal_id: UUID,
+        workspace_id: UUID,
+        name: str,
+        expected_version: int,
+        now: datetime,
+    ) -> Workspace:
         with self._transaction() as connection:
-            role = self._membership_role(
-                connection, workspace_id=workspace_id, principal_id=principal_id
+            current = self._workspace_for_update(
+                connection,
+                principal_id=principal_id,
+                workspace_id=workspace_id,
             )
-            if role is None:
-                raise PlatformIdentityRepositoryError("workspace_not_found")
-            if role not in {"owner", "admin", "manager"}:
-                raise PlatformIdentityRepositoryError("workspace_update_forbidden")
-            payload = connection.scalar(
-                text(
-                    "SELECT payload_json FROM identity_workspaces WHERE id = :id "
-                    "ORDER BY version DESC LIMIT 1"
-                ),
-                {"id": str(workspace_id)},
-            )
-            if payload is None:
-                raise PlatformIdentityRepositoryError("workspace_not_found")
-            current = Workspace.model_validate_json(payload)
             if current.version != expected_version:
                 raise PlatformIdentityRepositoryError("workspace_version_conflict")
             updated = current.model_copy(
@@ -434,18 +553,63 @@ class PlatformIdentityRepository:
         expected_version: int,
         now: datetime,
     ) -> DeviceRegistration:
-        with self._transaction() as connection:
-            payload = connection.scalar(
-                text(
-                    "SELECT payload_json FROM device_registrations "
-                    "WHERE account_id = :account_id AND id = :device_id "
-                    "ORDER BY version DESC LIMIT 1"
-                ),
-                {"account_id": str(account_id), "device_id": str(device_id)},
+        try:
+            return self._revoke_device_once(
+                account_id=account_id,
+                device_id=device_id,
+                expected_version=expected_version,
+                now=now,
             )
-            if payload is None:
-                raise PlatformIdentityRepositoryError("device_not_found")
-            current = DeviceRegistration.model_validate_json(payload)
+        except (IntegrityError, OperationalError) as exc:
+            if not _recognized_version_race(
+                exc,
+                constraint_names=_DEVICE_VERSION_CONSTRAINTS,
+                sqlite_unique=_DEVICE_SQLITE_UNIQUE,
+            ):
+                raise
+            with self._connection() as connection:
+                current = self._device_for_account(
+                    connection,
+                    account_id=account_id,
+                    device_id=device_id,
+                )
+            if current.version != expected_version:
+                raise PlatformIdentityRepositoryError("device_version_conflict") from None
+            raise
+
+    @staticmethod
+    def _device_for_account(
+        connection: Connection,
+        *,
+        account_id: UUID,
+        device_id: UUID,
+    ) -> DeviceRegistration:
+        payload = connection.scalar(
+            text(
+                "SELECT payload_json FROM device_registrations "
+                "WHERE account_id = :account_id AND id = :device_id "
+                "ORDER BY version DESC LIMIT 1"
+            ),
+            {"account_id": str(account_id), "device_id": str(device_id)},
+        )
+        if payload is None:
+            raise PlatformIdentityRepositoryError("device_not_found")
+        return DeviceRegistration.model_validate_json(payload)
+
+    def _revoke_device_once(
+        self,
+        *,
+        account_id: UUID,
+        device_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> DeviceRegistration:
+        with self._transaction() as connection:
+            current = self._device_for_account(
+                connection,
+                account_id=account_id,
+                device_id=device_id,
+            )
             if current.version != expected_version:
                 raise PlatformIdentityRepositoryError("device_version_conflict")
             if current.status is DeviceStatus.REVOKED:

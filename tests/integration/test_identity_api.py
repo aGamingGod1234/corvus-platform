@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import sqlite3
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier, get_ident
+from typing import Any
 from urllib.parse import parse_qs, urlparse
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Connection, create_engine
+from sqlalchemy.exc import IntegrityError
 
 from corvus.application.oauth import OAuthCallback, OAuthStart, VerifiedIdentity
+from corvus.domain.account import ExperienceKind
 from corvus.infrastructure.db import M1_CURRENT_REVISION, upgrade_database
+from corvus.infrastructure.repositories.platform_identity import (
+    PlatformIdentityRepository,
+    PlatformIdentityRepositoryError,
+)
 from corvus.mvp.api import create_app
 from corvus.platform.api.dependencies import build_identity_dependencies
 from corvus.store import TraceStore
@@ -23,6 +36,7 @@ _SESSION_SECRET = "session-secret-value-that-is-at-least-32-characters"  # noqa:
 class _OAuthClient:
     def __init__(self) -> None:
         self.exchange_calls: list[OAuthCallback] = []
+        self.abort_calls: list[str] = []
 
     def start(self, redirect_uri: str) -> OAuthStart:
         assert redirect_uri == _CALLBACK
@@ -40,6 +54,9 @@ class _OAuthClient:
             display_name="Lucas",
         )
 
+    def abort(self, state: str) -> None:
+        self.abort_calls.append(state)
+
 
 def _database(tmp_path: Path) -> Path:
     database = tmp_path / "corvus.db"
@@ -49,7 +66,10 @@ def _database(tmp_path: Path) -> Path:
 
 
 def _configured_client(tmp_path: Path) -> tuple[TestClient, _OAuthClient]:
-    database = _database(tmp_path)
+    return _configured_client_for_database(_database(tmp_path))
+
+
+def _configured_client_for_database(database: Path) -> tuple[TestClient, _OAuthClient]:
     oauth = _OAuthClient()
     dependencies = build_identity_dependencies(
         database=database,
@@ -65,6 +85,49 @@ def _configured_client(tmp_path: Path) -> tuple[TestClient, _OAuthClient]:
         identity_dependencies=dependencies,
     )
     return TestClient(app, base_url=_ORIGIN), oauth
+
+
+def _synchronize_version_insert(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    table_name: str,
+) -> None:
+    barrier = Barrier(2, timeout=10)
+    original_execute = Connection.execute
+    synchronized_threads: set[int] = set()
+
+    def execute(
+        connection: Connection,
+        statement: Any,
+        parameters: Any = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        sql = str(statement)
+        thread_id = get_ident()
+        if (
+            f"INSERT INTO {table_name}" in sql
+            and isinstance(parameters, dict)
+            and parameters.get("version") == 2
+            and thread_id not in synchronized_threads
+        ):
+            synchronized_threads.add(thread_id)
+            barrier.wait()
+        return original_execute(connection, statement, parameters, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "execute", execute)
+
+
+def _concurrent_results(calls: tuple[Callable[[], object], Callable[[], object]]) -> list[object]:
+    def invoke(call: Callable[[], object]) -> object:
+        try:
+            return call()
+        except Exception as exc:  # Return failures for symmetric race assertions.
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(invoke, call) for call in calls]
+        return [future.result(timeout=20) for future in futures]
 
 
 def _login(client: TestClient) -> tuple[str, str, str]:
@@ -144,6 +207,39 @@ def test_google_callback_sets_separate_secure_host_only_cookies_and_clean_redire
     assert any(value.startswith("__Host-corvus_v2_device=") for value in set_cookie)
     assert all("provider-code" not in value and "opaque-state" not in value for value in set_cookie)
     assert oauth.exchange_calls == [OAuthCallback(code="provider-code", state="opaque-state")]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"state": "opaque-state", "error": "provider-denial-canary"},
+        {
+            "state": "opaque-state",
+            "error": "access_denied",
+            "error_description": "provider-description-canary",
+        },
+        {"state": "opaque-state"},
+        {"state": "opaque-state", "code": "x" * 4097},
+    ],
+)
+def test_terminal_callback_rejection_consumes_valid_state_without_echoing_provider_values(
+    tmp_path: Path,
+    params: dict[str, str],
+) -> None:
+    client, oauth = _configured_client(tmp_path)
+
+    response = client.get(
+        "/api/v2/auth/google/callback",
+        params=params,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "oauth_callback_rejected"
+    assert response.json()["detail"]["correlation_id"]
+    assert oauth.abort_calls == ["opaque-state"]
+    assert oauth.exchange_calls == []
+    assert all(value not in response.text for value in params.values())
 
 
 def test_session_onboarding_workspace_and_device_contracts_are_versioned_and_scoped(
@@ -292,3 +388,161 @@ def test_unauthenticated_v2_bodies_never_echo_desktop_or_provider_tokens(
 
     assert response.status_code == 401
     assert canary not in response.text
+
+
+def test_concurrent_onboarding_updates_return_one_stable_version_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _database(tmp_path)
+    client, _oauth = _configured_client_for_database(database)
+    _login(client)
+    session = client.get("/api/v2/session").json()
+    repository = PlatformIdentityRepository(create_engine(f"sqlite:///{database}"))
+    _synchronize_version_insert(monkeypatch, table_name="account_onboarding_versions")
+    now = datetime(2026, 7, 16, 12, 1, tzinfo=UTC)
+    account_id = UUID(session["account_id"])
+
+    results = _concurrent_results(
+        (
+            lambda: repository.update_onboarding(
+                account_id=account_id,
+                experience_kind=ExperienceKind.EVERYDAY,
+                expected_version=session["account_version"],
+                now=now,
+            ),
+            lambda: repository.update_onboarding(
+                account_id=account_id,
+                experience_kind=ExperienceKind.DEVELOPER,
+                expected_version=session["account_version"],
+                now=now,
+            ),
+        )
+    )
+
+    errors = [result for result in results if isinstance(result, Exception)]
+    assert len(errors) == 1
+    assert isinstance(errors[0], PlatformIdentityRepositoryError)
+    assert str(errors[0]) == "account_version_conflict"
+    assert repository.get_onboarding(account_id)[1] == session["account_version"] + 1
+
+
+def test_concurrent_workspace_updates_return_one_stable_version_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _database(tmp_path)
+    client, _oauth = _configured_client_for_database(database)
+    csrf, _session, _device = _login(client)
+    session = client.get("/api/v2/session").json()
+    created = client.post(
+        "/api/v2/workspaces",
+        json={"name": "Race", "workspace_kind": "individual"},
+        headers=_mutation_headers(csrf, idempotency_key="race-workspace"),
+    ).json()
+    repository = PlatformIdentityRepository(create_engine(f"sqlite:///{database}"))
+    _synchronize_version_insert(monkeypatch, table_name="identity_workspaces")
+    now = datetime(2026, 7, 16, 12, 1, tzinfo=UTC)
+    workspace_id = UUID(created["id"])
+    principal_id = UUID(session["principal_id"])
+
+    results = _concurrent_results(
+        (
+            lambda: repository.update_workspace(
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+                name="First",
+                expected_version=created["version"],
+                now=now,
+            ),
+            lambda: repository.update_workspace(
+                principal_id=principal_id,
+                workspace_id=workspace_id,
+                name="Second",
+                expected_version=created["version"],
+                now=now,
+            ),
+        )
+    )
+
+    errors = [result for result in results if isinstance(result, Exception)]
+    assert len(errors) == 1
+    assert isinstance(errors[0], PlatformIdentityRepositoryError)
+    assert str(errors[0]) == "workspace_version_conflict"
+    assert repository.list_workspaces(principal_id)[0].version == created["version"] + 1
+
+
+def test_concurrent_device_revocations_return_one_stable_version_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _database(tmp_path)
+    client, _oauth = _configured_client_for_database(database)
+    csrf, _session, _browser_device = _login(client)
+    session = client.get("/api/v2/session").json()
+    created = client.post(
+        "/api/v2/devices",
+        json={"name": "Race", "public_key_digest": hashlib.sha256(b"race").hexdigest()},
+        headers=_mutation_headers(csrf, idempotency_key="race-device"),
+    ).json()
+    repository = PlatformIdentityRepository(create_engine(f"sqlite:///{database}"))
+    _synchronize_version_insert(monkeypatch, table_name="device_registrations")
+    now = datetime(2026, 7, 16, 12, 1, tzinfo=UTC)
+    account_id = UUID(session["account_id"])
+    device_id = UUID(created["id"])
+
+    def revoke() -> object:
+        return repository.revoke_device(
+            account_id=account_id,
+            device_id=device_id,
+            expected_version=created["version"],
+            now=now,
+        )
+
+    results = _concurrent_results((revoke, revoke))
+
+    errors = [result for result in results if isinstance(result, Exception)]
+    assert len(errors) == 1
+    assert isinstance(errors[0], PlatformIdentityRepositoryError)
+    assert str(errors[0]) == "device_version_conflict"
+    current = next(
+        device for device in repository.list_devices(account_id) if device.id == device_id
+    )
+    assert current.version == created["version"] + 1
+
+
+def test_unrelated_integrity_error_is_not_reclassified_as_version_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = _database(tmp_path)
+    client, _oauth = _configured_client_for_database(database)
+    _login(client)
+    session = client.get("/api/v2/session").json()
+    repository = PlatformIdentityRepository(create_engine(f"sqlite:///{database}"))
+    original_execute = Connection.execute
+
+    def execute(
+        connection: Connection,
+        statement: Any,
+        parameters: Any = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if "INSERT INTO account_onboarding_versions" in str(statement):
+            raise IntegrityError(
+                str(statement),
+                parameters,
+                sqlite3.IntegrityError("CHECK constraint failed: unrelated_canary"),
+            )
+        return original_execute(connection, statement, parameters, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "execute", execute)
+
+    with pytest.raises(IntegrityError, match="unrelated_canary"):
+        repository.update_onboarding(
+            account_id=UUID(session["account_id"]),
+            experience_kind=ExperienceKind.DEVELOPER,
+            expected_version=session["account_version"],
+            now=datetime(2026, 7, 16, 12, 1, tzinfo=UTC),
+        )
