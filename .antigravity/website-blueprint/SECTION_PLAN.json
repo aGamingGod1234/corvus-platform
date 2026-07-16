@@ -3,9 +3,24 @@
   "approval": {
     "status": "approved",
     "approvedBy": "Lucas",
-    "approvedAt": "2026-07-16T09:35:31.938042+00:00",
-    "approvedPacketHash": "cfd46ffbc8228eff7b606a71415553f5a692ab92892be8699e3240756e475438",
+    "approvedAt": "2026-07-16T09:50:27.962222+00:00",
+    "approvedPacketHash": "8673aefb8da80bb84c12bdb1b40dcaafb352ee21d4e999c8a764fd46a699fdea",
     "approvalNote": "Approved seven-section Corvus product design in the 2026-07-16 Codex thread"
+  },
+  "globalInteractions": {
+    "shell": [
+      {
+        "interactionId": "dish-selector",
+        "canonicalName": "workspace-identity-details",
+        "purpose": "Open read-only workspace, profile, account, and session details without offering inline profile changes."
+      }
+    ],
+    "navigation": [
+      {
+        "interactionId": "mobile-more",
+        "purpose": "Open the remaining authorized routes from mobile bottom navigation and restore focus on close."
+      }
+    ]
   },
   "sections": [
     {
@@ -258,7 +273,9 @@
       "copy": {
         "heading": "Where Corvus runs",
         "pairAction": "Pair this device",
-        "recoveryAction": "Retry connection"
+        "recoveryAction": "Retry connection",
+        "cloudLabel": "Corvus Cloud (Preview)",
+        "cloudTruth": "Cloud fallback and wake controls are not rendered until the native runtime selector, real Cloud path, and advertised lifecycle capabilities exist."
       },
       "inspirationSources": [
         "corvus-platform",
@@ -283,10 +300,31 @@
         "cancel-runtime-operation",
         "inspect-runtime-health"
       ],
+      "interactionAvailability": {
+        "authorize-cloud-fallback": {
+          "current": "not-rendered",
+          "untilAll": [
+            "native runtime selector is implemented",
+            "runtime placement capability advertises cloud fallback",
+            "real Corvus Cloud path is enabled"
+          ]
+        },
+        "wake-cloud-runtime": {
+          "current": "not-rendered",
+          "untilAll": [
+            "native runtime selector is implemented",
+            "cloud lifecycle capability is advertised",
+            "an authorized Cloud runtime binding exists",
+            "real Corvus Cloud path is enabled"
+          ]
+        }
+      },
       "customJustification": "The topology must show control-plane ownership, node/sandbox generation, and fallback consequences without exposing credentials or raw endpoints.",
       "failureConditions": [
         "Hosted web probes loopback",
         "Fallback is implicit",
+        "Fallback or wake controls render before every capability gate passes",
+        "Cloud is presented without the Preview label before its real path is enabled",
         "Cloud lifecycle or cleanup is hidden",
         "Runtime change silently migrates or merges data"
       ]

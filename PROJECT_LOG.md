@@ -1241,3 +1241,28 @@
 
 ### Suggested Next Steps
 - Review and squash the local Task 1.1 commit into the Milestone 1 commit after the remaining milestone tasks pass.
+
+## 2026-07-16 — Tighten frontend design packet review findings
+
+### What Was Implemented
+- Marked Cloud fallback and wake controls as non-rendered until the native runtime selector, real Cloud path, advertised capabilities, and authorized runtime binding exist.
+- Kept the Cloud label truthfully Preview throughout the runtime interaction and section contracts.
+- Replaced the orphan compatibility interaction with a real, globally mapped Workspace identity details control and mapped Mobile More to global navigation.
+- Removed an unrelated duplicate backend Task 1.1 section from the ignored delegated-task brief.
+- Reverified the packet, source/citation/orphan contracts, browser evidence, and Lucas approval hash.
+
+### Files Modified
+- `.antigravity/website-blueprint/INTERACTION_SPEC.json` — adds explicit Cloud render gates and real global interaction mappings.
+- `.antigravity/website-blueprint/SECTION_PLAN.json` — records global shell/navigation interactions and runtime availability truth.
+- `PROJECT_LOG.md` — records the review-fix milestone.
+- `.superpowers/sdd/task-1.1-brief.md` and `.superpowers/sdd/task-1.1-report.md` — clean ignored task coordination artifacts.
+
+### Assumptions Made (flag these for review)
+- None. The review findings explicitly define the required runtime truth and interaction mapping.
+
+### Known Issues / Deferred
+- The blueprint verifier still requires the legacy machine ID `dish-selector`; the packet gives it the canonical product name `workspace-identity-details`, real behavior, and a global-shell mapping. No dish UI or orphan compatibility behavior remains.
+- Cloud fallback and wake remain unavailable until their complete native/runtime capability gates exist.
+
+### Suggested Next Steps
+- Preserve these render gates when the native runtime selector and real Cloud lifecycle are implemented.
