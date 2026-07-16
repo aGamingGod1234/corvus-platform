@@ -1,14 +1,17 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { WorkspaceProfile } from "../app/workspaceProfiles";
 import type { components } from "../generated/api";
 import { WorkspaceIdentityBlock } from "./WorkspaceSwitcher";
+import { focusFirstControl, trapDialogFocus } from "./dialogFocus";
 
 type Workspace = components["schemas"]["Workspace"];
 
 interface ResponsiveNavigationProps {
   accountEmail: string;
   activeRoute: string;
+  legacyPreferencePending?: boolean;
+  onDismissLegacyPreference?(): void;
   onNavigate(routeId: string): void;
   onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   profile: WorkspaceProfile;
@@ -22,6 +25,8 @@ const MOBILE_PRIMARY_COUNT = 4;
 export function ResponsiveNavigation({
   accountEmail,
   activeRoute,
+  legacyPreferencePending = false,
+  onDismissLegacyPreference,
   onNavigate,
   onWorkspaceSelect,
   profile,
@@ -30,9 +35,14 @@ export function ResponsiveNavigation({
   workspaces
 }: ResponsiveNavigationProps) {
   const moreRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const primaryRoutes = profile.routes.slice(0, MOBILE_PRIMARY_COUNT);
   const remainingRoutes = profile.routes.slice(MOBILE_PRIMARY_COUNT);
+
+  useEffect(() => {
+    if (open) focusFirstControl(dialogRef.current);
+  }, [open]);
 
   function closeMenu() {
     setOpen(false);
@@ -70,7 +80,17 @@ export function ResponsiveNavigation({
         More
       </button>
       {open && (
-        <div aria-label="More navigation" aria-modal="true" className="mobile-settings" role="dialog">
+        <div
+          aria-label="More navigation"
+          aria-modal="true"
+          className="mobile-settings"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") closeMenu();
+            else trapDialogFocus(event, dialogRef.current);
+          }}
+          ref={dialogRef}
+          role="dialog"
+        >
           <div className="section-heading">
             <strong>More</strong>
             <button onClick={closeMenu} type="button">Close More menu</button>
@@ -85,6 +105,9 @@ export function ResponsiveNavigation({
           <WorkspaceIdentityBlock
             accountEmail={accountEmail}
             experience={profile.experience}
+            legacyPreferencePending={legacyPreferencePending}
+            onDismissLegacyPreference={onDismissLegacyPreference}
+            onNavigateSettings={() => navigate("settings")}
             onWorkspaceSelect={onWorkspaceSelect}
             selectedWorkspace={selectedWorkspace}
             selectionRequired={selectionRequired}

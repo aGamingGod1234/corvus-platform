@@ -35,10 +35,17 @@ describe("ResponsiveNavigation", () => {
     expect(more).toHaveAttribute("data-action", "mobile-more");
     await user.click(more);
     expect(screen.getByText("Everyday · Individual")).toBeVisible();
+    const close = screen.getByRole("button", { name: "Close More menu" });
+    expect(close).toHaveFocus();
     expect(screen.queryByRole("button", { name: /Developer work style/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Team workspace/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Close More menu" }));
+    const identity = screen.getByRole("button", { name: "Open workspace identity" });
+    identity.focus();
+    await user.tab();
+    expect(close).toHaveFocus();
+
+    await user.keyboard("{Escape}");
     expect(more).toHaveFocus();
   });
 });

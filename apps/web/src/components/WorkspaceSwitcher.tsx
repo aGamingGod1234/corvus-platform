@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { components } from "../generated/api";
+import { focusFirstControl, trapDialogFocus } from "./dialogFocus";
 
 type ExperienceKind = components["schemas"]["ExperienceKind"];
 type Workspace = components["schemas"]["Workspace"];
@@ -8,6 +9,9 @@ type Workspace = components["schemas"]["Workspace"];
 interface WorkspaceIdentityBlockProps {
   accountEmail: string;
   experience: ExperienceKind;
+  legacyPreferencePending?: boolean;
+  onDismissLegacyPreference?(): void;
+  onNavigateSettings?(): void;
   onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   selectedWorkspace: Workspace;
   selectionRequired?: boolean;
@@ -21,6 +25,9 @@ function titleCase(value: string): string {
 export function WorkspaceIdentityBlock({
   accountEmail,
   experience,
+  legacyPreferencePending = false,
+  onDismissLegacyPreference,
+  onNavigateSettings,
   onWorkspaceSelect,
   selectedWorkspace,
   selectionRequired = false,
@@ -32,7 +39,7 @@ export function WorkspaceIdentityBlock({
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    if (open) dialogRef.current?.focus();
+    if (open) focusFirstControl(dialogRef.current);
   }, [open]);
 
   async function selectWorkspace(workspaceId: string, force = false) {
@@ -84,10 +91,16 @@ export function WorkspaceIdentityBlock({
         <button
           className="button button--quiet"
           data-action="switch-workspace"
-          onClick={() => void selectWorkspace(selectedWorkspace.id, true)}
+          onClick={() => {
+            const candidate = workspaces.find((workspace) => workspace.id !== selectedWorkspace.id)
+              ?? workspaces[0];
+            if (candidate !== undefined) void selectWorkspace(candidate.id, true);
+          }}
           type="button"
         >
-          Re-select workspace
+          {workspaces.length === 1 && workspaces[0]?.id !== selectedWorkspace.id
+            ? `Select ${workspaces[0].name}`
+            : "Re-select workspace"}
         </button>
       )}
       <span aria-live="polite" className="sr-only">{status}</span>
@@ -98,6 +111,7 @@ export function WorkspaceIdentityBlock({
           className="workspace-identity-dialog"
           onKeyDown={(event) => {
             if (event.key === "Escape") close();
+            else trapDialogFocus(event, dialogRef.current);
           }}
           ref={dialogRef}
           role="dialog"
@@ -112,7 +126,21 @@ export function WorkspaceIdentityBlock({
             <div><dt>Profile</dt><dd>{titleCase(experience)} · {titleCase(selectedWorkspace.workspace_kind)}</dd></div>
             <div><dt>Account</dt><dd>{accountEmail}</dd></div>
           </dl>
-          <p data-action="change-workspace-profile">Profile changes will live in Settings.</p>
+          <button
+            data-action="change-workspace-profile"
+            onClick={() => {
+              close();
+              onNavigateSettings?.();
+            }}
+            type="button"
+          >
+            Open profile settings
+          </button>
+          {legacyPreferencePending && (
+            <button onClick={onDismissLegacyPreference} type="button">
+              Dismiss previous setup
+            </button>
+          )}
         </div>
       )}
     </div>

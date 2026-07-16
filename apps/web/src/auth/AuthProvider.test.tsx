@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -51,6 +51,7 @@ function Probe({ children }: { children?: ReactNode }) {
       <button onClick={() => void auth.refresh()} type="button">Refresh session</button>
       <button onClick={() => void auth.logout()} type="button">Log out</button>
       <button onClick={() => void auth.retry()} type="button">Retry session</button>
+      <button onClick={() => auth.invalidateAuthority()} type="button">Invalidate authority</button>
       {children}
     </div>
   );
@@ -133,6 +134,30 @@ describe("AuthProvider", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Log out" }));
 
     await waitFor(() => expect(screen.getByLabelText("auth status")).toHaveTextContent("unauthenticated"));
+    expect(screen.getByLabelText("session email")).toHaveTextContent("none");
+  });
+
+  it("ignores an older boot completion after a newer retry establishes authority", async () => {
+    const first = deferred<SessionResponse>();
+    const second = deferred<SessionResponse>();
+    const getSession = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    render(<AuthProvider api={completeApi({ getSession })}><Probe /></AuthProvider>);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry session" }));
+    await act(async () => { second.resolve({ ...SESSION, email: "new@example.com" }); });
+    await waitFor(() => expect(screen.getByLabelText("session email")).toHaveTextContent("new@example.com"));
+    await act(async () => { first.resolve({ ...SESSION, email: "stale@example.com" }); });
+
+    await waitFor(() => expect(screen.getByLabelText("session email")).toHaveTextContent("new@example.com"));
+  });
+
+  it("lets child mutation boundaries centrally invalidate session authority", async () => {
+    render(<AuthProvider api={completeApi({ getSession: vi.fn().mockResolvedValue(SESSION) })}><Probe /></AuthProvider>);
+    await waitFor(() => expect(screen.getByLabelText("auth status")).toHaveTextContent("authenticated"));
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Invalidate authority" }));
+
+    expect(screen.getByLabelText("auth status")).toHaveTextContent("unauthenticated");
     expect(screen.getByLabelText("session email")).toHaveTextContent("none");
   });
 });

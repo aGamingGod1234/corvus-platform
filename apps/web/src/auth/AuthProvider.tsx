@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 
@@ -19,7 +20,9 @@ export type AuthStatus = "checking" | "unauthenticated" | "authenticated" | "ret
 
 export interface AuthState {
   error: AuthApiError | null;
+  invalidateAuthority(): void;
   logout(): Promise<void>;
+  reloadSession(): Promise<SessionResponse | null>;
   refresh(): Promise<void>;
   retry(): Promise<void>;
   session: SessionResponse | null;
@@ -48,6 +51,7 @@ function normalizedError(error: unknown): AuthApiError {
 }
 
 export function AuthProvider({ api = browserAuthApi, children }: AuthProviderProps) {
+  const generationRef = useRef(0);
   const [snapshot, setSnapshot] = useState<AuthSnapshot>({
     error: null,
     session: null,
@@ -55,28 +59,62 @@ export function AuthProvider({ api = browserAuthApi, children }: AuthProviderPro
   });
 
   const loadSession = useCallback(async () => {
+    const generation = ++generationRef.current;
     setSnapshot((current) => ({ ...current, error: null, status: "checking" }));
     try {
       const session = await api.getSession();
-      setSnapshot({ error: null, session, status: "authenticated" });
+      if (generation === generationRef.current) {
+        setSnapshot({ error: null, session, status: "authenticated" });
+      }
     } catch (reason) {
       const error = normalizedError(reason);
-      setSnapshot({
-        error: error.status === 401 ? null : error,
-        session: null,
-        status: error.status === 401 ? "unauthenticated" : "retryable_error"
-      });
+      if (generation === generationRef.current) {
+        setSnapshot({
+          error: error.status === 401 ? null : error,
+          session: null,
+          status: error.status === 401 ? "unauthenticated" : "retryable_error"
+        });
+      }
     }
   }, [api]);
 
   useEffect(() => {
     void loadSession();
+    return () => {
+      generationRef.current += 1;
+    };
   }, [loadSession]);
+
+  const invalidateAuthority = useCallback(() => {
+    generationRef.current += 1;
+    setSnapshot({ error: null, session: null, status: "unauthenticated" });
+  }, []);
+
+  const reloadSession = useCallback(async () => {
+    const generation = ++generationRef.current;
+    try {
+      const session = await api.getSession();
+      if (generation === generationRef.current) {
+        setSnapshot({ error: null, session, status: "authenticated" });
+        return session;
+      }
+      return null;
+    } catch (reason) {
+      const error = normalizedError(reason);
+      if (error.status === 401) invalidateAuthority();
+      else if (generation === generationRef.current) {
+        setSnapshot((current) => ({ ...current, error, status: "retryable_error" }));
+      }
+      throw error;
+    }
+  }, [api, invalidateAuthority]);
 
   const refresh = useCallback(async () => {
     if (snapshot.session === null) return;
+    const generation = ++generationRef.current;
     try {
       const refreshed = await api.refreshSession(snapshot.session.csrf_token);
+      if (generation !== generationRef.current) return;
       setSnapshot((current) =>
         current.session === null
           ? current
@@ -92,6 +130,7 @@ export function AuthProvider({ api = browserAuthApi, children }: AuthProviderPro
       );
     } catch (reason) {
       const error = normalizedError(reason);
+      if (generation !== generationRef.current) return;
       setSnapshot((current) => ({
         error: error.status === 401 ? null : error,
         session: error.status === 401 ? null : current.session,
@@ -102,30 +141,59 @@ export function AuthProvider({ api = browserAuthApi, children }: AuthProviderPro
 
   const logout = useCallback(async () => {
     if (snapshot.session === null) return;
+    const generation = ++generationRef.current;
     try {
       await api.logout(snapshot.session.csrf_token);
-      setSnapshot({ error: null, session: null, status: "unauthenticated" });
+      if (generation === generationRef.current) invalidateAuthority();
     } catch (reason) {
       const error = normalizedError(reason);
+      if (generation !== generationRef.current) return;
       setSnapshot((current) =>
         error.status === 401
           ? { error: null, session: null, status: "unauthenticated" }
           : { ...current, error, status: "retryable_error" }
       );
     }
-  }, [api, snapshot.session]);
+  }, [api, invalidateAuthority, snapshot.session]);
 
   const value = useMemo<AuthState>(
     () => ({
       ...snapshot,
+      invalidateAuthority,
       logout,
+      reloadSession,
       refresh,
       retry: loadSession,
       startGoogle: api.startGoogle
     }),
-    [api.startGoogle, loadSession, logout, refresh, snapshot]
+    [api.startGoogle, invalidateAuthority, loadSession, logout, refresh, reloadSession, snapshot]
   );
 
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+const LOCAL_SESSION: SessionResponse = {
+  account_id: "00000000-0000-4000-8000-000000000001",
+  principal_id: "00000000-0000-4000-8000-000000000002",
+  email: "local-runtime@corvus.invalid",
+  experience_kind: "developer",
+  account_version: 1,
+  session_version: 1,
+  csrf_token: "local-runtime-only"
+};
+
+export function LocalAuthProvider({ children }: { children: ReactNode }) {
+  const value = useMemo<AuthState>(() => ({
+    error: null,
+    invalidateAuthority: () => undefined,
+    logout: async () => undefined,
+    reloadSession: async () => LOCAL_SESSION,
+    refresh: async () => undefined,
+    retry: async () => undefined,
+    session: LOCAL_SESSION,
+    startGoogle: () => undefined,
+    status: "authenticated"
+  }), []);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

@@ -67,34 +67,51 @@ describe("PlatformApp composition", () => {
     });
     const loopbackApi = { session: vi.fn() } as unknown as CorvusApi;
 
-    render(<PlatformApp hostedApi={hostedApi} loopbackApi={loopbackApi} preferenceStorage={new MemoryStorage()} />);
+    render(<PlatformApp hostedApi={hostedApi} locationHostname="corvus.example" loopbackApi={loopbackApi} preferenceStorage={new MemoryStorage()} />);
 
     expect(await screen.findByRole("button", { name: "Continue with Google" })).toBeVisible();
     expect(loopbackApi.session).not.toHaveBeenCalled();
     expect(hostedApi.listWorkspaces).not.toHaveBeenCalled();
   });
 
-  it("requires explicit workspace selection before opening the selected local boundary", async () => {
+  it("uses the real non-injected loopback composition and never boots hosted identity", async () => {
     const hostedApi = platformApi();
-    const loopbackApi = {
-      session: vi.fn().mockRejectedValue(new Error("authentication_required"))
-    } as unknown as CorvusApi;
-    const user = userEvent.setup();
 
+    render(<PlatformApp hostedApi={hostedApi} preferenceStorage={new MemoryStorage()} />);
+
+    expect(await screen.findByLabelText("One-time pairing value")).toBeVisible();
+    expect(hostedApi.getSession).not.toHaveBeenCalled();
+    expect(hostedApi.listWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it("refreshes onboarding conflict truth and retries with the new exact version", async () => {
+    const getSession = vi.fn()
+      .mockResolvedValueOnce({ ...SESSION, experience_kind: null, account_version: 1 })
+      .mockResolvedValue({ ...SESSION, experience_kind: null, account_version: 2 });
+    const updateOnboarding = vi.fn()
+      .mockRejectedValueOnce(new AuthApiError(409, "account_version_conflict"))
+      .mockResolvedValue({ experience_kind: "everyday", version: 3 });
+    const api = platformApi({ getSession, listWorkspaces: vi.fn().mockResolvedValue([]), updateOnboarding });
+    const user = userEvent.setup();
     render(
       <PlatformApp
-        hostedApi={hostedApi}
-        locationHostname="localhost"
-        loopbackApi={loopbackApi}
+        hostedApi={api}
+        locationHostname="corvus.example"
+        loopbackApi={{} as CorvusApi}
         preferenceStorage={new MemoryStorage()}
       />
     );
+    await user.click(await screen.findByRole("radio", { name: /Everyday/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/conflict/i);
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("radio", { name: /Everyday/ })).toBeChecked();
 
-    expect(await screen.findByRole("heading", { name: "Choose an authorized workspace" })).toBeVisible();
-    expect(loopbackApi.session).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: /Field desk/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
 
-    await waitFor(() => expect(loopbackApi.session).toHaveBeenCalledTimes(1));
-    expect(await screen.findByLabelText("One-time pairing value")).toBeVisible();
+    await waitFor(() => expect(updateOnboarding).toHaveBeenLastCalledWith(
+      { experience_kind: "everyday", expected_version: 2 },
+      "csrf-opaque"
+    ));
   });
 });

@@ -14,6 +14,12 @@ export interface WorkspaceProfile {
   routes: readonly WorkspaceRoute[];
 }
 
+const SETTINGS_ROUTE: WorkspaceRoute = {
+  id: "settings",
+  label: "Settings",
+  description: "Workspace profile and identity settings"
+};
+
 const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> = {
   "everyday:individual": {
     experience: "everyday",
@@ -24,7 +30,8 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
       { id: "home", label: "Home", description: "Today, recent outcomes, and next steps" },
       { id: "my-work", label: "My Work", description: "Goals, plans, progress, and results" },
       { id: "automations", label: "Automations", description: "Scheduled and repeatable work" },
-      { id: "files", label: "Files", description: "Inputs, sources, and deliverables" }
+      { id: "files", label: "Files", description: "Inputs, sources, and deliverables" },
+      SETTINGS_ROUTE
     ]
   },
   "developer:individual": {
@@ -37,7 +44,8 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
       { id: "threads", label: "Threads", description: "Agent plans and execution context" },
       { id: "changes", label: "Changes", description: "Files, diffs, and artifacts" },
       { id: "runs", label: "Runs", description: "Workflows, logs, checks, and budgets" },
-      { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" }
+      { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" },
+      SETTINGS_ROUTE
     ]
   },
   "everyday:team": {
@@ -50,7 +58,8 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
       { id: "assigned-work", label: "Assigned Work", description: "Owners, due work, and handoffs" },
       { id: "approvals", label: "Approvals", description: "Decisions that need review" },
       { id: "knowledge", label: "Knowledge", description: "Shared sources and decisions" },
-      { id: "people", label: "People", description: "Members, roles, and invitations" }
+      { id: "people", label: "People", description: "Members, roles, and invitations" },
+      SETTINGS_ROUTE
     ]
   },
   "developer:team": {
@@ -63,7 +72,8 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
       { id: "work-queue", label: "Work Queue", description: "Assignments, dependencies, and runs" },
       { id: "reviews", label: "Reviews", description: "Diffs, checks, comments, and approvals" },
       { id: "environments", label: "Environments", description: "Runtime readiness without secrets" },
-      { id: "policies", label: "Policies", description: "Access, autonomy, budget, and retention" }
+      { id: "policies", label: "Policies", description: "Access, autonomy, budget, and retention" },
+      SETTINGS_ROUTE
     ]
   }
 };

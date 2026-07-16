@@ -15,7 +15,9 @@ interface AppShellProps {
   error: string;
   inspector: ReactNode;
   inspectorOpen: boolean;
+  legacyPreferencePending?: boolean;
   onNavigate(routeId: string): void;
+  onDismissLegacyPreference?(): void;
   onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   profile: WorkspaceProfile;
   projectContext: ReactNode;
@@ -31,7 +33,9 @@ export function AppShell({
   error,
   inspector,
   inspectorOpen,
+  legacyPreferencePending = false,
   onNavigate,
+  onDismissLegacyPreference,
   onWorkspaceSelect,
   profile,
   projectContext,
@@ -56,6 +60,8 @@ export function AppShell({
         <NavigationRail
           accountEmail={accountEmail}
           activeRoute={activeRoute}
+          legacyPreferencePending={legacyPreferencePending}
+          onDismissLegacyPreference={onDismissLegacyPreference}
           onNavigate={onNavigate}
           onWorkspaceSelect={onWorkspaceSelect}
           profile={profile}
@@ -73,6 +79,8 @@ export function AppShell({
         <ResponsiveNavigation
           accountEmail={accountEmail}
           activeRoute={activeRoute}
+          legacyPreferencePending={legacyPreferencePending}
+          onDismissLegacyPreference={onDismissLegacyPreference}
           onNavigate={onNavigate}
           onWorkspaceSelect={onWorkspaceSelect}
           profile={profile}

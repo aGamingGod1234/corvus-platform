@@ -1600,3 +1600,30 @@
 ### Suggested Next Steps
 - Independently review the Task 1.6 commit and required viewport captures.
 - Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Close Task 1.6 consolidated review findings
+
+### What Was Implemented
+- Split loopback composition from hosted identity so `localhost`, `127.0.0.1`, and IPv6 loopback open the legacy local pairing boundary without booting hosted session or synchronization APIs.
+- Added generation fences for authentication discovery, workspace discovery/selection, local project/workflow/operations loads, event streams, and workspace-derived mutation results; confirmed workspace changes now reset every derived UI state.
+- Centralized mutation-time 401 authority invalidation, refreshed authorized workspace lists on 403 while preserving the last-safe read-only display, and rejected stale workspace selections.
+- Added explicit conflict versions with reload/retry actions, including onboarding truth refresh that preserves the selected form value and retries with the new exact account version.
+- Added real Settings routes with a truthful read-only placeholder, keyboard-contained identity and mobile More dialogs, and valid legacy candidate cleanup or explicit dismissal for returning users.
+
+### Files Modified
+- `apps/web/src/auth/`, `apps/web/src/sync/`, `apps/web/src/PlatformApp.tsx`, and `apps/web/src/App.tsx` — enforce runtime authority separation, centralized invalidation, conflict recovery, and async generation fencing.
+- `apps/web/src/app/` and `apps/web/src/components/` — add Settings navigation, conflict UI, legacy cleanup controls, alternate-workspace recovery, and accessible dialog focus behavior.
+- Web unit and integration tests — reproduce all consolidated review races, authority failures, conflict paths, runtime boundaries, migration cleanup, Settings behavior, and keyboard interactions.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record the review closure and final evidence.
+
+### Assumptions Made (flag these for review)
+- None. Loopback host matching, authority behavior, reset scope, conflict actions, Settings boundary, focus behavior, generation fencing, separate-commit requirement, and no-push/no-deployment stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Five baseline full-mypy errors remain in pre-existing migration files; no Task 1.6 review-fix file is implicated.
+- Four destructive PostgreSQL tests remain guarded before engine creation because disposable reset authorization is unavailable.
+- Settings is intentionally read-only; invitations, organization roles, persisted active-workspace preference, offline mutation queues, native desktop OAuth, real cloud execution, billing, deployment, and Task 2 remain deferred.
+
+### Suggested Next Steps
+- Independently review the separate Task 1.6 consolidated-fix commit.
+- Begin Task 2 only after explicit authorization.

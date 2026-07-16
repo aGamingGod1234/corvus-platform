@@ -35,9 +35,11 @@ import {
 } from "./app/preferences";
 import { getWorkspaceProfile } from "./app/workspaceProfiles";
 import { useAuth } from "./auth/AuthProvider";
+import { AuthApiError } from "./auth/authApi";
 import { useWorkspaceSync } from "./sync/SyncProvider";
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
+import { SyncConflictPanel } from "./components/SyncConflictPanel";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -134,6 +136,7 @@ export function App({
   const auth = useAuth();
   const workspaceSync = useWorkspaceSync();
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
+  const workspaceGenerationRef = useRef(0);
   const [legacyPreference, setLegacyPreference] = useState<LegacyPreferenceCandidate | null>(null);
   const experience =
     workspaceSync.accountProfile?.experience_kind ?? auth.session?.experience_kind ?? null;
@@ -164,10 +167,31 @@ export function App({
     setLegacyPreference(loadLegacyWorkspacePreference(preferenceStorage).candidate);
   }, [auth.status, preferenceStorage]);
 
-  const loadProjects = useCallback(async () => {
+  useEffect(() => {
+    if (
+      legacyPreference === null ||
+      experience === null ||
+      selectedWorkspace === null ||
+      workspaceSync.status !== "ready"
+    ) return;
+    if (
+      legacyPreference.experience === experience &&
+      legacyPreference.workspaceKind === selectedWorkspace.workspace_kind
+    ) {
+      completeLegacyPreferenceMigration(preferenceStorage, {
+        experienceConfirmed: true,
+        workspaceCreationConfirmed: true
+      });
+      setLegacyPreference(null);
+    }
+  }, [experience, legacyPreference, preferenceStorage, selectedWorkspace, workspaceSync.status]);
+
+  const loadProjects = useCallback(async (generation = workspaceGenerationRef.current) => {
     const loaded = await api.listProjects();
+    if (generation !== workspaceGenerationRef.current) return false;
     setProjects(loaded);
     setActiveProject((current) => current ?? loaded[0] ?? null);
+    return true;
   }, [api]);
 
   useEffect(() => {
@@ -177,6 +201,7 @@ export function App({
       workspaceSync.status !== "ready" ||
       hostedLocalHandoff
     ) return;
+    const generation = ++workspaceGenerationRef.current;
     setPhase("checking");
     setActiveRoute(profile.routes[0].id);
     setProjects([]);
@@ -186,13 +211,18 @@ export function App({
     setDetail(EMPTY_DETAIL);
     setSelectedItem(null);
     setOperations(EMPTY_OPERATIONS);
+    setAutonomy(null);
+    setRetrievedMemories([]);
+    setActivity([]);
+    setError("");
+    setBusy(false);
     let active = true;
     api
       .session()
-      .then(loadProjects)
-      .then(() => active && setPhase("ready"))
+      .then(() => loadProjects(generation))
+      .then(() => active && generation === workspaceGenerationRef.current && setPhase("ready"))
       .catch(async () => {
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         const pairingValue = takeDesktopPairingValue();
         if (pairingValue === null) {
           setPhase("pairing");
@@ -201,8 +231,8 @@ export function App({
         try {
           desktopPairingAttempt.current ??= api.pair(pairingValue);
           await desktopPairingAttempt.current;
-          await loadProjects();
-          if (active) setPhase("ready");
+          await loadProjects(generation);
+          if (active && generation === workspaceGenerationRef.current) setPhase("ready");
         } catch (reason: unknown) {
           if (!active) return;
           setError(messageFor(reason));
@@ -211,6 +241,7 @@ export function App({
       });
     return () => {
       active = false;
+      if (generation === workspaceGenerationRef.current) workspaceGenerationRef.current += 1;
     };
   }, [api, hostedLocalHandoff, loadProjects, profile, selectedWorkspace, workspaceSync.status]);
 
@@ -220,7 +251,11 @@ export function App({
   }, [profile]);
 
   const refreshWorkflow = useCallback(
-    async (workflowId: string, projectId: string) => {
+    async (
+      workflowId: string,
+      projectId: string,
+      generation = workspaceGenerationRef.current
+    ) => {
       const [current, items, effects, budget, artifacts, conversation] = await Promise.all([
         api.getWorkflow(workflowId),
         api.listWorkItems(workflowId),
@@ -229,6 +264,7 @@ export function App({
         api.listArtifacts(workflowId),
         api.listConversation(workflowId)
       ]);
+      if (generation !== workspaceGenerationRef.current) return null;
       setWorkflow(current);
       setDetail({ items, effects, budget, artifacts, conversation });
       setSelectedItem((currentItem) =>
@@ -240,7 +276,7 @@ export function App({
   );
 
   const loadOperations = useCallback(
-    async (projectId: string) => {
+    async (projectId: string, generation = workspaceGenerationRef.current) => {
       const [teams, providers, memories, skills, routines, offlineIntents, channelEvents] =
         await Promise.all([
           api.listTeams(projectId),
@@ -251,6 +287,7 @@ export function App({
           api.listOfflineIntents(),
           api.listChannelEvents()
         ]);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations({ teams, providers, memories, skills, routines, offlineIntents, channelEvents });
     },
     [api]
@@ -264,11 +301,12 @@ export function App({
       return;
     }
     let active = true;
+    const generation = workspaceGenerationRef.current;
     const project = activeProject;
     api
       .listOutcomes(project.id)
       .then(async (loadedOutcomes) => {
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         setOutcomes(loadedOutcomes);
         const latestOutcome = loadedOutcomes.at(-1);
         if (!latestOutcome) {
@@ -278,11 +316,15 @@ export function App({
         }
         const loadedWorkflows = await api.listWorkflows(latestOutcome.id);
         const latestWorkflow = loadedWorkflows.at(-1) ?? null;
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         setWorkflow(latestWorkflow);
-        if (latestWorkflow) await refreshWorkflow(latestWorkflow.id, project.id);
+        if (latestWorkflow) await refreshWorkflow(latestWorkflow.id, project.id, generation);
       })
-      .catch((reason: unknown) => active && setError(messageFor(reason)));
+      .catch((reason: unknown) => {
+        if (active && generation === workspaceGenerationRef.current) {
+          setError(messageFor(reason));
+        }
+      });
     return () => {
       active = false;
     };
@@ -294,8 +336,9 @@ export function App({
       return;
     }
     let active = true;
-    loadOperations(activeProject.id).catch((reason: unknown) => {
-      if (active) setError(messageFor(reason));
+    const generation = workspaceGenerationRef.current;
+    loadOperations(activeProject.id, generation).catch((reason: unknown) => {
+      if (active && generation === workspaceGenerationRef.current) setError(messageFor(reason));
     });
     return () => {
       active = false;
@@ -305,6 +348,7 @@ export function App({
   useEffect(() => {
     const workflowId = workflow?.id;
     const projectId = activeProject?.id;
+    const generation = workspaceGenerationRef.current;
     if (!workflowId || !projectId || typeof EventSource === "undefined") return;
     const stream = new EventSource(`/api/workflows/${workflowId}/events`);
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -321,8 +365,8 @@ export function App({
         }
         refreshing = true;
         try {
-          const current = await refreshWorkflow(workflowId, projectId);
-          if (current.status === "succeeded") stream.close();
+          const current = await refreshWorkflow(workflowId, projectId, generation);
+          if (current?.status === "succeeded") stream.close();
         } catch (reason) {
           if (!closed) setError(messageFor(reason));
         } finally {
@@ -344,12 +388,15 @@ export function App({
         } catch {
           // EventSource may deliver an empty test event; refresh still uses durable API state.
         }
+        if (generation !== workspaceGenerationRef.current) return;
         setActivity((current) => [...current, { id: eventId, type: eventType }].slice(-8));
         scheduleRefresh();
       })
     );
     stream.onerror = () => {
-      if (!closed) setError("Live updates reconnecting. Durable state remains available.");
+      if (!closed && generation === workspaceGenerationRef.current) {
+        setError("Live updates reconnecting. Durable state remains available.");
+      }
     };
     return () => {
       closed = true;
@@ -359,16 +406,17 @@ export function App({
   }, [activeProject?.id, refreshWorkflow, workflow?.id]);
 
   async function pair(value: string) {
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.pair(value);
-      await loadProjects();
-      setPhase("ready");
+      await loadProjects(generation);
+      if (generation === workspaceGenerationRef.current) setPhase("ready");
     });
   }
 
   async function createProject(name: string) {
-    await perform(async () => {
+    await perform(async (generation) => {
       const created = await api.createProject(name);
+      if (generation !== workspaceGenerationRef.current) return;
       setProjects((current) => [...current, created]);
       setActiveProject(created);
     });
@@ -376,72 +424,86 @@ export function App({
 
   async function createWorkflow(title: string, criterion: string, name: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.setBudget(activeProject.id, DEFAULT_DEMO_BUDGET_UNITS);
+      if (generation !== workspaceGenerationRef.current) return;
       const outcome = await api.createOutcome(activeProject.id, title, criterion);
+      if (generation !== workspaceGenerationRef.current) return;
       const created = await api.createWorkflow(outcome.id, name, DEFAULT_WORK_ITEMS);
+      if (generation !== workspaceGenerationRef.current) return;
       setOutcomes((current) => [...current, outcome]);
       setWorkflow(created);
-      await refreshWorkflow(created.id, activeProject.id);
+      await refreshWorkflow(created.id, activeProject.id, generation);
     });
   }
 
   async function mutateWorkflow(action: "start" | "run") {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       if (action === "start") await api.startWorkflow(workflow.id);
       else await api.runNext(workflow.id);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function approve(effectId: string) {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.approveEffect(effectId);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function reject(effectId: string) {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.rejectEffect(effectId);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function controlWorkflow(action: "pause" | "resume" | "cancel" | "kill") {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       if (action === "pause") await api.pauseWorkflow(workflow.id);
       if (action === "resume") await api.resumeWorkflow(workflow.id);
       if (action === "cancel") await api.cancelWorkflow(workflow.id);
       if (action === "kill") await api.setWorkflowKillSwitch(workflow.id, true);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function updateBudget(limitUnits: number) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const budget = await api.setBudget(activeProject.id, limitUnits);
+      if (generation !== workspaceGenerationRef.current) return;
       setDetail((current) => ({ ...current, budget }));
     });
   }
 
   async function createTeam(name: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const team = await api.createTeam(activeProject.id, name);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, teams: [...current.teams, team] }));
     });
   }
 
   async function createProvider(provider: string, credentialRef: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const connection = await api.createProvider(activeProject.id, provider, credentialRef);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({
         ...current,
         providers: [...current.providers, connection]
@@ -451,39 +513,45 @@ export function App({
 
   async function evaluateAutonomy() {
     if (!activeProject) return;
-    await perform(async () => {
-      setAutonomy(await api.evaluateAutonomy(activeProject.id, "model.generate"));
+    await perform(async (generation) => {
+      const decision = await api.evaluateAutonomy(activeProject.id, "model.generate");
+      if (generation === workspaceGenerationRef.current) setAutonomy(decision);
     });
   }
 
   async function storeMemory(content: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const memory = await api.storeMemory(activeProject.id, content);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, memories: [...current.memories, memory] }));
     });
   }
 
   async function searchMemory(query: string) {
     if (!activeProject) return;
-    await perform(async () => {
-      setRetrievedMemories(await api.retrieveMemory(activeProject.id, query));
+    await perform(async (generation) => {
+      const memories = await api.retrieveMemory(activeProject.id, query);
+      if (generation === workspaceGenerationRef.current) setRetrievedMemories(memories);
     });
   }
 
   async function createSkill(name: string, content: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const draft = await api.createSkill(activeProject.id, name, content);
+      if (generation !== workspaceGenerationRef.current) return;
       const active = await api.activateSkill(draft.id);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, skills: [...current.skills, active] }));
     });
   }
 
   async function createRoutine(name: string, skillVersionId: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const routine = await api.createRoutine(activeProject.id, name, skillVersionId);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, routines: [...current.routines, routine] }));
     });
   }
@@ -494,15 +562,16 @@ export function App({
     });
   }
 
-  async function perform(action: () => Promise<void>) {
+  async function perform(action: (generation: number) => Promise<void>) {
+    const generation = workspaceGenerationRef.current;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action(generation);
     } catch (reason) {
-      setError(messageFor(reason));
+      if (generation === workspaceGenerationRef.current) setError(messageFor(reason));
     } finally {
-      setBusy(false);
+      if (generation === workspaceGenerationRef.current) setBusy(false);
     }
   }
 
@@ -539,9 +608,20 @@ export function App({
           setLegacyPreference(null);
         }}
         onExperienceSaved={async (experienceKind, expectedVersion) => {
-          const saved = await workspaceSync.saveExperience(experienceKind, expectedVersion);
-          await auth.retry();
-          return saved;
+          try {
+            const saved = await workspaceSync.saveExperience(experienceKind, expectedVersion);
+            await auth.reloadSession();
+            return saved;
+          } catch (reason) {
+            if (
+              reason instanceof AuthApiError &&
+              reason.status === 409 &&
+              reason.code === "account_version_conflict"
+            ) {
+              await auth.reloadSession();
+            }
+            throw reason;
+          }
         }}
         onGoogleStart={auth.startGoogle}
         onWorkspaceConfirmed={() => {
@@ -617,6 +697,11 @@ export function App({
         />
       )}
       inspectorOpen={selectedItem !== null}
+      legacyPreferencePending={legacyPreference !== null}
+      onDismissLegacyPreference={() => {
+        dismissLegacyPreferenceMigration(preferenceStorage);
+        setLegacyPreference(null);
+      }}
       onNavigate={(routeId) => {
         setActiveRoute(routeId);
         setSelectedItem(null);
@@ -637,7 +722,22 @@ export function App({
       workspaces={workspaceSync.workspaces}
     >
       <WorkspaceErrorBoundary>
-        {hostedLocalHandoff ? (
+        {workspaceSync.status === "conflict" && workspaceSync.conflict !== null ? (
+          <SyncConflictPanel
+            currentVersion={workspaceSync.conflict.currentVersion}
+            desiredVersion={workspaceSync.conflict.submittedExpectedVersion}
+            onReload={workspaceSync.reloadConflict}
+            onRetry={workspaceSync.retryConflict}
+          />
+        ) : (activeRoute || profile.routes[0].id) === "settings" ? (
+          <WorkspaceRouter
+            activeRoute="settings"
+            executionSurface={executionSurface}
+            operationsSurface={operationsSurface}
+            profile={profile}
+            projectName={activeProject?.name ?? null}
+          />
+        ) : hostedLocalHandoff ? (
           <LocalRuntimeLauncher
             experience={experience ?? profile.experience}
             workspaceKind={selectedWorkspace.workspace_kind}

@@ -9,6 +9,8 @@ type Workspace = components["schemas"]["Workspace"];
 interface NavigationRailProps {
   accountEmail: string;
   activeRoute: string;
+  legacyPreferencePending?: boolean;
+  onDismissLegacyPreference?(): void;
   onNavigate(routeId: string): void;
   onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   profile: WorkspaceProfile;
@@ -21,6 +23,8 @@ interface NavigationRailProps {
 export function NavigationRail({
   accountEmail,
   activeRoute,
+  legacyPreferencePending = false,
+  onDismissLegacyPreference,
   onNavigate,
   onWorkspaceSelect,
   profile,
@@ -35,6 +39,9 @@ export function NavigationRail({
       <WorkspaceIdentityBlock
         accountEmail={accountEmail}
         experience={profile.experience}
+        legacyPreferencePending={legacyPreferencePending}
+        onDismissLegacyPreference={onDismissLegacyPreference}
+        onNavigateSettings={() => onNavigate("settings")}
         onWorkspaceSelect={onWorkspaceSelect}
         selectedWorkspace={selectedWorkspace}
         selectionRequired={selectionRequired}

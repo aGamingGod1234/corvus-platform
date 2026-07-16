@@ -29,7 +29,17 @@ export function WorkspaceRouter({
   ) : null;
 
   let surface: ReactNode;
-  if (profile.workspaceKind === "individual" && OPERATIONS_ROUTES.has(route.id)) {
+  if (route.id === "settings") {
+    surface = (
+      <section className="workspace-landing">
+        <p className="eyebrow">Workspace identity</p>
+        <h1>Workspace settings</h1>
+        <p className="workspace-lede">
+          Profile editing is not available yet. Your current workspace identity remains read-only.
+        </p>
+      </section>
+    );
+  } else if (profile.workspaceKind === "individual" && OPERATIONS_ROUTES.has(route.id)) {
     surface = operationsSurface;
   } else if (profile.workspaceKind === "individual" && EXECUTION_ROUTES.has(route.id)) {
     surface = executionSurface;

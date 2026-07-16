@@ -80,4 +80,75 @@ describe("WorkspaceIdentityBlock", () => {
 
     expect(onWorkspaceSelect).toHaveBeenCalledWith(FIRST.id);
   });
+
+  it("offers the sole refreshed authority instead of retrying a stale selected workspace", async () => {
+    const onWorkspaceSelect = vi.fn().mockResolvedValue(undefined);
+    render(
+      <WorkspaceIdentityBlock
+        accountEmail="person@example.com"
+        experience="developer"
+        onWorkspaceSelect={onWorkspaceSelect}
+        selectedWorkspace={FIRST}
+        selectionRequired
+        workspaces={[SECOND]}
+      />
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Select Team flight desk" }));
+
+    expect(onWorkspaceSelect).toHaveBeenCalledWith(SECOND.id);
+    expect(onWorkspaceSelect).not.toHaveBeenCalledWith(FIRST.id);
+  });
+
+  it("opens Settings from an interactive profile action", async () => {
+    const user = userEvent.setup();
+    const onNavigateSettings = vi.fn();
+    render(
+      <WorkspaceIdentityBlock
+        accountEmail="person@example.com"
+        experience="developer"
+        onNavigateSettings={onNavigateSettings}
+        onWorkspaceSelect={vi.fn()}
+        selectedWorkspace={FIRST}
+        workspaces={[FIRST]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open workspace identity" }));
+    await user.click(screen.getByRole("button", { name: "Open profile settings" }));
+
+    expect(onNavigateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses and traps the identity dialog, closes with Escape, and restores its trigger", async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceIdentityBlock
+        accountEmail="person@example.com"
+        experience="developer"
+        onNavigateSettings={vi.fn()}
+        onWorkspaceSelect={vi.fn()}
+        selectedWorkspace={FIRST}
+        workspaces={[FIRST]}
+      />
+    );
+
+    const trigger = screen.getByRole("button", { name: "Open workspace identity" });
+    await user.click(trigger);
+    const close = screen.getByRole("button", { name: "Close workspace identity" });
+    const settings = screen.getByRole("button", { name: "Open profile settings" });
+    expect(close).toHaveFocus();
+
+    settings.focus();
+    await user.tab();
+    expect(close).toHaveFocus();
+
+    close.focus();
+    await user.tab({ shift: true });
+    expect(settings).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Workspace identity" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
 });

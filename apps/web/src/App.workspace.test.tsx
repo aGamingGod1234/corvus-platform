@@ -1,10 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CorvusApi } from "./api";
+import { App } from "./App";
+import type { CorvusApi, Project } from "./api";
+import { AuthProvider } from "./auth/AuthProvider";
 import type { PlatformApi, Workspace } from "./auth/authApi";
 import { PlatformApp } from "./PlatformApp";
+import { SyncProvider } from "./sync/SyncProvider";
 import { MemoryStorage } from "./test/memoryStorage";
 
 const WORKSPACES: Workspace[] = [
@@ -27,6 +30,12 @@ const WORKSPACES: Workspace[] = [
     version: 1
   }
 ];
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
 
 function hostedApi(
   workspaces: Workspace[],
@@ -97,7 +106,7 @@ describe("adaptive Corvus bootstrap", () => {
     render(
       <PlatformApp
         hostedApi={hostedApi([WORKSPACES[0]], null)}
-        locationHostname="localhost"
+        locationHostname="corvus.example"
         loopbackApi={loopback}
         preferenceStorage={storage}
       />
@@ -133,17 +142,101 @@ describe("adaptive Corvus bootstrap", () => {
     render(
       <PlatformApp
         hostedApi={hostedApi(WORKSPACES)}
-        locationHostname="localhost"
+        locationHostname="corvus.example"
         loopbackApi={loopback}
         preferenceStorage={new MemoryStorage()}
       />
     );
 
     await user.click(await screen.findByRole("button", { name: /Field desk/ }));
-    await waitFor(() => expect(loopback.session).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Open Corvus on this computer." })).toBeVisible());
     expect(await screen.findByRole("link", { name: "Repositories" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /work style/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /team workspace/i })).not.toBeInTheDocument();
     expect(screen.getAllByText("Field desk").length).toBeGreaterThan(0);
+    expect(loopback.session).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("heading", { name: "Workspace settings" })).toBeVisible();
+  });
+
+  it("cleans up a matching legacy candidate once server-backed identity is ready", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "developer",
+      scope: "personal",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+
+    render(
+      <PlatformApp
+        hostedApi={hostedApi([WORKSPACES[0]])}
+        locationHostname="corvus.example"
+        preferenceStorage={storage}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Open Corvus on this computer." })).toBeVisible();
+    await waitFor(() => expect(storage.getItem("corvus.workspace-preference")).toBeNull());
+  });
+
+  it("lets a returning user explicitly dismiss a mismatched legacy candidate", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "developer",
+      scope: "team",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+    const user = userEvent.setup();
+
+    render(
+      <PlatformApp
+        hostedApi={hostedApi([WORKSPACES[0]])}
+        locationHostname="corvus.example"
+        preferenceStorage={storage}
+      />
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Open workspace identity" }));
+    await user.click(screen.getByRole("button", { name: "Dismiss previous setup" }));
+    expect(storage.getItem("corvus.workspace-preference")).toBeNull();
+  });
+
+  it("ignores a late project load from workspace A after workspace B is confirmed", async () => {
+    const firstProjects = deferred<Project[]>();
+    const secondProjects = deferred<Project[]>();
+    const projectA: Project = { id: "project-a", name: "Project A", tenant_id: "local", created_at: "2026-07-17T00:00:00Z" };
+    const projectB: Project = { id: "project-b", name: "Project B", tenant_id: "local", created_at: "2026-07-17T00:00:00Z" };
+    const loopback = {
+      ...readyLoopback(),
+      listProjects: vi.fn()
+        .mockReturnValueOnce(firstProjects.promise)
+        .mockReturnValueOnce(secondProjects.promise)
+    } as unknown as CorvusApi;
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider api={hostedApi(WORKSPACES)}>
+        <SyncProvider api={hostedApi(WORKSPACES)}>
+          <App api={loopback} locationHostname="localhost" preferenceStorage={new MemoryStorage()} />
+        </SyncProvider>
+      </AuthProvider>
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Field desk/ }));
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Authorized workspace" }),
+      WORKSPACES[1].id
+    );
+    await act(async () => { secondProjects.resolve([projectB]); });
+    expect(await screen.findByRole("button", { name: /Project B/ })).toBeVisible();
+    await act(async () => { firstProjects.resolve([projectA]); });
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Project A/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Project B/ })).toBeVisible();
   });
 });
