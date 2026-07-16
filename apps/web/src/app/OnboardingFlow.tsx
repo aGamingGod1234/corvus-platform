@@ -1,31 +1,44 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-import {
-  WORKSPACE_PREFERENCE_VERSION,
-  type ExperienceMode,
-  type RuntimeMode,
-  type WorkspacePreference,
-  type WorkspaceScope
-} from "./preferences";
+import type { AuthStatus } from "../auth/AuthProvider";
+import type { components } from "../generated/api";
+import type { LegacyPreferenceCandidate } from "./preferences";
 
-const FINAL_STEP = 3;
+type ExperienceKind = components["schemas"]["ExperienceKind"];
+type OnboardingResponse = components["schemas"]["OnboardingResponse"];
+type Workspace = components["schemas"]["Workspace"];
+type WorkspaceCreate = components["schemas"]["WorkspaceCreate"];
+type WorkspaceKind = components["schemas"]["WorkspaceKind"];
 
-interface OnboardingFlowProps {
-  onComplete: (preference: WorkspacePreference) => void;
-  recovered?: boolean;
+type AuthEntryStatus = Extract<AuthStatus, "unauthenticated" | "authenticated">;
+type OnboardingStep = "experience" | "workspace" | "runtime" | "create";
+
+export interface OnboardingFlowProps {
+  accountVersion: number;
+  authStatus: AuthEntryStatus;
+  experienceKind: ExperienceKind | null;
+  onCreateWorkspace(body: WorkspaceCreate, idempotencyKey: string): Promise<Workspace>;
+  onExperienceSaved(
+    experienceKind: ExperienceKind,
+    expectedVersion: number
+  ): Promise<OnboardingResponse>;
+  onGoogleStart(): void;
+  onWorkspaceConfirmed(workspace: Workspace): void | Promise<void>;
+  onDismissMigration?(): void;
+  preselection?: LegacyPreferenceCandidate | null;
 }
 
 interface Choice<T extends string> {
-  value: T;
-  title: string;
   description: string;
+  title: string;
+  value: T;
 }
 
-const EXPERIENCE_CHOICES: readonly Choice<ExperienceMode>[] = [
+const EXPERIENCE_CHOICES: readonly Choice<ExperienceKind>[] = [
   {
     value: "everyday",
     title: "Everyday",
-    description: "Clear plans, progress, approvals, and results. Technical details stay available."
+    description: "Clear plans, progress, approvals, and results with deeper detail available."
   },
   {
     value: "developer",
@@ -34,133 +47,318 @@ const EXPERIENCE_CHOICES: readonly Choice<ExperienceMode>[] = [
   }
 ];
 
-const SCOPE_CHOICES: readonly Choice<WorkspaceScope>[] = [
+const WORKSPACE_CHOICES: readonly Choice<WorkspaceKind>[] = [
   {
-    value: "personal",
-    title: "Just me",
-    description: "Private work and personal automations."
+    value: "individual",
+    title: "Individual",
+    description: "Private work and personal automations in an authorized workspace."
   },
   {
     value: "team",
-    title: "My team",
-    description: "Assign work, review decisions, and share knowledge."
+    title: "Team",
+    description: "Shared presentation only until real membership is confirmed by Corvus."
   }
 ];
 
-const RUNTIME_CHOICES: readonly Choice<RuntimeMode>[] = [
-  {
-    value: "local",
-    title: "On this computer",
-    description: "Corvus and your data stay on this device. Use it in the desktop app or a browser on this computer."
-  },
-  {
-    value: "corvus_cloud",
-    title: "Corvus Cloud (E2B)",
-    description: "Use the same workspace from desktop and web. Google sign-in required. Cloud Preview; billing comes later."
-  }
-];
+const TOTAL_STEPS = 4;
 
-export function OnboardingFlow({ onComplete, recovered = false }: OnboardingFlowProps) {
+function messageFor(reason: unknown): string {
+  if (!(reason instanceof Error)) return "Workspace setup could not be completed. Try again.";
+  return reason.message.replaceAll("_", " ");
+}
+
+function stepNumber(step: OnboardingStep): number {
+  return { experience: 1, workspace: 2, runtime: 3, create: 4 }[step];
+}
+
+export function OnboardingFlow({
+  accountVersion,
+  authStatus,
+  experienceKind,
+  onCreateWorkspace,
+  onExperienceSaved,
+  onGoogleStart,
+  onWorkspaceConfirmed,
+  onDismissMigration,
+  preselection = null
+}: OnboardingFlowProps) {
   const groupName = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [step, setStep] = useState(1);
-  const [experience, setExperience] = useState<ExperienceMode | null>(null);
-  const [scope, setScope] = useState<WorkspaceScope | null>(null);
-  const [runtime, setRuntime] = useState<RuntimeMode | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const [step, setStep] = useState<OnboardingStep>(
+    experienceKind === null ? "experience" : "workspace"
+  );
+  const [experience, setExperience] = useState<ExperienceKind | null>(
+    experienceKind ?? preselection?.experience ?? null
+  );
+  const [workspaceKind, setWorkspaceKind] = useState<WorkspaceKind | null>(
+    preselection?.workspaceKind ?? null
+  );
+  const [runtime, setRuntime] = useState<"local" | null>(
+    preselection?.runtimePreselection === "local" ? "local" : null
+  );
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const heading =
-    step === 1
-      ? "How do you want Corvus to work with you?"
-      : step === 2
-        ? "Who is this workspace for?"
-        : "Where should Corvus run?";
-  const choices =
-    step === 1 ? EXPERIENCE_CHOICES : step === 2 ? SCOPE_CHOICES : RUNTIME_CHOICES;
-  const selected = step === 1 ? experience : step === 2 ? scope : runtime;
+  useEffect(() => {
+    if (experienceKind !== null) {
+      setExperience(experienceKind);
+      setStep((current) => (current === "experience" ? "workspace" : current));
+    }
+  }, [experienceKind]);
 
   useEffect(() => {
     headingRef.current?.focus();
   }, [step]);
 
-  function choose(value: string) {
-    if (step === 1) setExperience(value as ExperienceMode);
-    else if (step === 2) setScope(value as WorkspaceScope);
-    else setRuntime(value as RuntimeMode);
+  useEffect(() => {
+    if (error !== null) errorRef.current?.focus();
+  }, [error]);
+
+  if (authStatus === "unauthenticated") {
+    return (
+      <main
+        className="onboarding-shell"
+        data-corvus-surface="identity-entry"
+        data-source-refs="corvus-platform chatgpt-conversion shadcn-button"
+        id="main-content"
+      >
+        <section className="onboarding-panel onboarding-panel--identity" aria-labelledby="identity-heading">
+          <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <p className="eyebrow">Identity first</p>
+          <h1 id="identity-heading">Start with your Corvus identity</h1>
+          <p className="onboarding-lede">Use the same governed workspace on your signed-in devices.</p>
+          <button
+            className="button button--primary onboarding-google"
+            data-action="sign-in-google"
+            data-component-source="shadcn-button"
+            onClick={onGoogleStart}
+            type="button"
+          >
+            Continue with Google
+          </button>
+        </section>
+      </main>
+    );
   }
 
-  function continueSetup() {
-    if (selected === null) return;
-    if (step < FINAL_STEP) {
-      setStep((current) => current + 1);
-      return;
+  const heading =
+    step === "experience"
+      ? "How do you want Corvus to work with you?"
+      : step === "workspace"
+        ? "Who is this workspace for?"
+        : step === "runtime"
+          ? "Where should Corvus run?"
+          : "Name your workspace";
+
+  async function continueExperience() {
+    if (experience === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await onExperienceSaved(experience, accountVersion);
+      setExperience(saved.experience_kind);
+      setStep("workspace");
+    } catch (reason) {
+      setError(messageFor(reason));
+    } finally {
+      setBusy(false);
     }
-    if (experience === null || scope === null || runtime === null) return;
-    onComplete({
-      version: WORKSPACE_PREFERENCE_VERSION,
-      experience,
-      scope,
-      runtime,
-      onboardingComplete: true
+  }
+
+  async function createWorkspace() {
+    if (workspaceKind === null || workspaceName.trim() === "") return;
+    if (idempotencyKeyRef.current === null) idempotencyKeyRef.current = crypto.randomUUID();
+    setBusy(true);
+    setError(null);
+    try {
+      const workspace = await onCreateWorkspace(
+        { name: workspaceName.trim(), workspace_kind: workspaceKind },
+        idempotencyKeyRef.current
+      );
+      await onWorkspaceConfirmed(workspace);
+    } catch (reason) {
+      setError(messageFor(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function back() {
+    setError(null);
+    setStep((current) => {
+      if (current === "create") return "runtime";
+      if (current === "runtime") return "workspace";
+      if (current === "workspace" && experienceKind === null) return "experience";
+      return current;
     });
   }
 
+  const canGoBack =
+    step === "create" || step === "runtime" || (step === "workspace" && experienceKind === null);
+
   return (
-    <main className="onboarding-shell" id="main-content">
+    <main
+      className="onboarding-shell"
+      data-corvus-surface="identity-entry"
+      data-source-refs="corvus-platform chatgpt-conversion shadcn-button"
+      id="main-content"
+    >
       <section className="onboarding-panel" aria-labelledby="onboarding-heading">
-        <div className="onboarding-wordmark" aria-label="Corvus">
-          <span aria-hidden="true">C</span>
-          <strong>Corvus</strong>
+        <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+        <div className="onboarding-progress" aria-live="polite">
+          <span>Step {stepNumber(step)} of {TOTAL_STEPS}</span>
+          <span>Server-backed setup</span>
         </div>
-        <div className="onboarding-progress">
-          <span>Step {step} of {FINAL_STEP}</span>
-          <span>Change anytime</span>
-        </div>
-        {recovered && (
-          <p className="setup-notice" role="status">
-            Your saved workspace setup could not be read, so we’ll set it up again safely.
-          </p>
-        )}
+        {error !== null && <div className="setup-error" ref={errorRef} role="alert" tabIndex={-1}>{error}</div>}
         <h1 id="onboarding-heading" ref={headingRef} tabIndex={-1}>{heading}</h1>
-        <p className="onboarding-lede">
-          {step === 1 && "Choose the level of detail that feels natural. You can always open the deeper view."}
-          {step === 2 && "This changes how work is organized, not what you are allowed to access."}
-          {step === 3 && "Local is ready now. Cloud is a preview and will never collect payment in this build."}
-        </p>
-        <fieldset className="choice-grid">
-          <legend className="sr-only">{heading}</legend>
-          {choices.map((choice) => (
-            <label className={`choice-card ${selected === choice.value ? "choice-card--selected" : ""}`} key={choice.value}>
-              <input
-                checked={selected === choice.value}
-                name={`${groupName}-${step}`}
-                onChange={() => choose(choice.value)}
-                type="radio"
-                value={choice.value}
-              />
-              <span className="choice-card__marker" aria-hidden="true" />
-              <span>
-                <strong>{choice.title}</strong>
-                <small> — {choice.description}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        {step === 2 && scope === "team" && (
-          <p className="choice-footnote">You can invite people after setup. Selecting Team does not create membership.</p>
+
+        {step === "experience" && (
+          <ChoiceGroup<ExperienceKind>
+            choices={EXPERIENCE_CHOICES}
+            dataChoice="experience"
+            groupName={`${groupName}-experience`}
+            heading={heading}
+            onChoose={setExperience}
+            selected={experience}
+          />
         )}
-        <div className="onboarding-actions">
-          <button className="button button--quiet" disabled={step === 1} onClick={() => setStep((current) => current - 1)} type="button">
-            Back
-          </button>
-          <button className="button button--primary" disabled={selected === null} onClick={continueSetup} type="button">
-            {step < FINAL_STEP
-              ? "Continue"
-              : runtime === "corvus_cloud"
-                ? "Continue to Cloud Preview"
-                : "Use this computer"}
-          </button>
-        </div>
+
+        {step === "workspace" && (
+          <>
+            <p className="onboarding-lede">This changes presentation, not membership or authority.</p>
+            <ChoiceGroup<WorkspaceKind>
+              choices={WORKSPACE_CHOICES}
+              dataChoice="workspace-type"
+              groupName={`${groupName}-workspace`}
+              heading={heading}
+              onChoose={(value) => {
+                idempotencyKeyRef.current = null;
+                setWorkspaceKind(value);
+              }}
+              selected={workspaceKind}
+            />
+          </>
+        )}
+
+        {step === "runtime" && (
+          <fieldset className="choice-grid" data-choice="runtime-policy">
+            <legend className="sr-only">{heading}</legend>
+            <label className={`choice-card ${runtime === "local" ? "choice-card--selected" : ""}`}>
+              <input checked={runtime === "local"} name={`${groupName}-runtime`} onChange={() => setRuntime("local")} type="radio" value="local" />
+              <span className="choice-card__marker" aria-hidden="true" />
+              <span><strong>Local</strong><small> — Available now through your paired local runtime.</small></span>
+            </label>
+            <label className="choice-card choice-card--disabled">
+              <input disabled name={`${groupName}-runtime`} type="radio" value="cloud" />
+              <span className="choice-card__marker" aria-hidden="true" />
+              <span><strong>Cloud Preview</strong><small> — Preview only. Cloud execution is not available yet.</small></span>
+            </label>
+            {preselection?.runtimePreselection === "cloud_preview" && (
+              <p className="setup-notice" role="status">
+                Your previous Cloud choice is preserved as Preview only. Choose Local to continue.
+                {onDismissMigration && <button className="text-button" onClick={onDismissMigration} type="button">Dismiss previous setup</button>}
+              </p>
+            )}
+          </fieldset>
+        )}
+
+        {step === "create" && (
+          <div className="workspace-create-form">
+            <label htmlFor="workspace-name">Workspace name</label>
+            <input
+              id="workspace-name"
+              maxLength={200}
+              onChange={(event) => {
+                if (event.target.value !== workspaceName) idempotencyKeyRef.current = null;
+                setWorkspaceName(event.target.value);
+              }}
+              value={workspaceName}
+            />
+            <p className="choice-footnote">
+              {workspaceKind === "team"
+                ? "A Team workspace is created only after this explicit action."
+                : "This creates your authorized Individual workspace."}
+            </p>
+            <div className="onboarding-create-actions">
+              <button
+                className="button button--primary"
+                data-action="create-workspace"
+                data-component-source="shadcn-button"
+                disabled={busy || workspaceName.trim() === ""}
+                onClick={() => void createWorkspace()}
+                type="button"
+              >
+                Create {workspaceKind} workspace
+              </button>
+              <button
+                className="button button--quiet"
+                data-action="join-workspace"
+                disabled
+                title="Workspace invitations are not available yet"
+                type="button"
+              >
+                Join workspace
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step !== "create" && (
+          <div className="onboarding-actions">
+            <button className="button button--quiet" disabled={!canGoBack || busy} onClick={back} type="button">Back</button>
+            <button
+              className="button button--primary"
+              data-component-source="shadcn-button"
+              disabled={
+                busy ||
+                (step === "experience" && experience === null) ||
+                (step === "workspace" && workspaceKind === null) ||
+                (step === "runtime" && runtime === null)
+              }
+              onClick={() => {
+                if (step === "experience") void continueExperience();
+                else if (step === "workspace") setStep("runtime");
+                else setStep("create");
+              }}
+              type="button"
+            >
+              Continue
+            </button>
+          </div>
+        )}
       </section>
     </main>
+  );
+}
+
+function ChoiceGroup<T extends string>({
+  choices,
+  dataChoice,
+  groupName,
+  heading,
+  onChoose,
+  selected
+}: {
+  choices: readonly Choice<T>[];
+  dataChoice: string;
+  groupName: string;
+  heading: string;
+  onChoose(value: T): void;
+  selected: T | null;
+}) {
+  return (
+    <fieldset className="choice-grid" data-choice={dataChoice}>
+      <legend className="sr-only">{heading}</legend>
+      {choices.map((choice) => (
+        <label className={`choice-card ${selected === choice.value ? "choice-card--selected" : ""}`} key={choice.value}>
+          <input checked={selected === choice.value} name={groupName} onChange={() => onChoose(choice.value)} type="radio" value={choice.value} />
+          <span className="choice-card__marker" aria-hidden="true" />
+          <span><strong>{choice.title}</strong><small> — {choice.description}</small></span>
+        </label>
+      ))}
+    </fieldset>
   );
 }

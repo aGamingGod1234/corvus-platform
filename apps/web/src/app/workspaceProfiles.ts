@@ -1,4 +1,4 @@
-import type { ExperienceMode, WorkspaceScope } from "./preferences";
+import type { ExperienceMode, WorkspaceKind } from "./preferences";
 
 export interface WorkspaceRoute {
   id: string;
@@ -8,17 +8,17 @@ export interface WorkspaceRoute {
 
 export interface WorkspaceProfile {
   experience: ExperienceMode;
-  scope: WorkspaceScope;
+  workspaceKind: WorkspaceKind;
   label: string;
   eyebrow: string;
   routes: readonly WorkspaceRoute[];
 }
 
-const PROFILES: Record<`${ExperienceMode}:${WorkspaceScope}`, WorkspaceProfile> = {
-  "everyday:personal": {
+const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> = {
+  "everyday:individual": {
     experience: "everyday",
-    scope: "personal",
-    label: "Everyday · Personal",
+    workspaceKind: "individual",
+    label: "Everyday · Individual",
     eyebrow: "Your private workspace",
     routes: [
       { id: "home", label: "Home", description: "Today, recent outcomes, and next steps" },
@@ -27,10 +27,10 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceScope}`, WorkspaceProfile> 
       { id: "files", label: "Files", description: "Inputs, sources, and deliverables" }
     ]
   },
-  "developer:personal": {
+  "developer:individual": {
     experience: "developer",
-    scope: "personal",
-    label: "Developer · Personal",
+    workspaceKind: "individual",
+    label: "Developer · Individual",
     eyebrow: "Local engineering workspace",
     routes: [
       { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
@@ -42,7 +42,7 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceScope}`, WorkspaceProfile> 
   },
   "everyday:team": {
     experience: "everyday",
-    scope: "team",
+    workspaceKind: "team",
     label: "Everyday · Team",
     eyebrow: "Shared work preview",
     routes: [
@@ -55,7 +55,7 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceScope}`, WorkspaceProfile> 
   },
   "developer:team": {
     experience: "developer",
-    scope: "team",
+    workspaceKind: "team",
     label: "Developer · Team",
     eyebrow: "Governed engineering preview",
     routes: [
@@ -70,7 +70,7 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceScope}`, WorkspaceProfile> 
 
 export function getWorkspaceProfile(
   experience: ExperienceMode,
-  scope: WorkspaceScope
+  workspaceKind: WorkspaceKind
 ): WorkspaceProfile {
-  return PROFILES[`${experience}:${scope}`];
+  return PROFILES[`${experience}:${workspaceKind}`];
 }

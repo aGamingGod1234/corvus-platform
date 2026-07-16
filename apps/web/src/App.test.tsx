@@ -2,8 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
 import type { CorvusApi, Outcome, Project, Workflow } from "./api";
+import type { PlatformApi } from "./auth/authApi";
+import { PlatformApp } from "./PlatformApp";
 import { MemoryStorage } from "./test/memoryStorage";
 
 const PROJECT: Project = {
@@ -28,6 +29,56 @@ const WORKFLOW: Workflow = {
   created_at: "2026-07-14T00:00:00Z",
   updated_at: "2026-07-14T00:00:00Z"
 };
+
+function hostedApi(): PlatformApi {
+  const workspace = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "Local workspace",
+    workspace_kind: "individual" as const,
+    status: "active" as const,
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+    version: 1
+  };
+  return {
+    applySync: vi.fn().mockResolvedValue({ acknowledged_cursor: 0, results: [] }),
+    createWorkspace: vi.fn(),
+    getSession: vi.fn().mockResolvedValue({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      principal_id: "22222222-2222-4222-8222-222222222222",
+      email: "operator@example.com",
+      experience_kind: "developer",
+      account_version: 1,
+      session_version: 1,
+      csrf_token: "hosted-csrf"
+    }),
+    getSyncPage: vi.fn().mockResolvedValue({
+      requested_cursor: 0,
+      next_cursor: 0,
+      high_watermark: 0,
+      earliest_retained_sequence: 1,
+      changes: [],
+      has_more: false
+    }),
+    getWorkspace: vi.fn().mockResolvedValue(workspace),
+    listWorkspaces: vi.fn().mockResolvedValue([workspace]),
+    logout: vi.fn(),
+    refreshSession: vi.fn(),
+    startGoogle: vi.fn(),
+    updateOnboarding: vi.fn()
+  };
+}
+
+function renderApp(api: CorvusApi, preferenceStorage: Storage) {
+  return render(
+    <PlatformApp
+      hostedApi={hostedApi()}
+      locationHostname="localhost"
+      loopbackApi={api}
+      preferenceStorage={preferenceStorage}
+    />
+  );
+}
 
 function fakeApi(projects: Project[] = []): CorvusApi {
   return {
@@ -107,7 +158,7 @@ describe("Corvus operator console", () => {
   it("pairs once and reveals the real project workspace", async () => {
     const api = fakeApi([PROJECT]);
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.type(await screen.findByLabelText("One-time pairing value"), "ephemeral-pairing-value");
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
@@ -121,7 +172,7 @@ describe("Corvus operator console", () => {
     const api = fakeApi([PROJECT]);
     window.history.replaceState(null, "", "/#pair=desktop-ephemeral-token");
 
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
     expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
@@ -139,7 +190,7 @@ describe("Corvus operator console", () => {
       expires_at: "2026-07-15T00:00:00Z"
     });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("button", { name: "New project" }));
     await user.type(screen.getByLabelText("Project name"), "Launch control");
@@ -174,7 +225,7 @@ describe("Corvus operator console", () => {
       settled_units: 0
     });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
     await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
@@ -231,7 +282,7 @@ describe("Corvus operator console", () => {
     }
     vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
 
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
     await screen.findByText("Browser delivery");
     await waitFor(() => expect(streams).toHaveLength(1));
     streams[0].emit("work_item.running");
@@ -253,7 +304,7 @@ describe("Corvus operator console", () => {
       expires_at: "2026-07-15T00:00:00Z"
     });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("link", { name: "Skills" }));
     await user.type(screen.getByLabelText("Team name"), "Operators");

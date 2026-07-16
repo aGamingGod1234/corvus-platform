@@ -4,10 +4,20 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from corvus.domain.sync import SyncConflictError, SyncMutation, SyncProtocolError
+from corvus.domain.sync import (
+    SyncApplyResult,
+    SyncConflictError,
+    SyncMutation,
+    SyncPage,
+    SyncProtocolError,
+)
 from corvus.infrastructure.repositories.accounts import WebSessionAuthentication
 from corvus.platform.api.dependencies import IdentityApiDependencies
-from corvus.platform.api.identity import authenticate_mutation, authenticate_session
+from corvus.platform.api.identity import (
+    V2_ERROR_RESPONSES,
+    authenticate_mutation,
+    authenticate_session,
+)
 from corvus.security import SecurityError
 
 _SESSION_COOKIE = "__Host-corvus_v2_session"
@@ -59,24 +69,42 @@ def _map_sync_error(error: SyncProtocolError) -> HTTPException:
 
 
 def create_sync_router(dependencies: IdentityApiDependencies | None) -> APIRouter:
-    router = APIRouter(prefix="/api/v2", tags=["platform-sync"])
+    router = APIRouter(
+        prefix="/api/v2",
+        tags=["platform-sync"],
+        responses=V2_ERROR_RESPONSES,
+    )
     if dependencies is None:
 
         def unavailable() -> None:
             raise _sync_error("platform_identity_unavailable", status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        router.add_api_route(
+        @router.get(
             "/workspaces/{workspace_id}/sync",
-            unavailable,
-            methods=["GET"],
             operation_id="unavailable_workspace_sync_get",
+            response_model=SyncPage,
         )
-        router.add_api_route(
+        def unavailable_workspace_sync_get(
+            workspace_id: UUID,
+            _cursor: Annotated[int, Query(alias="cursor", ge=0)] = 0,
+            _limit: Annotated[int, Query(alias="limit", ge=1, le=100)] = 100,
+        ) -> None:
+            del workspace_id
+            unavailable()
+
+        @router.post(
             "/workspaces/{workspace_id}/sync/mutations",
-            unavailable,
-            methods=["POST"],
             operation_id="unavailable_workspace_sync_post",
+            response_model=SyncApplyResult,
         )
+        def unavailable_workspace_sync_post(
+            workspace_id: UUID,
+            _body: SyncMutationBatch,
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            del workspace_id
+            unavailable()
+
         return router
 
     def authenticated(
@@ -91,7 +119,7 @@ def create_sync_router(dependencies: IdentityApiDependencies | None) -> APIRoute
     ) -> WebSessionAuthentication:
         return authenticate_mutation(dependencies, request, session, csrf_token)
 
-    @router.get("/workspaces/{workspace_id}/sync")
+    @router.get("/workspaces/{workspace_id}/sync", response_model=SyncPage)
     def page(
         workspace_id: UUID,
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
@@ -112,7 +140,7 @@ def create_sync_router(dependencies: IdentityApiDependencies | None) -> APIRoute
             raise _map_sync_error(exc) from None
         return result.model_dump(mode="json")
 
-    @router.post("/workspaces/{workspace_id}/sync/mutations")
+    @router.post("/workspaces/{workspace_id}/sync/mutations", response_model=SyncApplyResult)
     def apply(
         workspace_id: UUID,
         body: SyncMutationBatch,

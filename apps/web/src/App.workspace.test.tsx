@@ -1,36 +1,76 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
 import type { CorvusApi } from "./api";
+import type { PlatformApi, Workspace } from "./auth/authApi";
+import { PlatformApp } from "./PlatformApp";
 import { MemoryStorage } from "./test/memoryStorage";
 
-const PROJECT = {
-  id: "project-1",
-  name: "Launch control",
-  tenant_id: "local",
-  created_at: "2026-07-14T00:00:00Z"
-};
+const WORKSPACES: Workspace[] = [
+  {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "Field desk",
+    workspace_kind: "individual",
+    status: "active",
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+    version: 1
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444444",
+    name: "Operations",
+    workspace_kind: "team",
+    status: "active",
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+    version: 1
+  }
+];
 
-function bootstrapApi(): CorvusApi {
+function hostedApi(
+  workspaces: Workspace[],
+  experienceKind: "everyday" | "developer" | null = "developer"
+): PlatformApi {
   return {
-    session: vi.fn().mockRejectedValue(new Error("authentication_required")),
-    pair: vi.fn().mockResolvedValue(undefined),
-    listProjects: vi.fn().mockResolvedValue([])
-  } as unknown as CorvusApi;
+    applySync: vi.fn().mockResolvedValue({ acknowledged_cursor: 0, results: [] }),
+    createWorkspace: vi.fn(),
+    getSession: vi.fn().mockResolvedValue({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      principal_id: "22222222-2222-4222-8222-222222222222",
+      email: "person@example.com",
+      experience_kind: experienceKind,
+      account_version: 1,
+      session_version: 1,
+      csrf_token: "hosted-csrf"
+    }),
+    getSyncPage: vi.fn().mockResolvedValue({
+      requested_cursor: 0,
+      next_cursor: 0,
+      high_watermark: 0,
+      earliest_retained_sequence: 1,
+      changes: [],
+      has_more: false
+    }),
+    getWorkspace: vi.fn().mockImplementation(async (id: string) => workspaces.find((workspace) => workspace.id === id)!),
+    listWorkspaces: vi.fn().mockResolvedValue(workspaces),
+    logout: vi.fn(),
+    refreshSession: vi.fn(),
+    startGoogle: vi.fn(),
+    updateOnboarding: vi.fn()
+  };
 }
 
-function readyApi(): CorvusApi {
+function readyLoopback(): CorvusApi {
   return {
     session: vi.fn().mockResolvedValue({
-      csrf_token: "csrf",
+      csrf_token: "local-csrf",
       username: "operator",
       user_id: "operator-1",
       tenant_id: "local",
-      expires_at: "2026-07-16T00:00:00Z"
+      expires_at: "2026-07-18T00:00:00Z"
     }),
-    listProjects: vi.fn().mockResolvedValue([PROJECT]),
+    listProjects: vi.fn().mockResolvedValue([]),
     listOutcomes: vi.fn().mockResolvedValue([]),
     listTeams: vi.fn().mockResolvedValue([]),
     listProviders: vi.fn().mockResolvedValue([]),
@@ -42,122 +82,68 @@ function readyApi(): CorvusApi {
   } as unknown as CorvusApi;
 }
 
-function seedPreference(
-  storage: MemoryStorage,
-  experience: "everyday" | "developer",
-  scope: "personal" | "team"
-) {
-  storage.setItem(
-    "corvus.workspace-preference",
-    JSON.stringify({
+describe("adaptive Corvus bootstrap", () => {
+  it("treats a legacy preference only as onboarding preselection", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.workspace-preference", JSON.stringify({
       version: 1,
-      experience,
-      scope,
+      experience: "developer",
+      scope: "team",
       runtime: "local",
       onboardingComplete: true
-    })
-  );
-}
-
-describe("adaptive Corvus bootstrap", () => {
-  let preferenceStorage: MemoryStorage;
-
-  beforeEach(() => {
-    preferenceStorage = new MemoryStorage();
-  });
-
-  it("does not contact a workspace before the user chooses a runtime", async () => {
-    const api = bootstrapApi();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
-
-    expect(await screen.findByRole("heading", { name: "How do you want Corvus to work with you?" })).toBeVisible();
-    expect(api.session).not.toHaveBeenCalled();
-    expect(api.listProjects).not.toHaveBeenCalled();
-  });
-
-  it("shows a truthful Cloud Preview without checkout or fake sign-in", async () => {
-    const api = bootstrapApi();
-    const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
-
-    await user.click(await screen.findByLabelText(/Developer — Repositories/));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByLabelText(/My team — Assign work/));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByLabelText(/Corvus Cloud \(E2B\)/));
-    await user.click(screen.getByRole("button", { name: "Continue to Cloud Preview" }));
-
-    expect(await screen.findByRole("heading", { name: "Corvus Cloud is in preview." })).toBeVisible();
-    expect(screen.getByText("Cloud setup is not available in this build")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Billing not enabled" })).toBeDisabled();
-    expect(screen.queryByLabelText(/card/i)).not.toBeInTheDocument();
-    expect(api.session).not.toHaveBeenCalled();
-  });
-
-  it("starts Local only after setup is complete", async () => {
-    const api = bootstrapApi();
-    const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
-
-    await user.click(await screen.findByLabelText(/Everyday — Clear plans/));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByLabelText(/Just me — Private work/));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByLabelText(/On this computer/));
-    await user.click(screen.getByRole("button", { name: "Use this computer" }));
-
-    await waitFor(() => expect(api.session).toHaveBeenCalledTimes(1));
-    expect(await screen.findByLabelText("One-time pairing value")).toBeVisible();
-  });
-
-  it("hands hosted users to the same-origin loopback workspace", async () => {
-    const api = bootstrapApi();
-    seedPreference(preferenceStorage, "everyday", "personal");
+    }));
+    const loopback = readyLoopback();
 
     render(
-      <App
-        api={api}
-        locationHostname="corvus-platform.vercel.app"
-        preferenceStorage={preferenceStorage}
+      <PlatformApp
+        hostedApi={hostedApi([WORKSPACES[0]], null)}
+        locationHostname="localhost"
+        loopbackApi={loopback}
+        preferenceStorage={storage}
       />
     );
 
-    expect(
-      await screen.findByRole("heading", { name: "Open Corvus on this computer." })
-    ).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open local Corvus" })).toHaveAttribute(
-      "href",
-      "http://127.0.0.1:8080/"
-    );
-    expect(screen.getByText(/same-origin local page/i)).toBeVisible();
-    expect(screen.getByText(/does not verify which app owns port 8080/i)).toBeVisible();
-    expect(api.session).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "How do you want Corvus to work with you?" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Developer/ })).toBeChecked();
+    expect(loopback.session).not.toHaveBeenCalled();
   });
 
-  it("renders profile-specific navigation and preserves the active project while switching", async () => {
-    const api = readyApi();
+  it("hands hosted users to loopback without sending hosted authority to the local API", async () => {
+    const loopback = readyLoopback();
+
+    render(
+      <PlatformApp
+        hostedApi={hostedApi([WORKSPACES[0]])}
+        locationHostname="corvus-platform.example"
+        loopbackApi={loopback}
+        preferenceStorage={new MemoryStorage()}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Open Corvus on this computer." })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open local Corvus" })).toHaveAttribute("href", "http://127.0.0.1:8080/");
+    expect(screen.getByText(/hosted page never receives your local session/i)).toBeVisible();
+    expect(loopback.session).not.toHaveBeenCalled();
+  });
+
+  it("keeps experience and scope read-only after explicit workspace selection", async () => {
     const user = userEvent.setup();
-    seedPreference(preferenceStorage, "everyday", "personal");
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    const loopback = readyLoopback();
 
-    expect(await screen.findByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "My Work" })).toBeVisible();
-    expect(screen.getByText("Local · Connected")).toBeVisible();
-    expect(screen.getByRole("button", { name: /Launch control/ })).toBeVisible();
+    render(
+      <PlatformApp
+        hostedApi={hostedApi(WORKSPACES)}
+        locationHostname="localhost"
+        loopbackApi={loopback}
+        preferenceStorage={new MemoryStorage()}
+      />
+    );
 
-    await user.click(screen.getByRole("link", { name: "My Work" }));
-    expect(screen.getByRole("main")).toHaveFocus();
-
-    const desktopRail = within(screen.getByRole("complementary", { name: "Workspace navigation rail" }));
-    await user.click(desktopRail.getByRole("button", { name: "Developer work style" }));
-    expect(await screen.findByRole("link", { name: "Repositories" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Skills" })).toBeVisible();
-    expect(screen.getByRole("button", { name: /Launch control/ })).toBeVisible();
-
-    await user.click(desktopRail.getByRole("button", { name: "Team workspace" }));
-    expect(await screen.findByRole("link", { name: "Work Queue" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Policies" })).toBeVisible();
-    expect(screen.getByText("Team features require a shared workspace capability.")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: /Field desk/ }));
+    await waitFor(() => expect(loopback.session).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("link", { name: "Repositories" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /work style/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /team workspace/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Field desk").length).toBeGreaterThan(0);
   });
 });

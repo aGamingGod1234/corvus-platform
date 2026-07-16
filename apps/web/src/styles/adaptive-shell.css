@@ -58,6 +58,43 @@
 
 .workspace-switcher { display: grid; gap: 0.5rem; padding: 1rem; }
 
+.workspace-identity-block { display: grid; gap: 0.65rem; padding: 1rem; border-bottom: 1px solid var(--line); }
+.workspace-identity-trigger {
+  display: grid;
+  gap: 0.18rem;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  color: var(--ink);
+  background: color-mix(in oklch, var(--raised) 88%, transparent);
+  cursor: pointer;
+  text-align: left;
+}
+.workspace-identity-trigger span { overflow: hidden; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-identity-trigger strong { color: var(--muted); font-size: 0.72rem; font-weight: 620; text-transform: uppercase; letter-spacing: 0.05em; }
+.workspace-authorized-picker { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.7rem; }
+.workspace-authorized-picker select { min-height: 44px; width: 100%; border: 1px solid var(--line); border-radius: 0.55rem; padding: 0 0.6rem; color: var(--ink); background: var(--raised); }
+.workspace-identity-dialog {
+  position: fixed;
+  z-index: 60;
+  top: 50%;
+  left: 50%;
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  padding: 1.25rem;
+  background: var(--raised);
+  box-shadow: 0 24px 80px color-mix(in oklch, var(--ink) 24%, transparent);
+}
+.workspace-identity-dialog dl { display: grid; gap: 0; margin: 1rem 0; }
+.workspace-identity-dialog dl div { display: grid; grid-template-columns: 7rem 1fr; gap: 0.8rem; border-top: 1px solid var(--line); padding: 0.75rem 0; }
+.workspace-identity-dialog dt { color: var(--muted); }
+.workspace-identity-dialog dd { margin: 0; overflow-wrap: anywhere; font-weight: 700; }
+
 .segmented-control {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -218,9 +255,11 @@
     backdrop-filter: blur(18px);
   }
   .responsive-navigation > a,
-  .responsive-navigation summary {
+  .responsive-navigation > button {
     display: grid;
     place-items: center;
+    min-height: 44px;
+    border: 0;
     padding: 0.55rem 0.2rem;
     color: var(--muted);
     text-align: center;
@@ -230,13 +269,11 @@
     list-style: none;
   }
   .responsive-navigation > a[aria-current="page"] { color: var(--scope-accent); }
-  .responsive-navigation details { position: relative; }
-  .responsive-navigation details > div { position: absolute; right: 0.5rem; bottom: 64px; min-width: min(19rem, calc(100vw - 1rem)); border: 1px solid var(--line); border-radius: 0.65rem; padding: 0.4rem; background: var(--raised); box-shadow: var(--shadow); }
-  .responsive-navigation details button { width: 100%; border: 0; padding: 0.65rem; background: transparent; text-align: left; }
-  .responsive-navigation .workspace-switcher { border-top: 1px solid var(--line); padding: 0.6rem 0.35rem; }
-  .responsive-navigation .segmented-control button { padding: 0.5rem 0.3rem; text-align: center; }
+  .mobile-settings { position: fixed; z-index: 55; right: 0.5rem; bottom: 78px; left: 0.5rem; max-height: calc(100dvh - 94px); overflow-y: auto; border: 1px solid var(--line); border-radius: 0.8rem; padding: 0.75rem; background: var(--raised); box-shadow: var(--shadow); }
+  .mobile-settings button { min-height: 44px; }
+  .responsive-navigation .workspace-identity-block { border-bottom: 0; padding: 0.75rem 0 0; }
   .mobile-settings__routes { border-bottom: 1px solid var(--line); }
-  .responsive-navigation .mobile-change-setup { border-top: 1px solid var(--line); color: var(--muted); }
+  .mobile-settings__routes button { width: 100%; border: 0; padding: 0.65rem; background: transparent; text-align: left; }
   .workspace-summary > div { grid-template-columns: 1fr; gap: 0.3rem; }
 }
 

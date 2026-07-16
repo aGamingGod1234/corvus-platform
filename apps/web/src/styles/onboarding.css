@@ -15,6 +15,7 @@
 .onboarding-panel,
 .cloud-preview-panel,
 .local-launch-panel { width: min(100%, 780px); }
+.onboarding-panel--identity { width: min(100%, 460px); }
 .onboarding-panel { animation: onboarding-arrive 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 
 .onboarding-wordmark { display: flex; gap: 0.7rem; align-items: center; margin-bottom: clamp(2rem, 8vh, 5rem); font-family: "Fraunces Variable", Georgia, serif; font-size: 1.25rem; }
@@ -37,6 +38,12 @@
 .onboarding-actions { display: flex; justify-content: space-between; margin-top: 1.5rem; }
 .button--quiet { border-color: transparent; background: transparent; }
 .setup-notice { border-left: 3px solid var(--approval); padding: 0.7rem 0.9rem; background: color-mix(in oklch, var(--approval) 8%, var(--raised)); }
+.setup-error { margin: 0 0 1rem; border-left: 3px solid var(--danger); padding: 0.75rem 0.9rem; color: var(--danger); background: color-mix(in oklch, var(--danger) 7%, var(--raised)); }
+.workspace-create-form { display: grid; gap: 0.65rem; margin-top: 2rem; }
+.workspace-create-form input { min-height: 44px; border: 1px solid var(--line); border-radius: 0.55rem; padding: 0 0.75rem; color: var(--ink); background: var(--raised); }
+.onboarding-create-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.workspace-selection-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 2rem; }
+.workspace-selection-list .choice-card { grid-template-columns: 1fr; width: 100%; text-align: left; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .cloud-preview-panel,
@@ -63,12 +70,16 @@
 }
 
 @media (max-width: 620px) {
+  .onboarding-shell { align-items: start; padding: 1rem; }
+  .onboarding-wordmark { margin-bottom: 2.5rem; }
   .choice-grid { grid-template-columns: 1fr; }
   .choice-card { min-height: 110px; }
   .preview-route { display: grid; gap: 0.35rem; }
   .preview-route i { width: 1px; height: 18px; margin-left: 0.35rem; }
   .preview-plan { align-items: flex-start; flex-direction: column; }
   .cloud-preview-actions { align-items: stretch; flex-direction: column; }
+  .workspace-selection-list { grid-template-columns: 1fr; }
+  .onboarding-create-actions { align-items: stretch; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

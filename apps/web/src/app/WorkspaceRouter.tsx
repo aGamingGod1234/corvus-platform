@@ -21,7 +21,7 @@ export function WorkspaceRouter({
   projectName
 }: WorkspaceRouterProps) {
   const route = profile.routes.find((candidate) => candidate.id === activeRoute) ?? profile.routes[0];
-  const teamNotice = profile.scope === "team" ? (
+  const teamNotice = profile.workspaceKind === "team" ? (
     <p className="capability-notice" role="status">
       <strong>Team features require a shared workspace capability.</strong>
       This profile previews the team information architecture without creating members or permissions.
@@ -29,9 +29,9 @@ export function WorkspaceRouter({
   ) : null;
 
   let surface: ReactNode;
-  if (profile.scope === "personal" && OPERATIONS_ROUTES.has(route.id)) {
+  if (profile.workspaceKind === "individual" && OPERATIONS_ROUTES.has(route.id)) {
     surface = operationsSurface;
-  } else if (profile.scope === "personal" && EXECUTION_ROUTES.has(route.id)) {
+  } else if (profile.workspaceKind === "individual" && EXECUTION_ROUTES.has(route.id)) {
     surface = executionSurface;
   } else {
     surface = (
@@ -43,7 +43,7 @@ export function WorkspaceRouter({
         <div className="workspace-summary">
           <div><span>Workspace</span><strong>{projectName ?? "No project selected"}</strong></div>
           <div><span>Runtime</span><strong>On this computer</strong></div>
-          <div><span>Next</span><strong>{profile.scope === "team" ? "Connect a shared workspace later" : "Choose a project to begin"}</strong></div>
+          <div><span>Next</span><strong>{profile.workspaceKind === "team" ? "Connect a shared workspace later" : "Choose a project to begin"}</strong></div>
         </div>
       </section>
     );

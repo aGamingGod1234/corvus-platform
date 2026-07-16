@@ -1,32 +1,45 @@
 import type { ReactNode } from "react";
 
 import type { WorkspaceProfile } from "../app/workspaceProfiles";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
-import type { WorkspacePreference } from "../app/preferences";
+import type { components } from "../generated/api";
+import { WorkspaceIdentityBlock } from "./WorkspaceSwitcher";
+
+type Workspace = components["schemas"]["Workspace"];
 
 interface NavigationRailProps {
+  accountEmail: string;
   activeRoute: string;
-  onChangeSetup: () => void;
-  onNavigate: (routeId: string) => void;
-  onPreferenceChange: (preference: WorkspacePreference) => void;
-  preference: WorkspacePreference;
+  onNavigate(routeId: string): void;
+  onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   profile: WorkspaceProfile;
   projectContext: ReactNode;
+  selectedWorkspace: Workspace;
+  selectionRequired?: boolean;
+  workspaces: readonly Workspace[];
 }
 
 export function NavigationRail({
+  accountEmail,
   activeRoute,
-  onChangeSetup,
   onNavigate,
-  onPreferenceChange,
-  preference,
+  onWorkspaceSelect,
   profile,
-  projectContext
+  projectContext,
+  selectedWorkspace,
+  selectionRequired = false,
+  workspaces
 }: NavigationRailProps) {
   return (
     <aside aria-label="Workspace navigation rail" className="adaptive-rail">
       <div className="adaptive-wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
-      <WorkspaceSwitcher onChange={onPreferenceChange} preference={preference} />
+      <WorkspaceIdentityBlock
+        accountEmail={accountEmail}
+        experience={profile.experience}
+        onWorkspaceSelect={onWorkspaceSelect}
+        selectedWorkspace={selectedWorkspace}
+        selectionRequired={selectionRequired}
+        workspaces={workspaces}
+      />
       <div className="profile-caption">
         <span>{profile.eyebrow}</span>
         <strong>{profile.label}</strong>
@@ -49,7 +62,6 @@ export function NavigationRail({
         ))}
       </nav>
       {projectContext}
-      <button className="change-setup-button" onClick={onChangeSetup} type="button">Change workspace setup</button>
     </aside>
   );
 }

@@ -7,10 +7,10 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "./styles.css";
 import "./styles/onboarding.css";
 import "./styles/adaptive-shell.css";
-import { App } from "./App";
+import { PlatformApp } from "./PlatformApp";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <PlatformApp />
   </StrictMode>
 );

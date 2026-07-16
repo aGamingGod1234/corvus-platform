@@ -1572,3 +1572,31 @@
 ### Suggested Next Steps
 - Run the four guarded PostgreSQL cases against the approved disposable service when reset authorization is available.
 - Re-run independent review on the complete Task 1.5 commit chain before authorizing Task 1.6.
+
+## 2026-07-17 — Implement Task 1.6 Google-first onboarding and synchronized profiles
+
+### What Was Implemented
+- Added a single hosted composition root with in-memory authentication and ordered workspace synchronization providers.
+- Added Google-first, server-resumable onboarding with exact versions, stable idempotent workspace creation, explicit Team creation, unavailable Join, and disabled Cloud Preview.
+- Added strict sequence/digest/provenance reduction, acknowledgement-after-reduction, conflict/resync/offline/403 behavior, and explicit authority re-selection.
+- Replaced experience/scope switches with read-only identity labels and authorized workspace selection on desktop/mobile.
+- Reduced V1 browser preferences to one-time post-auth migration input and preserved the authenticated hosted-to-loopback boundary.
+- Added explicit V2 request/response/error schemas and regenerated deterministic OpenAPI/TypeScript contracts.
+
+### Files Modified
+- `apps/web/src/auth/`, `apps/web/src/sync/`, `apps/web/src/PlatformApp.tsx`, `apps/web/src/App.tsx`, and `apps/web/src/main.tsx` — compose session, onboarding, selection, sync, and local runtime boundaries.
+- `apps/web/src/app/`, `apps/web/src/components/`, `apps/web/src/runtime/`, and web styles/tests — implement resumable onboarding, migration, read-only identity, responsive navigation, handoff, and coverage.
+- `corvus/platform/api/identity.py`, `corvus/platform/api/sync.py`, `openapi/corvus-mvp.json`, and `apps/web/src/generated/api.ts` — provide explicit typed V2 contracts in configured and unavailable modes.
+- `tests/mvp/test_openapi_export.py` and `.superpowers/sdd/task-1.6-report.md` — prove and record typed export and completion evidence.
+
+### Assumptions Made (flag these for review)
+- None. All state ownership, failure, migration, vocabulary, runtime, viewport, and stop-boundary decisions were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy still reports five pre-existing migration typing errors unrelated to Task 1.6.
+- Four destructive PostgreSQL cases remain guarded before engine creation without disposable reset authorization.
+- Invitations, organization roles, durable active selection, offline mutation queues, native OAuth handoff, real cloud execution, billing, deployment, profile Settings, and Task 2 are deferred.
+
+### Suggested Next Steps
+- Independently review the Task 1.6 commit and required viewport captures.
+- Begin Task 2 only after explicit authorization.

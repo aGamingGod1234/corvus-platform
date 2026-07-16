@@ -1,49 +1,47 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import type { WorkspaceProfile } from "../app/workspaceProfiles";
-import type { WorkspacePreference } from "../app/preferences";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import type { components } from "../generated/api";
+import { WorkspaceIdentityBlock } from "./WorkspaceSwitcher";
+
+type Workspace = components["schemas"]["Workspace"];
 
 interface ResponsiveNavigationProps {
+  accountEmail: string;
   activeRoute: string;
-  onChangeSetup: () => void;
-  onNavigate: (routeId: string) => void;
-  onPreferenceChange: (preference: WorkspacePreference) => void;
-  preference: WorkspacePreference;
+  onNavigate(routeId: string): void;
+  onWorkspaceSelect(workspaceId: string): void | Promise<void>;
   profile: WorkspaceProfile;
+  selectedWorkspace: Workspace;
+  selectionRequired?: boolean;
+  workspaces: readonly Workspace[];
 }
 
 const MOBILE_PRIMARY_COUNT = 4;
 
 export function ResponsiveNavigation({
+  accountEmail,
   activeRoute,
-  onChangeSetup,
   onNavigate,
-  onPreferenceChange,
-  preference,
-  profile
+  onWorkspaceSelect,
+  profile,
+  selectedWorkspace,
+  selectionRequired = false,
+  workspaces
 }: ResponsiveNavigationProps) {
-  const menuRef = useRef<HTMLDetailsElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
   const primaryRoutes = profile.routes.slice(0, MOBILE_PRIMARY_COUNT);
   const remainingRoutes = profile.routes.slice(MOBILE_PRIMARY_COUNT);
 
   function closeMenu() {
-    if (menuRef.current !== null) menuRef.current.open = false;
+    setOpen(false);
+    moreRef.current?.focus();
   }
 
   function navigate(routeId: string) {
     closeMenu();
     onNavigate(routeId);
-  }
-
-  function changePreference(nextPreference: WorkspacePreference) {
-    closeMenu();
-    onPreferenceChange(nextPreference);
-  }
-
-  function changeSetup() {
-    closeMenu();
-    onChangeSetup();
   }
 
   return (
@@ -62,27 +60,38 @@ export function ResponsiveNavigation({
           {route.label}
         </a>
       ))}
-      <details ref={menuRef}>
-        <summary>More</summary>
-        <div className="mobile-settings">
+      <button
+        aria-expanded={open}
+        data-action="mobile-more"
+        onClick={() => setOpen(true)}
+        ref={moreRef}
+        type="button"
+      >
+        More
+      </button>
+      {open && (
+        <div aria-label="More navigation" aria-modal="true" className="mobile-settings" role="dialog">
+          <div className="section-heading">
+            <strong>More</strong>
+            <button onClick={closeMenu} type="button">Close More menu</button>
+          </div>
           {remainingRoutes.length > 0 && (
             <div className="mobile-settings__routes">
               {remainingRoutes.map((route) => (
-                <button key={route.id} onClick={() => navigate(route.id)} type="button">
-                  {route.label}
-                </button>
+                <button key={route.id} onClick={() => navigate(route.id)} type="button">{route.label}</button>
               ))}
             </div>
           )}
-          <WorkspaceSwitcher
-            onChange={changePreference}
-            preference={preference}
+          <WorkspaceIdentityBlock
+            accountEmail={accountEmail}
+            experience={profile.experience}
+            onWorkspaceSelect={onWorkspaceSelect}
+            selectedWorkspace={selectedWorkspace}
+            selectionRequired={selectionRequired}
+            workspaces={workspaces}
           />
-          <button className="mobile-change-setup" onClick={changeSetup} type="button">
-            Change workspace setup
-          </button>
         </div>
-      </details>
+      )}
     </nav>
   );
 }

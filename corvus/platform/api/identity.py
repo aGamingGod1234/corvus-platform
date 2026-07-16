@@ -1,6 +1,6 @@
 import hmac
-from datetime import timedelta
-from typing import Annotated
+from datetime import datetime, timedelta
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -19,7 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from corvus.application.oauth import OAuthCallback, OAuthError
 from corvus.domain.account import DeviceRegistration, ExperienceKind, normalize_identity_email
-from corvus.domain.identity import Workspace, WorkspaceKind
+from corvus.domain.identity import (
+    RecordStatus,
+    WorkspaceKind,
+)
+from corvus.domain.identity import (
+    Workspace as DomainWorkspace,
+)
 from corvus.infrastructure.repositories.accounts import (
     AccountRepositoryError,
     WebSessionAuthentication,
@@ -36,6 +42,40 @@ _ONBOARDING_DESTINATION = "/onboarding"
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ApiErrorDetail(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    code: str = Field(min_length=1)
+    correlation_id: UUID
+
+
+class ApiErrorResponse(ApiModel):
+    detail: ApiErrorDetail
+
+
+V2_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status.HTTP_400_BAD_REQUEST: {"model": ApiErrorResponse, "description": "Invalid request"},
+    status.HTTP_401_UNAUTHORIZED: {
+        "model": ApiErrorResponse,
+        "description": "Authentication required",
+    },
+    status.HTTP_403_FORBIDDEN: {"model": ApiErrorResponse, "description": "Authority denied"},
+    status.HTTP_404_NOT_FOUND: {"model": ApiErrorResponse, "description": "Resource not found"},
+    status.HTTP_409_CONFLICT: {
+        "model": ApiErrorResponse,
+        "description": "Version or sync conflict",
+    },
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {
+        "model": ApiErrorResponse,
+        "description": "Payload rejected",
+    },
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": ApiErrorResponse,
+        "description": "Service unavailable",
+    },
+}
 
 
 class OnboardingUpdate(ApiModel):
@@ -61,6 +101,36 @@ class DeviceCreate(ApiModel):
 class DeviceDelete(ApiModel):
     device_id: UUID
     expected_version: int = Field(ge=1)
+
+
+class Workspace(ApiModel):
+    id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    workspace_kind: WorkspaceKind
+    status: RecordStatus
+    created_at: datetime
+    updated_at: datetime
+    version: int = Field(ge=1)
+
+
+class SessionResponse(ApiModel):
+    account_id: UUID
+    principal_id: UUID
+    email: str = Field(min_length=3, max_length=320)
+    experience_kind: ExperienceKind | None
+    account_version: int = Field(ge=1)
+    session_version: int = Field(ge=1)
+    csrf_token: str = Field(min_length=1)
+
+
+class SessionRefreshResponse(ApiModel):
+    csrf_token: str = Field(min_length=1)
+    session_version: int = Field(ge=1)
+
+
+class OnboardingResponse(ApiModel):
+    experience_kind: ExperienceKind | None
+    version: int = Field(ge=1)
 
 
 def _error(code: str, status_code: int) -> HTTPException:
@@ -135,7 +205,7 @@ def _clear_cookie(response: Response, name: str) -> None:
     )
 
 
-def _workspace_payload(workspace: Workspace) -> dict[str, object]:
+def _workspace_payload(workspace: DomainWorkspace) -> dict[str, object]:
     return workspace.model_dump(mode="json")
 
 
@@ -144,35 +214,140 @@ def _device_payload(device: DeviceRegistration) -> dict[str, object]:
 
 
 def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIRouter:
-    router = APIRouter(prefix="/api/v2", tags=["platform-identity"])
+    router = APIRouter(
+        prefix="/api/v2",
+        tags=["platform-identity"],
+        responses=V2_ERROR_RESPONSES,
+    )
     if dependencies is None:
 
         def unavailable() -> None:
             raise _error("platform_identity_unavailable", status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        routes = (
-            ("/auth/google/start", "GET", "unavailable_google_start"),
-            ("/auth/google/callback", "GET", "unavailable_google_callback"),
-            ("/session", "GET", "unavailable_session"),
-            ("/session/refresh", "POST", "unavailable_session_refresh"),
-            ("/logout", "POST", "unavailable_logout"),
-            ("/onboarding", "GET", "unavailable_onboarding_get"),
-            ("/onboarding", "PUT", "unavailable_onboarding_put"),
-            ("/workspaces", "GET", "unavailable_workspaces_get"),
-            ("/workspaces", "POST", "unavailable_workspaces_post"),
-            ("/workspaces/{workspace_id}", "GET", "unavailable_workspace_get"),
-            ("/workspaces/{workspace_id}", "PATCH", "unavailable_workspace_patch"),
-            ("/devices", "GET", "unavailable_devices_get"),
-            ("/devices", "POST", "unavailable_devices_post"),
-            ("/devices", "DELETE", "unavailable_devices_delete"),
+        @router.get("/auth/google/start", operation_id="unavailable_google_start")
+        def unavailable_google_start() -> None:
+            unavailable()
+
+        @router.get("/auth/google/callback", operation_id="unavailable_google_callback")
+        def unavailable_google_callback(
+            _code: Annotated[str | None, Query(alias="code")] = None,
+            _state: Annotated[str | None, Query(alias="state")] = None,
+            _error_value: Annotated[str | None, Query(alias="error")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.get("/session", response_model=SessionResponse, operation_id="unavailable_session")
+        def unavailable_session() -> None:
+            unavailable()
+
+        @router.post(
+            "/session/refresh",
+            response_model=SessionRefreshResponse,
+            operation_id="unavailable_session_refresh",
         )
-        for path, method, operation_id in routes:
-            router.add_api_route(
-                path,
-                unavailable,
-                methods=[method],
-                operation_id=operation_id,
-            )
+        def unavailable_session_refresh(
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.post("/logout", status_code=204, operation_id="unavailable_logout")
+        def unavailable_logout(
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.get(
+            "/onboarding",
+            response_model=OnboardingResponse,
+            operation_id="unavailable_onboarding_get",
+        )
+        def unavailable_onboarding_get() -> None:
+            unavailable()
+
+        @router.put(
+            "/onboarding",
+            response_model=OnboardingResponse,
+            operation_id="unavailable_onboarding_put",
+        )
+        def unavailable_onboarding_put(
+            _body: OnboardingUpdate,
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.get(
+            "/workspaces",
+            response_model=list[Workspace],
+            operation_id="unavailable_workspaces_get",
+        )
+        def unavailable_workspaces_get() -> None:
+            unavailable()
+
+        @router.post(
+            "/workspaces",
+            response_model=Workspace,
+            operation_id="unavailable_workspaces_post",
+        )
+        def unavailable_workspaces_post(
+            _body: WorkspaceCreate,
+            _idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1)],
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.get(
+            "/workspaces/{workspace_id}",
+            response_model=Workspace,
+            operation_id="unavailable_workspace_get",
+        )
+        def unavailable_workspace_get(workspace_id: UUID) -> None:
+            del workspace_id
+            unavailable()
+
+        @router.patch(
+            "/workspaces/{workspace_id}",
+            response_model=Workspace,
+            operation_id="unavailable_workspace_patch",
+        )
+        def unavailable_workspace_patch(
+            workspace_id: UUID,
+            _body: WorkspaceUpdate,
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            del workspace_id
+            unavailable()
+
+        @router.get(
+            "/devices",
+            response_model=list[DeviceRegistration],
+            operation_id="unavailable_devices_get",
+        )
+        def unavailable_devices_get() -> None:
+            unavailable()
+
+        @router.post(
+            "/devices",
+            response_model=DeviceRegistration,
+            operation_id="unavailable_devices_post",
+        )
+        def unavailable_devices_post(
+            _body: DeviceCreate,
+            _idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1)],
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
+        @router.delete(
+            "/devices",
+            response_model=DeviceRegistration,
+            operation_id="unavailable_devices_delete",
+        )
+        def unavailable_devices_delete(
+            _body: DeviceDelete,
+            _csrf: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+        ) -> None:
+            unavailable()
+
         return router
 
     def authenticated(
@@ -244,7 +419,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             _set_cookie(response, _DEVICE_COOKIE, login.device_token)
         return response
 
-    @router.get("/session")
+    @router.get("/session", response_model=SessionResponse)
     def session(
         authenticated_session: Annotated[WebSessionAuthentication, Depends(authenticated)],
     ) -> dict[str, object]:
@@ -261,7 +436,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             "csrf_token": authenticated_session.csrf_token,
         }
 
-    @router.post("/session/refresh")
+    @router.post("/session/refresh", response_model=SessionRefreshResponse)
     def refresh_session(
         _authenticated: Annotated[WebSessionAuthentication, Depends(mutation_authenticated)],
         response: Response,
@@ -302,7 +477,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
 
-    @router.get("/onboarding")
+    @router.get("/onboarding", response_model=OnboardingResponse)
     def get_onboarding(
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
     ) -> dict[str, object]:
@@ -312,7 +487,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             "version": version,
         }
 
-    @router.put("/onboarding")
+    @router.put("/onboarding", response_model=OnboardingResponse)
     def update_onboarding(
         body: OnboardingUpdate,
         session: Annotated[WebSessionAuthentication, Depends(mutation_authenticated)],
@@ -328,7 +503,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             raise _map_error(exc) from None
         return {"experience_kind": experience.value, "version": version}
 
-    @router.get("/workspaces")
+    @router.get("/workspaces", response_model=list[Workspace])
     def list_workspaces(
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
     ) -> list[dict[str, object]]:
@@ -337,7 +512,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             for workspace in dependencies.platform.list_workspaces(session.account.principal_id)
         ]
 
-    @router.post("/workspaces")
+    @router.post("/workspaces", response_model=Workspace)
     def create_workspace(
         body: WorkspaceCreate,
         session: Annotated[WebSessionAuthentication, Depends(mutation_authenticated)],
@@ -359,7 +534,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             status_code=status.HTTP_200_OK if repeated else status.HTTP_201_CREATED,
         )
 
-    @router.get("/workspaces/{workspace_id}")
+    @router.get("/workspaces/{workspace_id}", response_model=Workspace)
     def get_workspace(
         workspace_id: UUID,
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
@@ -373,7 +548,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             raise _error("workspace_not_found", status.HTTP_404_NOT_FOUND)
         return _workspace_payload(workspace)
 
-    @router.patch("/workspaces/{workspace_id}")
+    @router.patch("/workspaces/{workspace_id}", response_model=Workspace)
     def update_workspace(
         workspace_id: UUID,
         body: WorkspaceUpdate,
@@ -391,7 +566,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             raise _map_error(exc) from None
         return _workspace_payload(workspace)
 
-    @router.get("/devices")
+    @router.get("/devices", response_model=list[DeviceRegistration])
     def list_devices(
         session: Annotated[WebSessionAuthentication, Depends(authenticated)],
     ) -> list[dict[str, object]]:
@@ -400,7 +575,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             for device in dependencies.platform.list_devices(session.account.id)
         ]
 
-    @router.post("/devices")
+    @router.post("/devices", response_model=DeviceRegistration)
     def create_device(
         body: DeviceCreate,
         session: Annotated[WebSessionAuthentication, Depends(mutation_authenticated)],
@@ -421,7 +596,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             status_code=status.HTTP_200_OK if repeated else status.HTTP_201_CREATED,
         )
 
-    @router.delete("/devices")
+    @router.delete("/devices", response_model=DeviceRegistration)
     def delete_device(
         body: DeviceDelete,
         session: Annotated[WebSessionAuthentication, Depends(mutation_authenticated)],

@@ -1,64 +1,70 @@
+import type { components } from "../generated/api";
+
 export const WORKSPACE_PREFERENCE_KEY = "corvus.workspace-preference";
-export const WORKSPACE_PREFERENCE_VERSION = 1 as const;
+const LEGACY_WORKSPACE_PREFERENCE_VERSION = 1;
 
-export type ExperienceMode = "everyday" | "developer";
-export type WorkspaceScope = "personal" | "team";
-export type RuntimeMode = "local" | "corvus_cloud";
+export type ExperienceMode = components["schemas"]["ExperienceKind"];
+export type WorkspaceKind = components["schemas"]["WorkspaceKind"];
+export type RuntimePreselection = "local" | "cloud_preview";
 
-export interface WorkspacePreference {
-  version: typeof WORKSPACE_PREFERENCE_VERSION;
+export interface LegacyPreferenceCandidate {
   experience: ExperienceMode;
-  scope: WorkspaceScope;
-  runtime: RuntimeMode;
-  workspaceId?: string;
-  onboardingComplete: boolean;
+  runtimePreselection: RuntimePreselection;
+  workspaceKind: WorkspaceKind;
 }
 
-export interface PreferenceLoadResult {
-  preference: WorkspacePreference | null;
+export interface LegacyPreferenceLoadResult {
+  candidate: LegacyPreferenceCandidate | null;
   recovered: boolean;
 }
 
-function isWorkspacePreference(value: unknown): value is WorkspacePreference {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    candidate.version === WORKSPACE_PREFERENCE_VERSION &&
-    (candidate.experience === "everyday" || candidate.experience === "developer") &&
-    (candidate.scope === "personal" || candidate.scope === "team") &&
-    (candidate.runtime === "local" || candidate.runtime === "corvus_cloud") &&
-    typeof candidate.onboardingComplete === "boolean" &&
-    (candidate.workspaceId === undefined || typeof candidate.workspaceId === "string")
-  );
+interface MigrationCompletion {
+  experienceConfirmed: boolean;
+  workspaceCreationConfirmed: boolean;
 }
 
-export function loadWorkspacePreference(storage: Storage): PreferenceLoadResult {
+function migrateLegacyWorkspacePreference(value: unknown): LegacyPreferenceCandidate | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.version !== LEGACY_WORKSPACE_PREFERENCE_VERSION ||
+    candidate.onboardingComplete !== true ||
+    (candidate.experience !== "everyday" && candidate.experience !== "developer") ||
+    (candidate.scope !== "personal" && candidate.scope !== "team") ||
+    (candidate.runtime !== "local" && candidate.runtime !== "corvus_cloud")
+  ) {
+    return null;
+  }
+  return {
+    experience: candidate.experience,
+    runtimePreselection: candidate.runtime === "corvus_cloud" ? "cloud_preview" : "local",
+    workspaceKind: candidate.scope === "personal" ? "individual" : "team"
+  };
+}
+
+export function loadLegacyWorkspacePreference(storage: Storage): LegacyPreferenceLoadResult {
   const serialized = storage.getItem(WORKSPACE_PREFERENCE_KEY);
-  if (serialized === null) return { preference: null, recovered: false };
+  if (serialized === null) return { candidate: null, recovered: false };
 
   try {
-    const parsed: unknown = JSON.parse(serialized);
-    if (isWorkspacePreference(parsed) && parsed.onboardingComplete) {
-      return { preference: parsed, recovered: false };
-    }
+    const candidate = migrateLegacyWorkspacePreference(JSON.parse(serialized) as unknown);
+    if (candidate !== null) return { candidate, recovered: false };
   } catch {
-    // The invalid value is removed below so setup can recover deterministically.
+    // Invalid legacy data is removed below; it never becomes current authority.
   }
-
   storage.removeItem(WORKSPACE_PREFERENCE_KEY);
-  return { preference: null, recovered: true };
+  return { candidate: null, recovered: true };
 }
 
-export function saveWorkspacePreference(
-  preference: WorkspacePreference,
-  storage: Storage
+export function completeLegacyPreferenceMigration(
+  storage: Storage,
+  completion: MigrationCompletion
 ): void {
-  if (!isWorkspacePreference(preference) || !preference.onboardingComplete) {
-    throw new Error("invalid_workspace_preference");
+  if (completion.experienceConfirmed && completion.workspaceCreationConfirmed) {
+    storage.removeItem(WORKSPACE_PREFERENCE_KEY);
   }
-  storage.setItem(WORKSPACE_PREFERENCE_KEY, JSON.stringify(preference));
 }
 
-export function clearWorkspacePreference(storage: Storage): void {
+export function dismissLegacyPreferenceMigration(storage: Storage): void {
   storage.removeItem(WORKSPACE_PREFERENCE_KEY);
 }

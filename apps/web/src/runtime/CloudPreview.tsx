@@ -1,24 +1,26 @@
-import type { WorkspacePreference } from "../app/preferences";
+import type { components } from "../generated/api";
 import { CloudIcon } from "../icons";
 
 interface CloudPreviewProps {
   authAvailable: boolean;
+  experience: components["schemas"]["ExperienceKind"];
   onChangeSetup: () => void;
   onUseLocal: () => void;
-  preference: WorkspacePreference;
+  workspaceKind: components["schemas"]["WorkspaceKind"];
 }
 
 export function CloudPreview({
   authAvailable,
+  experience,
   onChangeSetup,
   onUseLocal,
-  preference
+  workspaceKind
 }: CloudPreviewProps) {
   return (
     <main className="cloud-preview-shell" id="main-content">
       <section className="cloud-preview-panel">
         <div className="preview-badge"><CloudIcon /> Cloud Preview</div>
-        <p className="eyebrow">{preference.experience} · {preference.scope}</p>
+        <p className="eyebrow">{experience} · {workspaceKind}</p>
         <h1>Corvus Cloud is in preview.</h1>
         <p className="cloud-preview-lede">
           Cloud workspaces run in isolated E2B environments and sync across your signed-in devices. No payment will be collected.

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createCorvusApi,
@@ -28,13 +28,14 @@ import { AppShell } from "./app/AppShell";
 import { WorkspaceRouter } from "./app/WorkspaceRouter";
 import { WorkspaceErrorBoundary } from "./app/WorkspaceErrorBoundary";
 import {
-  clearWorkspacePreference,
-  loadWorkspacePreference,
-  saveWorkspacePreference,
-  type WorkspacePreference
+  completeLegacyPreferenceMigration,
+  dismissLegacyPreferenceMigration,
+  loadLegacyWorkspacePreference,
+  type LegacyPreferenceCandidate
 } from "./app/preferences";
 import { getWorkspaceProfile } from "./app/workspaceProfiles";
-import { CloudPreview } from "./runtime/CloudPreview";
+import { useAuth } from "./auth/AuthProvider";
+import { useWorkspaceSync } from "./sync/SyncProvider";
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 
@@ -130,21 +131,17 @@ export function App({
   locationHostname = window.location.hostname,
   preferenceStorage = window.localStorage
 }: AppProps) {
+  const auth = useAuth();
+  const workspaceSync = useWorkspaceSync();
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
-  const initialPreference = useMemo(
-    () => loadWorkspacePreference(preferenceStorage),
-    [preferenceStorage]
-  );
-  const [preference, setPreference] = useState<WorkspacePreference | null>(
-    initialPreference.preference
-  );
-  const profile = useMemo(
-    () =>
-      preference === null
-        ? null
-        : getWorkspaceProfile(preference.experience, preference.scope),
-    [preference]
-  );
+  const [legacyPreference, setLegacyPreference] = useState<LegacyPreferenceCandidate | null>(null);
+  const experience =
+    workspaceSync.accountProfile?.experience_kind ?? auth.session?.experience_kind ?? null;
+  const selectedWorkspace = workspaceSync.selectedWorkspace;
+  const profile =
+    experience === null || selectedWorkspace === null
+      ? null
+      : getWorkspaceProfile(experience, selectedWorkspace.workspace_kind);
   const [activeRoute, setActiveRoute] = useState("");
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -160,7 +157,12 @@ export function App({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const hostedLocalHandoff =
-    preference?.runtime === "local" && !isLoopbackRuntimeHost(locationHostname);
+    selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
+
+  useEffect(() => {
+    if (auth.status !== "authenticated") return;
+    setLegacyPreference(loadLegacyWorkspacePreference(preferenceStorage).candidate);
+  }, [auth.status, preferenceStorage]);
 
   const loadProjects = useCallback(async () => {
     const loaded = await api.listProjects();
@@ -169,7 +171,21 @@ export function App({
   }, [api]);
 
   useEffect(() => {
-    if (preference?.runtime !== "local" || hostedLocalHandoff) return;
+    if (
+      profile === null ||
+      selectedWorkspace === null ||
+      workspaceSync.status !== "ready" ||
+      hostedLocalHandoff
+    ) return;
+    setPhase("checking");
+    setActiveRoute(profile.routes[0].id);
+    setProjects([]);
+    setActiveProject(null);
+    setOutcomes([]);
+    setWorkflow(null);
+    setDetail(EMPTY_DETAIL);
+    setSelectedItem(null);
+    setOperations(EMPTY_OPERATIONS);
     let active = true;
     api
       .session()
@@ -196,7 +212,7 @@ export function App({
     return () => {
       active = false;
     };
-  }, [api, hostedLocalHandoff, loadProjects, preference]);
+  }, [api, hostedLocalHandoff, loadProjects, profile, selectedWorkspace, workspaceSync.status]);
 
   useEffect(() => {
     if (profile === null) return;
@@ -490,55 +506,61 @@ export function App({
     }
   }
 
-  function completeOnboarding(nextPreference: WorkspacePreference) {
-    saveWorkspacePreference(nextPreference, preferenceStorage);
-    setPreference(nextPreference);
+  if (auth.status === "checking") return <LoadingScreen label="Checking your Corvus identity…" />;
+  if (auth.status === "retryable_error") {
+    return <RetryScreen message={auth.error?.message ?? "Corvus could not verify your identity."} onRetry={auth.retry} />;
   }
-
-  function useLocalWorkspace() {
-    if (preference === null) return;
-    const localPreference: WorkspacePreference = { ...preference, runtime: "local" };
-    saveWorkspacePreference(localPreference, preferenceStorage);
-    setPreference(localPreference);
-  }
-
-  function changeWorkspaceSetup() {
-    clearWorkspacePreference(preferenceStorage);
-    setPreference(null);
-    setPhase("checking");
-  }
-
-  function changeWorkspacePreference(nextPreference: WorkspacePreference) {
-    saveWorkspacePreference(nextPreference, preferenceStorage);
-    setPreference(nextPreference);
-    setSelectedItem(null);
-  }
-
-  if (preference === null) {
-    return <OnboardingFlow onComplete={completeOnboarding} recovered={initialPreference.recovered} />;
-  }
-  if (preference.runtime === "corvus_cloud") {
+  if (auth.status === "unauthenticated") {
     return (
-      <CloudPreview
-        authAvailable={false}
-        onChangeSetup={changeWorkspaceSetup}
-        onUseLocal={useLocalWorkspace}
-        preference={preference}
+      <OnboardingFlow
+        accountVersion={0}
+        authStatus="unauthenticated"
+        experienceKind={null}
+        onCreateWorkspace={() => Promise.reject(new Error("session_required"))}
+        onExperienceSaved={() => Promise.reject(new Error("session_required"))}
+        onGoogleStart={auth.startGoogle}
+        onWorkspaceConfirmed={() => undefined}
       />
     );
   }
-  if (hostedLocalHandoff) {
+  if (auth.session === null) return <LoadingScreen label="Checking your Corvus identity…" />;
+  if (workspaceSync.status === "idle" || workspaceSync.status === "loading" || workspaceSync.status === "resyncing") {
+    return <LoadingScreen label="Opening your authorized workspaces…" />;
+  }
+  if (workspaceSync.status === "onboarding_required") {
     return (
-      <LocalRuntimeLauncher
-        onChangeSetup={changeWorkspaceSetup}
-        preference={preference}
+      <OnboardingFlow
+        accountVersion={workspaceSync.accountProfile?.version ?? auth.session.account_version}
+        authStatus="authenticated"
+        experienceKind={experience}
+        onCreateWorkspace={workspaceSync.createWorkspace}
+        onDismissMigration={() => {
+          dismissLegacyPreferenceMigration(preferenceStorage);
+          setLegacyPreference(null);
+        }}
+        onExperienceSaved={async (experienceKind, expectedVersion) => {
+          const saved = await workspaceSync.saveExperience(experienceKind, expectedVersion);
+          await auth.retry();
+          return saved;
+        }}
+        onGoogleStart={auth.startGoogle}
+        onWorkspaceConfirmed={() => {
+          completeLegacyPreferenceMigration(preferenceStorage, {
+            experienceConfirmed: true,
+            workspaceCreationConfirmed: true
+          });
+          setLegacyPreference(null);
+        }}
+        preselection={legacyPreference}
       />
     );
   }
-  if (profile === null) return <LoadingScreen />;
-
-  if (phase === "checking") return <LoadingScreen />;
-  if (phase === "pairing") return <PairingScreen busy={busy} error={error} onPair={pair} />;
+  if (workspaceSync.status === "selection_required" && selectedWorkspace === null) {
+    return <WorkspaceSelection accountEmail={auth.session.email} onSelect={workspaceSync.selectWorkspace} workspaces={workspaceSync.workspaces} />;
+  }
+  if (profile === null || selectedWorkspace === null) {
+    return <RetryScreen message={workspaceSync.error?.message ?? "No authorized workspace is available."} onRetry={workspaceSync.refresh} />;
+  }
 
   const executionSurface = (
     <ExecutionCanvas
@@ -578,8 +600,9 @@ export function App({
 
   return (
     <AppShell
+      accountEmail={auth.session.email}
       activeRoute={activeRoute || profile.routes[0].id}
-      error={error}
+      error={error || workspaceSync.error?.message || ""}
       inspector={(
         <Inspector
           artifacts={detail.artifacts}
@@ -594,13 +617,11 @@ export function App({
         />
       )}
       inspectorOpen={selectedItem !== null}
-      onChangeSetup={changeWorkspaceSetup}
       onNavigate={(routeId) => {
         setActiveRoute(routeId);
         setSelectedItem(null);
       }}
-      onPreferenceChange={changeWorkspacePreference}
-      preference={preference}
+      onWorkspaceSelect={workspaceSync.selectWorkspace}
       profile={profile}
       projectContext={(
         <ProjectRail
@@ -611,22 +632,88 @@ export function App({
           projects={projects}
         />
       )}
+      selectedWorkspace={selectedWorkspace}
+      selectionRequired={workspaceSync.status === "forbidden"}
+      workspaces={workspaceSync.workspaces}
     >
       <WorkspaceErrorBoundary>
-        <WorkspaceRouter
-          activeRoute={activeRoute || profile.routes[0].id}
-          executionSurface={executionSurface}
-          operationsSurface={operationsSurface}
-          profile={profile}
-          projectName={activeProject?.name ?? null}
-        />
+        {hostedLocalHandoff ? (
+          <LocalRuntimeLauncher
+            experience={experience ?? profile.experience}
+            workspaceKind={selectedWorkspace.workspace_kind}
+          />
+        ) : phase === "checking" ? (
+          <LoadingScreen />
+        ) : phase === "pairing" ? (
+          <PairingScreen busy={busy} error={error} onPair={pair} />
+        ) : (
+          <WorkspaceRouter
+            activeRoute={activeRoute || profile.routes[0].id}
+            executionSurface={executionSurface}
+            operationsSurface={operationsSurface}
+            profile={profile}
+            projectName={activeProject?.name ?? null}
+          />
+        )}
       </WorkspaceErrorBoundary>
     </AppShell>
   );
 }
 
-function LoadingScreen() {
-  return <div className="loading-screen">Opening local workspace…</div>;
+function LoadingScreen({ label = "Opening local workspace…" }: { label?: string }) {
+  return <div className="loading-screen" role="status">{label}</div>;
+}
+
+function RetryScreen({ message, onRetry }: { message: string; onRetry(): Promise<void> }) {
+  return (
+    <main className="pairing-screen" id="main-content">
+      <section className="pairing-panel" aria-labelledby="retry-title">
+        <p className="eyebrow">Connection interrupted</p>
+        <h1 id="retry-title">Corvus could not finish opening.</h1>
+        <p role="alert">{message}</p>
+        <button className="button button--primary" onClick={() => void onRetry()} type="button">Try again</button>
+      </section>
+    </main>
+  );
+}
+
+function WorkspaceSelection({
+  accountEmail,
+  onSelect,
+  workspaces
+}: {
+  accountEmail: string;
+  onSelect(workspaceId: string): Promise<void>;
+  workspaces: ReturnType<typeof useWorkspaceSync>["workspaces"];
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  return (
+    <main className="onboarding-shell" id="main-content">
+      <section className="onboarding-panel" aria-labelledby="workspace-selection-title">
+        <p className="eyebrow">Signed in as {accountEmail}</p>
+        <h1 id="workspace-selection-title">Choose an authorized workspace</h1>
+        <p className="onboarding-lede">Corvus never guesses when more than one workspace is available.</p>
+        <div className="workspace-selection-list">
+          {workspaces.map((workspace) => (
+            <button
+              className="choice-card"
+              disabled={busyId !== null || workspace.id === undefined}
+              key={workspace.id ?? workspace.name}
+              onClick={() => {
+                if (workspace.id === undefined) return;
+                setBusyId(workspace.id);
+                void onSelect(workspace.id).finally(() => setBusyId(null));
+              }}
+              type="button"
+            >
+              <span><strong>{workspace.name}</strong><small>{workspace.workspace_kind}</small></span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function PairingScreen({
@@ -648,7 +735,7 @@ function PairingScreen({
   }
 
   return (
-    <main className="pairing-screen">
+    <div className="pairing-screen">
       <section className="pairing-panel">
         <p className="eyebrow">Local authority boundary</p>
         <h1>Pair this browser with Corvus.</h1>
@@ -669,7 +756,7 @@ function PairingScreen({
         </form>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </section>
-    </main>
+    </div>
   );
 }
 
