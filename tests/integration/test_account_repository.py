@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -83,6 +84,50 @@ def _preprovisioned_account(repository: AccountRepository) -> Account:
     account = _account(principal)
     repository.create_preprovisioned_account(principal=principal, account=account)
     return account
+
+
+def _stale_device_session(
+    tmp_path: Path,
+) -> tuple[Path, AccountRepository, Account, DeviceRegistration, SessionRecord]:
+    database = _database(tmp_path)
+    repository = AccountRepository(database)
+    account = _preprovisioned_account(repository)
+    device = DeviceRegistration(
+        account_id=account.id,
+        name="Versioned device",
+        public_key_digest="f" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    repository.append_device(device)
+    issued = SessionRecord(
+        account_id=account.id,
+        device_id=device.id,
+        device_version=device.version,
+        token_digest="1" * 64,
+        issued_at=_NOW,
+        expires_at=_NOW + timedelta(hours=1),
+    )
+    repository.create_session(issued)
+    current = device.model_copy(update={"version": 2, "updated_at": _NOW + timedelta(minutes=1)})
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO device_registrations "
+            "(id, account_id, version, name, public_key_digest, status, revoked_at, "
+            "created_at, updated_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            (
+                str(current.id),
+                str(current.account_id),
+                current.version,
+                current.name,
+                current.public_key_digest,
+                current.status.value,
+                current.created_at.isoformat(),
+                current.updated_at.isoformat(),
+                current.model_dump_json(),
+            ),
+        )
+    return database, repository, account, device, issued
 
 
 def test_google_identity_creates_user_principal_account_and_identity_atomically(
@@ -639,44 +684,7 @@ def test_session_schema_rejects_missing_or_cross_account_device_versions(tmp_pat
 
 
 def test_session_repository_requires_the_exact_current_device_version(tmp_path: Path) -> None:
-    database = _database(tmp_path)
-    repository = AccountRepository(database)
-    account = _preprovisioned_account(repository)
-    device = DeviceRegistration(
-        account_id=account.id,
-        name="Versioned device",
-        public_key_digest="f" * 64,
-        created_at=_NOW,
-        updated_at=_NOW,
-    )
-    repository.append_device(device)
-    issued = SessionRecord(
-        account_id=account.id,
-        device_id=device.id,
-        device_version=device.version,
-        token_digest="1" * 64,
-        issued_at=_NOW,
-        expires_at=_NOW + timedelta(hours=1),
-    )
-    repository.create_session(issued)
-    current = device.model_copy(update={"version": 2, "updated_at": _NOW + timedelta(minutes=1)})
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "INSERT INTO device_registrations "
-            "(id, account_id, version, name, public_key_digest, status, revoked_at, "
-            "created_at, updated_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
-            (
-                str(current.id),
-                str(current.account_id),
-                current.version,
-                current.name,
-                current.public_key_digest,
-                current.status.value,
-                current.created_at.isoformat(),
-                current.updated_at.isoformat(),
-                current.model_dump_json(),
-            ),
-        )
+    database, repository, account, device, issued = _stale_device_session(tmp_path)
 
     assert (
         repository.get_active_session(
@@ -695,8 +703,57 @@ def test_session_repository_requires_the_exact_current_device_version(tmp_path: 
         issued_at=_NOW,
         expires_at=_NOW + timedelta(hours=1),
     )
-    with pytest.raises(AccountRepositoryError, match="session_device_version_mismatch"):
+    with pytest.raises(AccountRepositoryError, match="^session_device_version_stale$"):
         repository.create_session(stale_session)
+
+
+def test_stale_device_version_cannot_rotate_or_mint_a_replacement(tmp_path: Path) -> None:
+    database, repository, account, _, issued = _stale_device_session(tmp_path)
+    replacement_digest = "2" * 64
+
+    with pytest.raises(AccountRepositoryError, match="^session_device_version_stale$"):
+        repository.rotate_session(
+            account_id=account.id,
+            session_id=issued.id,
+            presented_digest=issued.token_digest or "",
+            replacement_digest=replacement_digest,
+            now=_NOW + timedelta(minutes=2),
+            expires_at=_NOW + timedelta(hours=2),
+        )
+
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM session_records WHERE id = ?", (str(issued.id),)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM session_records WHERE token_digest = ?",
+                (replacement_digest,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_stale_device_version_cannot_revoke_or_append_history(tmp_path: Path) -> None:
+    database, repository, account, _, issued = _stale_device_session(tmp_path)
+
+    with pytest.raises(AccountRepositoryError, match="^session_device_version_stale$"):
+        repository.revoke_session(
+            account_id=account.id,
+            session_id=issued.id,
+            presented_digest=issued.token_digest or "",
+            revoked_at=_NOW + timedelta(minutes=2),
+        )
+
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT version, status, token_digest FROM session_records WHERE id = ?",
+            (str(issued.id),),
+        ).fetchall()
+    assert rows == [(1, "active", issued.token_digest)]
 
 
 def test_session_replay_classification_is_scoped_to_account_and_session(tmp_path: Path) -> None:
@@ -883,6 +940,144 @@ def test_m2_populated_downgrade_refuses_before_removing_history_or_guards(tmp_pa
     assert before_manifest == after_manifest == 1
     assert before_triggers == after_triggers
     assert len(after_triggers) == 8
+
+
+def test_m2_team_workspace_only_downgrade_refuses_without_changing_metadata(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    identities = IdentityScopeRepository(database)
+    workspace = Workspace(
+        name="Team-only M2 metadata",
+        workspace_kind=WorkspaceKind.TEAM,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    identities.append_workspace(workspace)
+    with sqlite3.connect(database) as connection:
+        assert {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+            for table in (
+                "accounts",
+                "external_identities",
+                "device_registrations",
+                "session_records",
+            )
+        } == {
+            "accounts": 0,
+            "external_identities": 0,
+            "device_registrations": 0,
+            "session_records": 0,
+        }
+        before_row = connection.execute(
+            "SELECT workspace_kind, payload_json FROM identity_workspaces WHERE id = ?",
+            (str(workspace.id),),
+        ).fetchone()
+        before_manifest = connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            ("00000000-0000-4000-8000-000000000010",),
+        ).fetchone()[0]
+        before_triggers = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchone()[0]
+    assert before_row is not None
+    assert before_row[0] == WorkspaceKind.TEAM.value
+    assert json.loads(before_row[1])["workspace_kind"] == WorkspaceKind.TEAM.value
+
+    with pytest.raises(RuntimeError, match="identity_continuity_workspace_metadata_present"):
+        downgrade_database(database, M1_AUDIT_PROOF_MANIFEST_REVISION)
+
+    assert upgrade_database(database) == M1_CURRENT_REVISION
+    with sqlite3.connect(database) as connection:
+        after_row = connection.execute(
+            "SELECT workspace_kind, payload_json FROM identity_workspaces WHERE id = ?",
+            (str(workspace.id),),
+        ).fetchone()
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+                ("00000000-0000-4000-8000-000000000010",),
+            ).fetchone()[0]
+            == before_manifest
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+            ).fetchone()[0]
+            == before_triggers
+        )
+        assert "workspace_kind" in {
+            row[1] for row in connection.execute("PRAGMA table_info(identity_workspaces)")
+        }
+    assert after_row == before_row
+
+
+def test_m2_workspace_kind_column_payload_divergence_refuses_downgrade(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    workspace = Workspace(
+        name="Divergent workspace",
+        workspace_kind=WorkspaceKind.TEAM,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO identity_workspaces "
+            "(id, version, name, workspace_kind, status, created_at, updated_at, payload_json) "
+            "VALUES (?, 1, ?, 'individual', 'active', ?, ?, ?)",
+            (
+                str(workspace.id),
+                workspace.name,
+                workspace.created_at.isoformat(),
+                workspace.updated_at.isoformat(),
+                workspace.model_dump_json(),
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="identity_continuity_workspace_metadata_present"):
+        downgrade_database(database, M1_AUDIT_PROOF_MANIFEST_REVISION)
+
+    with sqlite3.connect(database) as connection:
+        persisted = connection.execute(
+            "SELECT workspace_kind, payload_json FROM identity_workspaces WHERE id = ?",
+            (str(workspace.id),),
+        ).fetchone()
+    assert persisted == ("individual", workspace.model_dump_json())
+
+
+def test_m2_default_individual_workspace_is_legacy_compatible_on_downgrade(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace = Workspace(name="Legacy individual", created_at=_NOW, updated_at=_NOW)
+    payload = workspace.model_dump(mode="json", exclude={"workspace_kind"})
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO identity_workspaces "
+            "(id, version, name, workspace_kind, status, created_at, updated_at, payload_json) "
+            "VALUES (?, 1, ?, 'individual', 'active', ?, ?, ?)",
+            (
+                str(workspace.id),
+                workspace.name,
+                workspace.created_at.isoformat(),
+                workspace.updated_at.isoformat(),
+                payload_json,
+            ),
+        )
+
+    assert downgrade_database(database, M1_AUDIT_PROOF_MANIFEST_REVISION) == (
+        M1_AUDIT_PROOF_MANIFEST_REVISION
+    )
+    with sqlite3.connect(database) as connection:
+        persisted_payload = connection.execute(
+            "SELECT payload_json FROM identity_workspaces WHERE id = ?",
+            (str(workspace.id),),
+        ).fetchone()
+        assert "workspace_kind" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(identity_workspaces)")
+        }
+    assert persisted_payload == (payload_json,)
 
 
 def test_repositories_accept_caller_owned_sqlalchemy_engine(tmp_path: Path) -> None:

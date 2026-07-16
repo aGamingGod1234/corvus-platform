@@ -10,6 +10,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from corvus.application.identity import IdentityService
 from corvus.domain.account import DeviceRegistration, DeviceStatus, SessionRecord, SessionStatus
+from corvus.domain.identity import Workspace, WorkspaceKind
 from corvus.infrastructure.db import (
     M1_AUDIT_PROOF_MANIFEST_REVISION,
     M1_CURRENT_REVISION,
@@ -19,6 +20,7 @@ from corvus.infrastructure.db import (
     upgrade_database_url,
 )
 from corvus.infrastructure.repositories.accounts import AccountRepository, AccountRepositoryError
+from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
 from corvus.platform import create_platform_engine
 from tests.postgres_safety import PostgresTestSafetyError, validate_disposable_postgres_url
 
@@ -403,6 +405,33 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
 
         assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
         with engine.connect() as connection:
+            _assert_head_schema_controls(connection)
+        team_workspace = Workspace(
+            name="PostgreSQL team-only metadata",
+            workspace_kind=WorkspaceKind.TEAM,
+            created_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        )
+        IdentityScopeRepository(engine).append_workspace(team_workspace)
+        with pytest.raises(
+            RuntimeError,
+            match="identity_continuity_workspace_metadata_present",
+        ):
+            downgrade_database_url(database_url, M1_AUDIT_PROOF_MANIFEST_REVISION)
+        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        with engine.connect() as connection:
+            persisted_workspace = connection.execute(
+                text(
+                    "SELECT workspace_kind, payload_json FROM identity_workspaces "
+                    "WHERE id = :workspace_id"
+                ),
+                {"workspace_id": str(team_workspace.id)},
+            ).one()
+            assert persisted_workspace.workspace_kind == WorkspaceKind.TEAM.value
+            assert (
+                Workspace.model_validate_json(persisted_workspace.payload_json).workspace_kind
+                is WorkspaceKind.TEAM
+            )
             _assert_head_schema_controls(connection)
         _assert_postgres_identity_repository_contract(engine)
         with engine.connect() as connection:

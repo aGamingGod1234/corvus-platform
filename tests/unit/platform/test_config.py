@@ -227,6 +227,20 @@ def test_postgres_alembic_upgrade_renders_offline_without_connecting() -> None:
         assert secret_value not in rendered
 
 
+def test_m2_offline_downgrade_fails_closed_without_history_inspection() -> None:
+    config = _alembic_config_url(POSTGRES_URL_WITH_QUERY_SECRETS)
+
+    with pytest.raises(
+        RuntimeError,
+        match="identity_continuity_downgrade_requires_online_history_check",
+    ):
+        command.downgrade(
+            config,
+            "m2_001_identity_continuity:m1_009_audit_external_proofs",
+            sql=True,
+        )
+
+
 def test_current_revision_url_disposes_engine_when_connection_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

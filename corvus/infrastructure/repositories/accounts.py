@@ -474,7 +474,7 @@ class AccountRepository:
                 if device.status is not DeviceStatus.ACTIVE:
                     raise AccountRepositoryError("session_device_revoked")
                 if session.device_version != device.version:
-                    raise AccountRepositoryError("session_device_version_mismatch")
+                    raise AccountRepositoryError("session_device_version_stale")
                 self._insert_session(connection, session)
         except IntegrityError as exc:
             raise AccountRepositoryError("session_identity_conflict") from exc
@@ -597,6 +597,8 @@ class AccountRepository:
                 )
                 if device is None or device.status is DeviceStatus.REVOKED:
                     raise AccountRepositoryError("session_device_revoked")
+                if current.device_version != device.version:
+                    raise AccountRepositoryError("session_device_version_stale")
                 if self._replacement_digest_conflicts(connection, replacement_digest):
                     raise AccountRepositoryError("session_replacement_conflict")
                 rotated = SessionRecord(
@@ -652,6 +654,8 @@ class AccountRepository:
                 )
                 if device is None:
                     raise AccountRepositoryError("session_device_missing")
+                if current.device_version != device.version:
+                    raise AccountRepositoryError("session_device_version_stale")
                 revoked = SessionRecord(
                     id=current.id,
                     account_id=current.account_id,

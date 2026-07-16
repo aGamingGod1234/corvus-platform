@@ -48,6 +48,24 @@ def _immutable(table_name: str, label: str) -> None:
     create_immutable_triggers(table_name, label)
 
 
+def _workspace_metadata_is_downgrade_compatible(bind: sa.Connection) -> bool:
+    rows = bind.execute(
+        sa.text("SELECT workspace_kind, payload_json FROM identity_workspaces")
+    ).fetchall()
+    for workspace_kind, payload_json in rows:
+        if workspace_kind != "individual":
+            return False
+        try:
+            payload = json.loads(payload_json)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("workspace_kind", "individual") != workspace_kind:
+            return False
+    return True
+
+
 def upgrade() -> None:
     op.add_column(
         "identity_workspaces",
@@ -275,6 +293,8 @@ def downgrade() -> None:
     bind = op.get_bind()
     if bind.execute(_IDENTITY_HISTORY_COUNT_SQL).scalar_one():
         raise RuntimeError("identity_continuity_history_present")
+    if not _workspace_metadata_is_downgrade_compatible(bind):
+        raise RuntimeError("identity_continuity_workspace_metadata_present")
     drop_immutable_triggers("authority_state_root_leaf_families")
     drop_immutable_triggers("authority_state_root_manifests")
     bind.execute(

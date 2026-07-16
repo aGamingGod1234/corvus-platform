@@ -1403,3 +1403,29 @@
 ### Suggested Next Steps
 - Run the guarded PostgreSQL test against the approved disposable service to collect server-backed proof of the populated downgrade refusal.
 - Review the Task 1.3 follow-up commit before beginning Task 1.4.
+
+## 2026-07-16 — Close Task 1.3 stale-device and workspace-metadata gaps
+
+### What Was Implemented
+- Unified exact-device-version write denial under the value-free `session_device_version_stale` code for session creation, rotation, and revocation.
+- Made stale v1-bound rotation and revocation fail before appending session history, consuming the presented token, or minting/rebinding a replacement after the active device advances to v2.
+- Extended the M2 downgrade preflight to inspect workspace-kind column and payload metadata portably on SQLite and PostgreSQL before any trigger, manifest, table, or column change.
+- Refused downgrade for TEAM, unknown, non-default, invalid, or column/payload-divergent workspace metadata while preserving compatible default-individual rows with matching or absent legacy payload metadata.
+- Added independent SQLite rotate/revoke regressions, TEAM-only and divergence downgrade preservation proofs, a legacy-compatible default-individual cycle, a guarded PostgreSQL TEAM proof, and explicit offline fail-closed coverage.
+
+### Files Modified
+- `corvus/infrastructure/repositories/accounts.py` — blocks stale-device session creation, rotation, and revocation with one value-free denial.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py` — validates workspace metadata before online downgrade and retains offline refusal without history inspection.
+- `tests/integration/test_account_repository.py` — proves stale writes do not append/mint and workspace-only metadata cannot be lost or diverge.
+- `tests/integration/test_postgres_database.py` and `tests/unit/platform/test_config.py` — retain guarded PostgreSQL and offline downgrade proofs.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.3-report.md` — record the final Task 1.3 review closure and evidence.
+
+### Assumptions Made (flag these for review)
+- None. The shared denial code, stale rotate/revoke boundary, workspace compatibility rule, and offline behavior were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL proof remains locally skipped before connection because the disposable reset opt-in is not authorized; the TEAM-workspace preservation contract is ready for the approved service.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL test against the approved disposable service for server-backed TEAM-workspace downgrade evidence.
+- Review this final Task 1.3 follow-up commit before starting Task 1.4.
