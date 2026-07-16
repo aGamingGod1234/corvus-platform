@@ -36,6 +36,12 @@ _NEW_FAMILIES = {
     "session_records",
 }
 _IMMUTABLE_TABLES = tuple(sorted(_NEW_FAMILIES))
+_IDENTITY_HISTORY_COUNT_SQL = sa.text(
+    "SELECT (SELECT COUNT(*) FROM accounts) + "
+    "(SELECT COUNT(*) FROM external_identities) + "
+    "(SELECT COUNT(*) FROM device_registrations) + "
+    "(SELECT COUNT(*) FROM session_records)"
+)
 
 
 def _immutable(table_name: str, label: str) -> None:
@@ -57,7 +63,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("principal_id", sa.String(length=36), nullable=False),
         sa.Column("normalized_email", sa.String(length=320), nullable=False),
-        sa.Column("experience_kind", sa.String(length=32), nullable=False),
+        sa.Column("experience_kind", sa.String(length=32), nullable=True),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("created_at", sa.String(length=40), nullable=False),
         sa.Column("updated_at", sa.String(length=40), nullable=False),
@@ -65,7 +71,7 @@ def upgrade() -> None:
         sa.Column("payload_json", sa.Text(), nullable=False),
         sa.CheckConstraint("version >= 1", name="ck_account_version_positive"),
         sa.CheckConstraint(
-            "experience_kind IN ('everyday','developer')",
+            "experience_kind IS NULL OR experience_kind IN ('everyday','developer')",
             name="ck_account_experience_kind_known",
         ),
         sa.ForeignKeyConstraint(
@@ -127,6 +133,12 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", "version", name="pk_device_registrations"),
+        sa.UniqueConstraint(
+            "id",
+            "version",
+            "account_id",
+            name="uq_device_registrations_identity_account",
+        ),
     )
     op.create_index(
         "ix_device_registrations_account",
@@ -138,6 +150,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("account_id", sa.String(length=36), nullable=False),
         sa.Column("device_id", sa.String(length=36), nullable=False),
+        sa.Column("device_version", sa.Integer(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("token_digest", sa.String(length=64), nullable=True),
         sa.Column("predecessor_digest", sa.String(length=64), nullable=True),
@@ -147,6 +160,7 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.String(length=40), nullable=True),
         sa.Column("payload_json", sa.Text(), nullable=False),
         sa.CheckConstraint("version >= 1", name="ck_session_version_positive"),
+        sa.CheckConstraint("device_version >= 1", name="ck_session_device_version_positive"),
         sa.CheckConstraint(
             "(status = 'active' AND token_digest IS NOT NULL AND revoked_at IS NULL) OR "
             "(status = 'revoked' AND token_digest IS NULL AND revoked_at IS NOT NULL "
@@ -157,6 +171,16 @@ def upgrade() -> None:
             ["account_id"],
             ["accounts.id"],
             name="fk_session_records_account",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["device_id", "device_version", "account_id"],
+            [
+                "device_registrations.id",
+                "device_registrations.version",
+                "device_registrations.account_id",
+            ],
+            name="fk_session_records_device_account",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", "version", name="pk_session_records"),
@@ -177,7 +201,7 @@ def upgrade() -> None:
 
     bind = op.get_bind()
     if op.get_context().as_sql:
-        prior_rows = [(name, *family_proof_metadata(name)) for name in M1_009_FAMILY_NAMES]
+        prior = {name: family_proof_metadata(name) for name in M1_009_FAMILY_NAMES}
     else:
         prior_rows = bind.execute(
             sa.text(
@@ -187,9 +211,10 @@ def upgrade() -> None:
             ),
             {"id": _PRIOR_MANIFEST_ID},
         ).fetchall()
-    prior = {
-        str(row[0]): (str(row[1]), None if row[2] is None else str(row[2])) for row in prior_rows
-    }
+        prior = {
+            str(row[0]): (str(row[1]), None if row[2] is None else str(row[2]))
+            for row in prior_rows
+        }
     if set(prior) != set(M1_009_FAMILY_NAMES):
         raise RuntimeError("prior authority manifest family set mismatch")
     family_names = sorted(set(prior) | _NEW_FAMILIES)
@@ -245,9 +270,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_context().as_sql:
+        raise RuntimeError("identity_continuity_downgrade_requires_online_history_check")
+    bind = op.get_bind()
+    if bind.execute(_IDENTITY_HISTORY_COUNT_SQL).scalar_one():
+        raise RuntimeError("identity_continuity_history_present")
     drop_immutable_triggers("authority_state_root_leaf_families")
     drop_immutable_triggers("authority_state_root_manifests")
-    bind = op.get_bind()
     bind.execute(
         sa.text("DELETE FROM authority_state_root_leaf_families WHERE manifest_version_id = :id"),
         {"id": _SEED_MANIFEST_ID},

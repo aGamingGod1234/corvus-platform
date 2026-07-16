@@ -62,7 +62,7 @@ class Account(_AccountContract):
     id: UUID = Field(default_factory=uuid4)
     principal_id: UUID
     normalized_email: str = Field(min_length=3, max_length=320)
-    experience_kind: ExperienceKind
+    experience_kind: ExperienceKind | None = None
     status: RecordStatus = RecordStatus.ACTIVE
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)
@@ -140,6 +140,7 @@ class SessionRecord(_AccountContract):
     id: UUID = Field(default_factory=uuid4)
     account_id: UUID
     device_id: UUID
+    device_version: int = Field(default=1, ge=1)
     version: int = Field(default=1, ge=1)
     token_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     predecessor_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")

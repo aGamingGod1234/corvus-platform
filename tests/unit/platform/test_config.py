@@ -213,6 +213,9 @@ def test_postgres_alembic_upgrade_renders_offline_without_connecting() -> None:
     assert "m1_009_audit_external_proofs" in rendered
     assert "CREATE TABLE accounts" in rendered
     assert "CREATE FUNCTION session_records_no_delete_fn" in rendered
+    assert "device_version INTEGER NOT NULL" in rendered
+    assert "fk_session_records_device_account" in rendered
+    assert "uq_device_registrations_identity_account" in rendered
     assert "m2_001_identity_continuity" in rendered
     for secret_value in (
         "database-user",

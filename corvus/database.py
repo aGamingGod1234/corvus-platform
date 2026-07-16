@@ -811,6 +811,7 @@ M2_IDENTITY_CONTINUITY_REQUIRED_COLUMNS = {
             "id",
             "account_id",
             "device_id",
+            "device_version",
             "version",
             "token_digest",
             "predecessor_digest",

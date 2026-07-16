@@ -37,7 +37,10 @@ from corvus.infrastructure.db import (
 )
 from corvus.infrastructure.repositories.accounts import AccountRepository, AccountRepositoryError
 from corvus.infrastructure.repositories.authorization_inputs import AuthorizationInputRepository
-from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
+from corvus.infrastructure.repositories.identity_scope import (
+    IdentityScopeRepository,
+    IdentityScopeRepositoryError,
+)
 from corvus.store import TraceStore
 
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -108,6 +111,7 @@ def test_google_identity_creates_user_principal_account_and_identity_atomically(
 
     assert repeated == account
     assert account.normalized_email == "lucas@example.com"
+    assert account.experience_kind is None
     principal = repository.get_principal(account.principal_id)
     assert principal is not None
     assert principal.kind is PrincipalKind.USER
@@ -279,6 +283,179 @@ def test_membership_access_uses_existing_bundle_and_grant_contracts_and_is_tenan
     assert identities.get_membership_access(foreign_workspace.id, principal.id) == ()
 
 
+@pytest.mark.parametrize(
+    ("role", "action"),
+    [
+        ("Owner", "workspace.manage"),
+        ("ADMIN", "workspace.manage"),
+        ("manager", "project.create"),
+        ("Member", "project.read"),
+        ("viewer", "project.read"),
+    ],
+)
+def test_membership_role_ceiling_accepts_only_approved_actions_case_insensitively(
+    tmp_path: Path,
+    role: str,
+    action: str,
+) -> None:
+    database = _database(tmp_path)
+    identities = IdentityScopeRepository(database)
+    authorization = AuthorizationInputRepository(database)
+    workspace = Workspace(name="Role ceiling", created_at=_NOW, updated_at=_NOW)
+    principal = _principal(subject=f"role:{role}")
+    membership = WorkspaceMembership(
+        workspace_id=workspace.id,
+        principal_id=principal.id,
+        role=role,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    bundle = AccessBundle(
+        workspace_id=workspace.id,
+        principal_id=principal.id,
+        scope_kind="workspace",
+        scope_id=workspace.id,
+        issued_by=principal.id,
+        policy_digest="a" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    grant = CapabilityGrant(
+        bundle_id=bundle.id,
+        workspace_id=workspace.id,
+        resource_kind="workspace",
+        resource_id=workspace.id,
+        action=action,
+        effect=CapabilityEffect.ALLOW,
+        created_at=_NOW,
+    )
+    identities.append_workspace(workspace)
+    identities.append_principal(principal)
+    identities.append_membership(membership)
+    authorization.append_access_bundle(bundle, [grant])
+
+    assert identities.get_membership_access(workspace.id, principal.id) == ((bundle, (grant,)),)
+
+
+def test_membership_role_ceiling_rejects_out_of_role_allows_and_unknown_roles(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    identities = IdentityScopeRepository(database)
+    authorization = AuthorizationInputRepository(database)
+    workspace = Workspace(name="Role rejection", created_at=_NOW, updated_at=_NOW)
+    viewer = _principal(subject="role:viewer-rejected")
+    identities.append_workspace(workspace)
+    identities.append_principal(viewer)
+    identities.append_membership(
+        WorkspaceMembership(
+            workspace_id=workspace.id,
+            principal_id=viewer.id,
+            role="Viewer",
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    bundle = AccessBundle(
+        workspace_id=workspace.id,
+        principal_id=viewer.id,
+        scope_kind="workspace",
+        scope_id=workspace.id,
+        issued_by=viewer.id,
+        policy_digest="b" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    forbidden = CapabilityGrant(
+        bundle_id=bundle.id,
+        workspace_id=workspace.id,
+        resource_kind="workspace",
+        resource_id=workspace.id,
+        action="workspace.manage",
+        effect=CapabilityEffect.ALLOW,
+        created_at=_NOW,
+    )
+    authorization.append_access_bundle(bundle, [forbidden])
+
+    with pytest.raises(IdentityScopeRepositoryError, match="membership_role_capability_mismatch"):
+        identities.get_membership_access(workspace.id, viewer.id)
+
+    unknown = _principal(subject="role:unknown")
+    identities.append_principal(unknown)
+    identities.append_membership(
+        WorkspaceMembership(
+            workspace_id=workspace.id,
+            principal_id=unknown.id,
+            role="operator",
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    with pytest.raises(IdentityScopeRepositoryError, match="membership_role_capability_mismatch"):
+        identities.get_membership_access(workspace.id, unknown.id)
+
+
+def test_membership_role_projection_preserves_deny_grants(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    identities = IdentityScopeRepository(database)
+    authorization = AuthorizationInputRepository(database)
+    workspace = Workspace(name="Deny precedence", created_at=_NOW, updated_at=_NOW)
+    principal = _principal(subject="role:viewer-deny")
+    identities.append_workspace(workspace)
+    identities.append_principal(principal)
+    identities.append_membership(
+        WorkspaceMembership(
+            workspace_id=workspace.id,
+            principal_id=principal.id,
+            role="viewer",
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+    bundle = AccessBundle(
+        workspace_id=workspace.id,
+        principal_id=principal.id,
+        scope_kind="workspace",
+        scope_id=workspace.id,
+        issued_by=principal.id,
+        policy_digest="c" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    grants = [
+        CapabilityGrant(
+            bundle_id=bundle.id,
+            workspace_id=workspace.id,
+            resource_kind="project",
+            resource_id=workspace.id,
+            action="project.read",
+            effect=CapabilityEffect.ALLOW,
+            created_at=_NOW,
+        ),
+        CapabilityGrant(
+            bundle_id=bundle.id,
+            workspace_id=workspace.id,
+            resource_kind="workspace",
+            resource_id=workspace.id,
+            action="workspace.manage",
+            effect=CapabilityEffect.DENY,
+            created_at=_NOW,
+        ),
+    ]
+    authorization.append_access_bundle(bundle, grants)
+
+    projected = identities.get_membership_access(workspace.id, principal.id)
+
+    assert len(projected) == 1
+    assert projected[0][0] == bundle
+    assert {(grant.action, grant.effect) for grant in projected[0][1]} == {
+        ("project.read", CapabilityEffect.ALLOW),
+        ("workspace.manage", CapabilityEffect.DENY),
+    }
+
+
 def test_session_rotation_is_atomic_digest_only_and_rejects_predecessor_replay(
     tmp_path: Path,
 ) -> None:
@@ -421,6 +598,175 @@ def test_session_revocation_appends_a_version_and_denies_the_revoked_digest(tmp_
     )
 
 
+def test_session_schema_rejects_missing_or_cross_account_device_versions(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    repository = AccountRepository(database)
+    first = _preprovisioned_account(repository)
+    second_principal = _principal(subject=f"preprovisioned:{uuid4()}")
+    second = _account(second_principal, email="second-device-owner@example.com")
+    repository.create_preprovisioned_account(principal=second_principal, account=second)
+    device = DeviceRegistration(
+        account_id=second.id,
+        name="Second account device",
+        public_key_digest="5" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    repository.append_device(device)
+
+    statement = (
+        "INSERT INTO session_records "
+        "(id, account_id, device_id, device_version, version, token_digest, "
+        "predecessor_digest, status, issued_at, expires_at, revoked_at, payload_json) "
+        "VALUES (?, ?, ?, ?, 1, ?, NULL, 'active', ?, ?, NULL, '{}')"
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        for device_id, digest in ((uuid4(), "6" * 64), (device.id, "7" * 64)):
+            with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+                connection.execute(
+                    statement,
+                    (
+                        str(uuid4()),
+                        str(first.id),
+                        str(device_id),
+                        device.version,
+                        digest,
+                        _NOW.isoformat(),
+                        (_NOW + timedelta(hours=1)).isoformat(),
+                    ),
+                )
+
+
+def test_session_repository_requires_the_exact_current_device_version(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    repository = AccountRepository(database)
+    account = _preprovisioned_account(repository)
+    device = DeviceRegistration(
+        account_id=account.id,
+        name="Versioned device",
+        public_key_digest="f" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    repository.append_device(device)
+    issued = SessionRecord(
+        account_id=account.id,
+        device_id=device.id,
+        device_version=device.version,
+        token_digest="1" * 64,
+        issued_at=_NOW,
+        expires_at=_NOW + timedelta(hours=1),
+    )
+    repository.create_session(issued)
+    current = device.model_copy(update={"version": 2, "updated_at": _NOW + timedelta(minutes=1)})
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO device_registrations "
+            "(id, account_id, version, name, public_key_digest, status, revoked_at, "
+            "created_at, updated_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            (
+                str(current.id),
+                str(current.account_id),
+                current.version,
+                current.name,
+                current.public_key_digest,
+                current.status.value,
+                current.created_at.isoformat(),
+                current.updated_at.isoformat(),
+                current.model_dump_json(),
+            ),
+        )
+
+    assert (
+        repository.get_active_session(
+            account_id=account.id,
+            token_digest=issued.token_digest or "",
+            now=_NOW + timedelta(minutes=2),
+        )
+        is None
+    )
+
+    stale_session = SessionRecord(
+        account_id=account.id,
+        device_id=device.id,
+        device_version=device.version,
+        token_digest="0" * 64,
+        issued_at=_NOW,
+        expires_at=_NOW + timedelta(hours=1),
+    )
+    with pytest.raises(AccountRepositoryError, match="session_device_version_mismatch"):
+        repository.create_session(stale_session)
+
+
+def test_session_replay_classification_is_scoped_to_account_and_session(tmp_path: Path) -> None:
+    repository = AccountRepository(_database(tmp_path))
+    first = _preprovisioned_account(repository)
+    second_principal = _principal(subject=f"preprovisioned:{uuid4()}")
+    second = _account(second_principal, email="second-session-owner@example.com")
+    repository.create_preprovisioned_account(principal=second_principal, account=second)
+    first_device = DeviceRegistration(
+        account_id=first.id,
+        name="First device",
+        public_key_digest="8" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    second_device = DeviceRegistration(
+        account_id=second.id,
+        name="Second device",
+        public_key_digest="9" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    repository.append_device(first_device)
+    repository.append_device(second_device)
+    first_session = SessionRecord(
+        account_id=first.id,
+        device_id=first_device.id,
+        device_version=first_device.version,
+        token_digest="a" * 64,
+        issued_at=_NOW,
+        expires_at=_NOW + timedelta(hours=1),
+    )
+    second_session = SessionRecord(
+        account_id=second.id,
+        device_id=second_device.id,
+        device_version=second_device.version,
+        token_digest="b" * 64,
+        issued_at=_NOW,
+        expires_at=_NOW + timedelta(hours=1),
+    )
+    repository.create_session(first_session)
+    repository.create_session(second_session)
+
+    with pytest.raises(AccountRepositoryError, match="^session_authentication_failed$"):
+        repository.rotate_session(
+            account_id=first.id,
+            session_id=first_session.id,
+            presented_digest="b" * 64,
+            replacement_digest="c" * 64,
+            now=_NOW + timedelta(minutes=1),
+            expires_at=_NOW + timedelta(hours=2),
+        )
+    with pytest.raises(AccountRepositoryError, match="^session_authentication_failed$"):
+        repository.revoke_session(
+            account_id=first.id,
+            session_id=first_session.id,
+            presented_digest="b" * 64,
+            revoked_at=_NOW + timedelta(minutes=1),
+        )
+    with pytest.raises(AccountRepositoryError, match="^session_replacement_conflict$"):
+        repository.rotate_session(
+            account_id=first.id,
+            session_id=first_session.id,
+            presented_digest="a" * 64,
+            replacement_digest="b" * 64,
+            now=_NOW + timedelta(minutes=1),
+            expires_at=_NOW + timedelta(hours=2),
+        )
+
+
 def test_m2_identity_migration_is_reversible_and_manifest_covers_revocation_history(
     tmp_path: Path,
 ) -> None:
@@ -459,6 +805,84 @@ def test_m2_identity_migration_is_reversible_and_manifest_covers_revocation_hist
     assert required_tables.isdisjoint(downgraded_tables)
     assert upgrade_database(database) == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
+
+
+def test_m2_populated_downgrade_refuses_before_removing_history_or_guards(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    repository = AccountRepository(database)
+    account = _preprovisioned_account(repository)
+    repository.append_external_identity(
+        ExternalIdentity(
+            account_id=account.id,
+            issuer=_GOOGLE_ISSUER,
+            subject="downgrade-history",
+            normalized_email=account.normalized_email,
+            email_verified=True,
+            created_at=_NOW,
+        )
+    )
+    device = DeviceRegistration(
+        account_id=account.id,
+        name="Downgrade guard device",
+        public_key_digest="d" * 64,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    repository.append_device(device)
+    repository.create_session(
+        SessionRecord(
+            account_id=account.id,
+            device_id=device.id,
+            device_version=device.version,
+            token_digest="e" * 64,
+            issued_at=_NOW,
+            expires_at=_NOW + timedelta(hours=1),
+        )
+    )
+    required_tables = ("accounts", "external_identities", "device_registrations", "session_records")
+    with sqlite3.connect(database) as connection:
+        before_counts = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+            for table in required_tables
+        }
+        before_manifest = connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            ("00000000-0000-4000-8000-000000000010",),
+        ).fetchone()[0]
+        before_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND "
+                "(name LIKE 'accounts_no_%' OR name LIKE 'external_identities_no_%' OR "
+                "name LIKE 'device_registrations_no_%' OR name LIKE 'session_records_no_%')"
+            )
+        }
+
+    with pytest.raises(RuntimeError, match="identity_continuity_history_present"):
+        downgrade_database(database, M1_AUDIT_PROOF_MANIFEST_REVISION)
+
+    assert M1_CURRENT_REVISION == upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        after_counts = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+            for table in required_tables
+        }
+        after_manifest = connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            ("00000000-0000-4000-8000-000000000010",),
+        ).fetchone()[0]
+        after_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND "
+                "(name LIKE 'accounts_no_%' OR name LIKE 'external_identities_no_%' OR "
+                "name LIKE 'device_registrations_no_%' OR name LIKE 'session_records_no_%')"
+            )
+        }
+    assert before_counts == after_counts == {table: 1 for table in required_tables}
+    assert before_manifest == after_manifest == 1
+    assert before_triggers == after_triggers
+    assert len(after_triggers) == 8
 
 
 def test_repositories_accept_caller_owned_sqlalchemy_engine(tmp_path: Path) -> None:

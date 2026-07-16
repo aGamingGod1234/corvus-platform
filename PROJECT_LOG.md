@@ -1375,3 +1375,31 @@
 ### Suggested Next Steps
 - Run `tests/integration/test_postgres_database.py` against the approved disposable PostgreSQL service with the documented reset opt-in.
 - Review the Task 1.3 commit before beginning OAuth transaction and cookie/session transport work in Task 1.4.
+
+## 2026-07-16 — Harden Task 1.3 review findings
+
+### What Was Implemented
+- Made M2 identity-continuity downgrade fail closed before changing triggers, manifests, or tables whenever any account, external identity, device, or session history exists; retained the empty downgrade/re-upgrade path.
+- Added `device_version` to session history and a portable composite foreign key that database-enforces an exact same-account device-version binding; repository creation also requires the current device version.
+- Scoped replay-history classification to the requested account and session, added cross-tenant rotate/revoke probes, and consolidated replacement-digest collisions under the value-free `session_replacement_conflict` code.
+- Added case-insensitive Owner/Admin/Manager/Member/Viewer capability ceilings over the existing AccessBundle/CapabilityGrant records, with unknown roles and out-of-ceiling allows failing closed while deny grants remain effective.
+- Made newly linked OAuth accounts truthfully retain `experience_kind=None` until onboarding, while preserving explicit experience values for pre-provisioned accounts.
+- Added populated SQLite preservation proof, a guarded PostgreSQL equivalent, direct schema probes, and focused/broad/security regression coverage.
+
+### Files Modified
+- `corvus/domain/account.py` — makes onboarding experience optional and records the bound device version on every session record.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py` and `corvus/database.py` — add nullable onboarding state, composite device/session integrity, classifier coverage, and the fail-closed downgrade guard.
+- `corvus/infrastructure/repositories/accounts.py` — enforces exact current-device binding, tenant-scoped replay classification, generic replacement conflicts, and unselected OAuth onboarding.
+- `corvus/infrastructure/repositories/identity_scope.py` — projects persisted grants through deterministic role ceilings without adding capabilities to memberships.
+- `tests/unit/domain/test_account.py`, `tests/unit/platform/test_config.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_postgres_database.py` — prove the reviewed behavior on models, rendered DDL, SQLite, and the guarded PostgreSQL contract.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.3-report.md` — record the corrected Task 1.3 contract and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The role matrix, case-insensitive labels, value-free failure behavior, downgrade boundary, session binding, replay scope, and onboarding sequence came directly from the Task 1.3 review clarification.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL test remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; its populated downgrade-preservation proof is retained for the approved disposable service.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL test against the approved disposable service to collect server-backed proof of the populated downgrade refusal.
+- Review the Task 1.3 follow-up commit before beginning Task 1.4.

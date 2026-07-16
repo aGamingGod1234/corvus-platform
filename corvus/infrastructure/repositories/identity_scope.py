@@ -13,7 +13,7 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 from corvus.database import DatabaseState, classify_database
-from corvus.domain.access import AccessBundle, CapabilityGrant
+from corvus.domain.access import AccessBundle, CapabilityEffect, CapabilityGrant
 from corvus.domain.identity import (
     AgentIdentity,
     MembershipStatus,
@@ -31,6 +31,14 @@ from corvus.domain.scope import (
 from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
 type Scope = WorkspaceScope | ProjectScope | ChannelScope | ThreadScope | ConversationScope
+
+_ROLE_ACTION_CEILINGS: Mapping[str, frozenset[str]] = {
+    "owner": frozenset({"workspace.manage", "project.create", "project.read"}),
+    "admin": frozenset({"workspace.manage", "project.create", "project.read"}),
+    "manager": frozenset({"project.create", "project.read"}),
+    "member": frozenset({"project.create", "project.read"}),
+    "viewer": frozenset({"project.read"}),
+}
 
 
 class IdentityScopeRepositoryError(RuntimeError):
@@ -223,6 +231,9 @@ class IdentityScopeRepository:
         membership = self.get_membership(workspace_id, principal_id)
         if membership is None or membership.status is not MembershipStatus.ACTIVE:
             return ()
+        role_ceiling = _ROLE_ACTION_CEILINGS.get(membership.role.strip().casefold())
+        if role_ceiling is None:
+            raise IdentityScopeRepositoryError("membership_role_capability_mismatch")
         with self._connection() as connection:
             bundle_payloads = connection.scalars(
                 text(
@@ -247,6 +258,11 @@ class IdentityScopeRepository:
                 grants = tuple(
                     CapabilityGrant.model_validate_json(payload) for payload in grant_payloads
                 )
+                if any(
+                    grant.effect is CapabilityEffect.ALLOW and grant.action not in role_ceiling
+                    for grant in grants
+                ):
+                    raise IdentityScopeRepositoryError("membership_role_capability_mismatch")
                 result.append((bundle, grants))
         return tuple(result)
 

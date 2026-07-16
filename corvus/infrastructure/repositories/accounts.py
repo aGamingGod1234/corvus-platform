@@ -16,7 +16,6 @@ from corvus.domain.account import (
     Account,
     DeviceRegistration,
     DeviceStatus,
-    ExperienceKind,
     ExternalIdentity,
     SessionRecord,
     SessionStatus,
@@ -119,7 +118,9 @@ class AccountRepository:
                 "id": str(account.id),
                 "principal_id": str(account.principal_id),
                 "normalized_email": account.normalized_email,
-                "experience_kind": account.experience_kind.value,
+                "experience_kind": (
+                    None if account.experience_kind is None else account.experience_kind.value
+                ),
                 "status": account.status.value,
                 "created_at": account.created_at.isoformat(),
                 "updated_at": account.updated_at.isoformat(),
@@ -303,7 +304,7 @@ class AccountRepository:
                         id=account_id,
                         principal_id=principal_id,
                         normalized_email=normalized_email,
-                        experience_kind=ExperienceKind.EVERYDAY,
+                        experience_kind=None,
                         status=RecordStatus.ACTIVE,
                         created_at=now,
                         updated_at=now,
@@ -417,15 +418,17 @@ class AccountRepository:
         connection.execute(
             text(
                 "INSERT INTO session_records "
-                "(id, account_id, device_id, version, token_digest, predecessor_digest, "
-                "status, issued_at, expires_at, revoked_at, payload_json) VALUES (:id, "
-                ":account_id, :device_id, :version, :token_digest, :predecessor_digest, "
-                ":status, :issued_at, :expires_at, :revoked_at, :payload_json)"
+                "(id, account_id, device_id, device_version, version, token_digest, "
+                "predecessor_digest, status, issued_at, expires_at, revoked_at, payload_json) "
+                "VALUES (:id, :account_id, :device_id, :device_version, :version, "
+                ":token_digest, :predecessor_digest, :status, :issued_at, :expires_at, "
+                ":revoked_at, :payload_json)"
             ),
             {
                 "id": str(session.id),
                 "account_id": str(session.account_id),
                 "device_id": str(session.device_id),
+                "device_version": session.device_version,
                 "version": session.version,
                 "token_digest": session.token_digest,
                 "predecessor_digest": session.predecessor_digest,
@@ -470,12 +473,36 @@ class AccountRepository:
                     raise AccountRepositoryError("session_device_missing")
                 if device.status is not DeviceStatus.ACTIVE:
                     raise AccountRepositoryError("session_device_revoked")
+                if session.device_version != device.version:
+                    raise AccountRepositoryError("session_device_version_mismatch")
                 self._insert_session(connection, session)
         except IntegrityError as exc:
             raise AccountRepositoryError("session_identity_conflict") from exc
 
     @staticmethod
-    def _digest_was_seen(connection: Connection, digest: str) -> bool:
+    def _digest_was_seen(
+        connection: Connection,
+        *,
+        account_id: UUID,
+        session_id: UUID,
+        digest: str,
+    ) -> bool:
+        count = connection.scalar(
+            text(
+                "SELECT COUNT(*) FROM session_records "
+                "WHERE account_id = :account_id AND id = :session_id "
+                "AND (token_digest = :digest OR predecessor_digest = :digest)"
+            ),
+            {
+                "account_id": str(account_id),
+                "session_id": str(session_id),
+                "digest": digest,
+            },
+        )
+        return bool(count)
+
+    @staticmethod
+    def _replacement_digest_conflicts(connection: Connection, digest: str) -> bool:
         count = connection.scalar(
             text(
                 "SELECT COUNT(*) FROM session_records "
@@ -520,7 +547,11 @@ class AccountRepository:
                 account_id=account_id,
                 device_id=current.device_id,
             )
-            if device is None or device.status is not DeviceStatus.ACTIVE:
+            if (
+                device is None
+                or device.status is not DeviceStatus.ACTIVE
+                or current.device_version != device.version
+            ):
                 return None
             return current
 
@@ -535,7 +566,7 @@ class AccountRepository:
         expires_at: datetime,
     ) -> SessionRecord:
         if replacement_digest == presented_digest:
-            raise AccountRepositoryError("session_replacement_digest_reused")
+            raise AccountRepositoryError("session_replacement_conflict")
         try:
             with self._transaction() as connection:
                 current = self._latest_session(
@@ -548,7 +579,12 @@ class AccountRepository:
                 if current.token_digest != presented_digest:
                     reason = (
                         "session_replay_detected"
-                        if self._digest_was_seen(connection, presented_digest)
+                        if self._digest_was_seen(
+                            connection,
+                            account_id=account_id,
+                            session_id=session_id,
+                            digest=presented_digest,
+                        )
                         else "session_authentication_failed"
                     )
                     raise AccountRepositoryError(reason)
@@ -561,12 +597,13 @@ class AccountRepository:
                 )
                 if device is None or device.status is DeviceStatus.REVOKED:
                     raise AccountRepositoryError("session_device_revoked")
-                if self._digest_was_seen(connection, replacement_digest):
-                    raise AccountRepositoryError("session_replacement_digest_reused")
+                if self._replacement_digest_conflicts(connection, replacement_digest):
+                    raise AccountRepositoryError("session_replacement_conflict")
                 rotated = SessionRecord(
                     id=current.id,
                     account_id=current.account_id,
                     device_id=current.device_id,
+                    device_version=device.version,
                     version=current.version + 1,
                     token_digest=replacement_digest,
                     predecessor_digest=presented_digest,
@@ -577,7 +614,7 @@ class AccountRepository:
                 self._insert_session(connection, rotated)
                 return rotated
         except IntegrityError as exc:
-            raise AccountRepositoryError("session_rotation_conflict") from exc
+            raise AccountRepositoryError("session_replacement_conflict") from exc
 
     def revoke_session(
         self,
@@ -599,14 +636,27 @@ class AccountRepository:
                 if current.token_digest != presented_digest:
                     reason = (
                         "session_replay_detected"
-                        if self._digest_was_seen(connection, presented_digest)
+                        if self._digest_was_seen(
+                            connection,
+                            account_id=account_id,
+                            session_id=session_id,
+                            digest=presented_digest,
+                        )
                         else "session_authentication_failed"
                     )
                     raise AccountRepositoryError(reason)
+                device = self._latest_device(
+                    connection,
+                    account_id=account_id,
+                    device_id=current.device_id,
+                )
+                if device is None:
+                    raise AccountRepositoryError("session_device_missing")
                 revoked = SessionRecord(
                     id=current.id,
                     account_id=current.account_id,
                     device_id=current.device_id,
+                    device_version=device.version,
                     version=current.version + 1,
                     token_digest=None,
                     predecessor_digest=presented_digest,

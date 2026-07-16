@@ -42,6 +42,17 @@ def test_account_experience_is_independent_from_workspace_presentation_kind() ->
     assert "capabilities" not in WorkspaceMembership.model_fields
 
 
+def test_account_experience_is_unselected_until_onboarding() -> None:
+    account = Account(
+        principal_id=uuid4(),
+        normalized_email="new-user@example.com",
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+
+    assert account.experience_kind is None
+
+
 def test_identity_models_are_frozen_and_reject_unexpected_authority_fields() -> None:
     account = Account(
         principal_id=uuid4(),
@@ -105,6 +116,7 @@ def test_session_record_is_digest_only_and_has_a_versioned_lineage() -> None:
     session = SessionRecord(
         account_id=account_id,
         device_id=device_id,
+        device_version=3,
         version=1,
         token_digest="a" * 64,
         status=SessionStatus.ACTIVE,
@@ -113,6 +125,7 @@ def test_session_record_is_digest_only_and_has_a_versioned_lineage() -> None:
     )
 
     assert session.token_digest == "a" * 64
+    assert session.device_version == 3
     assert session.predecessor_digest is None
     with pytest.raises(ValidationError, match="extra_forbidden"):
         SessionRecord.model_validate(

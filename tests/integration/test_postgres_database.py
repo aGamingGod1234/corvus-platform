@@ -11,6 +11,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from corvus.application.identity import IdentityService
 from corvus.domain.account import DeviceRegistration, DeviceStatus, SessionRecord, SessionStatus
 from corvus.infrastructure.db import (
+    M1_AUDIT_PROOF_MANIFEST_REVISION,
     M1_CURRENT_REVISION,
     M1_PROJECT_REVISION,
     current_revision_url,
@@ -359,6 +360,17 @@ def _assert_postgres_identity_repository_contract(engine: Engine) -> None:
     )
 
 
+def _identity_history_counts(connection: Connection) -> dict[str, int | None]:
+    return {
+        "accounts": connection.scalar(text("SELECT COUNT(*) FROM accounts")),
+        "external_identities": connection.scalar(text("SELECT COUNT(*) FROM external_identities")),
+        "device_registrations": connection.scalar(
+            text("SELECT COUNT(*) FROM device_registrations")
+        ),
+        "session_records": connection.scalar(text("SELECT COUNT(*) FROM session_records")),
+    }
+
+
 def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> None:
     database_url = _postgres_test_url()
     _require_reset_authorization(database_url)
@@ -381,7 +393,6 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
         with engine.begin() as connection:
             _assert_head_schema_controls(connection)
             _assert_runtime_constraints(connection)
-        _assert_postgres_identity_repository_contract(engine)
 
         assert downgrade_database_url(database_url, M1_PROJECT_REVISION) == M1_PROJECT_REVISION
         with engine.connect() as connection:
@@ -392,6 +403,26 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
 
         assert upgrade_database_url(database_url) == M1_CURRENT_REVISION
         with engine.connect() as connection:
+            _assert_head_schema_controls(connection)
+        _assert_postgres_identity_repository_contract(engine)
+        with engine.connect() as connection:
+            before_counts = _identity_history_counts(connection)
+        with pytest.raises(RuntimeError, match="identity_continuity_history_present"):
+            downgrade_database_url(database_url, M1_AUDIT_PROOF_MANIFEST_REVISION)
+        assert current_revision_url(database_url) == M1_CURRENT_REVISION
+        with engine.connect() as connection:
+            after_counts = _identity_history_counts(connection)
+            assert before_counts == after_counts
+            assert all(count for count in after_counts.values())
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM authority_state_root_manifests "
+                        "WHERE id = '00000000-0000-4000-8000-000000000010'"
+                    )
+                )
+                == 1
+            )
             _assert_head_schema_controls(connection)
     finally:
         engine.dispose()
