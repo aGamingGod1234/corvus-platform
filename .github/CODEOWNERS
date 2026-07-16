@@ -83,7 +83,11 @@
 # Own the complete current and future MVP trust surface by default.
 /corvus/mvp/                                    @asifdotpy
 
-# Supply-chain provenance generation
+# Desktop packaging and trusted local-runtime boundary
+/apps/desktop/                                 @asifdotpy
+
+# Release support and supply-chain scripts
+/scripts/                                      @asifdotpy
 /scripts/generate_supply_chain.py               @asifdotpy
 
 # Own all current and future MVP regression suites.

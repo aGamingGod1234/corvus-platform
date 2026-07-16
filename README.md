@@ -56,7 +56,7 @@ $env:CORVUS_SESSION_SECRET = '<at-least-32-byte-signing-value>'
 uv run corvus-mvp server --database corvus-mvp.sqlite3 --static-web-dir apps/web/dist
 ```
 
-Then open `http://127.0.0.1:8000` and pair once. A durable CLI-only demo is also available:
+Then open the loopback URL printed by the server, normally `http://127.0.0.1:8080`, and pair once. A durable CLI-only demo is also available:
 
 ```powershell
 uv run corvus-mvp demo --database corvus-mvp.sqlite3 --json
@@ -72,6 +72,20 @@ pnpm --dir apps/desktop install --frozen-lockfile
 pnpm --dir apps/desktop tauri build --no-bundle
 & apps\desktop\src-tauri\target\release\corvus-desktop.exe
 ```
+
+## Alpha installers and web deployment
+
+Unsigned alpha desktop installers are built by `.github/workflows/desktop-release.yml` for:
+
+- Windows x64 NSIS: `Corvus_0.2.0-alpha.1_x64-setup.exe`
+- macOS x64 DMG
+- Linux x64 AppImage and `.deb`
+
+The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell. It uploads installer artifacts on pull requests for review, and creates a GitHub prerelease with `SHA256SUMS.txt` only when a reviewed `v0.2.0-alpha.1` tag is pushed from `main`.
+
+These installers are intentionally unsigned alpha artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and release channels remain later work.
+
+The web app is linked to Vercel project `corvus-platform`, connected to `aGamingGod1234/corvus-platform`, with Git root `apps/web` so `main` updates produce production deployments and pull requests produce previews. Current deployment: <https://corvus-platform-tau.vercel.app>. The hosted app keeps Local mode honest: it hands off to the same-machine local runtime and does not receive local pairing secrets or session cookies.
 
 ## Development and verification
 

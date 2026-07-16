@@ -1011,3 +1011,108 @@
 
 ### Suggested Next Steps
 - Commit and push the verified integration merge, request exact-head reviewers, and merge PR #1 only after protected-branch requirements are satisfied.
+
+## 2026-07-15 — Alpha Installers and Vercel Release Path
+
+### What Was Implemented
+- Added a release-only Tauri packaging config that bundles the compiled React client and a standalone PyInstaller `corvus-mvp` sidecar without weakening the existing local sidecar override.
+- Added a GitHub Actions desktop-release workflow for unsigned Windows NSIS, macOS x64 DMG, Linux AppImage, and Linux `.deb` artifacts, with tag-gated GitHub prerelease publishing and SHA256 checksums.
+- Added the hosted-web Local handoff so Vercel never receives same-machine pairing secrets or local session cookies.
+- Linked Vercel project `corvus-platform` to `aGamingGod1234/corvus-platform`, connected GitHub integration, set Git root to `apps/web`, and deployed the current web app to `https://corvus-platform-tau.vercel.app`.
+- Confirmed GitHub `main` protection is already enabled with strict required checks, one code-owner approval, stale-review dismissal, admin enforcement, and force/delete disabled.
+
+### Files Modified
+- `.github/workflows/desktop-release.yml` — cross-platform unsigned installer build and tag-gated prerelease publishing.
+- `.gitignore` — ignores local Vercel project metadata.
+- `apps/desktop/src-tauri/src/lib.rs` — packaged sidecar lookup now checks both resource and installed executable directories.
+- `apps/desktop/src-tauri/tauri.conf.json` — declares desktop icons for release bundling.
+- `apps/desktop/src-tauri/tauri.release.conf.json` — release-only sidecar and resource packaging config.
+- `apps/desktop/src-tauri/icons/icon.icns` — generated macOS desktop icon from the existing app SVG.
+- `apps/desktop/README.md` — documents the standalone unsigned alpha installer build.
+- `apps/web/src/App.tsx`, `apps/web/src/runtime/*`, `apps/web/src/styles/onboarding.css`, `apps/web/src/App.workspace.test.tsx` — hosted Local handoff and tests.
+- `apps/web/vercel.json` — Vercel Vite build, SPA rewrite, and security headers.
+- `scripts/corvus_mvp_entry.py` — PyInstaller entrypoint for the MVP sidecar.
+- `README.md`, `HACKATHON_STATUS.md`, `PROJECT_LOG.md` — release/deployment status and limitations.
+
+### Assumptions Made (flag these for review)
+- Unsigned alpha artifacts are acceptable for this milestone; production signing, notarization, and update channels are intentionally deferred.
+- GitHub Releases should be created only from reviewed `main` tags, not directly from this feature branch.
+- Hosted Vercel Local mode should remain a launcher/handoff for same-machine runtime until a real cloud runtime and browser-safe local bridge are designed.
+
+### Known Issues / Deferred
+- GitHub Release assets require a reviewed tag push from `main`; the macOS alpha artifact is x64 because a locked dependency is not universal2-compatible in PyInstaller.
+- The Computer Use control surface was not exposed in this resumed tool set, so current Windows installer validation used process-level smoke testing instead of GUI automation.
+- Vercel direct deployment briefly required clearing `rootDirectory`; it was restored to `apps/web` after deployment for GitHub `main` auto-deploys.
+- Real E2B Cloud, Google-backed continuity, payments, production signing, notarization, live provider adapters, and real multi-user authority remain later milestones.
+
+### Suggested Next Steps
+- Push this branch and open a ready PR targeting `main` for review.
+- After review and merge, tag `v0.2.0-alpha.1` on `main` so the release workflow publishes installer assets and checksums.
+- Verify the GitHub Actions macOS and Linux installer artifacts before treating them as downloadable alpha builds.
+
+## 2026-07-15 — Alpha Release Review Hardening
+
+### What Was Implemented
+- Made packaged sidecar discovery skip directory lookalikes and continue to the next trusted candidate.
+- Made loopback host classification reject missing or non-string runtime values without throwing.
+- Required every release tag commit to be an ancestor of `origin/main` before GitHub prerelease publication.
+- Removed redundant native-sidecar bundling because the desktop runtime uses the explicit packaged-resource lookup.
+
+### Files Modified
+- `apps/desktop/src-tauri/src/lib.rs` — file-only packaged sidecar selection plus regression coverage.
+- `apps/web/src/runtime/localRuntime.ts` and `localRuntime.test.ts` — defensive runtime-host validation and regression coverage.
+- `.github/workflows/desktop-release.yml` — reviewed-main ancestry gate for release tags.
+- `apps/desktop/src-tauri/tauri.release.conf.json` — avoids packaging the sidecar twice.
+- `PROJECT_LOG.md` — this hardening record.
+
+### Assumptions Made (flag these for review)
+- Tags may point at any reviewed commit reachable from `main`; they do not need to point only at the current `main` tip.
+
+### Known Issues / Deferred
+- Broader CODEOWNERS coverage for release, desktop, and scripts paths remains a separate governance change so this release fix stays narrowly reviewable.
+
+### Suggested Next Steps
+- Re-run focused and full verification, obtain exact-head approval, merge PR #3, and tag `v0.2.0-alpha.1` from updated `main`.
+
+## 2026-07-16 — Complete PR #3 code-owner coverage
+
+### What Was Implemented
+- Extended required security review ownership to the desktop application and all release-support scripts.
+
+### Files Modified
+- `.github/CODEOWNERS` — enforces `@asifdotpy` review for `apps/desktop/` and `scripts/`.
+- `PROJECT_LOG.md` — records the governance follow-up.
+
+### Assumptions Made (flag these for review)
+- `@asifdotpy` remains the security owner for the alpha release surface.
+
+### Known Issues / Deferred
+- A fresh formal approval is still required because branch protection dismisses stale reviews after new commits.
+
+### Suggested Next Steps
+- Push the PR-head update, request Asif's review, and merge only after the protected-branch gate is satisfied.
+
+## 2026-07-16 — Close PR #3 release security blockers
+
+### What Was Implemented
+- Removed pull-request-triggered multi-OS installer packaging while preserving manual and release-tag builds.
+- Pinned the alpha Vercel network contract to same-origin API and streaming connections.
+- Disclosed that the alpha loopback handoff cannot authenticate the process owning port 8080.
+- Added regression coverage for the packaging trigger, CSP contract, and visible trust disclosure.
+
+### Files Modified
+- `.github/workflows/desktop-release.yml` — limits packaging to manual dispatch and release tags.
+- `apps/web/HOSTED_RUNTIME_SECURITY.md` — documents CSP and loopback trust decisions.
+- `apps/web/src/runtime/LocalRuntimeLauncher.tsx` — shows the unverified loopback limitation.
+- `apps/web/src/App.workspace.test.tsx` — checks the visible trust disclosure.
+- `tests/security/test_release_surface.py` — enforces the release-trigger and hosted-network policies.
+- `PROJECT_LOG.md` — records the security follow-up.
+
+### Assumptions Made (flag these for review)
+- The alpha hosted surface has no external API, SSE, or WebSocket dependency; future cloud origins require an explicit CSP review.
+
+### Known Issues / Deferred
+- Cryptographic local-app identity requires a native bootstrap channel and remains in the runtime-selector milestone.
+
+### Suggested Next Steps
+- Run the focused and full verification suites, push the reviewed delta, and request exact-head security approval.
