@@ -128,10 +128,10 @@ def test_platform_settings_require_distinct_secrets(monkeypatch):
 **Interfaces:**
 - Produces: <code>Account</code>, <code>ExternalIdentity</code>, <code>DeviceRegistration</code>, <code>SessionRecord</code>, and <code>IdentityService.complete_google_identity()</code>; reuses existing <code>Workspace</code> and <code>WorkspaceMembership</code> as the only workspace authority types.
 
-- [ ] Write failing tests for verified-email linking, unique issuer/subject, independent experience/workspace kind, membership capabilities, session rotation, device revocation, and cross-tenant denial.
-- [ ] Run both focused files and confirm missing models/migration failures.
-- [ ] Implement frozen account/session/device models, extend the existing workspace/membership repository contract, add constraints/indexes, and create the reversible migration without parallel authority types.
-- [ ] Upgrade/downgrade/upgrade fresh SQLite and PostgreSQL databases, then rerun the tests.
+- [x] Write failing tests for verified-email linking, unique issuer/subject, independent experience/workspace kind, membership capabilities, session rotation, device revocation, and cross-tenant denial.
+- [x] Run both focused files and confirm missing models/migration failures.
+- [x] Implement frozen account/session/device models, extend the existing workspace/membership repository contract, add constraints/indexes, and create the reversible migration without parallel authority types.
+- [x] Upgrade/downgrade/upgrade fresh SQLite and PostgreSQL databases, then rerun the tests.
 
 ### Task 1.4: Implement Google OAuth and durable sessions
 
