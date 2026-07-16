@@ -612,6 +612,58 @@ describe("SyncProvider", () => {
     expect(screen.getByLabelText("mutation authority")).toHaveTextContent("blocked");
   });
 
+  it("does not acknowledge an explicit resync page after workspace B supersedes workspace A", async () => {
+    const second = { ...WORKSPACE, id: DEVICE_ID, name: "Second workspace" };
+    const staleBoundary = deferred<SyncPage>();
+    const applySync = vi.fn().mockResolvedValue({ acknowledged_cursor: 2, results: [] });
+    const getWorkspace = vi.fn().mockImplementation(
+      async (workspaceId: string) => workspaceId === DEVICE_ID ? second : WORKSPACE
+    );
+    const getSyncPage = vi.fn().mockImplementation(
+      async (workspaceId: string, cursor: number) => {
+        if (workspaceId === DEVICE_ID) return page([]);
+        if (cursor === 1) return staleBoundary.promise;
+        throw new AuthApiError(409, "sync_resync_required", "resync-correlation", {
+          code: "sync_resync_required",
+          earliest_available: 2,
+          latest_sequence: 2,
+          resume_cursor: 1,
+          resources: ["/api/v2/session", `/api/v2/workspaces/${WORKSPACE_ID}`]
+        });
+      }
+    );
+    renderSync(completeApi({
+      applySync,
+      getSyncPage,
+      getWorkspace,
+      listWorkspaces: vi.fn().mockResolvedValue([WORKSPACE, second])
+    }));
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText("sync status")).toHaveTextContent("selection_required"));
+
+    await user.click(screen.getByRole("button", { name: "Select field desk" }));
+    await waitFor(() => expect(getSyncPage).toHaveBeenCalledWith(WORKSPACE_ID, 1));
+    await user.click(screen.getByRole("button", { name: "Select second workspace" }));
+    await waitFor(() => expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace"));
+
+    await act(async () => {
+      staleBoundary.resolve(page([
+        change(2, "2", { previous_digest: ZERO_DIGEST })
+      ], {
+        requested_cursor: 1,
+        next_cursor: 2,
+        high_watermark: 2,
+        earliest_retained_sequence: 2
+      }));
+    });
+
+    expect(applySync).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("selected workspace")).toHaveTextContent("Second workspace");
+    expect(screen.getByLabelText("sync status")).toHaveTextContent("ready");
+    expect(screen.getByLabelText("sync cursor")).toHaveTextContent("0");
+    expect(screen.getByLabelText("mutation authority")).toHaveTextContent("enabled");
+  });
+
   it("performs explicit resync by refetching session and workspace before the boundary", async () => {
     const boundary = page([], {
       requested_cursor: 1,

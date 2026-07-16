@@ -1656,3 +1656,26 @@
 ### Suggested Next Steps
 - Independently review the separate Task 1.6 authority/stale-operation repair commit and retained browser captures.
 - Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Fence stale explicit-resync acknowledgements
+
+### What Was Implemented
+- Added a generation fence after explicit-resync page fetch/reduction and immediately before acknowledgement.
+- Added a regression that defers workspace A's resync page, selects workspace B, then proves late A cannot send an acknowledgement or mutate B's ready snapshot.
+
+### Files Modified
+- `apps/web/src/sync/SyncProvider.tsx` — prevents superseded explicit-resync work from acknowledging a stale cursor.
+- `apps/web/src/sync/SyncProvider.test.tsx` — reproduces and permanently covers the stale pre-ACK race.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record the final review closure and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The race shape, generation boundary, frontend-only verification scope, documentation, separate commit, and stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy retains the five previously documented migration typing errors; this frontend-only repair does not touch those files.
+- Four destructive PostgreSQL tests remain guarded without disposable reset authorization.
+- No push, deployment, PR, or Task 2 work was authorized.
+
+### Suggested Next Steps
+- Independently review the final explicit-resync fence commit.
+- Begin Task 2 only after explicit authorization.

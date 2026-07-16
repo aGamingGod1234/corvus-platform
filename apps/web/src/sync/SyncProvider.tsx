@@ -281,12 +281,15 @@ export function SyncProvider({ api = browserPlatformApi, children }: SyncProvide
         highWatermark: resumeCursor
       };
       const page = await api.getSyncPage(confirmed.id, resumeCursor);
+      if (operation !== operationRef.current) return false;
       const reduced = reduceSyncPage(boundaryLedger, page, {
         accountId: freshSession.account_id,
         principalId: freshSession.principal_id,
         workspaceId: confirmed.id
       });
+      if (operation !== operationRef.current) return false;
       if (reduced.cursor > resumeCursor) {
+        if (operation !== operationRef.current) return false;
         await api.applySync(
           confirmed.id,
           { acknowledged_cursor: reduced.cursor, mutations: [] },
