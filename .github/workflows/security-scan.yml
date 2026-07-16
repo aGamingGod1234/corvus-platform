@@ -43,7 +43,7 @@ jobs:
       - name: Scan with public registry rules # alpha inform-only
         continue-on-error: true
         run: |
-          semgrep --config r/python --config r/typescript --config r/rust             --error --json semgrep.json || true
+          semgrep --config r/python --config r/typescript --config r/rust             --error . -o semgrep.json || true
           echo "Semgrep scan complete."
       - uses: actions/upload-artifact@v4
         if: always()
