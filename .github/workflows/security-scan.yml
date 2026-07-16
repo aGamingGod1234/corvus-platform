@@ -1,0 +1,48 @@
+name: security-scan
+
+# Self-scanning guardrail for every PR + pushes to main.
+# Runs in GitHub cloud. Token-free.
+#   - gitleaks: hunts leaked secrets/keys
+#   - semgrep : hunts insecure code patterns
+# This does NOT replace human review — it removes the mechanical scan.
+
+# TODO(pin actions): pin action SHAs, then add SARIF upload, dependency audit job, blocking semgrep after demo.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege. Scanning needs read-only checkout.
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Gitleaks - secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+  semgrep:
+    name: Semgrep - SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep
+      - name: Scan with public registry rules # alpha inform-only
+        continue-on-error: true
+        run: |
+          semgrep --config r/python --config r/typescript --config r/rust             --error --json semgrep.json || true
+          echo "Semgrep scan complete."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-findings
+          path: semgrep.json
