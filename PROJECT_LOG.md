@@ -1349,3 +1349,29 @@
 ### Suggested Next Steps
 - Run the guarded live PostgreSQL test against the disposable Compose service for server-backed evidence.
 - Treat this strict query allowlist as part of the destructive-test safety boundary in future changes.
+
+## 2026-07-16 — Task 1.3 Identity continuity persistence
+
+### What Was Implemented
+- Added frozen account, external-identity, device-registration, and digest-only session contracts while retaining the existing USER Principal as the authority identity.
+- Added callback-ready verified Google identity completion with exact issuer/subject reuse, atomic first-time Principal/Account/ExternalIdentity creation, and fail-closed pre-provisioned email attachment.
+- Added SQLAlchemy 2 repositories that preserve SQLite Path APIs, accept caller-owned SQLite/PostgreSQL engines, keep workspace and membership reads tenant-scoped, and expose membership authority only through existing AccessBundle/CapabilityGrant records.
+- Added atomic append-only session rotation/revocation, predecessor replay denial, and bound-device revocation invalidation.
+- Added reversible `m2_001_identity_continuity`, schema-7 authority-root coverage, classifier/revision updates, and SQLite/PostgreSQL migration contracts.
+
+### Files Modified
+- `corvus/domain/account.py`, `corvus/domain/identity.py`, and `corvus/application/identity.py` — define identity-continuity contracts and application linking rules.
+- `corvus/infrastructure/repositories/accounts.py` and `corvus/infrastructure/repositories/identity_scope.py` — implement the portable repository contract without parallel workspace or membership types.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py`, `manifest_history.py`, `corvus/database.py`, and `corvus/infrastructure/db.py` — add the reversible schema, current revision, exact classification, and manifest history.
+- `corvus/infrastructure/authority_root.py` — scopes account, identity, device, and session families through existing workspace memberships.
+- Focused and regression tests under `tests/unit/domain`, `tests/unit/platform`, `tests/integration`, and `tests/contract` — cover identity linking, isolation, rotation/revocation, migration cycles, PostgreSQL guarding, and active-manifest compatibility.
+
+### Assumptions Made (flag these for review)
+- None. The Task 1.3 brief and the callback contract clarification fixed the identity-linking, authority, persistence, and service-gating behavior.
+
+### Known Issues / Deferred
+- The guarded live PostgreSQL repository and migration contract did not run locally because the explicit disposable reset opt-in/service was unavailable; the test skipped before engine creation with `postgres_reset_opt_in_required`.
+
+### Suggested Next Steps
+- Run `tests/integration/test_postgres_database.py` against the approved disposable PostgreSQL service with the documented reset opt-in.
+- Review the Task 1.3 commit before beginning OAuth transaction and cookie/session transport work in Task 1.4.

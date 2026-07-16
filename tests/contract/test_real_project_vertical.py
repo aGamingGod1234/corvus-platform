@@ -76,8 +76,8 @@ from corvus.infrastructure.repositories.projects import ProjectRepository
 from corvus.infrastructure.repositories.registry import RegistryManifestRepository
 from corvus.store import TraceStore
 
-_NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
-_ACTIVE_MANIFEST_ID = UUID("00000000-0000-4000-8000-000000000009")
+_NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+_ACTIVE_MANIFEST_ID = UUID("00000000-0000-4000-8000-000000000010")
 
 
 class MemorySecretStore:

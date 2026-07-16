@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
+from corvus.application.identity import IdentityService
+from corvus.domain.account import DeviceRegistration, DeviceStatus, SessionRecord, SessionStatus
 from corvus.infrastructure.db import (
     M1_CURRENT_REVISION,
     M1_PROJECT_REVISION,
@@ -14,6 +17,7 @@ from corvus.infrastructure.db import (
     downgrade_database_url,
     upgrade_database_url,
 )
+from corvus.infrastructure.repositories.accounts import AccountRepository, AccountRepositoryError
 from corvus.platform import create_platform_engine
 from tests.postgres_safety import PostgresTestSafetyError, validate_disposable_postgres_url
 
@@ -23,6 +27,7 @@ DEFAULT_TEST_DATABASE_URL = (
 _IMMUTABLE_TABLES = frozenset(
     {
         "access_bundles",
+        "accounts",
         "agent_grants",
         "agent_identities",
         "audit_receipts",
@@ -41,10 +46,13 @@ _IMMUTABLE_TABLES = frozenset(
         "capability_grants",
         "delegation_grants",
         "deployment_profiles",
+        "device_registrations",
+        "external_identities",
         "identity_workspaces",
         "principals",
         "restore_validation_receipts",
         "scopes",
+        "session_records",
         "workspace_memberships",
         "workspace_signing_key_versions",
     }
@@ -161,7 +169,7 @@ def _assert_rejected(
 
 
 def _assert_runtime_constraints(connection: Connection) -> None:
-    manifest_id = "00000000-0000-4000-8000-000000000009"
+    manifest_id = "00000000-0000-4000-8000-000000000010"
     _assert_rejected(
         connection,
         "UPDATE authority_state_root_manifests SET status = 'disabled' WHERE id = :id",
@@ -279,6 +287,78 @@ def _assert_runtime_constraints(connection: Connection) -> None:
     )
 
 
+def _assert_postgres_identity_repository_contract(engine: Engine) -> None:
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+    repository = AccountRepository(engine)
+    account = IdentityService(repository).complete_google_identity(
+        issuer="https://accounts.google.com",
+        subject="postgres-google-subject",
+        email="Postgres@Example.COM",
+        email_verified=True,
+        display_name="Postgres User",
+        now=now,
+    )
+    repeated = IdentityService(repository).complete_google_identity(
+        issuer="https://accounts.google.com",
+        subject="postgres-google-subject",
+        email="postgres@example.com",
+        email_verified=True,
+        display_name="Postgres User",
+        now=now,
+    )
+    assert repeated == account
+
+    device = DeviceRegistration(
+        account_id=account.id,
+        name="PostgreSQL contract device",
+        public_key_digest="9" * 64,
+        status=DeviceStatus.ACTIVE,
+        created_at=now,
+        updated_at=now,
+    )
+    session = SessionRecord(
+        account_id=account.id,
+        device_id=device.id,
+        token_digest="8" * 64,
+        status=SessionStatus.ACTIVE,
+        issued_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    repository.append_device(device)
+    repository.create_session(session)
+    rotated = repository.rotate_session(
+        account_id=account.id,
+        session_id=session.id,
+        presented_digest="8" * 64,
+        replacement_digest="7" * 64,
+        now=now + timedelta(minutes=1),
+        expires_at=now + timedelta(hours=2),
+    )
+    assert rotated.version == 2
+    with pytest.raises(AccountRepositoryError, match="session_replay_detected"):
+        repository.rotate_session(
+            account_id=account.id,
+            session_id=session.id,
+            presented_digest="8" * 64,
+            replacement_digest="6" * 64,
+            now=now + timedelta(minutes=2),
+            expires_at=now + timedelta(hours=2),
+        )
+    repository.revoke_device(
+        account_id=account.id,
+        device_id=device.id,
+        revoked_at=now + timedelta(minutes=3),
+    )
+    assert (
+        repository.get_active_session(
+            account_id=account.id,
+            token_digest="7" * 64,
+            now=now + timedelta(minutes=3),
+        )
+        is None
+    )
+
+
 def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> None:
     database_url = _postgres_test_url()
     _require_reset_authorization(database_url)
@@ -301,6 +381,7 @@ def test_fresh_postgres_database_upgrade_constraints_and_migration_cycle() -> No
         with engine.begin() as connection:
             _assert_head_schema_controls(connection)
             _assert_runtime_constraints(connection)
+        _assert_postgres_identity_repository_contract(engine)
 
         assert downgrade_database_url(database_url, M1_PROJECT_REVISION) == M1_PROJECT_REVISION
         with engine.connect() as connection:

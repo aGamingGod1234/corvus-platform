@@ -53,9 +53,25 @@ M1_008_FAMILY_NAMES = tuple(
     for name in M1_007_FAMILY_NAMES
     if name not in {"audit_anchor_recovery_checkpoints", "audit_result_bindings"}
 )
+M1_009_FAMILY_NAMES = M1_007_FAMILY_NAMES
+M2_001_FAMILY_NAMES = tuple(
+    sorted(
+        {
+            *M1_009_FAMILY_NAMES,
+            "accounts",
+            "device_registrations",
+            "external_identities",
+            "session_records",
+        }
+    )
+)
 
 
 def family_proof_metadata(family_name: str) -> tuple[str, str | None]:
     if family_name == "authority_registry_freshness_proofs":
         return "external_proof", "registry_freshness_proof"
+    if family_name == "audit_anchor_recovery_checkpoints":
+        return "external_proof", "sealed_audit_checkpoint_history"
+    if family_name == "audit_result_bindings":
+        return "external_proof", "sealed_audit_result_binding_history"
     return "in_root", None

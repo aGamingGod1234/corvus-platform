@@ -37,6 +37,7 @@ _SELF_REFERENTIAL_FIELDS = {
 _VERSION_MARKERS = ("version", "sequence", "generation")
 _FAMILY_SELECT_ALL = {
     "access_bundles": "SELECT * FROM access_bundles",
+    "accounts": "SELECT * FROM accounts",
     "agent_grants": "SELECT * FROM agent_grants",
     "agent_identities": "SELECT * FROM agent_identities",
     "audience_policy_snapshots": "SELECT * FROM audience_policy_snapshots",
@@ -59,12 +60,15 @@ _FAMILY_SELECT_ALL = {
     "delegation_grants": "SELECT * FROM delegation_grants",
     "deployment_instance_leases": "SELECT * FROM deployment_instance_leases",
     "deployment_instances": "SELECT * FROM deployment_instances",
+    "device_registrations": "SELECT * FROM device_registrations",
     "idempotency_envelopes": "SELECT * FROM idempotency_envelopes",
     "identity_workspaces": "SELECT * FROM identity_workspaces",
+    "external_identities": "SELECT * FROM external_identities",
     "principals": "SELECT * FROM principals",
     "projects": "SELECT * FROM projects",
     "restore_validation_receipts": "SELECT * FROM restore_validation_receipts",
     "scopes": "SELECT * FROM scopes",
+    "session_records": "SELECT * FROM session_records",
     "workspace_authorities": "SELECT * FROM workspace_authorities",
     "workspace_memberships": "SELECT * FROM workspace_memberships",
     "workspace_signing_key_versions": "SELECT * FROM workspace_signing_key_versions",
@@ -241,14 +245,18 @@ class AuthorityRootCalculator:
             elif family_name == "identity_workspaces":
                 rows = [row for row in rows if row["id"] == str(workspace_id)]
             elif family_name == "principals":
-                principal_ids = {
-                    str(row[0])
-                    for row in connection.execute(
-                        "SELECT principal_id FROM workspace_memberships WHERE workspace_id = ?",
-                        (str(workspace_id),),
-                    ).fetchall()
-                }
+                principal_ids = self._workspace_principal_ids(connection, workspace_id)
                 rows = [row for row in rows if row["id"] in principal_ids]
+            elif family_name == "accounts":
+                principal_ids = self._workspace_principal_ids(connection, workspace_id)
+                rows = [row for row in rows if row["principal_id"] in principal_ids]
+            elif family_name in {
+                "external_identities",
+                "device_registrations",
+                "session_records",
+            }:
+                account_ids = self._workspace_account_ids(connection, workspace_id)
+                rows = [row for row in rows if row["account_id"] in account_ids]
             elif family_name == "deployment_instances":
                 instance_ids = {
                     str(row[0])
@@ -273,6 +281,34 @@ class AuthorityRootCalculator:
                 raise AuthorityRootCalculationError("authority_projection_rule_missing")
         return tuple(dict(row) for row in rows)
 
+    @staticmethod
+    def _workspace_principal_ids(
+        connection: sqlite3.Connection,
+        workspace_id: UUID,
+    ) -> set[str]:
+        return {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT principal_id FROM workspace_memberships WHERE workspace_id = ?",
+                (str(workspace_id),),
+            ).fetchall()
+        }
+
+    @classmethod
+    def _workspace_account_ids(
+        cls,
+        connection: sqlite3.Connection,
+        workspace_id: UUID,
+    ) -> set[str]:
+        principal_ids = cls._workspace_principal_ids(connection, workspace_id)
+        if not principal_ids:
+            return set()
+        return {
+            str(row[0])
+            for row in connection.execute("SELECT id, principal_id FROM accounts").fetchall()
+            if str(row[1]) in principal_ids
+        }
+
     def _latest_active_manifest(self) -> AuthorityStateRootManifestVersion:
         with self._connect() as connection:
             row = connection.execute(
@@ -295,6 +331,8 @@ class AuthorityRootCalculator:
     ) -> tuple[dict[str, Any], ...]:
         with self._connect() as connection:
             expected_columns = set(self._table_columns(connection, family_name))
+            principal_ids = self._workspace_principal_ids(connection, workspace_id)
+            account_ids = self._workspace_account_ids(connection, workspace_id)
         normalized: list[dict[str, Any]] = []
         for row in rows:
             normalized_row = dict(row)
@@ -305,6 +343,13 @@ class AuthorityRootCalculator:
             ):
                 raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
             if family_name == "identity_workspaces" and normalized_row["id"] != str(workspace_id):
+                raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
+            if family_name == "accounts" and normalized_row["principal_id"] not in principal_ids:
+                raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
+            if (
+                family_name in {"external_identities", "device_registrations", "session_records"}
+                and normalized_row["account_id"] not in account_ids
+            ):
                 raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
             normalized.append(normalized_row)
         return tuple(normalized)

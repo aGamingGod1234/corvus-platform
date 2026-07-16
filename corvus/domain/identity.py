@@ -36,6 +36,11 @@ class MembershipStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class WorkspaceKind(StrEnum):
+    INDIVIDUAL = "individual"
+    TEAM = "team"
+
+
 class _IdentityContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
@@ -43,6 +48,7 @@ class _IdentityContract(BaseModel):
 class Workspace(_IdentityContract):
     id: UUID = Field(default_factory=uuid4)
     name: str = Field(min_length=1, max_length=200)
+    workspace_kind: WorkspaceKind = WorkspaceKind.INDIVIDUAL
     status: RecordStatus = RecordStatus.ACTIVE
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)
