@@ -22,6 +22,7 @@ from corvus.domain.conversations import (
     AgentRunRecord,
     AttachmentRef,
     Message,
+    MessageAuthorKind,
     RunArtifact,
     RunEventPage,
     RunEventRecord,
@@ -38,6 +39,8 @@ __all__ = [
     "ConversationResponse",
     "ConversationService",
 ]
+
+_AUTHORITY_BINDING_MISMATCH = "conversation_authority_binding_mismatch"
 
 
 def _digest(value: object) -> str:
@@ -80,6 +83,14 @@ class ConversationService:
     @staticmethod
     def _failure(context: RequestContext, reason_code: str) -> ConversationResponse:
         return ConversationResponse(request_id=context.id, ok=False, reason_code=reason_code)
+
+    @staticmethod
+    def _thread_scope_matches(context: RequestContext, thread_id: UUID) -> bool:
+        return context.scope_kind in {"thread", "conversation"} and context.scope_id == thread_id
+
+    @staticmethod
+    def _workspace_scope_matches(context: RequestContext) -> bool:
+        return context.scope_kind == "workspace" and context.scope_id == context.workspace_id
 
     def _authorize(
         self,
@@ -293,6 +304,12 @@ class ConversationService:
         client_surface: ClientSurface,
         attachment: AttachmentRef,
     ) -> ConversationResponse:
+        if (
+            attachment.workspace_id != context.workspace_id
+            or attachment.owner_principal_id != context.requester_id
+            or not self._workspace_scope_matches(context)
+        ):
+            return self._failure(context, _AUTHORITY_BINDING_MISMATCH)
         return self._mutate(
             context=context,
             client_surface=client_surface,
@@ -312,6 +329,23 @@ class ConversationService:
         *,
         requester_membership_version: int,
     ) -> ConversationResponse:
+        principal_author_matches = (
+            message.author_kind is MessageAuthorKind.PRINCIPAL
+            and message.author_principal_id == context.requester_id
+            and message.author_membership_version == requester_membership_version
+        )
+        agent_author_matches = (
+            message.author_kind is MessageAuthorKind.AGENT
+            and context.agent_id is not None
+            and message.author_agent_id == context.agent_id
+        )
+        system_author_matches = message.author_kind is MessageAuthorKind.SYSTEM
+        if (
+            message.workspace_id != context.workspace_id
+            or not self._thread_scope_matches(context, message.thread_id)
+            or not (principal_author_matches or agent_author_matches or system_author_matches)
+        ):
+            return self._failure(context, _AUTHORITY_BINDING_MISMATCH)
         return self._mutate(
             context=context,
             client_surface=client_surface,
@@ -361,6 +395,14 @@ class ConversationService:
         client_surface: ClientSurface,
         run: AgentRunRecord,
     ) -> ConversationResponse:
+        if (
+            run.workspace_id != context.workspace_id
+            or not self._thread_scope_matches(context, run.thread_id)
+            or run.requester_principal_id != context.requester_id
+            or run.authorization_snapshot_id != context.authorization_snapshot_id
+            or run.authorization_snapshot_digest != context.authorization_snapshot_digest
+        ):
+            return self._failure(context, _AUTHORITY_BINDING_MISMATCH)
         return self._mutate(
             context=context,
             client_surface=client_surface,
@@ -405,6 +447,10 @@ class ConversationService:
         *,
         requester_membership_version: int,
     ) -> ConversationResponse:
+        if record.workspace_id != context.workspace_id or not self._thread_scope_matches(
+            context, record.thread_id
+        ):
+            return self._failure(context, _AUTHORITY_BINDING_MISMATCH)
         return self._mutate(
             context=context,
             client_surface=client_surface,
@@ -464,6 +510,10 @@ class ConversationService:
         *,
         requester_membership_version: int,
     ) -> ConversationResponse:
+        if artifact.workspace_id != context.workspace_id or not self._workspace_scope_matches(
+            context
+        ):
+            return self._failure(context, _AUTHORITY_BINDING_MISMATCH)
         return self._mutate(
             context=context,
             client_surface=client_surface,

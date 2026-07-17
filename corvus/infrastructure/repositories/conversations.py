@@ -916,25 +916,44 @@ class ConversationRepository:
                 raise ConversationRepositoryError("conversation_cursor_invalid")
             if after_sequence < earliest - 1:
                 raise ConversationRepositoryError("conversation_cursor_resync_required")
-            rows = (
+            chain_rows = (
                 connection.execute(
                     text(
                         "SELECT * FROM agent_run_events WHERE workspace_id = :workspace_id "
-                        "AND run_id = :run_id AND sequence > :after_sequence AND sequence <= :high "
-                        "ORDER BY sequence LIMIT :limit"
+                        "AND run_id = :run_id AND sequence <= :high ORDER BY sequence"
                     ),
                     {
                         "workspace_id": str(workspace_id),
                         "run_id": str(run_id),
-                        "after_sequence": after_sequence,
                         "high": high,
-                        "limit": limit,
                     },
                 )
                 .mappings()
                 .all()
             )
-            events = tuple(self._event_from_row(row) for row in rows)
+            chain = tuple(self._event_from_row(row) for row in chain_rows)
+            if chain:
+                expected_thread_id = UUID(run_row["thread_id"])
+                if (
+                    len(chain) != high
+                    or earliest != 1
+                    or any(
+                        record.workspace_id != workspace_id
+                        or record.thread_id != expected_thread_id
+                        or record.run_id != run_id
+                        for record in chain
+                    )
+                ):
+                    raise ConversationRepositoryError("run_event_integrity_invalid")
+                try:
+                    validate_agent_run_event_chain(tuple(record.event for record in chain))
+                except AgentRunEventChainError as exc:
+                    raise ConversationRepositoryError("run_event_integrity_invalid") from exc
+            elif high != 0:
+                raise ConversationRepositoryError("run_event_integrity_invalid")
+            events = tuple(record for record in chain if record.event.sequence > after_sequence)[
+                :limit
+            ]
             next_after = after_sequence if not events else events[-1].event.sequence
             return RunEventPage(
                 workspace_id=workspace_id,

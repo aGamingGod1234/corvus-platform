@@ -1713,3 +1713,30 @@
 ### Suggested Next Steps
 - Independently review the separate Task 2.1 commit and the evidence in `.superpowers/sdd/task-2.1-report.md`.
 - Progress to Task 2.2 after independent Task 2.1 approval.
+
+## 2026-07-17 - Close Task 2.1 authority-binding and event-chain review findings
+
+### What Was Implemented
+- Added fail-closed application-boundary authority binding for attachment registration, message append, run creation, event append, and artifact recording before lifecycle or repository invocation.
+- Bound every affected payload to the request workspace and its provable scope; denied delegated attachment ownership and principal/agent authorship, and bound run requester plus authorization snapshot ID/digest exactly to `RequestContext`.
+- Required attachment and artifact mutations to use an exact workspace scope because neither payload exposes a provable thread scope; retained transactional producing-run/event/parent validation for artifacts.
+- Changed event paging to validate the complete persisted chain from genesis through the frozen high watermark, including sequence, predecessor/event digests, run handle, workspace/thread/run envelope, terminal transitions, and tool-state prerequisites.
+- Added adversarial coverage for all five mutation families, identity/snapshot/scope transplants, and a disconnected predecessor whose event digest was recomputed to remain locally valid.
+
+### Files Modified
+- `corvus/application/conversations.py` - rejects authority transplants with the stable non-enumerating `conversation_authority_binding_mismatch` before lifecycle/repository access.
+- `corvus/infrastructure/repositories/conversations.py` - validates the full frozen persisted event chain before returning any page slice.
+- `tests/security/test_conversation_isolation.py` - reproduces both High findings and covers all confirmed binding rules.
+- `.superpowers/sdd/task-2.1-report.md` and `PROJECT_LOG.md` - record review repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. Workspace/scope, owner/author/requester, authority-version, snapshot, chain-validation, stable-error, test, commit, and no-push boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy retains the five documented errors in unchanged certified migration files; the review-fix source files pass targeted mypy.
+- PostgreSQL destructive tests remain guarded without explicit disposable reset authorization.
+- No API/SSE/UI/provider runtime, Task 2.2 implementation, push, pull request, or deployment is included in this repair.
+
+### Suggested Next Steps
+- Independently re-review the separate Task 2.1 High-finding repair commit.
+- Progress to Task 2.2 after Task 2.1 approval.

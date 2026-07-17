@@ -59,3 +59,27 @@ Those five paths have no Task 2.1 diff and were not modified because they are ce
 ## Stop Boundary
 
 Task 2.1 stops at domain, application lifecycle seams, repository persistence, migration/classifier/root integration, tests, and documentation. No push, pull request, deployment, Task 2.2, provider runtime, API/SSE, or UI work is performed in this task. Progression to Task 2.2 follows independent Task 2.1 approval.
+
+## Independent Review Repair
+
+The first independent Task 2.1 review returned two High findings. Both were reproduced red-first and repaired in a separate local commit:
+
+- Authority transplant: five workspace-transplanted mutation cases, three thread-scope transplants, attachment/artifact unrelated-scope cases, owner/author/requester/snapshot mismatches, and an agent-author transplant all returned success before the repair. The security RED was **13 failed, 6 passed**.
+- Event chain: paging after sequence 1 accepted a sequence-2 record whose predecessor and event digest were both recomputed, because only the returned slice was decoded. The repair validates every persisted record from genesis through the frozen high watermark before slicing.
+
+The application boundary now returns the single non-enumerating `conversation_authority_binding_mismatch` before lifecycle or repository access when:
+
+- any affected payload workspace differs from `RequestContext.workspace_id`;
+- attachment owner differs from the requester or the request is not exactly workspace-scoped;
+- a message is not exactly thread/conversation-scoped, a principal author/requester membership binding differs, or an agent author differs from `context.agent_id`;
+- a run is not exactly thread/conversation-scoped, its requester differs, or its authorization snapshot ID/digest differs;
+- an event is not exactly bound to the context workspace and thread/conversation scope; or
+- an artifact is not exactly workspace-scoped. Producing run/event and parent lineage remain transactionally bound because `RequestContext` has no run scope and `RunArtifact` has no thread field.
+
+Repository page reads now validate the complete frozen chain for contiguous sequence from 1, canonical genesis predecessor, event digest, predecessor linkage, stable handle/run identity, workspace/thread/run envelope, provider uniqueness, terminal transitions, and tool/effect state before returning the requested bounded slice.
+
+Focused GREEN evidence after the repair:
+
+- `tests/security/test_conversation_isolation.py`: **19 passed**.
+- Complete conversation domain/repository/migration/security slice: **63 passed, 1 guarded PostgreSQL skip**.
+- Final exact-tree `uv run --python 3.13 pytest -q`: **962 passed, 5 guarded PostgreSQL skips** in 332.34 seconds.
