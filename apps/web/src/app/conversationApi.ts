@@ -71,8 +71,28 @@ export interface LocalChatRequest {
   mcp_enabled: boolean;
 }
 
+export type ResponseTone = "concise" | "balanced" | "detailed";
+
+export interface RuntimePreferences {
+  version: number;
+  default_provider: "codex" | "claude";
+  default_model: string | null;
+  default_effort: ThinkingLevel;
+  default_mode: RunMode;
+  mcp_enabled: boolean;
+  response_tone: ResponseTone;
+  custom_rules: string;
+  updated_at: string | null;
+}
+
+export interface RuntimePreferencesUpdate extends Omit<RuntimePreferences, "version" | "updated_at"> {
+  expected_version: number;
+}
+
 export interface ConversationApi {
   listProviders(): Promise<ProviderCatalogEntry[]>;
+  getPreferences(): Promise<RuntimePreferences>;
+  updatePreferences(preferences: RuntimePreferencesUpdate): Promise<RuntimePreferences>;
   startRun(
     prompt: string,
     request: LocalChatRequest,
@@ -128,6 +148,15 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
     listProviders: () => requestJson("/api/local-chat/providers", {
       method: "GET",
       headers: { Accept: "application/json" }
+    }),
+    getPreferences: () => requestJson("/api/local-chat/preferences", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
+    updatePreferences: (preferences) => requestJson("/api/local-chat/preferences", {
+      method: "PUT",
+      headers: mutationHeaders(),
+      body: JSON.stringify(preferences)
     }),
     startRun: (prompt, request, idempotencyKey) => requestJson("/api/local-chat/runs", {
       method: "POST",

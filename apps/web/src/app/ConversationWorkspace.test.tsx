@@ -32,6 +32,18 @@ class FakeRunStream implements RunEventStream {
 
 function conversationApi(stream: FakeRunStream): ConversationApi {
   return {
+    getPreferences: vi.fn().mockResolvedValue({
+      version: 0,
+      default_provider: "codex",
+      default_model: null,
+      default_effort: "medium",
+      default_mode: "chat",
+      mcp_enabled: false,
+      response_tone: "balanced",
+      custom_rules: "",
+      updated_at: null
+    }),
+    updatePreferences: vi.fn(),
     listProviders: vi.fn().mockResolvedValue([
       { id: "codex", label: "Codex", status: "ready", runtime: "local", models: [
         { id: "default", label: "Codex default", recommended: true },

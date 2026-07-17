@@ -124,6 +124,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local-chat/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Local Preferences */
+        get: operations["get_local_preferences_api_local_chat_preferences_get"];
+        /** Update Local Preferences */
+        put: operations["update_local_preferences_api_local_chat_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Providers */
+        get: operations["local_chat_providers_api_local_chat_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Local Chat */
+        post: operations["start_local_chat_api_local_chat_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/artifact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Artifact */
+        get: operations["local_chat_artifact_api_local_chat_runs__run_id__artifact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Local Chat */
+        post: operations["cancel_local_chat_api_local_chat_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Events */
+        get: operations["local_chat_events_api_local_chat_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -1162,6 +1265,145 @@ export interface components {
             /** Scope Kind */
             scope_kind: string;
         };
+        /** LocalChatCancelResponse */
+        LocalChatCancelResponse: {
+            /** Accepted */
+            accepted: boolean;
+            /** Reason Code */
+            reason_code: string | null;
+            /** Run Id */
+            run_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "cancelled" | "completed" | "failed";
+        };
+        /** LocalChatStartRequest */
+        LocalChatStartRequest: {
+            /**
+             * Effort
+             * @default normal
+             * @enum {string}
+             */
+            effort: "normal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Mcp Enabled
+             * @default false
+             */
+            mcp_enabled: boolean;
+            /**
+             * Mode
+             * @default chat
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model?: string | null;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Provider
+             * @default codex
+             * @enum {string}
+             */
+            provider: "codex" | "claude";
+        };
+        /** LocalChatStartResponse */
+        LocalChatStartResponse: {
+            /** Created At */
+            created_at: string;
+            /** Handle Id */
+            handle_id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "codex" | "claude";
+            /** Run Id */
+            run_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "completed" | "failed";
+            /**
+             * Storage
+             * @constant
+             */
+            storage: "this_device";
+        };
+        /** LocalPreferencesResponse */
+        LocalPreferencesResponse: {
+            /** Custom Rules */
+            custom_rules: string;
+            /**
+             * Default Effort
+             * @enum {string}
+             */
+            default_effort: "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Default Mode
+             * @enum {string}
+             */
+            default_mode: "chat" | "build";
+            /** Default Model */
+            default_model: string | null;
+            /**
+             * Default Provider
+             * @enum {string}
+             */
+            default_provider: "codex" | "claude";
+            /** Mcp Enabled */
+            mcp_enabled: boolean;
+            /**
+             * Response Tone
+             * @enum {string}
+             */
+            response_tone: "concise" | "balanced" | "detailed";
+            /** Updated At */
+            updated_at: string | null;
+            /** Version */
+            version: number;
+        };
+        /** LocalPreferencesUpdate */
+        LocalPreferencesUpdate: {
+            /** Custom Rules */
+            custom_rules: string;
+            /**
+             * Default Effort
+             * @enum {string}
+             */
+            default_effort: "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Default Mode
+             * @enum {string}
+             */
+            default_mode: "chat" | "build";
+            /** Default Model */
+            default_model?: string | null;
+            /**
+             * Default Provider
+             * @enum {string}
+             */
+            default_provider: "codex" | "claude";
+            /** Expected Version */
+            expected_version: number;
+            /** Mcp Enabled */
+            mcp_enabled: boolean;
+            /**
+             * Response Tone
+             * @enum {string}
+             */
+            response_tone: "concise" | "balanced" | "detailed";
+        };
         /** MemoryCreateRequest */
         MemoryCreateRequest: {
             /** Content */
@@ -2077,6 +2319,218 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_local_preferences_api_local_chat_preferences_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalPreferencesResponse"];
+                };
+            };
+        };
+    };
+    update_local_preferences_api_local_chat_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalPreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalPreferencesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_providers_api_local_chat_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    start_local_chat_api_local_chat_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalChatStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalChatStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_artifact_api_local_chat_runs__run_id__artifact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_local_chat_api_local_chat_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalChatCancelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_events_api_local_chat_runs__run_id__events_get: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+            };
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

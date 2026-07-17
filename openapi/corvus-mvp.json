@@ -785,6 +785,346 @@
         "title": "KillSwitchResponse",
         "type": "object"
       },
+      "LocalChatCancelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "cancelled",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "state",
+          "accepted",
+          "reason_code"
+        ],
+        "title": "LocalChatCancelResponse",
+        "type": "object"
+      },
+      "LocalChatStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "mcp_enabled": {
+            "default": false,
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "chat",
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prompt": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "provider": {
+            "default": "codex",
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "LocalChatStartRequest",
+        "type": "object"
+      },
+      "LocalChatStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "handle_id": {
+            "title": "Handle Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "storage": {
+            "const": "this_device",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "handle_id",
+          "state",
+          "provider",
+          "model",
+          "mode",
+          "storage",
+          "created_at"
+        ],
+        "title": "LocalChatStartResponse",
+        "type": "object"
+      },
+      "LocalPreferencesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_rules": {
+            "title": "Custom Rules",
+            "type": "string"
+          },
+          "default_effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Default Effort",
+            "type": "string"
+          },
+          "default_mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Default Mode",
+            "type": "string"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Default Provider",
+            "type": "string"
+          },
+          "mcp_enabled": {
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "response_tone": {
+            "enum": [
+              "concise",
+              "balanced",
+              "detailed"
+            ],
+            "title": "Response Tone",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version": {
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_provider",
+          "default_model",
+          "default_effort",
+          "default_mode",
+          "mcp_enabled",
+          "response_tone",
+          "custom_rules",
+          "updated_at"
+        ],
+        "title": "LocalPreferencesResponse",
+        "type": "object"
+      },
+      "LocalPreferencesUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_rules": {
+            "maxLength": 20000,
+            "title": "Custom Rules",
+            "type": "string"
+          },
+          "default_effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Default Effort",
+            "type": "string"
+          },
+          "default_mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Default Mode",
+            "type": "string"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Default Provider",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "mcp_enabled": {
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "response_tone": {
+            "enum": [
+              "concise",
+              "balanced",
+              "detailed"
+            ],
+            "title": "Response Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "default_provider",
+          "default_effort",
+          "default_mode",
+          "mcp_enabled",
+          "response_tone",
+          "custom_rules"
+        ],
+        "title": "LocalPreferencesUpdate",
+        "type": "object"
+      },
       "MemoryCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2819,6 +3159,333 @@
           }
         },
         "summary": "Reject Effect"
+      }
+    },
+    "/api/local-chat/preferences": {
+      "get": {
+        "operationId": "get_local_preferences_api_local_chat_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Local Preferences"
+      },
+      "put": {
+        "operationId": "update_local_preferences_api_local_chat_preferences_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalPreferencesUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Local Preferences"
+      }
+    },
+    "/api/local-chat/providers": {
+      "get": {
+        "operationId": "local_chat_providers_api_local_chat_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Local Chat Providers Api Local Chat Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Chat Providers"
+      }
+    },
+    "/api/local-chat/runs": {
+      "post": {
+        "operationId": "start_local_chat_api_local_chat_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalChatStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Local Chat"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/artifact": {
+      "get": {
+        "operationId": "local_chat_artifact_api_local_chat_runs__run_id__artifact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Artifact"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_local_chat_api_local_chat_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatCancelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Local Chat"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/events": {
+      "get": {
+        "operationId": "local_chat_events_api_local_chat_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "follow",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Follow",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Events"
       }
     },
     "/api/offline-intents": {

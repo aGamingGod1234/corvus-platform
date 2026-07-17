@@ -2001,3 +2001,37 @@
 
 ### Suggested Next Steps
 - Push the repair commit, resolve the addressed review threads, and let PR 6 rerun its protected GitHub and Vercel checks without merging it.
+
+## 2026-07-17 - Simplify the Corvus workspace and connect runtime settings
+
+### What Was Implemented
+- Replaced the layered/card-heavy conversation surface with one compact navigation rail, a centered new-thread state, on-demand history, safe streamed work/thinking output, and a bottom composer that exposes provider, model, thinking, Chat/Build, MCP, and submit controls.
+- Rebuilt Settings as flat categorized rows for General, Models, Agent, MCP, Appearance, and Account instead of a five-card dashboard.
+- Added owner-scoped backend persistence for runtime defaults, response style, and custom rules with CSRF protection, optimistic version checks, typed OpenAPI/TypeScript contracts, and explicit policy-preserving prompt guidance.
+- Kept Cloud, integrations, and unavailable providers truthfully labeled Preview or unavailable; no client setting can expand authority, credentials, budgets, approvals, or sandbox policy.
+- Tightened the 390x844 layout to one six-icon bottom navigation row and touch-scrollable settings categories without an exposed platform scrollbar.
+
+### Files Modified
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,conversationApi}.tsx` and related tests - simplified chat/settings presentation and connected real runtime preferences.
+- `apps/web/src/{App.tsx,styles.css}`, `apps/web/src/app/AppShell.tsx`, and workspace styles/tests - reduced persistent chrome and completed desktop/mobile behavior.
+- `corvus/mvp/{api,preferences,store}.py` and `tests/mvp/test_local_chat_api.py` - added authenticated preference storage, conflict handling, policy-safe prompt application, and coverage.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` - regenerated the typed contract.
+- `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - documented current behavior and verification.
+
+### Assumptions Made (flag these for review)
+- Hosted Cloud settings remain read-only/Preview because the authorized production Cloud runtime and shared identity milestone has not yet landed.
+- Appearance remains device-local, while local runtime defaults are scoped to the authenticated local user.
+
+### Known Issues / Deferred
+- Google OAuth continuity, E2B lifecycle, production multi-user collaboration, billing, and real Gemini/Grok/Cursor adapters remain at their existing explicit later milestone boundaries.
+- The generic legacy design-audit rubric expects restaurant photography and bilingual marketing metadata and cannot reach this Windows loopback service from its separate MCP host; current UI acceptance instead used the real paired FastAPI app in Playwright at 1440x900 and 390x844.
+
+### Verification
+- Python: 1051 passed with 6 intentional platform/database skips; Ruff and strict Mypy passed.
+- Web: 144 tests passed across 24 files; TypeScript and the Vite production build passed.
+- Live browser: one-time fragment pairing, desktop new-thread surface, flat settings, a real preference save (`PUT /api/local-chat/preferences` 200), and the corrected one-row mobile navigation passed.
+- Contract and hygiene: OpenAPI and generated TypeScript were regenerated; `git diff --check` passed apart from Windows line-ending notices.
+
+### Suggested Next Steps
+- Open the single unmerged UX PR for code-owner and automated review.
+- Keep the next Cloud/identity and collaboration milestones behind their existing explicit authorization boundaries.

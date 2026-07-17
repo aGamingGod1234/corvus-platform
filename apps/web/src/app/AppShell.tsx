@@ -73,9 +73,12 @@ export function AppShell({
         />
         <header className="adaptive-topbar">
           <div><span className="mobile-wordmark">Corvus</span><strong>{profile.label}</strong></div>
-          <ConnectionBanner error={error} />
+          {error ? <ConnectionBanner error={error} /> : null}
         </header>
-        <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>{children}</main>
+        <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>
+          {error ? <div className="adaptive-main__error"><ConnectionBanner error={error} /></div> : null}
+          {children}
+        </main>
         {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
         <ResponsiveNavigation
           accountEmail={accountEmail}

@@ -64,9 +64,7 @@ h2 { font-size: 1.15rem; }
   grid-template-columns: 232px minmax(0, 1fr);
   grid-template-rows: minmax(0, 100vh);
   min-height: 100vh;
-  background:
-    linear-gradient(90deg, transparent 31px, color-mix(in oklch, var(--line) 55%, transparent) 32px, transparent 33px) 0 0 / 64px 64px,
-    var(--paper);
+  background: var(--paper);
 }
 
 .local-sidebar {
@@ -76,18 +74,17 @@ h2 { font-size: 1.15rem; }
   flex-direction: column;
   overflow-y: auto;
   border-right: 1px solid var(--line);
-  background: color-mix(in oklch, var(--raised) 88%, transparent);
+  background: var(--paper);
 }
 
 .local-sidebar__wordmark {
   display: flex;
   gap: 0.7rem;
   align-items: center;
-  min-height: 64px;
-  padding: 0 1rem;
-  border-bottom: 1px solid var(--line);
-  font-family: "Fraunces Variable", Georgia, serif;
-  font-size: 1.25rem;
+  min-height: 58px;
+  padding: 0 .9rem;
+  font-size: .96rem;
+  letter-spacing: -.015em;
 }
 
 .local-sidebar__wordmark span {
@@ -95,16 +92,15 @@ h2 { font-size: 1.15rem; }
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 50% 50% 42% 58%;
+  border-radius: .55rem;
   color: white;
   background: var(--signal);
 }
 
 .local-sidebar__identity {
   display: grid;
-  gap: 0.18rem;
-  padding: 1rem;
-  border-bottom: 1px solid var(--line);
+  gap: 0.12rem;
+  padding: .75rem .9rem .55rem;
 }
 
 .local-sidebar__identity span {
@@ -122,19 +118,20 @@ h2 { font-size: 1.15rem; }
   text-transform: uppercase;
 }
 
-.local-sidebar__navigation { display: grid; padding: 0.75rem 0.6rem; }
+.local-sidebar__navigation { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; padding: .45rem; }
+.local-sidebar__navigation a:last-child { margin-top: auto; }
 
 .local-sidebar__navigation a {
   display: grid;
   grid-template-columns: 1.65rem 1fr;
   align-items: center;
-  min-height: 44px;
-  border-radius: 0.48rem;
-  padding: 0.58rem 0.55rem;
+  min-height: 38px;
+  border-radius: 0.42rem;
+  padding: .45rem .5rem;
   color: var(--muted);
   text-decoration: none;
-  font-size: 0.84rem;
-  font-weight: 650;
+  font-size: .8rem;
+  font-weight: 610;
 }
 
 .local-sidebar__navigation a .nav-icon {
@@ -154,7 +151,7 @@ h2 { font-size: 1.15rem; }
 
 .local-sidebar__navigation a[aria-current="page"] {
   color: var(--ink);
-  background: var(--soft-signal);
+  background: color-mix(in oklch, var(--ink) 6%, transparent);
 }
 
 .local-sidebar__connection {
@@ -162,12 +159,11 @@ h2 { font-size: 1.15rem; }
   gap: 0.55rem;
   align-items: center;
   min-height: 44px;
-  margin: auto 1rem 1rem;
+  margin: .35rem .9rem .8rem;
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: .01em;
 }
 
 .local-sidebar__connection span {
@@ -403,7 +399,8 @@ textarea { min-height: 92px; resize: vertical; }
   .local-sidebar__wordmark,
   .local-sidebar__identity,
   .local-sidebar__connection { display: none; }
-  .local-sidebar__navigation { grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 0; }
+  .local-sidebar__navigation { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); padding: 0; }
+  .local-sidebar__navigation a:last-child { margin-top: 0; }
   .local-sidebar__navigation a {
     grid-template-columns: 1fr;
     place-items: center;

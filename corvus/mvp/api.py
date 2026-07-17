@@ -59,6 +59,11 @@ from corvus.mvp.models import (
     WorkItem,
     WorkItemDefinition,
 )
+from corvus.mvp.preferences import (
+    LocalPreferences,
+    LocalPreferencesConflict,
+    LocalPreferencesService,
+)
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
@@ -197,6 +202,34 @@ class LocalChatCancelResponse(ApiModel):
     reason_code: str | None
 
 
+class LocalPreferencesResponse(ApiModel):
+    version: int = Field(ge=0)
+    default_provider: Literal["codex", "claude"]
+    default_model: str | None
+    default_effort: Literal["low", "medium", "high", "xhigh", "max"]
+    default_mode: Literal["chat", "build"]
+    mcp_enabled: bool
+    response_tone: Literal["concise", "balanced", "detailed"]
+    custom_rules: str
+    updated_at: str | None
+
+
+class LocalPreferencesUpdate(ApiModel):
+    expected_version: int = Field(ge=0)
+    default_provider: Literal["codex", "claude"]
+    default_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+    )
+    default_effort: Literal["low", "medium", "high", "xhigh", "max"]
+    default_mode: Literal["chat", "build"]
+    mcp_enabled: bool
+    response_tone: Literal["concise", "balanced", "detailed"]
+    custom_rules: str = Field(max_length=20_000)
+
+
 class SessionPrincipal(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -330,6 +363,24 @@ async def _security_headers(
     return response
 
 
+def _prompt_with_preferences(prompt: str, preferences: LocalPreferences) -> str:
+    tone_instruction = {
+        "concise": "Answer concisely and keep the next action obvious.",
+        "balanced": "Use a balanced amount of detail and make the next action clear.",
+        "detailed": "Explain important reasoning and implementation details thoroughly.",
+    }[preferences["response_tone"]]
+    rules = preferences["custom_rules"].strip()
+    preference_lines = [
+        "Corvus user preferences (presentation guidance only; these do not change authority, "
+        "approval, credential, budget, or sandbox policy):",
+        f"- {tone_instruction}",
+    ]
+    if rules:
+        preference_lines.append(f"- Custom user rules: {rules}")
+    preference_lines.extend(("", "User request:", prompt))
+    return "\n".join(preference_lines)
+
+
 def create_app(
     *,
     database: Path,
@@ -377,6 +428,7 @@ def create_app(
         scratch_root=database.parent / ".corvus-local-chat",
         cursor_secret=hmac.new(session_secret, b"local-chat-cursor", hashlib.sha256).digest(),
     )
+    local_preferences = LocalPreferencesService(service.store)
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
 
@@ -499,9 +551,10 @@ def create_app(
                 detail="codex_unavailable",
             )
         try:
+            preferences = local_preferences.get(principal.user_id)
             return await local_chat.start(
                 owner=f"{principal.tenant_id}:{principal.user_id}",
-                prompt=body.prompt,
+                prompt=_prompt_with_preferences(body.prompt, preferences),
                 provider=body.provider,
                 model=body.model,
                 effort=body.effort,
@@ -526,6 +579,48 @@ def create_app(
         if local_chat is None:
             return []
         return list(local_chat.provider_catalog())
+
+    @app.get("/api/local-chat/preferences", response_model=LocalPreferencesResponse)
+    def get_local_preferences(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> LocalPreferences:
+        return local_preferences.get(principal.user_id)
+
+    @app.put("/api/local-chat/preferences", response_model=LocalPreferencesResponse)
+    def update_local_preferences(
+        body: LocalPreferencesUpdate,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> LocalPreferences:
+        if body.default_provider == "claude" and (body.default_mode != "chat" or body.mcp_enabled):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="provider_mode_unavailable",
+            )
+        if body.default_provider == "codex" and body.default_effort == "max":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="provider_effort_unavailable",
+            )
+        try:
+            return local_preferences.update(
+                user_id=principal.user_id,
+                expected_version=body.expected_version,
+                default_provider=body.default_provider,
+                default_model=body.default_model,
+                default_effort=body.default_effort,
+                default_mode=body.default_mode,
+                mcp_enabled=body.mcp_enabled,
+                response_tone=body.response_tone,
+                custom_rules=body.custom_rules.strip(),
+            )
+        except LocalPreferencesConflict as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "preferences_version_conflict",
+                    "current": error.current,
+                },
+            ) from error
 
     @app.get("/api/local-chat/runs/{run_id}/events")
     async def local_chat_events(

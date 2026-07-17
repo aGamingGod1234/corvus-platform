@@ -743,6 +743,7 @@ export function App({
           />
         ) : localSurface === "settings" ? (
           <SettingsPanel
+            api={createConversationApi(localSession.csrf_token)}
             experience={localProfile.experience}
             onExperienceChange={async () => undefined}
             profileEditable={false}

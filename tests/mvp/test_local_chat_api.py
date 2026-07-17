@@ -28,6 +28,7 @@ class _Backend:
         self.starts = 0
         self.cancelled: set[UUID] = set()
         self.last_effort: str | None = None
+        self.last_prompt: str | None = None
 
     async def start(
         self,
@@ -40,7 +41,8 @@ class _Backend:
         mcp_enabled: bool,
         idempotency_key: str,
     ) -> LocalChatBackendHandle:
-        del prompt, model, mode, mcp_enabled, idempotency_key
+        self.last_prompt = prompt
+        del model, mode, mcp_enabled, idempotency_key
         self.starts += 1
         self.last_effort = effort
         return LocalChatBackendHandle(id=uuid4(), run_id=run_id)
@@ -380,6 +382,59 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     assert catalog["gemini"]["status"] == "preview"
     assert catalog["grok"]["status"] == "preview"
     assert "path" not in response.text.lower()
+
+
+def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
+    tmp_path: Path,
+) -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    client, headers = _client(tmp_path, "preferences", service)
+
+    defaults = client.get("/api/local-chat/preferences")
+    assert defaults.status_code == 200
+    assert defaults.json() == {
+        "version": 0,
+        "default_provider": "codex",
+        "default_model": None,
+        "default_effort": "medium",
+        "default_mode": "chat",
+        "mcp_enabled": False,
+        "response_tone": "balanced",
+        "custom_rules": "",
+        "updated_at": None,
+    }
+    update = {
+        "expected_version": 0,
+        "default_provider": "codex",
+        "default_model": "gpt-5.6-sol",
+        "default_effort": "high",
+        "default_mode": "build",
+        "mcp_enabled": True,
+        "response_tone": "concise",
+        "custom_rules": "Always end with a verification result.",
+    }
+    assert client.put("/api/local-chat/preferences", json=update).status_code == 403
+    saved = client.put("/api/local-chat/preferences", json=update, headers=headers)
+    assert saved.status_code == 200
+    assert saved.json()["version"] == 1
+    assert saved.json()["custom_rules"] == "Always end with a verification result."
+
+    stale = client.put("/api/local-chat/preferences", json=update, headers=headers)
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "preferences_version_conflict"
+    assert stale.json()["detail"]["current"]["version"] == 1
+
+    started = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix the failing test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert started.status_code == 202
+    assert backend.last_prompt is not None
+    assert "presentation guidance only" in backend.last_prompt
+    assert "Always end with a verification result." in backend.last_prompt
+    assert backend.last_prompt.endswith("User request:\nFix the failing test")
 
 
 def test_local_chat_dispatches_to_selected_ready_provider(tmp_path: Path) -> None:

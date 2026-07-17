@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 4
+SCHEMA_VERSION: Final = 5
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -330,6 +330,21 @@ CREATE TABLE mvp_local_users (
 );
 """
 
+_MIGRATION_005 = """
+CREATE TABLE mvp_local_preferences (
+    user_id TEXT PRIMARY KEY REFERENCES mvp_local_users(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version > 0),
+    default_provider TEXT NOT NULL CHECK (default_provider IN ('codex', 'claude')),
+    default_model TEXT,
+    default_effort TEXT NOT NULL CHECK (default_effort IN ('low', 'medium', 'high', 'xhigh', 'max')),
+    default_mode TEXT NOT NULL CHECK (default_mode IN ('chat', 'build')),
+    mcp_enabled INTEGER NOT NULL CHECK (mcp_enabled IN (0, 1)),
+    response_tone TEXT NOT NULL CHECK (response_tone IN ('concise', 'balanced', 'detailed')),
+    custom_rules TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -399,4 +414,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(4)
+            if 5 not in versions:
+                connection.executescript(_MIGRATION_005)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )

@@ -252,7 +252,7 @@ describe("Corvus operator console", () => {
     renderApp(api, preferenceStorage);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
-    expect(await screen.findByRole("heading", { name: "What should Corvus do?" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "What do you want to build?" })).toBeVisible();
     expect(screen.queryByDisplayValue("desktop-ephemeral-token")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("");
   });
