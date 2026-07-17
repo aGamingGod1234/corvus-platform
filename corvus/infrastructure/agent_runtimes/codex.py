@@ -206,6 +206,7 @@ class CodexCliAdapter(AgentRuntimePort):
         self._session_starter = session_starter
         self._bindings: dict[UUID, ProviderBinding] = {}
         self._sessions: dict[UUID, _RunSession] = {}
+        self._idempotency_handles: dict[str, AgentRunHandle] = {}
 
     async def discover(self, query: ProviderDiscoveryQuery) -> tuple[ProviderCandidate, ...]:
         if not self._executable.is_file():
@@ -309,25 +310,9 @@ class CodexCliAdapter(AgentRuntimePort):
         deadline: datetime,
         max_output_bytes: int,
     ) -> AgentRunStartResult:
-        existing = next(
-            (
-                handle
-                for handle, session in self._sessions.items()
-                if getattr(session, "request_key", None) == idempotency_key
-            ),
-            None,
-        )
+        existing = self._idempotency_handles.get(idempotency_key)
         if existing is not None:
-            return AgentRunStartResult(
-                handle=AgentRunHandle(
-                    id=existing,
-                    run_id=run_id,
-                    provider_binding_id=binding.id,
-                    created_at=self._clock(),
-                    state=AgentRunState.RUNNING,
-                ),
-                replayed=True,
-            )
+            return AgentRunStartResult(handle=existing, replayed=True)
         if not prompt:
             raise CodexAdapterError("codex_prompt_required")
         if model is not None and _MODEL_PATTERN.fullmatch(model) is None:
@@ -398,8 +383,8 @@ class CodexCliAdapter(AgentRuntimePort):
             state=AgentRunState.RUNNING,
         )
         run_session = _RunSession(process, scratch=scratch, mode=mode)
-        run_session.request_key = idempotency_key  # type: ignore[attr-defined]
         self._sessions[handle.id] = run_session
+        self._idempotency_handles[idempotency_key] = handle
         return AgentRunStartResult(handle=handle, replayed=False)
 
     async def events(
@@ -543,7 +528,7 @@ class CodexCliAdapter(AgentRuntimePort):
             if terminal:
                 continue
             if (
-                process_event.kind is ProcessSessionEventKind.FRAME
+                process_event.kind == ProcessSessionEventKind.FRAME
                 and process_event.frame is not None
             ):
                 frame_type = process_event.frame.get("type")
@@ -604,18 +589,18 @@ class CodexCliAdapter(AgentRuntimePort):
                             and value >= 0
                         }
                         yield event(AgentRunEventType.USAGE, safe_usage)
-            elif process_event.kind is ProcessSessionEventKind.CANCELLED:
+            elif process_event.kind == ProcessSessionEventKind.CANCELLED:
                 yield event(AgentRunEventType.CANCELLED, {"reason_code": "agent_run_cancelled"})
                 session.terminal_state = AgentRunState.CANCELLED
                 terminal = True
-            elif process_event.kind is ProcessSessionEventKind.FAILED:
+            elif process_event.kind == ProcessSessionEventKind.FAILED:
                 yield event(
                     AgentRunEventType.FAILED,
                     {"reason_code": process_event.reason_code or "codex_process_failed"},
                 )
                 session.terminal_state = AgentRunState.FAILED
                 terminal = True
-            elif process_event.kind is ProcessSessionEventKind.EXITED and not terminal:
+            elif process_event.kind == ProcessSessionEventKind.EXITED and not terminal:
                 if process_event.return_code != 0:
                     yield event(
                         AgentRunEventType.FAILED,
@@ -730,6 +715,7 @@ def _contains_sensitive_build_content(content: bytes) -> bool:
             is_sensitive_field_name(key)
             and len(value) >= 8
             and not _is_placeholder_secret(value)
+            and not value.casefold().startswith(("env://", "keyring://"))
             and not (
                 separator == ":"
                 and unquoted_value is not None
@@ -750,13 +736,13 @@ def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
     files: list[tuple[Path, str, bytes]] = []
     total_bytes = 0
     for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path_is_link_or_reparse(candidate):
+            raise CodexAdapterError("codex_build_link_rejected")
         if candidate.is_dir():
             continue
         relative = candidate.relative_to(root)
         if any(part in _BUILD_EXCLUDED_PARTS for part in relative.parts):
             continue
-        if path_is_link_or_reparse(candidate):
-            raise CodexAdapterError("codex_build_link_rejected")
         name = candidate.name.lower()
         if _is_sensitive_build_path(relative) or (
             name.startswith(".env.") or candidate.suffix.lower() in {".key", ".pem"}

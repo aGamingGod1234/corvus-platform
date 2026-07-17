@@ -330,16 +330,16 @@ class ConversationService:
         requester_membership_version: int,
     ) -> ConversationResponse:
         principal_author_matches = (
-            message.author_kind is MessageAuthorKind.PRINCIPAL
+            message.author_kind == MessageAuthorKind.PRINCIPAL
             and message.author_principal_id == context.requester_id
             and message.author_membership_version == requester_membership_version
         )
         agent_author_matches = (
-            message.author_kind is MessageAuthorKind.AGENT
+            message.author_kind == MessageAuthorKind.AGENT
             and context.agent_id is not None
             and message.author_agent_id == context.agent_id
         )
-        system_author_matches = message.author_kind is MessageAuthorKind.SYSTEM
+        system_author_matches = message.author_kind == MessageAuthorKind.SYSTEM
         if (
             message.workspace_id != context.workspace_id
             or not self._thread_scope_matches(context, message.thread_id)

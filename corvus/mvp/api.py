@@ -544,6 +544,7 @@ def create_app(
                 owner=f"{principal.tenant_id}:{principal.user_id}",
                 run_id=run_id,
                 cursor=last_event_id,
+                follow=follow,
             )
         except LocalChatNotFound as error:
             raise HTTPException(
@@ -568,8 +569,6 @@ def create_app(
                     f"event: {event.type}\n"
                     f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
                 )
-                if not follow and event.type in {"completed", "failed", "cancelled"}:
-                    return
 
         return StreamingResponse(
             stream(),

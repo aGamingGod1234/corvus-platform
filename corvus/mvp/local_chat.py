@@ -252,6 +252,7 @@ class LocalChatService:
         owner: str,
         run_id: UUID,
         cursor: str | None,
+        follow: bool = True,
     ) -> AsyncIterator[tuple[str, LocalChatBackendEvent]]:
         record = self._owned_run(owner, run_id)
         after_sequence = self._decode_cursor(owner, run_id, cursor) if cursor else 0
@@ -262,13 +263,15 @@ class LocalChatService:
                 async with record.condition:
                     pending = [event for event in record.events if event.sequence > latest]
                     if not pending:
-                        if record.state in {"completed", "failed", "cancelled"}:
+                        if not follow or record.state in {"completed", "failed", "cancelled"}:
                             return
                         await record.condition.wait()
                         continue
                 for event in pending:
                     latest = event.sequence
                     yield self._encode_cursor(owner, run_id, event.sequence), event
+                if not follow:
+                    return
 
         return stream()
 

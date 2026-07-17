@@ -23,7 +23,7 @@ _SESSION_SECRET = "session-secret-value-that-is-at-least-32-characters"  # noqa:
 
 class _OAuthClient:
     def start(self, redirect_uri: str) -> OAuthStart:
-        return OAuthStart(authorization_url="https://accounts.google.com/auth?state=opaque")
+        return OAuthStart(authorization_url="https://accounts.google.com/auth?state=opaque-state")
 
     def exchange(self, callback: OAuthCallback) -> VerifiedIdentity:
         return VerifiedIdentity(
@@ -59,6 +59,8 @@ def _client(tmp_path: Path) -> tuple[TestClient, Path]:
 
 
 def _login(client: TestClient) -> tuple[dict[str, object], dict[str, str]]:
+    start = client.get("/api/v2/auth/google/start", follow_redirects=False)
+    assert start.status_code == 302, start.text
     callback = client.get(
         "/api/v2/auth/google/callback",
         params={"code": "provider-code", "state": "opaque-state"},

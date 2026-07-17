@@ -1,6 +1,7 @@
 import hmac
 from datetime import datetime, timedelta
 from typing import Annotated, Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -15,7 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from corvus.application.oauth import OAuthCallback, OAuthError
 from corvus.domain.account import DeviceRegistration, ExperienceKind, normalize_identity_email
@@ -35,7 +36,9 @@ from corvus.platform.api.dependencies import IdentityApiDependencies
 
 _SESSION_COOKIE = "__Host-corvus_v2_session"
 _DEVICE_COOKIE = "__Host-corvus_v2_device"
+_OAUTH_STATE_COOKIE = "__Host-corvus_v2_oauth_state"
 _SESSION_TTL = timedelta(days=30)
+_OAUTH_STATE_TTL = timedelta(minutes=10)
 _CALLBACK_PATH = "/api/v2/auth/google/callback"
 _ONBOARDING_DESTINATION = "/onboarding"
 
@@ -91,6 +94,14 @@ class WorkspaceCreate(ApiModel):
 class WorkspaceUpdate(ApiModel):
     name: str = Field(min_length=1, max_length=200)
     expected_version: int = Field(ge=1)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("workspace_name_required")
+        return normalized
 
 
 class DeviceCreate(ApiModel):
@@ -188,6 +199,18 @@ def _set_cookie(response: Response, name: str, value: str) -> None:
     response.set_cookie(
         key=name,
         value=value,
+        secure=True,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _set_oauth_state_cookie(response: Response, state_value: str) -> None:
+    response.set_cookie(
+        key=_OAUTH_STATE_COOKIE,
+        value=state_value,
+        max_age=int(_OAUTH_STATE_TTL.total_seconds()),
         secure=True,
         httponly=True,
         samesite="lax",
@@ -370,7 +393,12 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
             )
         except (OAuthError, ValueError) as exc:
             raise _map_error(exc) from None
-        return RedirectResponse(result.authorization_url, status_code=status.HTTP_302_FOUND)
+        response = RedirectResponse(result.authorization_url, status_code=status.HTTP_302_FOUND)
+        state_values = parse_qs(urlsplit(result.authorization_url).query).get("state", ())
+        if len(state_values) != 1 or not state_values[0]:
+            raise _error("oauth_state_invalid", status.HTTP_400_BAD_REQUEST)
+        _set_oauth_state_cookie(response, state_values[0])
+        return response
 
     @router.get("/auth/google/callback")
     def google_callback(
@@ -378,8 +406,11 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
         state_value: Annotated[str | None, Query(alias="state")] = None,
         provider_error: Annotated[str | None, Query(alias="error")] = None,
         device_token: Annotated[str | None, Cookie(alias=_DEVICE_COOKIE)] = None,
+        browser_state: Annotated[str | None, Cookie(alias=_OAUTH_STATE_COOKIE)] = None,
     ) -> RedirectResponse:
         if state_value is None or not 1 <= len(state_value) <= 4096:
+            raise _error("oauth_state_invalid", status.HTTP_400_BAD_REQUEST)
+        if browser_state is None or not hmac.compare_digest(browser_state, state_value):
             raise _error("oauth_state_invalid", status.HTTP_400_BAD_REQUEST)
         if provider_error is not None or code is None or not 1 <= len(code) <= 4096:
             try:
@@ -417,6 +448,7 @@ def create_identity_router(dependencies: IdentityApiDependencies | None) -> APIR
         _set_cookie(response, _SESSION_COOKIE, login.session_token)
         if login.device_token is not None:
             _set_cookie(response, _DEVICE_COOKIE, login.device_token)
+        _clear_cookie(response, _OAUTH_STATE_COOKIE)
         return response
 
     @router.get("/session", response_model=SessionResponse)

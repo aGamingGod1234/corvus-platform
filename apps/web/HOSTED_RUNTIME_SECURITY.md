@@ -14,6 +14,18 @@ credential-free HTTPS hostname ending in `.up.railway.app`; arbitrary custom dom
 private/link-local addresses, userinfo, paths, queries, and fragments are rejected. Custom Railway
 domains remain unsupported until an explicit deployment allowlist is designed and reviewed.
 
+The proxy forwards only an explicit request-header allowlist. A browser `Origin` must exactly match
+the public request URL origin; spoofed values are rejected, and the matching value is canonicalized
+before Railway sees it. Upstream cookies are rebound to the public same-origin boundary: any
+`Domain` attribute is removed, `Path` is normalized to `/`, and `Secure` is enforced for HTTPS
+requests. Redirects remain limited to relative application paths and Google's fixed authorization
+endpoint.
+
+Google OAuth client secrets and their credential references are server-only configuration. They
+are resolved by the Python control plane and are not referenced by `apps/web/src`, exposed through
+Vite variables, or placed in browser source maps. A security regression test enforces this source
+boundary.
+
 Loopback proxy origins are accepted only when the function receives an explicit `development` or
 `test` environment. They are rejected in production, preview, and unspecified environments.
 Adding E2B or any other hosted API, SSE, or WebSocket origin still requires an explicit CSP change,

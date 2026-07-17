@@ -1970,3 +1970,34 @@
 ### Suggested Next Steps
 - When the user can access the Codex desktop UI, start the native security diff scan and address any verified findings before review freeze.
 - Open the consolidated branch as one unmerged PR after the final diff review completes.
+
+## 2026-07-17 - Resolve PR 6 security, correctness, and cross-platform review findings
+
+### What Was Implemented
+- Bound Google OAuth state to the initiating browser with a short-lived secure HttpOnly cookie, and kept Google client secrets outside browser sources.
+- Fenced Vercel proxy origins, rebound Railway cookies to the public host-only root path, and documented the hosted trust boundary.
+- Returned the original Codex handle on idempotent replay, allowed opaque credential references, rejected directory symlinks before traversal, and replaced unsafe string-enum identity comparisons.
+- Reinitialized conversation state when the authenticated local user changes, rejected blank workspace names, and made non-following local-chat event polls return after their current buffered batch.
+- Made Windows-only process attributes portable under strict mypy so the same source type-checks on Windows, Linux, and macOS.
+
+### Files Modified
+- `apps/web/api/v2/[...path].ts`, `apps/web/src/{App.tsx,v2Proxy.test.ts}`, and `apps/web/HOSTED_RUNTIME_SECURITY.md` - proxy, cookie, origin, workspace remount, tests, and security contract.
+- `corvus/platform/api/identity.py` and identity/sync security tests - browser-bound OAuth and normalized workspace names.
+- `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, conversation/account domain and repository files, and `corvus/safe_process.py` - runtime replay, artifact, enum, and platform typing repairs.
+- `corvus/mvp/{api,local_chat}.py` and focused tests - bounded non-following event polling.
+- `tests/security/test_hosted_secret_boundary.py`, `.gitignore`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - secret-boundary regression, isolated test-temp hygiene, and current certification evidence.
+
+### Assumptions Made (flag these for review)
+- The public request URL origin is the canonical Vercel origin presented to the proxy; Railway still enforces its independently configured public origin on mutations.
+
+### Known Issues / Deferred
+- Destructive PostgreSQL integration tests remain explicitly opt-in, and POSIX process-group behavior remains CI-only on this Windows workstation.
+- Docker and Podman are not running locally, so the already-green GitHub Docker sandbox job remains the authoritative container gate.
+
+### Verification
+- Python: 1050 passed with 6 intentional platform/database skips; Ruff, format, strict mypy, Bandit, pip-audit, compile, wheel, CLI help, and doctor smoke passed.
+- Web: 143 tests passed and the Vite production build passed.
+- Desktop: 7 Rust tests passed.
+
+### Suggested Next Steps
+- Push the repair commit, resolve the addressed review threads, and let PR 6 rerun its protected GitHub and Vercel checks without merging it.

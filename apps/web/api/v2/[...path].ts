@@ -9,7 +9,6 @@ const FORWARDED_REQUEST_HEADERS = [
   "content-type",
   "cookie",
   "idempotency-key",
-  "origin",
   "x-csrf-token",
 ] as const;
 const FORWARDED_RESPONSE_HEADERS = [
@@ -102,16 +101,31 @@ function safeApiPath(requestUrl: URL): string | null {
   return `${API_PREFIX}${captured}`;
 }
 
-function requestHeaders(request: Request): Headers {
+function requestHeaders(request: Request, trustedBrowserOrigin: string | null): Headers {
   const forwarded = new Headers();
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = request.headers.get(name);
     if (value !== null) forwarded.set(name, value);
   }
+  if (trustedBrowserOrigin !== null) forwarded.set("origin", trustedBrowserOrigin);
   return forwarded;
 }
 
-function responseHeaders(upstream: Response): Headers {
+function publicCookie(cookie: string, requestUrl: URL): string | null {
+  if (/[\u0000-\u001f\u007f]/.test(cookie)) return null;
+  const segments = cookie.split(";").map((segment) => segment.trim()).filter(Boolean);
+  const nameValue = segments.shift();
+  if (nameValue === undefined || !nameValue.includes("=")) return null;
+  const attributes = segments.filter((attribute) => {
+    const name = attribute.split("=", 1)[0].trim().toLowerCase();
+    return name !== "domain" && name !== "path" && name !== "secure";
+  });
+  attributes.push("Path=/");
+  if (requestUrl.protocol === "https:") attributes.push("Secure");
+  return [nameValue, ...attributes].join("; ");
+}
+
+function responseHeaders(upstream: Response, requestUrl: URL): Headers {
   const forwarded = new Headers();
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = upstream.headers.get(name);
@@ -127,10 +141,14 @@ function responseHeaders(upstream: Response): Headers {
   const cookieHeaders = upstream.headers as Headers & { getSetCookie?: () => string[] };
   const cookies = cookieHeaders.getSetCookie?.() ?? [];
   if (cookies.length > 0) {
-    for (const cookie of cookies) forwarded.append("set-cookie", cookie);
+    for (const cookie of cookies) {
+      const rewritten = publicCookie(cookie, requestUrl);
+      if (rewritten !== null) forwarded.append("set-cookie", rewritten);
+    }
   } else {
     const cookie = upstream.headers.get("set-cookie");
-    if (cookie !== null) forwarded.append("set-cookie", cookie);
+    const rewritten = cookie === null ? null : publicCookie(cookie, requestUrl);
+    if (rewritten !== null) forwarded.append("set-cookie", rewritten);
   }
   return forwarded;
 }
@@ -149,13 +167,17 @@ export async function proxyV2Request(
   const requestUrl = new URL(request.url);
   const apiPath = safeApiPath(requestUrl);
   if (apiPath === null) return errorResponse(400, "platform_proxy_path_invalid");
+  const browserOrigin = request.headers.get("origin");
+  if (browserOrigin !== null && browserOrigin !== requestUrl.origin) {
+    return errorResponse(403, "platform_proxy_origin_forbidden");
+  }
   const target = `${origin.origin}${apiPath}${requestUrl.search}`;
   const body = BODY_METHODS.has(request.method) ? await request.arrayBuffer() : undefined;
   let upstream: Response;
   try {
     upstream = await fetchImpl(target, {
       method: request.method,
-      headers: requestHeaders(request),
+      headers: requestHeaders(request, browserOrigin === null ? null : requestUrl.origin),
       body: body?.byteLength === 0 ? undefined : body,
       redirect: "manual",
     });
@@ -166,7 +188,7 @@ export async function proxyV2Request(
     request.method === "HEAD" || [204, 205, 304].includes(upstream.status);
   return new Response(bodyForbidden ? null : upstream.body, {
     status: upstream.status,
-    headers: responseHeaders(upstream),
+    headers: responseHeaders(upstream, requestUrl),
   });
 }
 

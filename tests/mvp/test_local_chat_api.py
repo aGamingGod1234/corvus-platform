@@ -72,6 +72,7 @@ class _Backend:
 class _GatedBackend(_Backend):
     def __init__(self) -> None:
         super().__init__()
+        self.started = asyncio.Event()
         self.release = asyncio.Event()
 
     async def events(
@@ -81,6 +82,7 @@ class _GatedBackend(_Backend):
     ) -> AsyncIterator[LocalChatBackendEvent]:
         del handle
         if after_sequence < 1:
+            self.started.set()
             yield LocalChatBackendEvent(1, NOW, "started", {"status": "started"})
         await self.release.wait()
         if after_sequence < 2:
@@ -218,6 +220,35 @@ async def test_local_chat_service_streams_first_event_before_terminal(tmp_path: 
     assert first.type == "started"
     backend.release.set()
     assert [event.type async for _cursor, event in stream] == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_local_chat_non_following_poll_returns_after_buffered_events(tmp_path: Path) -> None:
+    backend = _GatedBackend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    started = await service.start(
+        owner="local:user",
+        prompt="Hello",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="poll-once",
+    )
+    stream = service.events(
+        owner="local:user",
+        run_id=UUID(str(started["run_id"])),
+        cursor=None,
+        follow=False,
+    )
+
+    await asyncio.wait_for(backend.started.wait(), timeout=1)
+    _cursor, first = await asyncio.wait_for(anext(stream), timeout=1)
+    assert first.type == "started"
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=1)
+    backend.release.set()
 
 
 @pytest.mark.asyncio

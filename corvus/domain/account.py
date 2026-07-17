@@ -129,9 +129,9 @@ class DeviceRegistration(_AccountContract):
         _require_aware(self.updated_at, "device_updated_at_must_be_timezone_aware")
         if self.revoked_at is not None:
             _require_aware(self.revoked_at, "device_revoked_at_must_be_timezone_aware")
-        if self.status is DeviceStatus.REVOKED and self.revoked_at is None:
+        if self.status == DeviceStatus.REVOKED and self.revoked_at is None:
             raise _contract_error("device_revoked_at_required")
-        if self.status is DeviceStatus.ACTIVE and self.revoked_at is not None:
+        if self.status == DeviceStatus.ACTIVE and self.revoked_at is not None:
             raise _contract_error("active_device_cannot_have_revoked_at")
         return self
 
@@ -157,7 +157,7 @@ class SessionRecord(_AccountContract):
             raise _contract_error("session_expiry_must_follow_issue")
         if self.revoked_at is not None:
             _require_aware(self.revoked_at, "session_revoked_at_must_be_timezone_aware")
-        if self.status is SessionStatus.ACTIVE:
+        if self.status == SessionStatus.ACTIVE:
             if self.token_digest is None:
                 raise _contract_error("active_session_digest_required")
             if self.revoked_at is not None:

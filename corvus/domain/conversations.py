@@ -312,13 +312,13 @@ class Message(_ConversationModel):
             self.author_membership_version is None
         ) or (self.author_agent_id is None) != (self.author_agent_version is None)
         valid = (
-            self.author_kind is MessageAuthorKind.PRINCIPAL
+            self.author_kind == MessageAuthorKind.PRINCIPAL
             and principal_shape
             and not agent_shape
-            or self.author_kind is MessageAuthorKind.AGENT
+            or self.author_kind == MessageAuthorKind.AGENT
             and agent_shape
             and not principal_shape
-            or self.author_kind is MessageAuthorKind.SYSTEM
+            or self.author_kind == MessageAuthorKind.SYSTEM
             and not principal_shape
             and not agent_shape
         )

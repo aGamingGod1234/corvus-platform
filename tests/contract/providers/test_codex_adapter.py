@@ -242,6 +242,19 @@ async def test_codex_adapter_discovers_pinned_text_only_binding(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_codex_idempotency_replay_returns_the_original_bound_handle(tmp_path: Path) -> None:
+    adapter, _starter = _adapter(tmp_path, ())
+    candidate = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    request = _request(candidate.binding.id, candidate.binding_digest)
+
+    started = await adapter.start(request)
+    replayed = await adapter.start(request.model_copy(update={"run_id": uuid4()}))
+
+    assert replayed.replayed is True
+    assert replayed.handle == started.handle
+
+
+@pytest.mark.asyncio
 async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_text(
     tmp_path: Path,
 ) -> None:
@@ -655,6 +668,45 @@ async def test_codex_build_rejects_common_credential_paths(
 
 
 @pytest.mark.asyncio
+async def test_codex_build_rejects_directory_symlinks(tmp_path: Path) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=2, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    candidate = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        candidate.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build the project.",
+            idempotency_key="directory-symlink",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside", encoding="utf-8")
+    try:
+        os.symlink(outside, starter.invocation.cwd / "linked", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable on this host")
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-1].event_type is AgentRunEventType.FAILED
+    assert events[-1].redacted_payload == {"reason_code": "codex_build_link_rejected"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content",
     (
@@ -737,6 +789,8 @@ async def test_codex_build_allows_non_secret_examples_in_ordinary_files(tmp_path
                 "Authorization: Bearer your-placeholder-token-goes-here-123456",
                 "password: SecretStr",
                 "credential: CredentialReference",
+                "database_password = env://DATABASE_PASSWORD",
+                "api_key = keyring://corvus/provider/api-key",
             )
         ),
         encoding="utf-8",

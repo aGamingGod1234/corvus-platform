@@ -131,6 +131,8 @@ def _concurrent_results(calls: tuple[Callable[[], object], Callable[[], object]]
 
 
 def _login(client: TestClient) -> tuple[str, str, str]:
+    start = client.get("/api/v2/auth/google/start", follow_redirects=False)
+    assert start.status_code == 302, start.text
     response = client.get(
         "/api/v2/auth/google/callback",
         params={"code": "provider-code", "state": "opaque-state"},
@@ -209,6 +211,21 @@ def test_google_callback_sets_separate_secure_host_only_cookies_and_clean_redire
     assert oauth.exchange_calls == [OAuthCallback(code="provider-code", state="opaque-state")]
 
 
+def test_google_callback_rejects_state_not_bound_to_the_initiating_browser(
+    tmp_path: Path,
+) -> None:
+    client, oauth = _configured_client(tmp_path)
+
+    callback = client.get(
+        "/api/v2/auth/google/callback?code=provider-code&state=opaque-state",
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 400
+    assert callback.json()["detail"]["code"] == "oauth_state_invalid"
+    assert oauth.exchange_calls == []
+
+
 @pytest.mark.parametrize(
     "params",
     [
@@ -227,6 +244,8 @@ def test_terminal_callback_rejection_consumes_valid_state_without_echoing_provid
     params: dict[str, str],
 ) -> None:
     client, oauth = _configured_client(tmp_path)
+    start = client.get("/api/v2/auth/google/start", follow_redirects=False)
+    assert start.status_code == 302
 
     response = client.get(
         "/api/v2/auth/google/callback",
@@ -287,6 +306,13 @@ def test_session_onboarding_workspace_and_device_contracts_are_versioned_and_sco
     assert repeated.json() == workspace.json()
     workspace_id = workspace.json()["id"]
     assert client.get("/api/v2/workspaces").json() == [workspace.json()]
+
+    blank = client.patch(
+        f"/api/v2/workspaces/{workspace_id}",
+        json={"name": "   ", "expected_version": workspace.json()["version"]},
+        headers=_mutation_headers(csrf),
+    )
+    assert blank.status_code == 422
 
     patched = client.patch(
         f"/api/v2/workspaces/{workspace_id}",

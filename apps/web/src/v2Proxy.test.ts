@@ -74,6 +74,23 @@ describe("same-origin v2 proxy", () => {
     expect(init?.redirect).toBe("manual");
   });
 
+  it("rejects a spoofed browser origin instead of forwarding it to Railway", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const response = await proxyV2Request(
+      new Request("https://corvus.example/api/v2/workspaces/example", {
+        method: "PATCH",
+        headers: { origin: "https://evil.example", "content-type": "application/json" },
+        body: JSON.stringify({ name: "Spoofed" }),
+      }),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(403);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it.each([
     "/api/v2/../admin",
     "/api/v2/%2e%2e/admin",
@@ -119,6 +136,33 @@ describe("same-origin v2 proxy", () => {
     expect(response.headers.get("set-cookie")).toContain("__Host-corvus_v2_session=opaque");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.has("x-upstream-secret")).toBe(false);
+  });
+
+  it("rewrites upstream cookies onto the public same-origin boundary", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 204,
+        headers: {
+          "set-cookie":
+            "corvus_session=opaque; Domain=corvus-control.up.railway.app; Path=/api; HttpOnly",
+        },
+      }),
+    );
+
+    const response = await proxyV2Request(
+      new Request("https://corvus.example/api/v2/session"),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    const cookie = response.headers.get("set-cookie");
+    expect(cookie).toContain("corvus_session=opaque");
+    expect(cookie).toContain("Path=/");
+    expect(cookie).toContain("Secure");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).not.toMatch(/domain=/i);
+    expect(cookie).not.toContain("Path=/api");
   });
 
   it("drops an external upstream redirect location", async () => {

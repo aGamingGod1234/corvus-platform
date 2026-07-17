@@ -641,7 +641,7 @@ class PlatformIdentityRepository:
             )
             if current.version != expected_version:
                 raise PlatformIdentityRepositoryError("device_version_conflict")
-            if current.status is DeviceStatus.REVOKED:
+            if current.status == DeviceStatus.REVOKED:
                 return current
             revoked = current.model_copy(
                 update={

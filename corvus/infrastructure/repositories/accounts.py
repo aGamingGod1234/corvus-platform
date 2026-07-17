@@ -457,7 +457,7 @@ class AccountRepository:
                 )
                 if current is None:
                     raise AccountRepositoryError("device_not_found")
-                if current.status is DeviceStatus.REVOKED:
+                if current.status == DeviceStatus.REVOKED:
                     return current
                 revoked = current.model_copy(
                     update={
@@ -654,7 +654,7 @@ class AccountRepository:
                     account_id=account_id,
                     device_id=current.device_id,
                 )
-                if device is None or device.status is DeviceStatus.REVOKED:
+                if device is None or device.status == DeviceStatus.REVOKED:
                     raise AccountRepositoryError("session_device_revoked")
                 if current.device_version != device.version:
                     raise AccountRepositoryError("session_device_version_stale")
@@ -838,7 +838,7 @@ class AccountRepository:
                         )
                         if (
                             candidate is not None
-                            and candidate.status is DeviceStatus.ACTIVE
+                            and candidate.status == DeviceStatus.ACTIVE
                             and hmac.compare_digest(
                                 candidate.public_key_digest,
                                 _credential_digest(existing_device_token),

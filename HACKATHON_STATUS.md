@@ -148,9 +148,9 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `1045 passed, 6 skipped` in 223.88 seconds on Windows; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff, Ruff format, strict mypy, Bandit, and pip-audit passed.
+- Python: `1050 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff, Ruff format, strict mypy, Bandit, and pip-audit passed.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `141 passed` across 24 files; Vite production build passed (62 modules, 302.92 kB JS / 89.68 kB gzip).
+- Web: `143 passed` across 24 files; Vite production build passed (62 modules, 302.93 kB JS / 89.69 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
 - M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 7 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt, Clippy with warnings denied, and `cargo check` passed. Windows Computer Use launched the exact worktree release binary, verified the simplified one-sidebar UI, detected Local Codex, streamed a live prompt through the sidecar, and rendered the exact `CORVUS_UI_OK` completion without HTTP 500. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
 - Release alpha: local Windows PyInstaller sidecar build passed and `--help` ran; Tauri NSIS release build passed; silent installer wrote `corvus-desktop.exe`, `corvus-mvp`, and `corvus-mvp.exe` into `%LOCALAPPDATA%\Corvus`; launching the installed app started both `corvus-desktop.exe` and the packaged `corvus-mvp.exe`. Vercel deployment `dpl_4kqEKRLSybjAHik6EUSAezPrRyYH` is Ready and aliased at `https://corvus-platform-tau.vercel.app`; project root was restored to `apps/web` for GitHub `main` deployments.

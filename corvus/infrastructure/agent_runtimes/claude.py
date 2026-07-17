@@ -406,7 +406,7 @@ class ClaudeCliAdapter(AgentRuntimePort):
             if terminal:
                 continue
             if (
-                process_event.kind is ProcessSessionEventKind.FRAME
+                process_event.kind == ProcessSessionEventKind.FRAME
                 and process_event.frame is not None
             ):
                 if not started:
@@ -461,18 +461,18 @@ class ClaudeCliAdapter(AgentRuntimePort):
                     yield event(AgentRunEventType.COMPLETED, {"status": "completed"})
                     session.terminal_state = AgentRunState.COMPLETED
                     terminal = True
-            elif process_event.kind is ProcessSessionEventKind.CANCELLED:
+            elif process_event.kind == ProcessSessionEventKind.CANCELLED:
                 yield event(AgentRunEventType.CANCELLED, {"reason_code": "agent_run_cancelled"})
                 session.terminal_state = AgentRunState.CANCELLED
                 terminal = True
-            elif process_event.kind is ProcessSessionEventKind.FAILED:
+            elif process_event.kind == ProcessSessionEventKind.FAILED:
                 yield event(
                     AgentRunEventType.FAILED,
                     {"reason_code": process_event.reason_code or "claude_process_failed"},
                 )
                 session.terminal_state = AgentRunState.FAILED
                 terminal = True
-            elif process_event.kind is ProcessSessionEventKind.EXITED and not terminal:
+            elif process_event.kind == ProcessSessionEventKind.EXITED and not terminal:
                 state = (
                     AgentRunState.COMPLETED
                     if process_event.return_code == 0

@@ -25,6 +25,7 @@ class TrustedProcessResult:
 
 
 type _ThreadOutcome = tuple[TrustedProcessResult | None, BaseException | None]
+_POSIX_SIGKILL_NUMBER = 9
 
 
 def path_is_link_or_reparse(path: Path) -> bool:
@@ -46,7 +47,10 @@ def windows_system_directory() -> Path:
     if os.name != "nt":
         raise TrustedProcessError("windows system directory is unavailable")
     buffer = ctypes.create_unicode_buffer(32_768)
-    length = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    windows_loader = getattr(ctypes, "windll", None)
+    if windows_loader is None:
+        raise TrustedProcessError("windows system directory is unavailable")
+    length = windows_loader.kernel32.GetSystemDirectoryW(buffer, len(buffer))
     if length <= 0 or length >= len(buffer):
         raise TrustedProcessError("windows system directory is unavailable")
     directory = Path(buffer.value)
@@ -100,6 +104,7 @@ async def create_grouped_process(
     """Spawn an argv directly in a separately terminable process group."""
 
     if os.name == "nt":
+        process_group_flag = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         return await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
@@ -107,7 +112,7 @@ async def create_grouped_process(
             stdin=stdin,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=process_group_flag,
         )
     return await asyncio.create_subprocess_exec(
         *argv,
@@ -143,10 +148,10 @@ async def _terminate_posix_process_tree(
     *,
     grace_seconds: float,
 ) -> bool:
-    kill_process_group = cast(
-        Callable[[int, int], None],
-        os.killpg,  # type: ignore[attr-defined]
-    )
+    process_group_kill = getattr(os, "killpg", None)
+    if process_group_kill is None:
+        raise TrustedProcessError("POSIX process groups are unavailable")
+    kill_process_group = cast(Callable[[int, int], None], process_group_kill)
     process_group_id = process.pid
     if not _posix_process_group_exists(process_group_id, kill_process_group):
         return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
@@ -163,7 +168,7 @@ async def _terminate_posix_process_tree(
     try:
         kill_process_group(
             process_group_id,
-            cast(int, signal.SIGKILL),  # type: ignore[attr-defined]
+            _POSIX_SIGKILL_NUMBER,
         )
     except ProcessLookupError:
         return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)

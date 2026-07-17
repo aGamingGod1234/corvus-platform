@@ -726,6 +726,7 @@ export function App({
       >
         {localSurface === "conversations" ? (
           <ConversationWorkspace
+            key={localSession.user_id}
             api={createConversationApi(localSession.csrf_token)}
             experience={localProfile.experience}
             storage={preferenceStorage}
