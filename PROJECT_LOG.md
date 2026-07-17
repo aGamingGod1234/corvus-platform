@@ -1800,6 +1800,33 @@
 - Independently re-review the two Task 2.2 High repairs.
 - Begin Task 2.3 only after approval.
 
+## 2026-07-17 - Ship truthful same-device Codex chat MVP
+
+### What Was Implemented
+- Added a bounded, text-only Codex CLI adapter that pins the executable, runs without a shell in a read-only sandbox, redacts diagnostics, rejects tool events, normalizes run events, and supports cancellation.
+- Added paired-session local chat routes for idempotent run start, owner-scoped signed-cursor SSE replay, and cancellation.
+- Kept run handles/events in daemon memory and explicitly labels responses as `this_device`; transcripts remain client-local and no Task 2.1 conversation persistence is claimed or written.
+- Uses the user's configured Codex default by omitting `--model`; optional model identifiers are strictly bounded and cannot inject flags.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` - bounded local Codex process adapter.
+- `corvus/mvp/local_chat.py` - owner-scoped in-memory local run service and Codex backend bridge.
+- `corvus/mvp/api.py` - authenticated/CSRF-protected local chat start, SSE, and cancel routes.
+- `tests/contract/providers/test_codex_adapter.py` - adapter bounds, normalization, redaction, cancellation, and model validation.
+- `tests/mvp/test_local_chat_api.py` - route auth, isolation, idempotency, cursor, cancellation, and redaction coverage.
+
+### Assumptions Made (flag these for review)
+- None. The hackathon scope was explicitly narrowed to a truthful same-device local Codex flow with daemon-lifetime events and client-local transcripts.
+
+### Known Issues / Deferred
+- Runs and server-side events do not survive daemon restart; cross-device sync and durable conversation storage are deferred.
+- Cloud runtimes, API-key providers, tools, repository writes, scheduling, and full-auto execution are not included in this slice.
+- The Codex executable must be locally installed and authenticated; unavailable installations return a stable service error.
+
+### Suggested Next Steps
+- Connect the device-local web transcript adapter to these routes and verify the desktop flow visually.
+- Add durable/cloud execution only through the separately authorized runtime and identity milestones.
+
 ## 2026-07-17 - Deliver hackathon chat-first product vertical
 
 ### What Was Implemented

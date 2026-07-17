@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -38,6 +38,14 @@ from corvus.mvp.ingress import (
     LocalEnvelopeSigner,
     OfflineConnectorService,
     OfflineIntentRecord,
+)
+from corvus.mvp.local_chat import (
+    LocalChatConflict,
+    LocalChatCursorError,
+    LocalChatError,
+    LocalChatNotFound,
+    LocalChatService,
+    build_default_local_chat_service,
 )
 from corvus.mvp.models import (
     ApprovalRecord,
@@ -155,6 +163,34 @@ class ChannelIdentityRequest(ApiModel):
 
 class MutationStatus(ApiModel):
     status: str
+
+
+class LocalChatStartRequest(ApiModel):
+    prompt: str = Field(min_length=1, max_length=1_000_000)
+    model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+    )
+    effort: Literal["normal", "high"] = "normal"
+
+
+class LocalChatStartResponse(ApiModel):
+    run_id: str
+    handle_id: str
+    state: Literal["running", "completed", "failed"]
+    provider: Literal["codex"]
+    model: str
+    storage: Literal["this_device"]
+    created_at: str
+
+
+class LocalChatCancelResponse(ApiModel):
+    run_id: str
+    state: Literal["running", "cancelled", "completed", "failed"]
+    accepted: bool
+    reason_code: str | None
 
 
 class SessionPrincipal(BaseModel):
@@ -301,6 +337,7 @@ def create_app(
     allow_existing_user_pairing: bool = False,
     instance_token: str | None = None,
     identity_dependencies: IdentityApiDependencies | None = None,
+    local_chat_service: LocalChatService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -331,6 +368,10 @@ def create_app(
         bootstrap_token=bootstrap_token,
         session_secret=session_secret,
         allow_existing_user_pairing=allow_existing_user_pairing,
+    )
+    local_chat = local_chat_service or build_default_local_chat_service(
+        scratch_root=database.parent / ".corvus-local-chat",
+        cursor_secret=hmac.new(session_secret, b"local-chat-cursor", hashlib.sha256).digest(),
     )
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
@@ -430,6 +471,110 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> dict[str, Any]:
         return principal.model_dump(mode="json")
+
+    @app.post(
+        "/api/local-chat/runs",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=LocalChatStartResponse,
+    )
+    async def start_local_chat(
+        body: LocalChatStartRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+        idempotency_key: Annotated[
+            str | None, Header(alias="Idempotency-Key", min_length=1, max_length=200)
+        ] = None,
+    ) -> dict[str, object]:
+        if idempotency_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="idempotency_key_required",
+            )
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            return await local_chat.start(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                prompt=body.prompt,
+                model=body.model,
+                effort=body.effort,
+                idempotency_key=idempotency_key,
+            )
+        except LocalChatConflict as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.reason_code) from error
+        except LocalChatError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error.reason_code,
+            ) from error
+
+    @app.get("/api/local-chat/runs/{run_id}/events")
+    async def local_chat_events(
+        run_id: UUID,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        follow: bool = True,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    ) -> StreamingResponse:
+        del follow
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            events = await local_chat.events(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                run_id=run_id,
+                cursor=last_event_id,
+            )
+        except LocalChatNotFound as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code) from error
+        except LocalChatCursorError as error:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error.reason_code) from error
+
+        async def stream() -> AsyncIterator[str]:
+            for cursor, event in events:
+                payload = {
+                    "run_id": str(run_id),
+                    "sequence": event.sequence,
+                    "timestamp": event.timestamp.isoformat(),
+                    "type": event.type,
+                    "payload": event.payload,
+                }
+                yield (
+                    f"id: {cursor}\n"
+                    f"event: {event.type}\n"
+                    f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                )
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post(
+        "/api/local-chat/runs/{run_id}/cancel",
+        response_model=LocalChatCancelResponse,
+    )
+    async def cancel_local_chat(
+        run_id: UUID,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, object]:
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            return await local_chat.cancel(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                run_id=run_id,
+            )
+        except LocalChatNotFound as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code) from error
 
     @app.get("/api/projects", response_model=list[Project])
     def projects(
