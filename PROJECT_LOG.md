@@ -1883,3 +1883,28 @@
 ### Suggested Next Steps
 - Run the consolidated Python, web, Rust, and repository release gates.
 - Push the verified branch and open the single unmerged review PR.
+
+## 2026-07-17 - Close consolidated Python release-quality blockers
+
+### What Was Implemented
+- Normalized migration query rows into explicit tuple shapes so strict typing matches the already-supported offline migration path without changing stored values or manifest construction.
+- Added an explicit missing-URL failure for offline Alembic configuration instead of relying on an optional-string attribute error.
+- Replaced three optimization-removable authorization assertions with explicit fail-closed `agent_run_authorization_unavailable` results.
+- Applied the repository formatter to the local-chat API and recorded narrow Bandit suppressions for the hardened fixed-argv subprocess boundary and a capability field named `shell` that is not process execution.
+
+### Files Modified
+- `corvus/infrastructure/migrations/env.py` and revisions `m1_006` through `m1_009` - close strict typing gaps while retaining the existing migration data flow.
+- `corvus/application/agent_runtime.py` - keeps impossible authorization states fail closed under optimized Python.
+- `corvus/safe_process.py` and `corvus/infrastructure/agent_runtimes/codex.py` - document two precise Bandit false positives.
+- `corvus/mvp/api.py` - applies deterministic repository formatting.
+- `PROJECT_LOG.md` - records the repair scope and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The changes preserve existing runtime and migration behavior while making the fail-closed path explicit.
+
+### Known Issues / Deferred
+- Destructive PostgreSQL tests remain opt-in and POSIX process-group behavior remains CI-only on this Windows workstation.
+
+### Suggested Next Steps
+- Add the newly requested provider, streaming, MCP discovery, scratch-build handoff, and simplified interface vertical.
+- Rerun the complete release matrix after that vertical is integrated.

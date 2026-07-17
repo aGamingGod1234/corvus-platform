@@ -44,14 +44,17 @@ def upgrade() -> None:
     if op.get_context().as_sql:
         prior_rows = [(name, *family_proof_metadata(name)) for name in M1_008_FAMILY_NAMES]
     else:
-        prior_rows = bind.execute(
-            sa.text(
-                "SELECT family_name, coverage_kind, external_proof_kind "
-                "FROM authority_state_root_leaf_families "
-                "WHERE manifest_version_id = :id ORDER BY ordinal"
-            ),
-            {"id": _PRIOR_MANIFEST_ID},
-        ).fetchall()
+        prior_rows = [
+            (row[0], row[1], row[2])
+            for row in bind.execute(
+                sa.text(
+                    "SELECT family_name, coverage_kind, external_proof_kind "
+                    "FROM authority_state_root_leaf_families "
+                    "WHERE manifest_version_id = :id ORDER BY ordinal"
+                ),
+                {"id": _PRIOR_MANIFEST_ID},
+            ).fetchall()
+        ]
     prior = {
         str(row[0]): (str(row[1]), None if row[2] is None else str(row[2])) for row in prior_rows
     }

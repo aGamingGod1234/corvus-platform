@@ -4,7 +4,7 @@ import asyncio
 import ctypes
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass

@@ -159,7 +159,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization is not None
+        if authorization is None:
+            return self._failure(
+                context,
+                AgentRunOperation.START,
+                "agent_run_authorization_unavailable",
+            )
         try:
             preflight_reason = await self._provider_preflight(
                 authorization.request,
@@ -231,7 +236,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization is not None
+        if authorization is None:
+            return self._failure(
+                context,
+                AgentRunOperation.RESUME,
+                "agent_run_authorization_unavailable",
+            )
         try:
             preflight_reason = await self._provider_preflight(
                 authorization.request,
@@ -308,7 +318,12 @@ class AgentRuntimeCoordinator:
         )
         if failure is not None:
             return failure
-        assert authorization is not None
+        if authorization is None:
+            return self._failure(
+                context,
+                AgentRunOperation.CANCEL,
+                "agent_run_authorization_unavailable",
+            )
         try:
             cancellation_result = _revalidate_cancellation_result(
                 await self._runtime.cancel(

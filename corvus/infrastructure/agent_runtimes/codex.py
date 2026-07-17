@@ -483,7 +483,8 @@ def _sha256_file(path: Path) -> str:
 
 def _text_only_capabilities() -> AgentCapabilities:
     unsupported = CapabilitySupport.UNSUPPORTED
-    return AgentCapabilities(
+    # AgentCapabilities.shell is metadata; this is not a process-spawning call.
+    return AgentCapabilities(  # nosec B604
         text=CapabilitySupport.SUPPORTED,
         streaming=CapabilitySupport.SUPPORTED,
         tools=unsupported,

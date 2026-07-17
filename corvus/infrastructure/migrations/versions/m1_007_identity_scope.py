@@ -128,13 +128,16 @@ def upgrade() -> None:
     if op.get_context().as_sql:
         prior = [(name,) for name in M1_006_FAMILY_NAMES]
     else:
-        prior = bind.execute(
-            sa.text(
-                "SELECT family_name FROM authority_state_root_leaf_families "
-                "WHERE manifest_version_id = :id ORDER BY ordinal"
-            ),
-            {"id": _PRIOR_MANIFEST_ID},
-        ).fetchall()
+        prior = [
+            (row[0],)
+            for row in bind.execute(
+                sa.text(
+                    "SELECT family_name FROM authority_state_root_leaf_families "
+                    "WHERE manifest_version_id = :id ORDER BY ordinal"
+                ),
+                {"id": _PRIOR_MANIFEST_ID},
+            ).fetchall()
+        ]
     names = {str(row[0]) for row in prior} | _NEW_FAMILIES
     families = [
         {

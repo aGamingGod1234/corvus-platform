@@ -503,7 +503,9 @@ def create_app(
                 idempotency_key=idempotency_key,
             )
         except LocalChatConflict as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.reason_code) from error
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=error.reason_code
+            ) from error
         except LocalChatError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -530,9 +532,13 @@ def create_app(
                 cursor=last_event_id,
             )
         except LocalChatNotFound as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code) from error
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code
+            ) from error
         except LocalChatCursorError as error:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error.reason_code) from error
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=error.reason_code
+            ) from error
 
         async def stream() -> AsyncIterator[str]:
             for cursor, event in events:
@@ -574,7 +580,9 @@ def create_app(
                 run_id=run_id,
             )
         except LocalChatNotFound as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code) from error
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=error.reason_code
+            ) from error
 
     @app.get("/api/projects", response_model=list[Project])
     def projects(

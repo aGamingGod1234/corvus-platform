@@ -8,6 +8,8 @@ config = context.config
 
 def run_migrations_offline() -> None:
     database_url = config.get_main_option("sqlalchemy.url")
+    if database_url is None:
+        raise RuntimeError("sqlalchemy_url_missing")
     context.configure(
         url=database_url,
         literal_binds=True,
