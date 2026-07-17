@@ -8,15 +8,16 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from corvus.mvp.api_chat import ApiChatBackend, ApiProvider
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
 from corvus.mvp.governance import (
@@ -63,6 +64,12 @@ from corvus.mvp.preferences import (
     LocalPreferences,
     LocalPreferencesConflict,
     LocalPreferencesService,
+)
+from corvus.mvp.provider_credentials import (
+    ProviderCredentialError,
+    ProviderCredentialService,
+    ProviderCredentialStatus,
+    ProviderVerification,
 )
 from corvus.mvp.safety import build_safety_preview
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
@@ -173,7 +180,7 @@ class MutationStatus(ApiModel):
 
 class LocalChatStartRequest(ApiModel):
     prompt: str = Field(min_length=1, max_length=1_000_000)
-    provider: Literal["codex", "claude"] = "codex"
+    provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"] = "codex"
     model: str | None = Field(
         default=None,
         min_length=1,
@@ -204,7 +211,7 @@ class LocalChatStartResponse(ApiModel):
     run_id: str
     handle_id: str
     state: Literal["running", "completed", "failed"]
-    provider: Literal["codex", "claude"]
+    provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"]
     model: str
     mode: Literal["chat", "build"]
     storage: Literal["this_device"]
@@ -263,6 +270,23 @@ class LocalPreferencesUpdate(ApiModel):
     mcp_enabled: bool
     response_tone: Literal["concise", "balanced", "detailed"]
     custom_rules: str = Field(max_length=20_000)
+
+
+class ProviderCredentialConnectRequest(ApiModel):
+    credential: SecretStr
+
+
+class ProviderCredentialStatusResponse(ApiModel):
+    provider: Literal["openai", "anthropic", "gemini", "xai"]
+    configured: bool
+    source: Literal["keyring", "environment", "none"]
+
+
+class ProviderCredentialVerificationResponse(ApiModel):
+    provider: Literal["openai", "anthropic", "gemini", "xai"]
+    configured: bool
+    verified: bool
+    models: list[str]
 
 
 class SessionPrincipal(BaseModel):
@@ -428,6 +452,7 @@ def create_app(
     instance_token: str | None = None,
     identity_dependencies: IdentityApiDependencies | None = None,
     local_chat_service: LocalChatService | None = None,
+    provider_credentials: ProviderCredentialService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -464,6 +489,7 @@ def create_app(
         cursor_secret=hmac.new(session_secret, b"local-chat-cursor", hashlib.sha256).digest(),
     )
     local_preferences = LocalPreferencesService(service.store)
+    credential_service = provider_credentials or ProviderCredentialService()
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
 
@@ -563,6 +589,71 @@ def create_app(
     ) -> dict[str, Any]:
         return principal.model_dump(mode="json")
 
+    @app.get(
+        "/api/provider-credentials",
+        response_model=list[ProviderCredentialStatusResponse],
+    )
+    def provider_credential_statuses(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[ProviderCredentialStatus]:
+        return [
+            credential_service.status(principal.user_id, provider)
+            for provider in ("openai", "anthropic", "gemini", "xai")
+        ]
+
+    @app.put(
+        "/api/provider-credentials/{provider}",
+        response_model=ProviderCredentialStatusResponse,
+    )
+    def connect_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        body: ProviderCredentialConnectRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderCredentialStatus:
+        try:
+            return credential_service.connect(
+                principal.user_id,
+                provider,
+                body.credential.get_secret_value(),
+            )
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+
+    @app.post(
+        "/api/provider-credentials/{provider}/verify",
+        response_model=ProviderCredentialVerificationResponse,
+    )
+    async def verify_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderVerification:
+        try:
+            return await credential_service.verify(principal.user_id, provider)
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+
+    @app.delete(
+        "/api/provider-credentials/{provider}",
+        response_model=ProviderCredentialStatusResponse,
+    )
+    def remove_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderCredentialStatus:
+        try:
+            return credential_service.remove(principal.user_id, provider)
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+
     @app.post(
         "/api/local-chat/runs",
         status_code=status.HTTP_202_ACCEPTED,
@@ -587,8 +678,21 @@ def create_app(
             )
         try:
             preferences = local_preferences.get(principal.user_id)
+            owner = f"{principal.tenant_id}:{principal.user_id}"
+            if body.provider in {"openai", "anthropic", "gemini", "xai"}:
+                api_provider = cast(ApiProvider, body.provider)
+                credential = credential_service.require(principal.user_id, api_provider)
+                local_chat.register_owner_backend(
+                    owner,
+                    api_provider,
+                    ApiChatBackend(
+                        provider=api_provider,
+                        credential=credential,
+                        clock=lambda: datetime.now(UTC),
+                    ),
+                )
             return await local_chat.start(
-                owner=f"{principal.tenant_id}:{principal.user_id}",
+                owner=owner,
                 prompt=_prompt_with_preferences(body.prompt, preferences),
                 provider=body.provider,
                 model=body.model,
@@ -598,6 +702,11 @@ def create_app(
                 safety_digest=body.safety_digest,
                 idempotency_key=idempotency_key,
             )
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
         except LocalChatConflict as error:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=error.reason_code
@@ -610,16 +719,52 @@ def create_app(
 
     @app.get("/api/local-chat/providers")
     def local_chat_providers(
-        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> list[dict[str, object]]:
         if local_chat is None:
             return []
-        return list(local_chat.provider_catalog())
+        local_entries = [
+            entry for entry in local_chat.provider_catalog()
+            if entry["id"] not in {"gemini", "grok"}
+        ]
+        labels = {
+            "openai": "OpenAI API",
+            "anthropic": "Anthropic API",
+            "gemini": "Gemini API",
+            "xai": "Grok by xAI",
+        }
+        for provider in ("openai", "anthropic", "gemini", "xai"):
+            provider_models = credential_service.models(principal.user_id, provider)
+            configured = credential_service.status(principal.user_id, provider)["configured"]
+            ready = configured and bool(provider_models)
+            local_entries.append({
+                "id": provider,
+                "label": labels[provider],
+                "runtime": "api",
+                "status": "ready" if ready else "unavailable",
+                "status_label": (
+                    "Verified for API chat"
+                    if ready
+                    else "Connected; verify in Settings"
+                    if configured
+                    else "Not configured"
+                ),
+                "models": [
+                    {"id": model, "label": model, "recommended": index == 0}
+                    for index, model in enumerate(provider_models)
+                ],
+                "thinking_levels": (
+                    ["low", "medium", "high", "xhigh", "max"]
+                    if provider == "openai" else []
+                ),
+                "supports_mcp": False,
+            })
+        return local_entries
 
     @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
     def local_chat_safety_preview(
         _principal: Annotated[SessionPrincipal, Depends(authenticated)],
-        provider: Literal["codex", "claude"] = "codex",
+        provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"] = "codex",
         mode: Literal["chat", "build"] = "chat",
         mcp_enabled: bool = False,
     ) -> dict[str, object]:

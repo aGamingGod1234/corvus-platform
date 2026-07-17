@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   ConversationApi,
   ProviderCatalogEntry,
+  ProviderCredentialId,
+  ProviderCredentialStatus,
   ResponseTone,
   RuntimePreferences,
   ThinkingLevel
@@ -10,12 +12,29 @@ import type {
 import {
   loadDevicePreferences,
   saveDevicePreferences,
+  type SafetyGuidance,
+  type SendKeyMode,
   type ThemePreference
 } from "./devicePreferences";
 import type { ExperienceMode, WorkspaceKind } from "./preferences";
 
 type SettingsCategory = "general" | "models" | "agent" | "mcp" | "safety" | "appearance" | "account";
-type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences">;
+type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences" | "listProviderCredentials" | "connectProviderCredential" | "verifyProviderCredential" | "removeProviderCredential">;
+
+const API_PROVIDERS: ReadonlyArray<{ id: ProviderCredentialId; label: string; environment: string }> = [
+  { id: "openai", label: "OpenAI", environment: "OPENAI_API_KEY" },
+  { id: "anthropic", label: "Anthropic", environment: "ANTHROPIC_API_KEY" },
+  { id: "gemini", label: "Gemini", environment: "GEMINI_API_KEY" },
+  { id: "xai", label: "xAI", environment: "XAI_API_KEY" }
+];
+
+const THINKING_LABELS: Record<ThinkingLevel, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max"
+};
 
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; label: string }> = [
   { id: "general", label: "General" },
@@ -81,8 +100,13 @@ export function SettingsPanel({
 }) {
   const [category, setCategory] = useState<SettingsCategory>("general");
   const [theme, setTheme] = useState<ThemePreference>(() => loadDevicePreferences(storage, workspaceId).theme);
+  const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>(() => loadDevicePreferences(storage, workspaceId).sendKeyMode);
+  const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance>(() => loadDevicePreferences(storage, workspaceId).safetyGuidance);
   const [runtime, setRuntime] = useState<RuntimePreferences>(DEFAULT_RUNTIME_PREFERENCES);
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
+  const [credentials, setCredentials] = useState<ProviderCredentialStatus[]>([]);
+  const [credentialDrafts, setCredentialDrafts] = useState<Partial<Record<ProviderCredentialId, string>>>({});
+  const [verifiedModels, setVerifiedModels] = useState<Partial<Record<ProviderCredentialId, string[]>>>({});
   const [profileExperience, setProfileExperience] = useState<ExperienceMode>(experience);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -97,6 +121,8 @@ export function SettingsPanel({
   useEffect(() => {
     const device = loadDevicePreferences(storage, workspaceId);
     setTheme(device.theme);
+    setSendKeyMode(device.sendKeyMode);
+    setSafetyGuidance(device.safetyGuidance);
     setProfileExperience(experience);
     setStatus("");
     setError("");
@@ -113,7 +139,11 @@ export function SettingsPanel({
     void Promise.all([api.getPreferences(), api.listProviders()])
       .then(([preferences, catalog]) => {
         if (!current) return;
-        setRuntime(preferences);
+        const selected = catalog.find((provider) => provider.id === preferences.default_provider);
+        const defaultModel = selected?.models.some((model) => model.id === preferences.default_model)
+          ? preferences.default_model
+          : selected?.models[0]?.id ?? null;
+        setRuntime({ ...preferences, default_model: defaultModel });
         setProviders(catalog);
       })
       .catch((reason) => {
@@ -122,6 +152,13 @@ export function SettingsPanel({
       .finally(() => {
         if (current) setBusy(false);
       });
+    if (api.listProviderCredentials !== undefined) {
+      void api.listProviderCredentials().then((statuses) => {
+        if (current) setCredentials(statuses);
+      }).catch(() => {
+        if (current) setError("Provider credentials could not be checked. No key was read or exposed.");
+      });
+    }
     return () => { current = false; };
   }, [api, experience, storage, workspaceId]);
 
@@ -174,7 +211,9 @@ export function SettingsPanel({
       ...device,
       theme,
       responseTone: runtime.response_tone,
-      customRules: runtime.custom_rules
+      customRules: runtime.custom_rules,
+      sendKeyMode,
+      safetyGuidance
     });
     document.documentElement.dataset.theme = theme;
     try {
@@ -195,6 +234,54 @@ export function SettingsPanel({
         setStatus("Saved on this device");
       }
       setDirty(false);
+    } catch (reason) {
+      setError(safeError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connectCredential(provider: ProviderCredentialId): Promise<void> {
+    const credential = credentialDrafts[provider]?.trim() ?? "";
+    if (credential === "" || api?.connectProviderCredential === undefined) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await api.connectProviderCredential(provider, credential);
+      setCredentials((current) => [...current.filter((entry) => entry.provider !== provider), saved]);
+      setCredentialDrafts((current) => ({ ...current, [provider]: "" }));
+      setStatus("Credential stored in the operating system keyring");
+    } catch (reason) {
+      setError(safeError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyCredential(provider: ProviderCredentialId): Promise<void> {
+    if (api?.verifyProviderCredential === undefined) return;
+    setBusy(true);
+    setError("");
+    try {
+      const verified = await api.verifyProviderCredential(provider);
+      setVerifiedModels((current) => ({ ...current, [provider]: verified.models }));
+      setStatus("Provider verified with its authenticated model catalog");
+    } catch (reason) {
+      setError(safeError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeCredential(provider: ProviderCredentialId): Promise<void> {
+    if (api?.removeProviderCredential === undefined) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await api.removeProviderCredential(provider);
+      setCredentials((current) => [...current.filter((entry) => entry.provider !== provider), saved]);
+      setVerifiedModels((current) => ({ ...current, [provider]: [] }));
+      setStatus(saved.configured ? "Environment credential remains configured" : "Provider credential removed");
     } catch (reason) {
       setError(safeError(reason));
     } finally {
@@ -227,6 +314,7 @@ export function SettingsPanel({
               <select aria-label="Experience" onChange={(event) => setProfileExperience(event.target.value as ExperienceMode)} value={profileExperience}><option value="everyday">Everyday</option><option value="developer">Developer</option></select>
             </SettingsRow>
             <SettingsRow description="Workspace membership and authority stay attached to this workspace." label="Workspace type"><select aria-label="Workspace type" disabled value={workspaceKind}><option value="individual">Individual</option><option value="team">Team</option></select></SettingsRow>
+            <div className="settings-field"><span className="settings-field__label">Send messages</span><p>Adaptive sends single-line prompts with Enter and multiline prompts with Ctrl+Enter.</p><div className="segmented-choice" role="radiogroup" aria-label="Composer send keys"><label><input checked={sendKeyMode === "adaptive"} onChange={() => { setSendKeyMode("adaptive"); setDirty(true); }} type="radio" />Adaptive</label><label><input checked={sendKeyMode === "enter"} onChange={() => { setSendKeyMode("enter"); setDirty(true); }} type="radio" />Enter sends</label><label><input checked={sendKeyMode === "ctrl-enter"} onChange={() => { setSendKeyMode("ctrl-enter"); setDirty(true); }} type="radio" />Ctrl+Enter sends</label></div></div>
             <div className="settings-actions"><button className="button" disabled={!profileEditable || busy || profileExperience === experience} onClick={() => void saveProfile()} type="button">Save profile</button></div>
             {!profileEditable ? <p className="field-note">Profile changes are available after signing in on the web app.</p> : null}
           </> : null}
@@ -234,9 +322,10 @@ export function SettingsPanel({
           {category === "models" ? <>
             <div className="settings-section__heading"><h2>Models</h2><p>Defaults used when a new conversation opens.</p></div>
             <SettingsRow description="Only detected local providers can run." label="Provider"><select aria-label="Default provider" disabled={busy || providers.length === 0} onChange={(event) => updateProvider(event.target.value as "codex" | "claude")} value={runtime.default_provider}>{providers.length === 0 ? <option value={runtime.default_provider}>{title(runtime.default_provider)}</option> : providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <option disabled={entry.status !== "ready"} key={entry.id} value={entry.id}>{entry.label} · {entry.status_label}</option>)}</select></SettingsRow>
-            <SettingsRow description="Recommended models appear first in the composer." label="Model"><select aria-label="Default model" disabled={busy || (selectedProvider?.models.length ?? 0) === 0} onChange={(event) => updateRuntime("default_model", event.target.value || null)} value={runtime.default_model ?? ""}><option value="">Provider default</option>{selectedProvider?.models.map((model) => <option key={model.id} value={model.id}>{model.label}{model.recommended ? " · Recommended" : ""}</option>)}</select></SettingsRow>
-            <SettingsRow description="Higher levels spend more time reasoning." label="Thinking"><select aria-label="Default thinking" disabled={busy} onChange={(event) => updateRuntime("default_effort", event.target.value as ThinkingLevel)} value={runtime.default_effort}>{(selectedProvider?.thinking_levels ?? ["medium"]).map((effort) => <option key={effort} value={effort}>{title(effort)}</option>)}</select></SettingsRow>
+            <SettingsRow description="Recommended models appear first in the composer." label="Model"><select aria-label="Default model" disabled={busy || (selectedProvider?.models.length ?? 0) === 0} onChange={(event) => updateRuntime("default_model", event.target.value)} value={runtime.default_model ?? ""}>{selectedProvider?.models.map((model) => <option key={model.id} value={model.id}>{model.label}{model.recommended ? " · Recommended" : ""}</option>)}</select></SettingsRow>
+            <SettingsRow description="Higher levels spend more time reasoning." label="Thinking"><select aria-label="Default thinking" disabled={busy} onChange={(event) => updateRuntime("default_effort", event.target.value as ThinkingLevel)} value={runtime.default_effort}>{(selectedProvider?.thinking_levels ?? ["medium"]).map((effort) => <option key={effort} value={effort}>{THINKING_LABELS[effort]}</option>)}</select></SettingsRow>
             <SettingsRow description="Build runs work in an isolated project sandbox and return an artifact." label="Mode"><select aria-label="Default mode" disabled={busy} onChange={(event) => { const mode = event.target.value as "chat" | "build"; updateRuntime("default_mode", mode); if (mode === "chat") updateRuntime("mcp_enabled", false); }} value={runtime.default_mode}><option value="chat">Chat</option><option disabled={runtime.default_provider !== "codex"} value="build">Build</option></select></SettingsRow>
+            <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p></div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected · or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
           </> : null}
 
           {category === "agent" ? <>
@@ -257,6 +346,7 @@ export function SettingsPanel({
             <SettingsRow description="Build work uses a fresh scratch workspace; your original project stays unchanged." label="Workspace isolation"><span className="settings-value">Enforced by runtime</span></SettingsRow>
             <SettingsRow description="Network behavior follows the selected CLI sandbox policy. Corvus grants no separate permission." label="Network"><span className="settings-value">No additional grant</span></SettingsRow>
             <SettingsRow description="Stop remains available while a run is active and sends an owner-scoped cancellation." label="Emergency stop"><span className="settings-value">Available during every run</span></SettingsRow>
+            <div className="settings-field"><span className="settings-field__label">Safety guidance</span><p>Choose how much evidence Corvus shows while it works. This never weakens confirmation, isolation, MCP warnings, or sandbox enforcement.</p><div className="segmented-choice" role="radiogroup" aria-label="Safety guidance"><label><input checked={safetyGuidance === "standard"} onChange={() => { setSafetyGuidance("standard"); setDirty(true); }} type="radio" />Standard safety guidance</label><label><input checked={safetyGuidance === "detailed"} onChange={() => { setSafetyGuidance("detailed"); setDirty(true); }} type="radio" />Detailed safety guidance</label></div></div>
             <p className="settings-callout">Completed Build runs include an owner-scoped receipt with the locked policy, observed activity, artifact hash, and screening result.</p>
           </> : null}
 
@@ -271,7 +361,7 @@ export function SettingsPanel({
             <SettingsRow description="GitHub, Google Drive, and Slack connection flows are not enabled in this alpha." label="Integrations"><span className="settings-value">Not connected</span></SettingsRow>
           </> : null}
 
-          {category !== "general" && category !== "safety" ? <div className="settings-actions"><button className="button button--primary" disabled={busy || !dirty} onClick={() => void saveSettings()} type="button">{busy ? "Saving…" : "Save changes"}</button></div> : null}
+          {category !== "account" ? <div className="settings-actions"><button className="button button--primary" disabled={busy || !dirty} onClick={() => void saveSettings()} type="button">{busy ? "Saving…" : "Save changes"}</button></div> : null}
           {status ? <p className="save-status" role="status">{status}</p> : null}
           {error ? <p className="settings-error" role="alert">{error}</p> : null}
         </div>

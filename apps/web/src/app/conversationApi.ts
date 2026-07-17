@@ -2,7 +2,7 @@ export interface LocalChatRun {
   run_id: string;
   handle_id: string;
   state: "running" | "completed" | "failed";
-  provider: "codex" | "claude";
+  provider: RunnableProviderId;
   model: string;
   mode: "chat" | "build";
   storage: "this_device";
@@ -43,7 +43,8 @@ class BrowserRunEventStream implements RunEventStream {
   }
 }
 
-export type ProviderId = "codex" | "claude" | "gemini" | "cursor" | "grok";
+export type ProviderId = "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai" | "cursor" | "grok";
+export type RunnableProviderId = "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
 export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type RunMode = "chat" | "build";
 export type SafetyLevel = "read_only" | "protected" | "elevated";
@@ -96,7 +97,7 @@ export interface ProviderCatalogEntry {
 }
 
 export interface LocalChatRequest {
-  provider: "codex" | "claude";
+  provider: RunnableProviderId;
   model: string | null;
   effort: ThinkingLevel;
   mode: RunMode;
@@ -105,6 +106,20 @@ export interface LocalChatRequest {
 }
 
 export type ResponseTone = "concise" | "balanced" | "detailed";
+export type ProviderCredentialId = "openai" | "anthropic" | "gemini" | "xai";
+
+export interface ProviderCredentialStatus {
+  provider: ProviderCredentialId;
+  configured: boolean;
+  source: "keyring" | "environment" | "none";
+}
+
+export interface ProviderCredentialVerification {
+  provider: ProviderCredentialId;
+  configured: boolean;
+  verified: boolean;
+  models: string[];
+}
 
 export interface RuntimePreferences {
   version: number;
@@ -127,7 +142,7 @@ export interface ConversationApi {
   getPreferences(): Promise<RuntimePreferences>;
   updatePreferences(preferences: RuntimePreferencesUpdate): Promise<RuntimePreferences>;
   getSafetyPreview(
-    provider: "codex" | "claude",
+    provider: RunnableProviderId,
     mode: RunMode,
     mcpEnabled: boolean
   ): Promise<SafetyPreview>;
@@ -140,6 +155,10 @@ export interface ConversationApi {
   cancelRun(runId: string): Promise<LocalChatCancel>;
   openRunEvents(runId: string): RunEventStream;
   artifactUrl(runId: string): string;
+  listProviderCredentials?(): Promise<ProviderCredentialStatus[]>;
+  connectProviderCredential?(provider: ProviderCredentialId, credential: string): Promise<ProviderCredentialStatus>;
+  verifyProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialVerification>;
+  removeProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialStatus>;
 }
 
 interface ApiErrorDetail { code?: string; correlation_id?: string; }
@@ -226,6 +245,23 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
         withCredentials: true
       }));
     },
-    artifactUrl: (runId) => `${baseUrl}/api/local-chat/runs/${runId}/artifact`
+    artifactUrl: (runId) => `${baseUrl}/api/local-chat/runs/${runId}/artifact`,
+    listProviderCredentials: () => requestJson("/api/provider-credentials", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
+    connectProviderCredential: (provider, credential) => requestJson(`/api/provider-credentials/${provider}`, {
+      method: "PUT",
+      headers: mutationHeaders(),
+      body: JSON.stringify({ credential })
+    }),
+    verifyProviderCredential: (provider) => requestJson(`/api/provider-credentials/${provider}/verify`, {
+      method: "POST",
+      headers: mutationHeaders()
+    }),
+    removeProviderCredential: (provider) => requestJson(`/api/provider-credentials/${provider}`, {
+      method: "DELETE",
+      headers: mutationHeaders()
+    })
   };
 }

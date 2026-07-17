@@ -89,13 +89,38 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("Not connected")).toBeVisible();
   });
 
+  it("uses the discovered model name instead of a vague provider default", async () => {
+    const api = settingsApi();
+    vi.mocked(api.getPreferences).mockResolvedValue({
+      ...(await api.getPreferences()),
+      default_model: null
+    });
+    render(
+      <SettingsPanel
+        api={api}
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-model"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(await screen.findByRole("option", { name: "GPT-5.6 Sol · Recommended" })).toBeVisible();
+    expect(screen.getByLabelText("Default model")).toHaveValue("gpt-5.6-sol");
+    expect(screen.queryByRole("option", { name: /provider default/i })).not.toBeInTheDocument();
+  });
+
   it("explains the enforced local safety boundaries without offering a bypass", async () => {
+    const storage = new MemoryStorage();
     render(
       <SettingsPanel
         api={settingsApi()}
         experience="developer"
         onExperienceChange={vi.fn().mockResolvedValue(undefined)}
-        storage={new MemoryStorage()}
+        storage={storage}
         workspaceId="workspace-safety"
         workspaceKind="individual"
       />
@@ -107,5 +132,71 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("Always on in this alpha")).toBeVisible();
     expect(screen.getByText(/original project stays unchanged/i)).toBeVisible();
     expect(screen.queryByRole("button", { name: /full access/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Detailed safety guidance/i }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(loadDevicePreferences(storage, "workspace-safety").safetyGuidance).toBe("detailed");
+  });
+
+  it("persists the composer send-key behavior in General settings", async () => {
+    const storage = new MemoryStorage();
+    render(
+      <SettingsPanel
+        api={settingsApi()}
+        experience="everyday"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={storage}
+        workspaceId="workspace-keys"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: /Ctrl\+Enter sends/i }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(loadDevicePreferences(storage, "workspace-keys").sendKeyMode).toBe("ctrl-enter");
+  });
+
+  it("connects, verifies, replaces, and removes write-only provider credentials", async () => {
+    const api = {
+      ...settingsApi(),
+      listProviderCredentials: vi.fn().mockResolvedValue([
+        { provider: "openai", configured: false, source: "none" }
+      ]),
+      connectProviderCredential: vi.fn().mockResolvedValue(
+        { provider: "openai", configured: true, source: "keyring" }
+      ),
+      verifyProviderCredential: vi.fn().mockResolvedValue(
+        { provider: "openai", configured: true, verified: true, models: ["gpt-5.6-sol"] }
+      ),
+      removeProviderCredential: vi.fn().mockResolvedValue(
+        { provider: "openai", configured: false, source: "none" }
+      )
+    } as unknown as ConversationApi;
+    render(
+      <SettingsPanel
+        api={api}
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-provider"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const credential = screen.getByLabelText("OpenAI API key");
+    await user.type(credential, "sk-test-never-render-again");
+    await user.click(screen.getByRole("button", { name: "Connect OpenAI" }));
+    expect(api.connectProviderCredential).toHaveBeenCalledWith("openai", "sk-test-never-render-again");
+    expect(credential).toHaveValue("");
+    expect(screen.queryByDisplayValue("sk-test-never-render-again")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Verify OpenAI" }));
+    expect(await screen.findByText("gpt-5.6-sol")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove OpenAI" }));
+    expect(api.removeProviderCredential).toHaveBeenCalledWith("openai");
   });
 });

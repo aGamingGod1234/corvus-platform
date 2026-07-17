@@ -881,7 +881,11 @@
             "default": "codex",
             "enum": [
               "codex",
-              "claude"
+              "claude",
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
             ],
             "title": "Provider",
             "type": "string"
@@ -931,7 +935,11 @@
           "provider": {
             "enum": [
               "codex",
-              "claude"
+              "claude",
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
             ],
             "title": "Provider",
             "type": "string"
@@ -1590,6 +1598,95 @@
           "credential_ref"
         ],
         "title": "ProviderCreateRequest",
+        "type": "object"
+      },
+      "ProviderCredentialConnectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "credential": {
+            "format": "password",
+            "title": "Credential",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "title": "ProviderCredentialConnectRequest",
+        "type": "object"
+      },
+      "ProviderCredentialStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "keyring",
+              "environment",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "configured",
+          "source"
+        ],
+        "title": "ProviderCredentialStatusResponse",
+        "type": "object"
+      },
+      "ProviderCredentialVerificationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "configured",
+          "verified",
+          "models"
+        ],
+        "title": "ProviderCredentialVerificationResponse",
         "type": "object"
       },
       "RecordStatus": {
@@ -3717,7 +3814,11 @@
               "default": "codex",
               "enum": [
                 "codex",
-                "claude"
+                "claude",
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
               ],
               "title": "Provider",
               "type": "string"
@@ -4830,6 +4931,219 @@
           }
         },
         "summary": "Create Team"
+      }
+    },
+    "/api/provider-credentials": {
+      "get": {
+        "operationId": "provider_credential_statuses_api_provider_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                  },
+                  "title": "Response Provider Credential Statuses Api Provider Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Provider Credential Statuses"
+      }
+    },
+    "/api/provider-credentials/{provider}": {
+      "delete": {
+        "operationId": "remove_provider_credential_api_provider_credentials__provider__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Provider Credential"
+      },
+      "put": {
+        "operationId": "connect_provider_credential_api_provider_credentials__provider__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCredentialConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Provider Credential"
+      }
+    },
+    "/api/provider-credentials/{provider}/verify": {
+      "post": {
+        "operationId": "verify_provider_credential_api_provider_credentials__provider__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Provider Credential"
       }
     },
     "/api/routines/{routine_id}/run": {

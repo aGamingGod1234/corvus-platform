@@ -2067,4 +2067,35 @@
 
 ### Suggested Next Steps
 - Let PR #7 reviewers inspect this focused follow-up commit; do not merge until review is complete.
+
+## 2026-07-18 - Complete adaptive provider, streaming, and safety UX
+
+### What Was Implemented
+- Added ready-only local provider discovery with effective Codex model detection and exact Low, Medium, High, Extra high, and Max effort labels.
+- Added write-only keyring-backed OpenAI, Anthropic, Gemini, and xAI credentials with environment fallback, authenticated verification/model discovery, and direct low-latency Chat streaming; API providers cannot enter Build or MCP paths.
+- Added adaptive Enter/Ctrl+Enter behavior, sanitized GitHub-flavored Markdown, icon-led adaptive composer controls, configurable safety guidance, onboarding safety selection, and runtime-evidence-only safety activity.
+- Removed vague default/preview choices from runnable controls and verified the current Windows build plus paired desktop/mobile web layouts.
+
+### Files Modified
+- `corvus/mvp/{api_chat,provider_credentials,provider_catalog,local_chat,safety,api}.py` - provider discovery, secret custody, streaming adapters, truthful capability gates, and authenticated API routes.
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,OnboardingFlow,conversationApi,devicePreferences}.*` and `apps/web/src/styles/product-workspace.css` - composer, Markdown, Settings, onboarding, safety, provider, and responsive UX.
+- `tests/mvp/test_{api_chat,provider_credentials,provider_catalog,local_chat_api,safety}.py` and web tests - security, ownership, streaming, keyboard, Markdown, and UI regressions.
+- `openapi/corvus-mvp.json`, `apps/web/src/generated/api.ts`, `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - regenerated contracts and current verified scope.
+
+### Assumptions Made (flag these for review)
+- Authenticated provider model-list endpoints are the authority for API model names; native Codex uses its effective local config and otherwise exposes the reviewed recommended model.
+- API-key providers remain Chat-only until a provider-specific sandbox adapter can preserve the Build safety contract.
+
+### Known Issues / Deferred
+- Cursor, real E2B Cloud lifecycle, API-provider Build, production signing/notarization, and billing remain outside this milestone.
+- The bundled Computer-use connector was unavailable after the resumed session; the exact worktree desktop executable was launched and visually captured, while the same paired compiled UI was exercised through Playwright at desktop and mobile sizes.
+
+### Verification
+- Python: 1,062 passed and 6 expected skips across all 1,068 collected tests; Ruff and strict mypy passed.
+- Web: 153 tests passed; TypeScript and Vite production build passed.
+- Desktop: Tauri release `--no-bundle` compilation passed; the exact worktree executable launched with the current sidecar and rendered the bottom composer.
+- Browser: paired local runtime passed; safety details, Settings, model/effort labels, 1440x900 and 390x844 geometry, and zero console errors passed.
+
+### Suggested Next Steps
+- Push the verified commit to PR #7, resolve every actionable review thread/check, then produce checksum-bound unsigned alpha installers through the trusted multi-OS release workflow.
 - After approval, demo the path: Read-only chip → Build → policy confirmation → Stop/timeline → artifact receipt.

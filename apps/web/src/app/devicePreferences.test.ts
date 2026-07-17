@@ -13,12 +13,16 @@ describe("device preferences", () => {
     saveDevicePreferences(storage, "workspace-a", {
       ...DEFAULT_DEVICE_PREFERENCES,
       responseTone: "concise",
-      theme: "dark"
+      theme: "dark",
+      sendKeyMode: "ctrl-enter",
+      safetyGuidance: "detailed"
     });
 
     expect(loadDevicePreferences(storage, "workspace-a")).toMatchObject({
       responseTone: "concise",
-      theme: "dark"
+      theme: "dark",
+      sendKeyMode: "ctrl-enter",
+      safetyGuidance: "detailed"
     });
     expect(loadDevicePreferences(storage, "workspace-b")).toEqual(DEFAULT_DEVICE_PREFERENCES);
   });

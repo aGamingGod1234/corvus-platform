@@ -45,8 +45,9 @@ Local and future Cloud runtimes share contracts; clients never grant themselves 
 - A chat-first local agent workspace with on-demand history, provider/model/thinking controls, safe streamed reasoning summaries and work status, explicit MCP opt-in, and downloadable project artifacts.
 - Server-authored safety previews bind every Build confirmation to the exact runtime policy digest; completed builds return an owner-scoped safety receipt with observed activity, artifact hash, and screening result.
 - Owner-scoped runtime preferences for provider, model, thinking, Chat/Build mode, MCP consent, response style, and custom rules, persisted by the authenticated local backend with optimistic version checks.
+- Secure bring-your-own-key Chat adapters for OpenAI, Anthropic, Gemini, and xAI, with write-only keyring storage, environment fallback, authenticated verification/model discovery, and no secret returned to the client.
 
-Local Codex and Claude run through native CLIs detected on the device; the provider verifies its own sign-in when a run starts. Chat is read-only. Codex Build mode uses a fresh workspace-write sandbox, always disables user plugins/apps/hooks, enables MCP only after explicit consent, streams only safe summaries/status, and returns a bounded ZIP with a SHA-256 manifest. Network behavior follows the selected CLI sandbox policy; Corvus grants no separate network permission. Gemini and xAI/Grok are labeled Preview and Cursor is labeled unavailable until real adapters exist. Credentials remain references resolved only at the effect boundary and are never stored in prompts, events, synchronized state, artifacts, or audit output.
+Local Codex and Claude run through native CLIs detected on the device; the provider verifies its own sign-in when a run starts. Chat is read-only. Codex Build mode uses a fresh workspace-write sandbox, always disables user plugins/apps/hooks, enables MCP only after explicit consent, streams only safe summaries/status, and returns a bounded ZIP with a SHA-256 manifest. Network behavior follows the selected CLI sandbox policy; Corvus grants no separate network permission. API-key providers are deliberately Chat-only: prompts go directly to the selected provider over HTTPS, with no project filesystem, MCP, or sandbox claim. Keys live only in the operating-system keyring or provider environment variable and are never returned, logged, synchronized, placed in prompts, or included in artifacts/audit output. Cursor remains unavailable until a real adapter exists.
 
 ## Codex Usage
 
@@ -131,7 +132,7 @@ python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc8
 
 ## Status and scope
 
-This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, and the local Codex/Claude agent fast track. It is not formal certification. Real E2B lifecycle management, API-key providers, Gemini/Cursor/xAI adapters, durable provider/autonomy/credential/budget/kill repositories, and production signing remain explicit later milestones.
+This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, native Codex/Claude execution, and secure API Chat adapters. It is not formal certification. Real E2B lifecycle management, Cursor and API-provider Build adapters, durable provider/autonomy/budget/kill repositories, and production signing remain explicit later milestones.
 
 See [HACKATHON_STATUS.md](HACKATHON_STATUS.md) for verified commands and limitations, [ROADMAP.md](ROADMAP.md) for the readable delivery outline, and [PLAN.md](PLAN.md) for the authoritative security specification.
 

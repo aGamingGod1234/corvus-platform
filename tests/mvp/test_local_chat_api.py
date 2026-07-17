@@ -19,6 +19,7 @@ from corvus.mvp.local_chat import (
     LocalChatBackendHandle,
     LocalChatService,
 )
+from corvus.mvp.provider_credentials import ProviderCredentialService
 
 NOW = datetime(2026, 7, 17, 5, 0, tzinfo=UTC)
 
@@ -69,6 +70,20 @@ class _Backend:
     def artifact(self, handle: LocalChatBackendHandle) -> LocalBuildArtifact | None:
         del handle
         return None
+
+
+class _MemoryKeyring:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.values.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.values[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.values.pop((service, username), None)
 
 
 class _GatedBackend(_Backend):
@@ -225,6 +240,40 @@ async def test_local_chat_service_streams_first_event_before_terminal(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_local_chat_owner_backend_enables_configured_api_provider_without_cross_owner_access(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    service = LocalChatService(backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW)
+    api_backend = _Backend()
+    service.register_owner_backend("local:owner-1", "openai", api_backend)
+
+    started = await service.start(
+        owner="local:owner-1",
+        prompt="Hello",
+        provider="openai",
+        model="gpt-5.6-sol",
+        effort="high",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="owner-api-run",
+    )
+
+    assert started["provider"] == "openai"
+    with pytest.raises(Exception, match="provider_unavailable"):
+        await service.start(
+            owner="local:owner-2",
+            prompt="Hello",
+            provider="openai",
+            model="gpt-5.6-sol",
+            effort="high",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="other-owner-api-run",
+        )
+
+
+@pytest.mark.asyncio
 async def test_local_chat_non_following_poll_returns_after_buffered_events(tmp_path: Path) -> None:
     backend = _GatedBackend()
     service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
@@ -362,7 +411,8 @@ def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
 
     assert first.status_code == replay.status_code == 202
     assert first.json() == replay.json()
-    assert first.json()["model"] == "Codex default"
+    assert first.json()["model"] != "Codex default"
+    assert first.json()["model"]
     assert first.json()["storage"] == "this_device"
     assert backend.starts == 1
     assert conflict.status_code == 409
@@ -423,9 +473,55 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     catalog = {entry["id"]: entry for entry in response.json()}
     assert catalog["codex"]["status"] == "ready"
     assert catalog["claude"]["status"] == "unavailable"
-    assert catalog["gemini"]["status"] == "preview"
-    assert catalog["grok"]["status"] == "preview"
+    assert catalog["gemini"]["status"] == "unavailable"
+    assert catalog["xai"]["status"] == "unavailable"
     assert "path" not in response.text.lower()
+
+
+def test_provider_credentials_api_is_authenticated_csrf_protected_and_write_only(
+    tmp_path: Path,
+) -> None:
+    backend = _Backend()
+    local_chat = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    token = "bootstrap-provider-credentials"  # noqa: S105
+    client = TestClient(
+        create_app(
+            database=tmp_path / "credentials.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            local_chat_service=local_chat,
+            provider_credentials=ProviderCredentialService(keyring=_MemoryKeyring()),
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    csrf = client.get("/api/auth/session").json()["csrf_token"]
+
+    denied = client.put(
+        "/api/provider-credentials/openai",
+        json={"credential": "sk-test-never-return-this"},
+    )
+    assert denied.status_code == 403
+
+    connected = client.put(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+        json={"credential": "sk-test-never-return-this"},
+    )
+    assert connected.status_code == 200
+    assert connected.json() == {
+        "provider": "openai",
+        "configured": True,
+        "source": "keyring",
+    }
+    assert "sk-test-never-return-this" not in connected.text
+    assert client.get("/api/provider-credentials").json()[0]["provider"] == "openai"
+
+    removed = client.delete(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["configured"] is False
 
 
 def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(

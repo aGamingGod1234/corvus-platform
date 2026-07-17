@@ -149,13 +149,13 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `1051 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff, Ruff format, strict mypy, Bandit, and pip-audit passed.
+- Python: `1062 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff and strict mypy passed across the repository.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `144 passed` across 24 files; Vite production build passed (62 modules, 309.37 kB JS / 91.45 kB gzip).
+- Web: `153 passed` across 24 files; the Vite production build passed (319 modules, 485.34 kB JS / 145.21 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
 - M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 7 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt, Clippy with warnings denied, and `cargo check` passed. Windows Computer Use launched the exact worktree release binary, verified the simplified one-sidebar UI, detected Local Codex, streamed a live prompt through the sidecar, and rendered the exact `CORVUS_UI_OK` completion without HTTP 500. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
 - Release alpha: local Windows PyInstaller sidecar build passed and `--help` ran; Tauri NSIS release build passed; silent installer wrote `corvus-desktop.exe`, `corvus-mvp`, and `corvus-mvp.exe` into `%LOCALAPPDATA%\Corvus`; launching the installed app started both `corvus-desktop.exe` and the packaged `corvus-mvp.exe`. Vercel deployment `dpl_4kqEKRLSybjAHik6EUSAezPrRyYH` is Ready and aliased at `https://corvus-platform-tau.vercel.app`; project root was restored to `apps/web` for GitHub `main` deployments.
-- Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
+- Browser: real FastAPI + Vite pairing, safety-details disclosure, ready-only provider/model/effort controls, Settings, desktop layout, and 390x844 mobile composer geometry passed. The final authenticated run logged zero console errors or warnings and no horizontal overflow.
 - Design blueprint: the packet, source evidence, and fixed-viewport captures were completed and reviewed during implementation, then removed from the tracked submission by the explicitly approved `.antigravity/` repository-hygiene cleanup. The resulting UI, responsive behavior, and regression tests remain in the product source; no fake restaurant artifact was added to satisfy the incompatible legacy auditor.
 
 ## Final 20-point acceptance evidence

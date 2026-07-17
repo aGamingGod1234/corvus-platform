@@ -23,3 +23,12 @@ def test_build_preview_requires_confirmation_and_discloses_mcp_risk() -> None:
     assert elevated.requires_confirmation is True
     assert "external systems" in elevated.mcp.lower()
     assert protected.policy_digest != elevated.policy_digest
+
+
+def test_api_chat_never_claims_sandboxed_build_or_tool_access() -> None:
+    preview = build_safety_preview(provider="openai", mode="chat", mcp_enabled=False)
+
+    assert preview.label == "API chat"
+    assert "sent directly" in preview.network
+    assert "No project filesystem" in preview.filesystem
+    assert preview.requires_confirmation is False

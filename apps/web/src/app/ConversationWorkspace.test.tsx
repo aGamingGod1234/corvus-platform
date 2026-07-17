@@ -59,7 +59,6 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
     updatePreferences: vi.fn(),
     listProviders: vi.fn().mockResolvedValue([
       { id: "codex", label: "Codex", status: "ready", runtime: "local", models: [
-        { id: "default", label: "Codex default", recommended: true },
         { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true },
         { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", recommended: false },
         { id: "gpt-5.5", label: "GPT-5.5", recommended: false }
@@ -78,7 +77,7 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
       approval: "No blanket host approval was granted.", original_project_modified: false,
       artifact: { download_name: "corvus-project.zip", sha256_digest: "d".repeat(64), size_bytes: 42, secret_screening: "passed" }
     }),
-    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "Codex default", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
+    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "gpt-5.6-sol", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
     cancelRun: vi.fn().mockResolvedValue({ run_id: "run-1", state: "cancelled", accepted: true, reason_code: null }),
     openRunEvents: vi.fn().mockReturnValue(stream),
     artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`)
@@ -114,7 +113,7 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(api.startRun).toHaveBeenCalledWith("Draft release notes", {
-      provider: "codex", model: null, effort: "medium", mode: "chat", mcp_enabled: false,
+      provider: "codex", model: "gpt-5.6-sol", effort: "medium", mode: "chat", mcp_enabled: false,
       safety_digest: "a".repeat(64)
     }, expect.any(String));
     expect(screen.getByLabelText("Run status: working")).toBeVisible();
@@ -138,12 +137,13 @@ describe("ConversationWorkspace", () => {
     const user = userEvent.setup();
 
     expect(screen.queryByRole("complementary", { name: "thread list" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Claude (Detected)" })).toBeEnabled();
-    expect(screen.queryByRole("option", { name: "Maximum" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Claude" })).toBeEnabled();
+    expect(screen.queryByRole("option", { name: /Gemini|Grok|Unavailable|Preview/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Codex default/i })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent provider" }), "claude");
     expect(screen.getByRole("option", { name: "Claude Sonnet (recommended)" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent model" }), "opus");
-    expect(screen.getByRole("option", { name: "Maximum" })).toHaveValue("max");
+    expect(screen.getByRole("option", { name: "Max" })).toHaveValue("max");
     await user.selectOptions(screen.getByRole("combobox", { name: "Thinking level" }), "max");
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Review this change");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -178,7 +178,7 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByText(/original project is not modified/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     expect(api.startRun).toHaveBeenCalledWith("Build a landing page", {
-      provider: "codex", model: null, effort: "medium", mode: "build", mcp_enabled: true,
+      provider: "codex", model: "gpt-5.6-sol", effort: "medium", mode: "build", mcp_enabled: true,
       safety_digest: "c".repeat(64)
     }, expect.any(String));
     stream.emit("thinking", { type: "thinking", payload: { text: "Checking the project structure" } });
@@ -199,8 +199,55 @@ describe("ConversationWorkspace", () => {
     const user = userEvent.setup();
 
     expect(await screen.findByRole("button", { name: "View safety details" })).toHaveTextContent("Read-only");
+    expect(screen.getByRole("button", { name: "View safety details" })).toHaveAttribute(
+      "title",
+      "Click to see details"
+    );
     await user.click(screen.getByRole("button", { name: "View safety details" }));
     expect(screen.getByRole("region", { name: "Safety details" })).toHaveTextContent(/no separate network permission/i);
+  });
+
+  it("sends a single line with Enter and a multiline draft with Control+Enter", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="everyday" />);
+    const user = userEvent.setup();
+    const composer = screen.getByRole("textbox", { name: "Message Corvus" });
+
+    await user.type(composer, "Send this{enter}");
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+    stream.emit("completed", { type: "completed", payload: {} });
+    await screen.findByText("Completed");
+
+    await user.type(composer, "First line{shift>}{enter}{/shift}Second line{enter}");
+    expect(api.startRun).toHaveBeenCalledTimes(1);
+    expect(composer).toHaveValue("First line\nSecond line\n");
+    await user.type(composer, "{control>}{enter}{/control}");
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(2));
+    expect(api.startRun).toHaveBeenLastCalledWith(
+      "First line\nSecond line",
+      expect.any(Object),
+      expect.any(String)
+    );
+  });
+
+  it("renders streamed and durable messages as sanitized GitHub-flavored Markdown", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Use **safe** markdown");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("message", {
+      type: "message",
+      payload: { text: "**Done**\n\n- checked\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
+    });
+
+    expect(await screen.findByText("Done")).toHaveStyle({ fontWeight: "bold" });
+    expect(screen.getByText("checked").closest("ul")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
+    expect(document.querySelector("script")).toBeNull();
   });
 
   it("loads the safety receipt when a run is cancelled", async () => {

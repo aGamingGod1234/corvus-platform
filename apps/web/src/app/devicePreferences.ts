@@ -3,6 +3,8 @@ const DEVICE_PREFERENCES_VERSION = 1;
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ResponseTone = "concise" | "balanced" | "detailed";
+export type SendKeyMode = "adaptive" | "enter" | "ctrl-enter";
+export type SafetyGuidance = "standard" | "detailed";
 
 export interface DevicePreferences {
   version: typeof DEVICE_PREFERENCES_VERSION;
@@ -10,6 +12,8 @@ export interface DevicePreferences {
   responseTone: ResponseTone;
   customRules: string;
   mcpNotes: string;
+  sendKeyMode: SendKeyMode;
+  safetyGuidance: SafetyGuidance;
 }
 
 export const DEFAULT_DEVICE_PREFERENCES: DevicePreferences = Object.freeze({
@@ -17,7 +21,9 @@ export const DEFAULT_DEVICE_PREFERENCES: DevicePreferences = Object.freeze({
   theme: "system",
   responseTone: "balanced",
   customRules: "",
-  mcpNotes: ""
+  mcpNotes: "",
+  sendKeyMode: "adaptive",
+  safetyGuidance: "standard"
 });
 
 function storageKey(workspaceId: string): string {
@@ -34,7 +40,11 @@ function isDevicePreferences(value: unknown): value is DevicePreferences {
       candidate.responseTone === "balanced" ||
       candidate.responseTone === "detailed") &&
     typeof candidate.customRules === "string" &&
-    typeof candidate.mcpNotes === "string"
+    typeof candidate.mcpNotes === "string" &&
+    (candidate.sendKeyMode === "adaptive" ||
+      candidate.sendKeyMode === "enter" ||
+      candidate.sendKeyMode === "ctrl-enter") &&
+    (candidate.safetyGuidance === "standard" || candidate.safetyGuidance === "detailed")
   );
 }
 

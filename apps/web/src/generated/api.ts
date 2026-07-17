@@ -474,6 +474,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/provider-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider Credential Statuses */
+        get: operations["provider_credential_statuses_api_provider_credentials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/provider-credentials/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Connect Provider Credential */
+        put: operations["connect_provider_credential_api_provider_credentials__provider__put"];
+        post?: never;
+        /** Remove Provider Credential */
+        delete: operations["remove_provider_credential_api_provider_credentials__provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/provider-credentials/{provider}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Provider Credential */
+        post: operations["verify_provider_credential_api_provider_credentials__provider__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/routines/{routine_id}/run": {
         parameters: {
             query?: never;
@@ -1341,7 +1393,7 @@ export interface components {
              * @default codex
              * @enum {string}
              */
-            provider: "codex" | "claude";
+            provider: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
             /** Safety Digest */
             safety_digest?: string | null;
         };
@@ -1362,7 +1414,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "codex" | "claude";
+            provider: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
             /** Run Id */
             run_id: string;
             safety: components["schemas"]["SafetyPreviewResponse"];
@@ -1614,6 +1666,43 @@ export interface components {
             credential_ref: string;
             /** Provider */
             provider: string;
+        };
+        /** ProviderCredentialConnectRequest */
+        ProviderCredentialConnectRequest: {
+            /**
+             * Credential
+             * Format: password
+             */
+            credential: string;
+        };
+        /** ProviderCredentialStatusResponse */
+        ProviderCredentialStatusResponse: {
+            /** Configured */
+            configured: boolean;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "gemini" | "xai";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "keyring" | "environment" | "none";
+        };
+        /** ProviderCredentialVerificationResponse */
+        ProviderCredentialVerificationResponse: {
+            /** Configured */
+            configured: boolean;
+            /** Models */
+            models: string[];
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "gemini" | "xai";
+            /** Verified */
+            verified: boolean;
         };
         /**
          * RecordStatus
@@ -2677,7 +2766,7 @@ export interface operations {
     local_chat_safety_preview_api_local_chat_safety_preview_get: {
         parameters: {
             query?: {
-                provider?: "codex" | "claude";
+                provider?: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
                 mode?: "chat" | "build";
                 mcp_enabled?: boolean;
             };
@@ -3383,6 +3472,129 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Team"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    provider_credential_statuses_api_provider_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"][];
+                };
+            };
+        };
+    };
+    connect_provider_credential_api_provider_credentials__provider__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCredentialConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_provider_credential_api_provider_credentials__provider__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_provider_credential_api_provider_credentials__provider__verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialVerificationResponse"];
                 };
             };
             /** @description Validation Error */

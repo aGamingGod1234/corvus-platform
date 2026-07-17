@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { components } from "../generated/api";
 import { OnboardingFlow, type OnboardingFlowProps } from "./OnboardingFlow";
+import { MemoryStorage } from "../test/memoryStorage";
 
 type Workspace = components["schemas"]["Workspace"];
 
@@ -26,6 +27,7 @@ function onboardingProps(overrides: Partial<OnboardingFlowProps> = {}): Onboardi
     onExperienceSaved: vi.fn().mockResolvedValue({ experience_kind: "developer", version: 5 }),
     onGoogleStart: vi.fn(),
     onWorkspaceConfirmed: vi.fn(),
+    storage: new MemoryStorage(),
     ...overrides
   };
 }
@@ -83,6 +85,9 @@ describe("OnboardingFlow", () => {
 
     await user.click(screen.getByRole("radio", { name: /Team/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("heading", { name: "How much safety guidance do you want?" })).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: /Detailed guidance/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByRole("radio", { name: /Cloud Preview/ })).toBeDisabled();
     await user.click(screen.getByRole("radio", { name: /Local/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -111,6 +116,8 @@ describe("OnboardingFlow", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("radio", { name: /Individual/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("radio", { name: /Standard guidance/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("radio", { name: /Local/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));

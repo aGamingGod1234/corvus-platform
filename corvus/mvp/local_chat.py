@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import tomllib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -36,10 +37,10 @@ from corvus.infrastructure.agent_runtimes.codex import (
 from corvus.mvp.provider_catalog import build_provider_catalog
 from corvus.mvp.safety import SafetyPreview, build_safety_preview
 
-_CODEX_DEFAULT_LABEL = "Codex default"
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
+_SCREENING_OK = "passed"
 _WINDOWS_CODEX_TARGETS = {
     "amd64": ("codex-win32-x64", "x86_64-pc-windows-msvc"),
     "arm64": ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
@@ -136,12 +137,23 @@ class LocalChatService:
         if not configured:
             raise ValueError("local_chat_backend_required")
         self._backends = configured
+        self._owner_backends: dict[tuple[str, str], LocalChatBackend] = {}
         self._backend = configured.get("codex") or next(iter(configured.values()))
         self._cursor_secret = cursor_secret
         self._clock = clock or (lambda: datetime.now(UTC))
         self._runs: dict[UUID, _RunRecord] = {}
         self._idempotency: dict[tuple[str, str], UUID] = {}
         self._start_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def register_owner_backend(
+        self,
+        owner: str,
+        provider: str,
+        backend: LocalChatBackend,
+    ) -> None:
+        if not owner.strip() or not provider.strip():
+            raise ValueError("owner_backend_scope_invalid")
+        self._owner_backends[(owner, provider)] = backend
 
     async def start(
         self,
@@ -156,7 +168,7 @@ class LocalChatService:
         idempotency_key: str,
         safety_digest: str | None = None,
     ) -> dict[str, object]:
-        backend = self._backends.get(provider)
+        backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
         if backend is None:
             raise LocalChatError("provider_unavailable")
         if provider == "codex" and effort == "max":
@@ -240,12 +252,19 @@ class LocalChatService:
             )
         except (CodexAdapterError, ClaudeAdapterError) as error:
             raise LocalChatError(error.reason_code) from error
+        except RuntimeError as error:
+            reason_code = getattr(error, "reason_code", None) or str(error)
+            raise LocalChatError(reason_code or "provider_start_failed") from error
         response: dict[str, object] = {
             "run_id": str(run_id),
             "handle_id": str(handle.id),
             "state": "running",
             "provider": provider,
-            "model": model or (_CODEX_DEFAULT_LABEL if provider == "codex" else "Claude Sonnet 5"),
+            "model": model or (
+                (_discover_codex_effective_model() or "Codex configured model")
+                if provider == "codex"
+                else "Claude Sonnet"
+            ),
             "mode": mode,
             "storage": "this_device",
             "created_at": self._clock().isoformat(),
@@ -367,7 +386,7 @@ class LocalChatService:
                 "download_name": artifact.download_name,
                 "sha256_digest": artifact.sha256_digest,
                 "size_bytes": artifact.size_bytes,
-                "secret_screening": "passed",
+                "secret_screening": _SCREENING_OK,
             }
         return {
             "run_id": str(run_id),
@@ -407,6 +426,7 @@ class LocalChatService:
         entries = build_provider_catalog(
             codex_available="codex" in self._backends,
             claude_available="claude" in self._backends,
+            codex_effective_model=_discover_codex_effective_model(),
         )
         return tuple(
             {
@@ -669,6 +689,20 @@ def _discover_claude_executable() -> Path | None:
     if candidate.suffix.lower() not in {"", ".exe"} or not candidate.is_file():
         return None
     return candidate.resolve()
+
+
+def _discover_codex_effective_model() -> str | None:
+    config_path = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
+    try:
+        with config_path.open("rb") as config_file:
+            config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    model = config.get("model")
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip()
+    return normalized if 0 < len(normalized) <= 100 else None
 
 
 def _windows_npm_codex_executable() -> Path | None:
