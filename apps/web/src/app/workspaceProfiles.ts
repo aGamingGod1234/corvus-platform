@@ -27,9 +27,9 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Everyday · Individual",
     eyebrow: "Your private workspace",
     routes: [
-      { id: "home", label: "Home", description: "Today, recent outcomes, and next steps" },
+      { id: "threads", label: "Conversations", description: "Ask Corvus and follow the result" },
+      { id: "schedule", label: "Schedule", description: "Create routines and run them now" },
       { id: "my-work", label: "My Work", description: "Goals, plans, progress, and results" },
-      { id: "automations", label: "Automations", description: "Scheduled and repeatable work" },
       { id: "files", label: "Files", description: "Inputs, sources, and deliverables" },
       SETTINGS_ROUTE
     ]
@@ -40,10 +40,10 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Developer · Individual",
     eyebrow: "Local engineering workspace",
     routes: [
-      { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
       { id: "threads", label: "Threads", description: "Agent plans and execution context" },
-      { id: "changes", label: "Changes", description: "Files, diffs, and artifacts" },
+      { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
       { id: "runs", label: "Runs", description: "Workflows, logs, checks, and budgets" },
+      { id: "schedule", label: "Schedule", description: "Authorized routines and manual runs" },
       { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" },
       SETTINGS_ROUTE
     ]
@@ -54,10 +54,10 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Everyday · Team",
     eyebrow: "Shared work preview",
     routes: [
-      { id: "team-home", label: "Team Home", description: "Shared outcomes and team activity" },
+      { id: "threads", label: "Conversations", description: "Team-shaped conversations on this device" },
+      { id: "schedule", label: "Schedule", description: "Shared routine presentation and run-now controls" },
       { id: "assigned-work", label: "Assigned Work", description: "Owners, due work, and handoffs" },
       { id: "approvals", label: "Approvals", description: "Decisions that need review" },
-      { id: "knowledge", label: "Knowledge", description: "Shared sources and decisions" },
       { id: "people", label: "People", description: "Members, roles, and invitations" },
       SETTINGS_ROUTE
     ]
@@ -68,10 +68,11 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Developer · Team",
     eyebrow: "Governed engineering preview",
     routes: [
+      { id: "threads", label: "Threads", description: "Agent plans and local run context" },
       { id: "repositories", label: "Repositories", description: "Registered repositories and ownership" },
-      { id: "work-queue", label: "Work Queue", description: "Assignments, dependencies, and runs" },
+      { id: "runs", label: "Runs", description: "Run status, events, and budgets" },
       { id: "reviews", label: "Reviews", description: "Diffs, checks, comments, and approvals" },
-      { id: "environments", label: "Environments", description: "Runtime readiness without secrets" },
+      { id: "schedule", label: "Schedule", description: "Authorized routines and manual runs" },
       { id: "policies", label: "Policies", description: "Access, autonomy, budget, and retention" },
       SETTINGS_ROUTE
     ]

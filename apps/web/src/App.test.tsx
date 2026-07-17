@@ -171,6 +171,7 @@ describe("Corvus operator console", () => {
 
     await user.type(await screen.findByLabelText("One-time pairing value"), "ephemeral-pairing-value");
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
 
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
     expect(api.session).toHaveBeenCalledTimes(2);
@@ -246,6 +247,7 @@ describe("Corvus operator console", () => {
     });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
 
     await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
     await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
@@ -302,7 +304,9 @@ describe("Corvus operator console", () => {
     }
     vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
 
+    const user = userEvent.setup();
     renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
     await screen.findByText("Browser delivery");
     await waitFor(() => expect(streams).toHaveLength(1));
     streams[0].emit("work_item.running");

@@ -41,6 +41,11 @@ import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncPr
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 import { SyncConflictPanel } from "./components/SyncConflictPanel";
+import { ConversationWorkspace } from "./app/ConversationWorkspace";
+import { createConversationApi } from "./app/conversationApi";
+import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
+import { SettingsPanel } from "./app/SettingsPanel";
+import { loadDevicePreferences } from "./app/devicePreferences";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -170,6 +175,15 @@ export function App({
     selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
 
   useEffect(() => {
+    const deviceScope = selectedWorkspace?.id ?? localSession?.user_id ?? null;
+    if (deviceScope === null) return;
+    document.documentElement.dataset.theme = loadDevicePreferences(
+      preferenceStorage,
+      deviceScope
+    ).theme;
+  }, [localSession?.user_id, preferenceStorage, selectedWorkspace?.id]);
+
+  useEffect(() => {
     if (localRuntime || auth?.status !== "authenticated") return;
     setLegacyPreference(loadLegacyWorkspacePreference(preferenceStorage).candidate);
   }, [auth?.status, localRuntime, preferenceStorage]);
@@ -206,7 +220,7 @@ export function App({
     if (!localRuntime) return;
     const generation = ++workspaceGenerationRef.current;
     setPhase("checking");
-    setActiveRoute("execution");
+    setActiveRoute("threads");
     setProjects([]);
     setActiveProject(null);
     setLocalSession(null);
@@ -676,7 +690,7 @@ export function App({
     }
     return (
       <LocalRuntimeShell
-        activeRoute={activeRoute || "execution"}
+        activeRoute={activeRoute || "threads"}
         error={error}
         inspector={(
           <Inspector
@@ -706,7 +720,32 @@ export function App({
         )}
         session={localSession}
       >
-        {activeRoute === "skills" ? operationsSurface : executionSurface}
+        {(activeRoute || "threads") === "threads" ? (
+          <ConversationWorkspace
+            api={createConversationApi(localSession.csrf_token)}
+            experience="developer"
+            storage={preferenceStorage}
+            storageScope={localSession.user_id}
+          />
+        ) : activeRoute === "schedule" ? (
+          <RoutinesWorkspace
+            busy={busy}
+            onCreate={createRoutine}
+            onRun={runRoutine}
+            projectName={activeProject?.name ?? null}
+            routines={operations.routines}
+            skills={operations.skills}
+          />
+        ) : activeRoute === "settings" ? (
+          <SettingsPanel
+            experience="developer"
+            onExperienceChange={async () => undefined}
+            profileEditable={false}
+            storage={preferenceStorage}
+            workspaceId={localSession.user_id}
+            workspaceKind="individual"
+          />
+        ) : activeRoute === "skills" ? operationsSurface : executionSurface}
       </LocalRuntimeShell>
     );
   }
@@ -834,12 +873,17 @@ export function App({
             onRetry={workspaceSync.retryConflict}
           />
         ) : (activeRoute || profile.routes[0].id) === "settings" ? (
-          <WorkspaceRouter
-            activeRoute="settings"
-            executionSurface={executionSurface}
-            operationsSurface={operationsSurface}
-            profile={profile}
-            projectName={activeProject?.name ?? null}
+          <SettingsPanel
+            experience={profile.experience}
+            onExperienceChange={async (nextExperience) => {
+              if (nextExperience === profile.experience) return;
+              const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
+              await workspaceSync.saveExperience(nextExperience, expectedVersion);
+              await auth.reloadSession();
+            }}
+            storage={preferenceStorage}
+            workspaceId={selectedWorkspace.id}
+            workspaceKind={selectedWorkspace.workspace_kind}
           />
         ) : hostedLocalHandoff ? (
           <LocalRuntimeLauncher
@@ -877,7 +921,7 @@ function LocalRuntimeShell({
   children: ReactNode;
   error: string;
   inspector: ReactNode;
-  onNavigate(routeId: "execution" | "skills"): void;
+  onNavigate(routeId: "threads" | "execution" | "schedule" | "skills" | "settings"): void;
   projectContext: ReactNode;
   session: Session;
 }) {
@@ -887,7 +931,17 @@ function LocalRuntimeShell({
         <div className="wordmark">Corvus</div>
         <nav aria-label="Local runtime navigation" className="view-switcher">
           <a
-            aria-current={activeRoute !== "skills" ? "page" : undefined}
+            aria-current={activeRoute === "threads" ? "page" : undefined}
+            href="#threads"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("threads");
+            }}
+          >
+            Threads
+          </a>
+          <a
+            aria-current={activeRoute === "execution" ? "page" : undefined}
             href="#execution"
             onClick={(event) => {
               event.preventDefault();
@@ -895,6 +949,16 @@ function LocalRuntimeShell({
             }}
           >
             Repositories
+          </a>
+          <a
+            aria-current={activeRoute === "schedule" ? "page" : undefined}
+            href="#schedule"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("schedule");
+            }}
+          >
+            Schedule
           </a>
           <a
             aria-current={activeRoute === "skills" ? "page" : undefined}
@@ -905,6 +969,16 @@ function LocalRuntimeShell({
             }}
           >
             Skills
+          </a>
+          <a
+            aria-current={activeRoute === "settings" ? "page" : undefined}
+            href="#settings"
+            onClick={(event) => {
+              event.preventDefault();
+              onNavigate("settings");
+            }}
+          >
+            Settings
           </a>
         </nav>
         <div className="connection-state"><span />{session.username}</div>

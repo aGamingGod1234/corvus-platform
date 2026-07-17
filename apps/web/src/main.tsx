@@ -7,6 +7,7 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "./styles.css";
 import "./styles/onboarding.css";
 import "./styles/adaptive-shell.css";
+import "./styles/product-workspace.css";
 import { PlatformApp } from "./PlatformApp";
 
 createRoot(document.getElementById("root")!).render(

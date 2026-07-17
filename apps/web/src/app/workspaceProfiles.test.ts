@@ -4,10 +4,10 @@ import { getWorkspaceProfile } from "./workspaceProfiles";
 
 describe("workspace profiles", () => {
   it.each([
-    ["everyday", "individual", ["Home", "My Work", "Automations", "Files", "Settings"]],
-    ["developer", "individual", ["Repositories", "Threads", "Changes", "Runs", "Skills", "Settings"]],
-    ["everyday", "team", ["Team Home", "Assigned Work", "Approvals", "Knowledge", "People", "Settings"]],
-    ["developer", "team", ["Repositories", "Work Queue", "Reviews", "Environments", "Policies", "Settings"]]
+    ["everyday", "individual", ["Conversations", "Schedule", "My Work", "Files", "Settings"]],
+    ["developer", "individual", ["Threads", "Repositories", "Runs", "Schedule", "Skills", "Settings"]],
+    ["everyday", "team", ["Conversations", "Schedule", "Assigned Work", "Approvals", "People", "Settings"]],
+    ["developer", "team", ["Threads", "Repositories", "Runs", "Reviews", "Schedule", "Policies", "Settings"]]
   ] as const)("defines %s %s navigation", (experience, scope, labels) => {
     expect(getWorkspaceProfile(experience, scope).routes.map((route) => route.label)).toEqual(labels);
   });

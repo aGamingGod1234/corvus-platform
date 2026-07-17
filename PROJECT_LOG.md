@@ -1799,3 +1799,33 @@
 ### Suggested Next Steps
 - Independently re-review the two Task 2.2 High repairs.
 - Begin Task 2.3 only after approval.
+
+## 2026-07-17 - Deliver hackathon chat-first product vertical
+
+### What Was Implemented
+- Added a chat-first local workspace with versioned device-only threads, transcript, composer, Local Codex/default-model controls, durable SSE output, stop control, and Plan-to-Work-to-Result run status.
+- Added real Schedule/Routines create, list, and run-now surfaces over the existing authorized routine APIs while labeling timed recurrence Coming soon.
+- Added real Settings for light/dark/system theme, response tone, custom rules, synced profile changes on hosted accounts, and truthful MCP/integration placeholders.
+- Reordered all four adaptive persona/workspace profiles around Conversations/Threads and Schedule while preserving distinct everyday/developer and individual/team information density.
+- Kept Google-first hosted onboarding, local pairing, authority, sync, Cloud Preview, and local-runtime handoff boundaries intact.
+
+### Files Modified
+- `apps/web/src/App.tsx` - wires local chat, routines, settings, theme restoration, and chat-first local navigation.
+- `apps/web/src/app/ConversationWorkspace.tsx`, `conversationApi.ts`, and `conversationStorage.ts` - paired Local Codex execution, SSE presentation, cancellation, and strict device-only transcript storage.
+- `apps/web/src/app/SettingsPanel.tsx` and `devicePreferences.ts` - account profile control plus versioned workspace/device settings.
+- `apps/web/src/app/RoutinesWorkspace.tsx` - authorized routine creation and run-now surface.
+- `apps/web/src/app/workspaceProfiles.ts` - four coherent chat-first navigation profiles.
+- `apps/web/src/styles/product-workspace.css` and `apps/web/src/main.tsx` - responsive product UI and explicit theme tokens.
+- Focused and integration web tests - RED/GREEN coverage for storage, API proofs, chat/run/stop, settings, routines, profiles, and legacy navigation.
+
+### Assumptions Made (flag these for review)
+- The local-chat contract confirmed during implementation is stable: paired `corvus_session`, legacy CSRF, idempotency key, Local Codex configured default, cookie-auth SSE, and device-only storage labeling.
+- Direct loopback sessions do not invent a synced persona; profile editing is disabled there and points to the signed-in web app.
+
+### Known Issues / Deferred
+- Conversation transcript synchronization, Cloud execution, E2B, additional model providers, executable MCP connections, integration OAuth, timed recurrence, advanced team administration, and billing remain deferred.
+- Responsive Computer Use screenshots and real desktop acceptance are owned by the consolidated root verification pass.
+
+### Suggested Next Steps
+- Run the paired local-chat backend and complete desktop/mobile Computer Use acceptance.
+- Review the combined backend/frontend vertical before the single hackathon PR.
