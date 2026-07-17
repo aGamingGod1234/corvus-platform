@@ -2035,3 +2035,36 @@
 ### Suggested Next Steps
 - Open the single unmerged UX PR for code-owner and automated review.
 - Keep the next Cloud/identity and collaboration milestones behind their existing explicit authorization boundaries.
+
+## 2026-07-17 - Add an intuitive, backend-proven local safety journey
+
+### What Was Implemented
+- Added deterministic server-authored safety previews for provider, Chat/Build mode, and MCP state, with a SHA-256 policy digest that Build must present before the backend starts a run.
+- Added a compact protection indicator, readable policy details, fail-closed Build confirmation, observed live safety timeline, existing emergency Stop access, and an owner-scoped safety receipt for completed, cancelled, or failed runs.
+- Added a Safety settings category that explains immutable Build confirmation, scratch isolation, network disclosure, emergency stop behavior, and receipt evidence without offering a full-access bypass.
+- Kept Cloud/E2B, OAuth, new sandbox engines, policy rewrites, and expanded host access outside this milestone.
+
+### Files Modified
+- `corvus/mvp/safety.py`, `corvus/mvp/local_chat.py`, and `corvus/mvp/api.py` - authoritative preview, digest enforcement, stored policy snapshot, and receipt endpoint.
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,conversationApi}.tsx` and tests - safety UX, confirmation, timeline, settings, and typed client methods.
+- `apps/web/src/styles/product-workspace.css` - compact responsive protection, receipt, and confirmation presentation.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` - regenerated API contracts.
+- `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - documented the verified behavior and boundaries.
+
+### Assumptions Made (flag these for review)
+- The native CLI remains the authority for network behavior; Corvus truthfully discloses that it grants no separate network permission rather than claiming all network access is blocked.
+- A returned `LocalBuildArtifact` is produced by the existing Corvus secret-screened packaging contract; the receipt records that result without reimplementing packaging.
+
+### Known Issues / Deferred
+- Runtime-native per-tool approval prompts are not fabricated in the UI; local alpha host actions remain blocked and Build confirmation is the available consent boundary.
+- Cloud/E2B execution, Google identity continuity, production collaboration, billing, and new provider adapters remain at their existing later milestone boundaries.
+
+### Verification
+- Python: 1,054 passed with 6 intentional platform/database skips, split sequentially on Windows to avoid SQLite contention; Ruff, format, strict Mypy, and Bandit passed.
+- Web: 148 tests passed across 24 files; TypeScript and the Vite production build passed.
+- Desktop: Tauri release no-bundle compilation passed and the live process path was verified against the worktree build with the current Python sidecar.
+- Browser: real local pairing passed; desktop 1440x900 and phone 390x844 geometry kept the composer in viewport; Safety settings, protected Build preview, and the confirmation sheet were verified without starting a provider run.
+
+### Suggested Next Steps
+- Let PR #7 reviewers inspect this focused follow-up commit; do not merge until review is complete.
+- After approval, demo the path: Read-only chip → Build → policy confirmation → Stop/timeline → artifact receipt.

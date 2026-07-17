@@ -34,6 +34,7 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Capability discovery is fail-closed and typed. Deterministic contract adapters remain intact; installed native Codex and Claude CLIs are now discovered and connected for paired same-device runs. Gemini and xAI/Grok remain Preview, while Cursor remains unavailable.
 - The composer exposes verified providers, recommended models, thinking effort, Chat/Build mode, and explicit MCP opt-in. Messages plus provider-supplied safe reasoning summaries and generic work status stream over owner-scoped SSE.
 - Chat is read-only. Codex Build runs in a fresh workspace-write sandbox, always disables user plugins/apps/hooks, can use configured MCP servers only after explicit opt-in, and hands back a bounded, secret-screened ZIP with a SHA-256 manifest. Real Windows acceptance produced and verified the requested project artifact.
+- The backend now authors the safety preview shown in the composer, requires its current digest before Build starts, and issues an owner-scoped terminal receipt. The UI does not claim network blocking: it states that network follows the selected CLI sandbox policy and that Corvus grants no separate permission.
 - Durable provider binding, autonomy, credential, budget, kill-switch, and post-effect audit-reconciliation repositories remain an explicit later milestone. M2A does not claim those production integrations.
 
 ## Install and run

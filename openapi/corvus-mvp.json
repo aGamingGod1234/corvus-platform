@@ -885,6 +885,18 @@
             ],
             "title": "Provider",
             "type": "string"
+          },
+          "safety_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safety Digest"
           }
         },
         "required": [
@@ -928,6 +940,9 @@
             "title": "Run Id",
             "type": "string"
           },
+          "safety": {
+            "$ref": "#/components/schemas/SafetyPreviewResponse"
+          },
           "state": {
             "enum": [
               "running",
@@ -951,7 +966,8 @@
           "model",
           "mode",
           "storage",
-          "created_at"
+          "created_at",
+          "safety"
         ],
         "title": "LocalChatStartResponse",
         "type": "object"
@@ -1722,6 +1738,167 @@
           "created_at"
         ],
         "title": "RoutineRun",
+        "type": "object"
+      },
+      "SafetyArtifactResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "download_name": {
+            "title": "Download Name",
+            "type": "string"
+          },
+          "secret_screening": {
+            "const": "passed",
+            "title": "Secret Screening",
+            "type": "string"
+          },
+          "sha256_digest": {
+            "title": "Sha256 Digest",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "download_name",
+          "sha256_digest",
+          "size_bytes",
+          "secret_screening"
+        ],
+        "title": "SafetyArtifactResponse",
+        "type": "object"
+      },
+      "SafetyPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approvals": {
+            "title": "Approvals",
+            "type": "string"
+          },
+          "execution": {
+            "title": "Execution",
+            "type": "string"
+          },
+          "filesystem": {
+            "title": "Filesystem",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read_only",
+              "protected",
+              "elevated"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "mcp": {
+            "title": "Mcp",
+            "type": "string"
+          },
+          "network": {
+            "title": "Network",
+            "type": "string"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "policy_digest": {
+            "title": "Policy Digest",
+            "type": "string"
+          },
+          "requires_confirmation": {
+            "title": "Requires Confirmation",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_digest",
+          "level",
+          "label",
+          "summary",
+          "execution",
+          "filesystem",
+          "network",
+          "mcp",
+          "approvals",
+          "output",
+          "requires_confirmation"
+        ],
+        "title": "SafetyPreviewResponse",
+        "type": "object"
+      },
+      "SafetyReceiptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "activities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "approval": {
+            "title": "Approval",
+            "type": "string"
+          },
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SafetyArtifactResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcp_used": {
+            "title": "Mcp Used",
+            "type": "boolean"
+          },
+          "original_project_modified": {
+            "title": "Original Project Modified",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "safety": {
+            "$ref": "#/components/schemas/SafetyPreviewResponse"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "safety",
+          "activities",
+          "mcp_used",
+          "approval",
+          "original_project_modified",
+          "artifact"
+        ],
+        "title": "SafetyReceiptResponse",
         "type": "object"
       },
       "SessionPrincipal": {
@@ -3486,6 +3663,114 @@
           }
         },
         "summary": "Local Chat Events"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/safety-receipt": {
+      "get": {
+        "operationId": "local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyReceiptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Safety Receipt"
+      }
+    },
+    "/api/local-chat/safety-preview": {
+      "get": {
+        "operationId": "local_chat_safety_preview_api_local_chat_safety_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "default": "codex",
+              "enum": [
+                "codex",
+                "claude"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "chat",
+              "enum": [
+                "chat",
+                "build"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mcp_enabled",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Mcp Enabled",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Safety Preview"
       }
     },
     "/api/offline-intents": {

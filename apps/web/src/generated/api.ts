@@ -227,6 +227,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local-chat/runs/{run_id}/safety-receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Safety Receipt */
+        get: operations["local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/safety-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Safety Preview */
+        get: operations["local_chat_safety_preview_api_local_chat_safety_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -1308,6 +1342,8 @@ export interface components {
              * @enum {string}
              */
             provider: "codex" | "claude";
+            /** Safety Digest */
+            safety_digest?: string | null;
         };
         /** LocalChatStartResponse */
         LocalChatStartResponse: {
@@ -1329,6 +1365,7 @@ export interface components {
             provider: "codex" | "claude";
             /** Run Id */
             run_id: string;
+            safety: components["schemas"]["SafetyPreviewResponse"];
             /**
              * State
              * @enum {string}
@@ -1636,6 +1673,68 @@ export interface components {
             skill_version_id: string;
             /** Status */
             status: string;
+        };
+        /** SafetyArtifactResponse */
+        SafetyArtifactResponse: {
+            /** Download Name */
+            download_name: string;
+            /**
+             * Secret Screening
+             * @constant
+             */
+            secret_screening: "passed";
+            /** Sha256 Digest */
+            sha256_digest: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** SafetyPreviewResponse */
+        SafetyPreviewResponse: {
+            /** Approvals */
+            approvals: string;
+            /** Execution */
+            execution: string;
+            /** Filesystem */
+            filesystem: string;
+            /** Label */
+            label: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "read_only" | "protected" | "elevated";
+            /** Mcp */
+            mcp: string;
+            /** Network */
+            network: string;
+            /** Output */
+            output: string;
+            /** Policy Digest */
+            policy_digest: string;
+            /** Requires Confirmation */
+            requires_confirmation: boolean;
+            /** Summary */
+            summary: string;
+        };
+        /** SafetyReceiptResponse */
+        SafetyReceiptResponse: {
+            /** Activities */
+            activities: string[];
+            /** Approval */
+            approval: string;
+            artifact: components["schemas"]["SafetyArtifactResponse"] | null;
+            /** Mcp Used */
+            mcp_used: boolean;
+            /** Original Project Modified */
+            original_project_modified: boolean;
+            /** Run Id */
+            run_id: string;
+            safety: components["schemas"]["SafetyPreviewResponse"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed" | "cancelled";
         };
         /** SessionPrincipal */
         SessionPrincipal: {
@@ -2531,6 +2630,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SafetyReceiptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_safety_preview_api_local_chat_safety_preview_get: {
+        parameters: {
+            query?: {
+                provider?: "codex" | "claude";
+                mode?: "chat" | "build";
+                mcp_enabled?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SafetyPreviewResponse"];
                 };
             };
             /** @description Validation Error */

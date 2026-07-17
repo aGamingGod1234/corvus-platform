@@ -369,6 +369,50 @@ def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
     assert conflict.json()["detail"] == "idempotency_conflict"
 
 
+def test_local_build_requires_current_safety_digest(tmp_path: Path) -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    client, headers = _client(tmp_path, "safety-digest", service)
+    preview = client.get(
+        "/api/local-chat/safety-preview",
+        params={"provider": "codex", "mode": "build", "mcp_enabled": False},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["level"] == "protected"
+    assert preview.json()["requires_confirmation"] is True
+
+    body = {
+        "prompt": "Build a safe project",
+        "provider": "codex",
+        "mode": "build",
+        "mcp_enabled": False,
+    }
+    missing = client.post(
+        "/api/local-chat/runs",
+        json=body,
+        headers={**headers, "Idempotency-Key": "missing-safety"},
+    )
+    stale = client.post(
+        "/api/local-chat/runs",
+        json={**body, "safety_digest": "0" * 64},
+        headers={**headers, "Idempotency-Key": "stale-safety"},
+    )
+    started = client.post(
+        "/api/local-chat/runs",
+        json={**body, "safety_digest": preview.json()["policy_digest"]},
+        headers={**headers, "Idempotency-Key": "verified-safety"},
+    )
+
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == "safety_digest_mismatch"
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "safety_digest_mismatch"
+    assert started.status_code == 202
+    assert started.json()["safety"] == preview.json()
+    assert backend.starts == 1
+
+
 def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -> None:
     service = LocalChatService(backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW)
     client, _headers = _client(tmp_path, "catalog", service)
@@ -497,6 +541,10 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
     )
     owner, headers = _client(tmp_path, "builder", service)
     stranger, _stranger_headers = _client(tmp_path, "not-builder", service)
+    preview = owner.get(
+        "/api/local-chat/safety-preview",
+        params={"provider": "codex", "mode": "build", "mcp_enabled": False},
+    ).json()
     started = owner.post(
         "/api/local-chat/runs",
         json={
@@ -505,6 +553,7 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
             "effort": "high",
             "mode": "build",
             "mcp_enabled": False,
+            "safety_digest": preview["policy_digest"],
         },
         headers={**headers, "Idempotency-Key": "build-once"},
     )
@@ -518,6 +567,15 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
     assert download.content == b"PK-safe-build"
     assert download.headers["content-disposition"].endswith('filename="corvus-build.zip"')
     assert stranger.get(f"/api/local-chat/runs/{run_id}/artifact").status_code == 404
+
+    receipt = owner.get(f"/api/local-chat/runs/{run_id}/safety-receipt")
+    assert receipt.status_code == 200
+    assert receipt.json()["run_id"] == run_id
+    assert receipt.json()["safety"] == preview
+    assert receipt.json()["original_project_modified"] is False
+    assert receipt.json()["artifact"]["sha256_digest"] == "a" * 64
+    assert receipt.json()["artifact"]["secret_screening"] == "passed"  # noqa: S105
+    assert stranger.get(f"/api/local-chat/runs/{run_id}/safety-receipt").status_code == 404
 
 
 def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:

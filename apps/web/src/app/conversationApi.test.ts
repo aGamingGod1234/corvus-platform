@@ -18,7 +18,8 @@ describe("conversation API", () => {
       model: null,
       effort: "high",
       mode: "build",
-      mcp_enabled: true
+      mcp_enabled: true,
+      safety_digest: "a".repeat(64)
     }, "run-key");
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -34,7 +35,8 @@ describe("conversation API", () => {
           model: null,
           effort: "high",
           mode: "build",
-          mcp_enabled: true
+          mcp_enabled: true,
+          safety_digest: "a".repeat(64)
         })
       })
     );
@@ -75,6 +77,27 @@ describe("conversation API", () => {
 
     await expect(api.listProviders()).resolves.toEqual(providers);
     expect(api.artifactUrl("run-1")).toBe("http://127.0.0.1:8765/api/local-chat/runs/run-1/artifact");
+  });
+
+  it("loads server-authored safety previews and owner-scoped receipts", async () => {
+    const preview = { policy_digest: "a".repeat(64), level: "protected", label: "Protected build" };
+    const receipt = { run_id: "run-1", status: "completed", safety: preview };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = createConversationApi("csrf");
+
+    await expect(api.getSafetyPreview("codex", "build", true)).resolves.toEqual(preview);
+    await expect(api.getSafetyReceipt("run-1")).resolves.toEqual(receipt);
+    expect(fetchMock).toHaveBeenNthCalledWith(1,
+      "/api/local-chat/safety-preview?provider=codex&mode=build&mcp_enabled=true",
+      expect.objectContaining({ credentials: "include", method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      "/api/local-chat/runs/run-1/safety-receipt",
+      expect.objectContaining({ credentials: "include", method: "GET" })
+    );
   });
 
   it("surfaces only a permanently closed EventSource as terminal loss", () => {

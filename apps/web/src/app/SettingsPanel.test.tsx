@@ -88,4 +88,24 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("Web · Preview")).toBeVisible();
     expect(screen.getByText("Not connected")).toBeVisible();
   });
+
+  it("explains the enforced local safety boundaries without offering a bypass", async () => {
+    render(
+      <SettingsPanel
+        api={settingsApi()}
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-safety"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Safety" }));
+    expect(screen.getByText("Build confirmation")).toBeVisible();
+    expect(screen.getByText("Always on in this alpha")).toBeVisible();
+    expect(screen.getByText(/original project stays unchanged/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /full access/i })).not.toBeInTheDocument();
+  });
 });

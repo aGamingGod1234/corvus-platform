@@ -14,7 +14,7 @@ import {
 } from "./devicePreferences";
 import type { ExperienceMode, WorkspaceKind } from "./preferences";
 
-type SettingsCategory = "general" | "models" | "agent" | "mcp" | "appearance" | "account";
+type SettingsCategory = "general" | "models" | "agent" | "mcp" | "safety" | "appearance" | "account";
 type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences">;
 
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; label: string }> = [
@@ -22,6 +22,7 @@ const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; label: string }> = [
   { id: "models", label: "Models" },
   { id: "agent", label: "Agent" },
   { id: "mcp", label: "MCP" },
+  { id: "safety", label: "Safety" },
   { id: "appearance", label: "Appearance" },
   { id: "account", label: "Account" }
 ];
@@ -250,6 +251,15 @@ export function SettingsPanel({
             <p className="settings-callout">Corvus does not store MCP credentials here. Configure servers through Codex, then explicitly enable them for a Build run.</p>
           </> : null}
 
+          {category === "safety" ? <>
+            <div className="settings-section__heading"><h2>Safety</h2><p>Enforced boundaries for local agent runs.</p></div>
+            <SettingsRow description="Every Build is bound to the exact policy shown before it starts." label="Build confirmation"><span className="settings-value">Always on in this alpha</span></SettingsRow>
+            <SettingsRow description="Build work uses a fresh scratch workspace; your original project stays unchanged." label="Workspace isolation"><span className="settings-value">Enforced by runtime</span></SettingsRow>
+            <SettingsRow description="Network behavior follows the selected CLI sandbox policy. Corvus grants no separate permission." label="Network"><span className="settings-value">No additional grant</span></SettingsRow>
+            <SettingsRow description="Stop remains available while a run is active and sends an owner-scoped cancellation." label="Emergency stop"><span className="settings-value">Available during every run</span></SettingsRow>
+            <p className="settings-callout">Completed Build runs include an owner-scoped receipt with the locked policy, observed activity, artifact hash, and screening result.</p>
+          </> : null}
+
           {category === "appearance" ? <>
             <div className="settings-section__heading"><h2>Appearance</h2><p>Visual preferences stay on this device.</p></div>
             <SettingsRow description="Follow your system or choose a fixed theme." label="Theme"><select aria-label="Theme" onChange={(event) => { setTheme(event.target.value as ThemePreference); setDirty(true); }} value={theme}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></SettingsRow>
@@ -261,7 +271,7 @@ export function SettingsPanel({
             <SettingsRow description="GitHub, Google Drive, and Slack connection flows are not enabled in this alpha." label="Integrations"><span className="settings-value">Not connected</span></SettingsRow>
           </> : null}
 
-          {category !== "general" ? <div className="settings-actions"><button className="button button--primary" disabled={busy || !dirty} onClick={() => void saveSettings()} type="button">{busy ? "Saving…" : "Save changes"}</button></div> : null}
+          {category !== "general" && category !== "safety" ? <div className="settings-actions"><button className="button button--primary" disabled={busy || !dirty} onClick={() => void saveSettings()} type="button">{busy ? "Saving…" : "Save changes"}</button></div> : null}
           {status ? <p className="save-status" role="status">{status}</p> : null}
           {error ? <p className="settings-error" role="alert">{error}</p> : null}
         </div>

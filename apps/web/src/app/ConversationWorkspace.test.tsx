@@ -31,6 +31,19 @@ class FakeRunStream implements RunEventStream {
 }
 
 function conversationApi(stream: FakeRunStream): ConversationApi {
+  const preview = (mode: "chat" | "build", mcpEnabled: boolean) => ({
+    policy_digest: (mcpEnabled ? "c" : mode === "build" ? "b" : "a").repeat(64),
+    level: mcpEnabled ? "elevated" as const : mode === "build" ? "protected" as const : "read_only" as const,
+    label: mcpEnabled ? "External tools on" : mode === "build" ? "Protected build" : "Read-only",
+    summary: mode === "build" ? "Work happens in a fresh writable sandbox." : "The agent can inspect context without writing files.",
+    execution: "Codex CLI runs ephemerally.",
+    filesystem: mode === "build" ? "The original project is not modified." : "The sandbox is read-only.",
+    network: "Corvus grants no separate network permission.",
+    mcp: mcpEnabled ? "Configured MCP tools may act on external systems." : "Configured MCP servers are not loaded.",
+    approvals: "No blanket host approval is granted.",
+    output: mode === "build" ? "A screened ZIP can be downloaded." : "No artifact is exported.",
+    requires_confirmation: mode === "build"
+  });
   return {
     getPreferences: vi.fn().mockResolvedValue({
       version: 0,
@@ -58,7 +71,14 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
       { id: "gemini", label: "Gemini", status: "preview", runtime: "local", models: [], status_label: "Preview", thinking_levels: [], supports_mcp: false },
       { id: "grok", label: "Grok", status: "preview", runtime: "api", models: [], status_label: "Preview", thinking_levels: [], supports_mcp: false }
     ]),
-    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "Codex default", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z" }),
+    getSafetyPreview: vi.fn((_provider, mode, mcpEnabled) => Promise.resolve(preview(mode, mcpEnabled))),
+    getSafetyReceipt: vi.fn().mockResolvedValue({
+      run_id: "run-1", status: "completed", safety: preview("build", true),
+      activities: ["Files changed only inside the scratch workspace"], mcp_used: true,
+      approval: "No blanket host approval was granted.", original_project_modified: false,
+      artifact: { download_name: "corvus-project.zip", sha256_digest: "d".repeat(64), size_bytes: 42, secret_screening: "passed" }
+    }),
+    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "Codex default", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
     cancelRun: vi.fn().mockResolvedValue({ run_id: "run-1", state: "cancelled", accepted: true, reason_code: null }),
     openRunEvents: vi.fn().mockReturnValue(stream),
     artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`)
@@ -94,7 +114,8 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(api.startRun).toHaveBeenCalledWith("Draft release notes", {
-      provider: "codex", model: null, effort: "medium", mode: "chat", mcp_enabled: false
+      provider: "codex", model: null, effort: "medium", mode: "chat", mcp_enabled: false,
+      safety_digest: "a".repeat(64)
     }, expect.any(String));
     expect(screen.getByLabelText("Run status: working")).toBeVisible();
     expect(await screen.findByText("Working")).toBeVisible();
@@ -127,7 +148,8 @@ describe("ConversationWorkspace", () => {
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Review this change");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(api.startRun).toHaveBeenCalledWith("Review this change", {
-      provider: "claude", model: "opus", effort: "max", mode: "chat", mcp_enabled: false
+      provider: "claude", model: "opus", effort: "max", mode: "chat", mcp_enabled: false,
+      safety_digest: "a".repeat(64)
     }, expect.any(String));
     stream.emit("completed", { type: "completed", payload: {} });
     expect(await screen.findByText("Completed")).toBeVisible();
@@ -151,18 +173,48 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("checkbox", { name: "Allow configured MCP servers" }));
     expect(screen.getByText(/may access external systems/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Build project" }));
+    expect(api.startRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Confirm protected build" })).toBeVisible();
+    expect(screen.getByText(/original project is not modified/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     expect(api.startRun).toHaveBeenCalledWith("Build a landing page", {
-      provider: "codex", model: null, effort: "medium", mode: "build", mcp_enabled: true
+      provider: "codex", model: null, effort: "medium", mode: "build", mcp_enabled: true,
+      safety_digest: "c".repeat(64)
     }, expect.any(String));
     stream.emit("thinking", { type: "thinking", payload: { text: "Checking the project structure" } });
     expect(await screen.findByText("Checking the project structure")).toBeVisible();
     stream.emit("status", { type: "status", payload: { activity: "files" } });
-    expect(await screen.findByText("Updating files")).toBeVisible();
+    expect((await screen.findAllByText("Updating files"))[0]).toBeVisible();
     stream.emit("artifact", { type: "artifact", payload: { download_name: "corvus-project.zip" } });
     stream.emit("completed", { type: "completed", payload: {} });
     expect(await screen.findByRole("link", { name: "Download finished project" })).toHaveAttribute(
       "href", "/api/local-chat/runs/run-1/artifact"
     );
+    expect(await screen.findByRole("region", { name: "Safety receipt" })).toHaveTextContent(/screening passed/i);
+  });
+
+  it("shows the server-authored protection summary in the composer", async () => {
+    const api = conversationApi(new FakeRunStream());
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("button", { name: "View safety details" })).toHaveTextContent("Read-only");
+    await user.click(screen.getByRole("button", { name: "View safety details" }));
+    expect(screen.getByRole("region", { name: "Safety details" })).toHaveTextContent(/no separate network permission/i);
+  });
+
+  it("loads the safety receipt when a run is cancelled", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("cancelled", { type: "cancelled", payload: {} });
+
+    await waitFor(() => expect(api.getSafetyReceipt).toHaveBeenCalledWith("run-1"));
+    expect(await screen.findByRole("region", { name: "Safety receipt" })).toBeVisible();
   });
 
   it("fails closed when provider discovery is unavailable and allows retry", async () => {

@@ -64,6 +64,7 @@ from corvus.mvp.preferences import (
     LocalPreferencesConflict,
     LocalPreferencesService,
 )
+from corvus.mvp.safety import build_safety_preview
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
@@ -182,6 +183,21 @@ class LocalChatStartRequest(ApiModel):
     effort: Literal["normal", "low", "medium", "high", "xhigh", "max"] = "normal"
     mode: Literal["chat", "build"] = "chat"
     mcp_enabled: bool = False
+    safety_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class SafetyPreviewResponse(ApiModel):
+    policy_digest: str
+    level: Literal["read_only", "protected", "elevated"]
+    label: str
+    summary: str
+    execution: str
+    filesystem: str
+    network: str
+    mcp: str
+    approvals: str
+    output: str
+    requires_confirmation: bool
 
 
 class LocalChatStartResponse(ApiModel):
@@ -193,6 +209,25 @@ class LocalChatStartResponse(ApiModel):
     mode: Literal["chat", "build"]
     storage: Literal["this_device"]
     created_at: str
+    safety: SafetyPreviewResponse
+
+
+class SafetyArtifactResponse(ApiModel):
+    download_name: str
+    sha256_digest: str
+    size_bytes: int
+    secret_screening: Literal["passed"]
+
+
+class SafetyReceiptResponse(ApiModel):
+    run_id: str
+    status: Literal["completed", "failed", "cancelled"]
+    safety: SafetyPreviewResponse
+    activities: list[str]
+    mcp_used: bool
+    approval: str
+    original_project_modified: bool
+    artifact: SafetyArtifactResponse | None
 
 
 class LocalChatCancelResponse(ApiModel):
@@ -560,6 +595,7 @@ def create_app(
                 effort=body.effort,
                 mode=body.mode,
                 mcp_enabled=body.mcp_enabled,
+                safety_digest=body.safety_digest,
                 idempotency_key=idempotency_key,
             )
         except LocalChatConflict as error:
@@ -579,6 +615,25 @@ def create_app(
         if local_chat is None:
             return []
         return list(local_chat.provider_catalog())
+
+    @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
+    def local_chat_safety_preview(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        provider: Literal["codex", "claude"] = "codex",
+        mode: Literal["chat", "build"] = "chat",
+        mcp_enabled: bool = False,
+    ) -> dict[str, object]:
+        try:
+            return build_safety_preview(
+                provider=provider,
+                mode=mode,
+                mcp_enabled=mcp_enabled,
+            ).as_dict()
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
 
     @app.get("/api/local-chat/preferences", response_model=LocalPreferencesResponse)
     def get_local_preferences(
@@ -696,6 +751,35 @@ def create_app(
             media_type="application/zip",
             filename=artifact.download_name,
         )
+
+    @app.get(
+        "/api/local-chat/runs/{run_id}/safety-receipt",
+        response_model=SafetyReceiptResponse,
+    )
+    def local_chat_safety_receipt(
+        run_id: UUID,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, object]:
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            return local_chat.safety_receipt(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                run_id=run_id,
+            )
+        except LocalChatNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error.reason_code,
+            ) from error
+        except LocalChatConflict as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error.reason_code,
+            ) from error
 
     @app.post(
         "/api/local-chat/runs/{run_id}/cancel",

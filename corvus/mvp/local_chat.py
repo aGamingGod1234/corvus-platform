@@ -34,6 +34,7 @@ from corvus.infrastructure.agent_runtimes.codex import (
     LocalCodexTextRequest,
 )
 from corvus.mvp.provider_catalog import build_provider_catalog
+from corvus.mvp.safety import SafetyPreview, build_safety_preview
 
 _CODEX_DEFAULT_LABEL = "Codex default"
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
@@ -110,6 +111,7 @@ class _RunRecord:
     idempotency_key: str
     response: dict[str, object]
     events: list[LocalChatBackendEvent]
+    safety: SafetyPreview
     state: str = "running"
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     pump_task: asyncio.Task[None] | None = None
@@ -152,6 +154,7 @@ class LocalChatService:
         mode: str,
         mcp_enabled: bool,
         idempotency_key: str,
+        safety_digest: str | None = None,
     ) -> dict[str, object]:
         backend = self._backends.get(provider)
         if backend is None:
@@ -160,6 +163,19 @@ class LocalChatService:
             raise LocalChatError("provider_effort_unavailable")
         if provider != "codex" and (mode != "chat" or mcp_enabled):
             raise LocalChatError("provider_mode_unavailable")
+        try:
+            safety = build_safety_preview(
+                provider=provider,
+                mode=mode,
+                mcp_enabled=mcp_enabled,
+            )
+        except ValueError as error:
+            raise LocalChatError(str(error)) from error
+        if safety.requires_confirmation and not hmac.compare_digest(
+            safety.policy_digest,
+            safety_digest or "",
+        ):
+            raise LocalChatConflict("safety_digest_mismatch")
         request_digest = _request_digest(
             prompt,
             provider,
@@ -167,6 +183,7 @@ class LocalChatService:
             effort,
             mode,
             mcp_enabled,
+            safety_digest,
         )
         idempotency_scope = (owner, idempotency_key)
         start_lock = self._start_locks.setdefault(idempotency_scope, asyncio.Lock())
@@ -179,6 +196,8 @@ class LocalChatService:
                 effort=effort,
                 mode=mode,
                 mcp_enabled=mcp_enabled,
+                safety_digest=safety_digest,
+                safety=safety,
                 idempotency_key=idempotency_key,
                 idempotency_scope=idempotency_scope,
                 request_digest=request_digest,
@@ -195,6 +214,8 @@ class LocalChatService:
         effort: str,
         mode: str,
         mcp_enabled: bool,
+        safety_digest: str | None,
+        safety: SafetyPreview,
         idempotency_key: str,
         idempotency_scope: tuple[str, str],
         request_digest: str,
@@ -228,6 +249,7 @@ class LocalChatService:
             "mode": mode,
             "storage": "this_device",
             "created_at": self._clock().isoformat(),
+            "safety": safety.as_dict(),
         }
         record = _RunRecord(
             owner=owner,
@@ -237,6 +259,7 @@ class LocalChatService:
             idempotency_key=idempotency_key,
             response=response,
             events=[],
+            safety=safety,
         )
         self._runs[run_id] = record
         self._idempotency[idempotency_scope] = run_id
@@ -320,6 +343,44 @@ class LocalChatService:
         if artifact is None:
             raise LocalChatNotFound("local_chat_artifact_not_found")
         return artifact
+
+    def safety_receipt(self, *, owner: str, run_id: UUID) -> dict[str, object]:
+        record = self._owned_run(owner, run_id)
+        if record.state == "running":
+            raise LocalChatConflict("safety_receipt_not_ready")
+        activity_labels = {
+            "command": "Commands ran inside the selected sandbox",
+            "files": "Files changed only inside the scratch workspace",
+            "mcp": "A configured MCP tool was used",
+            "search": "Project context was inspected",
+        }
+        activity_keys = {
+            event.payload.get("activity")
+            for event in record.events
+            if event.type == "status" and isinstance(event.payload.get("activity"), str)
+        }
+        activities = [label for key, label in activity_labels.items() if key in activity_keys]
+        artifact_payload: dict[str, object] | None = None
+        artifact = record.backend.artifact(record.handle)
+        if artifact is not None:
+            artifact_payload = {
+                "download_name": artifact.download_name,
+                "sha256_digest": artifact.sha256_digest,
+                "size_bytes": artifact.size_bytes,
+                "secret_screening": "passed",
+            }
+        return {
+            "run_id": str(run_id),
+            "status": record.state,
+            "safety": record.safety.as_dict(),
+            "activities": activities,
+            "mcp_used": "mcp" in activity_keys,
+            "approval": (
+                "No blanket host approval was granted; the run remained inside its selected policy."
+            ),
+            "original_project_modified": False,
+            "artifact": artifact_payload,
+        }
 
     async def cancel(self, *, owner: str, run_id: UUID) -> dict[str, object]:
         record = self._owned_run(owner, run_id)
@@ -638,6 +699,7 @@ def _request_digest(
     effort: str,
     mode: str,
     mcp_enabled: bool,
+    safety_digest: str | None,
 ) -> str:
     payload = json.dumps(
         {
@@ -647,6 +709,7 @@ def _request_digest(
             "effort": effort,
             "mode": mode,
             "mcp_enabled": mcp_enabled,
+            "safety_digest": safety_digest,
         },
         sort_keys=True,
         separators=(",", ":"),

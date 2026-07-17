@@ -7,6 +7,7 @@ export interface LocalChatRun {
   mode: "chat" | "build";
   storage: "this_device";
   created_at: string;
+  safety: SafetyPreview;
 }
 
 export interface LocalChatCancel {
@@ -45,6 +46,37 @@ class BrowserRunEventStream implements RunEventStream {
 export type ProviderId = "codex" | "claude" | "gemini" | "cursor" | "grok";
 export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type RunMode = "chat" | "build";
+export type SafetyLevel = "read_only" | "protected" | "elevated";
+
+export interface SafetyPreview {
+  policy_digest: string;
+  level: SafetyLevel;
+  label: string;
+  summary: string;
+  execution: string;
+  filesystem: string;
+  network: string;
+  mcp: string;
+  approvals: string;
+  output: string;
+  requires_confirmation: boolean;
+}
+
+export interface SafetyReceipt {
+  run_id: string;
+  status: "completed" | "failed" | "cancelled";
+  safety: SafetyPreview;
+  activities: string[];
+  mcp_used: boolean;
+  approval: string;
+  original_project_modified: boolean;
+  artifact: {
+    download_name: string;
+    sha256_digest: string;
+    size_bytes: number;
+    secret_screening: "passed";
+  } | null;
+}
 
 export interface ProviderModel {
   id: string;
@@ -69,6 +101,7 @@ export interface LocalChatRequest {
   effort: ThinkingLevel;
   mode: RunMode;
   mcp_enabled: boolean;
+  safety_digest?: string | null;
 }
 
 export type ResponseTone = "concise" | "balanced" | "detailed";
@@ -93,6 +126,12 @@ export interface ConversationApi {
   listProviders(): Promise<ProviderCatalogEntry[]>;
   getPreferences(): Promise<RuntimePreferences>;
   updatePreferences(preferences: RuntimePreferencesUpdate): Promise<RuntimePreferences>;
+  getSafetyPreview(
+    provider: "codex" | "claude",
+    mode: RunMode,
+    mcpEnabled: boolean
+  ): Promise<SafetyPreview>;
+  getSafetyReceipt(runId: string): Promise<SafetyReceipt>;
   startRun(
     prompt: string,
     request: LocalChatRequest,
@@ -158,6 +197,21 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       headers: mutationHeaders(),
       body: JSON.stringify(preferences)
     }),
+    getSafetyPreview: (provider, mode, mcpEnabled) => {
+      const query = new URLSearchParams({
+        provider,
+        mode,
+        mcp_enabled: String(mcpEnabled)
+      });
+      return requestJson(`/api/local-chat/safety-preview?${query.toString()}`, {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      });
+    },
+    getSafetyReceipt: (runId) => requestJson(
+      `/api/local-chat/runs/${encodeURIComponent(runId)}/safety-receipt`,
+      { method: "GET", headers: { Accept: "application/json" } }
+    ),
     startRun: (prompt, request, idempotencyKey) => requestJson("/api/local-chat/runs", {
       method: "POST",
       headers: mutationHeaders(idempotencyKey),
