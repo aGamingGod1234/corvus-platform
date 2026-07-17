@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
 import type { CorvusApi, Outcome, Project, Workflow } from "./api";
+import type { PlatformApi } from "./auth/authApi";
+import { PlatformApp } from "./PlatformApp";
 import { MemoryStorage } from "./test/memoryStorage";
 
 const PROJECT: Project = {
@@ -28,6 +29,56 @@ const WORKFLOW: Workflow = {
   created_at: "2026-07-14T00:00:00Z",
   updated_at: "2026-07-14T00:00:00Z"
 };
+
+function hostedApi(): PlatformApi {
+  const workspace = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "Local workspace",
+    workspace_kind: "individual" as const,
+    status: "active" as const,
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+    version: 1
+  };
+  return {
+    applySync: vi.fn().mockResolvedValue({ acknowledged_cursor: 0, results: [] }),
+    createWorkspace: vi.fn(),
+    getSession: vi.fn().mockResolvedValue({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      principal_id: "22222222-2222-4222-8222-222222222222",
+      email: "operator@example.com",
+      experience_kind: "developer",
+      account_version: 1,
+      session_version: 1,
+      csrf_token: "hosted-csrf"
+    }),
+    getSyncPage: vi.fn().mockResolvedValue({
+      requested_cursor: 0,
+      next_cursor: 0,
+      high_watermark: 0,
+      earliest_retained_sequence: 1,
+      changes: [],
+      has_more: false
+    }),
+    getWorkspace: vi.fn().mockResolvedValue(workspace),
+    listWorkspaces: vi.fn().mockResolvedValue([workspace]),
+    logout: vi.fn(),
+    refreshSession: vi.fn(),
+    startGoogle: vi.fn(),
+    updateOnboarding: vi.fn()
+  };
+}
+
+function renderApp(api: CorvusApi, preferenceStorage: Storage) {
+  return render(
+    <PlatformApp
+      hostedApi={hostedApi()}
+      locationHostname="localhost"
+      loopbackApi={api}
+      preferenceStorage={preferenceStorage}
+    />
+  );
+}
 
 function fakeApi(projects: Project[] = []): CorvusApi {
   return {
@@ -104,32 +155,109 @@ describe("Corvus operator console", () => {
     );
   });
 
-  it("pairs once and reveals the real project workspace", async () => {
+  it("pairs once and reveals the repository workspace without a project rail", async () => {
     const api = fakeApi([PROJECT]);
+    api.session = vi.fn()
+      .mockRejectedValueOnce(new Error("authentication_required"))
+      .mockResolvedValue({
+        csrf_token: "paired-csrf",
+        username: "paired-operator",
+        user_id: "operator-1",
+        tenant_id: "local",
+        expires_at: "2026-07-15T00:00:00Z"
+      });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.type(await screen.findByLabelText("One-time pairing value"), "ephemeral-pairing-value");
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
 
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
-    expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
+    expect(api.session).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("paired-operator")).toBeVisible();
     expect(screen.getByText("Define the next durable outcome.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Launch control/ })).not.toBeInTheDocument();
+  });
+
+  it("uses one local left navigation and omits permanent secondary rails", async () => {
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    const { container } = renderApp(api, preferenceStorage);
+
+    const sidebar = await screen.findByRole("complementary", { name: "Local workspace" });
+    expect(sidebar).toContainElement(screen.getByRole("navigation", { name: "Local runtime navigation" }));
+    expect(sidebar.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(6);
+    expect(container.querySelector(".project-rail")).toBeNull();
+    expect(screen.queryByLabelText("Work item details")).not.toBeInTheDocument();
+    expect(screen.getByText("Developer · Individual")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute("href", "#main-content");
+    expect(container.querySelector("main#main-content")).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("main", { name: "Threads" })).toBeVisible();
+    expect(container.querySelector(".local-topbar")).toBeNull();
+  });
+
+  it.each([
+    ["everyday", "personal", ["Conversations", "Schedule", "My Work", "Files", "Settings"]],
+    ["developer", "personal", ["Threads", "Repositories", "Runs", "Schedule", "Skills", "Settings"]],
+    ["everyday", "team", ["Conversations", "Schedule", "Assigned Work", "Approvals", "People", "Settings"]],
+    ["developer", "team", ["Threads", "Repositories", "Runs", "Reviews", "Schedule", "Policies", "Settings"]]
+  ] as const)("provides accessible local routes for the %s %s profile", async (experience, scope, labels) => {
+    preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience,
+      scope,
+      runtime: "local",
+      onboardingComplete: true
+    }));
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    renderApp(api, preferenceStorage);
+    const user = userEvent.setup();
+
+    const navigation = await screen.findByRole("navigation", { name: "Local runtime navigation" });
+    expect(screen.getByText(new RegExp(`${experience}.*${scope === "personal" ? "individual" : "team"}`, "i"))).toBeVisible();
+    expect(within(navigation).getAllByRole("link").map((link) => link.textContent)).toEqual(labels);
+    for (const label of labels) {
+      await user.click(within(navigation).getByRole("link", { name: label }));
+      expect(screen.getByRole("main", { name: label })).toBeVisible();
+    }
   });
 
   it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
     const api = fakeApi([PROJECT]);
+    api.session = vi.fn()
+      .mockRejectedValueOnce(new Error("authentication_required"))
+      .mockResolvedValue({
+        csrf_token: "desktop-csrf",
+        username: "desktop-operator",
+        user_id: "operator-1",
+        tenant_id: "local",
+        expires_at: "2026-07-15T00:00:00Z"
+      });
     window.history.replaceState(null, "", "/#pair=desktop-ephemeral-token");
 
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
-    expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "What should Corvus do?" })).toBeVisible();
     expect(screen.queryByDisplayValue("desktop-ephemeral-token")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("");
   });
 
-  it("creates a project through the injected application adapter", async () => {
+  it("does not expose project creation as a second local navigation rail", async () => {
     const api = fakeApi();
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -138,15 +266,12 @@ describe("Corvus operator console", () => {
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
     });
-    const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    const { container } = renderApp(api, preferenceStorage);
 
-    await user.click(await screen.findByRole("button", { name: "New project" }));
-    await user.type(screen.getByLabelText("Project name"), "Launch control");
-    await user.click(screen.getByRole("button", { name: "Create project" }));
-
-    expect(api.createProject).toHaveBeenCalledWith("Launch control");
-    expect(await screen.findByRole("button", { name: /Launch control/ })).toBeVisible();
+    await screen.findByRole("navigation", { name: "Local runtime navigation" });
+    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
+    expect(container.querySelector(".project-rail")).toBeNull();
+    expect(api.createProject).not.toHaveBeenCalled();
   });
 
   it("creates an approval-bearing workflow with a reserved demo budget", async () => {
@@ -174,7 +299,8 @@ describe("Corvus operator console", () => {
       settled_units: 0
     });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
 
     await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
     await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
@@ -231,7 +357,9 @@ describe("Corvus operator console", () => {
     }
     vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
 
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Repositories" }));
     await screen.findByText("Browser delivery");
     await waitFor(() => expect(streams).toHaveLength(1));
     streams[0].emit("work_item.running");
@@ -253,7 +381,7 @@ describe("Corvus operator console", () => {
       expires_at: "2026-07-15T00:00:00Z"
     });
     const user = userEvent.setup();
-    render(<App api={api} preferenceStorage={preferenceStorage} />);
+    renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("link", { name: "Skills" }));
     await user.type(screen.getByLabelText("Team name"), "Operators");

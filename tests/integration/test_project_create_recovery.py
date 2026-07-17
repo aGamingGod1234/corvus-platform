@@ -21,6 +21,7 @@ from corvus.application.projects import (
     ProjectRepositoryAdapter,
     ProjectService,
 )
+from corvus.database import M1_AUTHORITY_FAMILY_NAMES
 from corvus.domain.audit import (
     AuditResultBinding,
     AuthorizationDecisionSnapshot,
@@ -599,7 +600,7 @@ def test_project_create_recovers_after_project_commit_before_authority_commit(
         workspace_id=project.workspace_id,
         authority_generation=authority.authority_generation + 1,
     )
-    assert len(planned_commitments) == 32
+    assert len(planned_commitments) == len(M1_AUTHORITY_FAMILY_NAMES)
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT state FROM authority_commit_intents WHERE workspace_id = ?",
@@ -810,7 +811,7 @@ def test_project_create_recovers_after_every_durable_crash_point(
         authority_generation=advanced.authority_generation,
     )
     assert list(verified.commitments) == commitments
-    assert len(commitments) == 32
+    assert len(commitments) == len(M1_AUTHORITY_FAMILY_NAMES)
     assert len(scenario.audit_repository.list_receipts(scenario.project.workspace_id)) == 1
     with sqlite3.connect(scenario.database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM projects").fetchone() == (1,)

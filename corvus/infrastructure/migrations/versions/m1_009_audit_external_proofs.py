@@ -13,6 +13,15 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.manifest_history import (
+    M1_008_FAMILY_NAMES,
+    family_proof_metadata,
+)
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    drop_immutable_triggers,
+)
+
 revision: str = "m1_009_audit_external_proofs"
 down_revision: str | None = "m1_008_non_circular_root_manifest"
 branch_labels: str | Sequence[str] | None = None
@@ -27,26 +36,25 @@ _AUDIT_EXTERNAL_FAMILIES = {
 
 
 def _immutable(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    prior_rows = bind.execute(
-        sa.text(
-            "SELECT family_name, coverage_kind, external_proof_kind "
-            "FROM authority_state_root_leaf_families "
-            "WHERE manifest_version_id = :id ORDER BY ordinal"
-        ),
-        {"id": _PRIOR_MANIFEST_ID},
-    ).fetchall()
+    if op.get_context().as_sql:
+        prior_rows = [(name, *family_proof_metadata(name)) for name in M1_008_FAMILY_NAMES]
+    else:
+        prior_rows = [
+            (row[0], row[1], row[2])
+            for row in bind.execute(
+                sa.text(
+                    "SELECT family_name, coverage_kind, external_proof_kind "
+                    "FROM authority_state_root_leaf_families "
+                    "WHERE manifest_version_id = :id ORDER BY ordinal"
+                ),
+                {"id": _PRIOR_MANIFEST_ID},
+            ).fetchall()
+        ]
     prior = {
         str(row[0]): (str(row[1]), None if row[2] is None else str(row[2])) for row in prior_rows
     }
@@ -121,10 +129,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_update")
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_delete")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_update")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_delete")
+    drop_immutable_triggers("authority_state_root_leaf_families")
+    drop_immutable_triggers("authority_state_root_manifests")
     bind = op.get_bind()
     bind.execute(
         sa.text("DELETE FROM authority_state_root_leaf_families WHERE manifest_version_id = :id"),

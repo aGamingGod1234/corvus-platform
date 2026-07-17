@@ -35,6 +35,10 @@ M1_HANDOFF_REVISION = "m1_006_handoff_restore"
 M1_IDENTITY_SCOPE_REVISION = "m1_007_identity_scope"
 M1_ROOT_MANIFEST_REVISION = "m1_008_non_circular_root_manifest"
 M1_AUDIT_PROOF_MANIFEST_REVISION = "m1_009_audit_external_proofs"
+M2_IDENTITY_CONTINUITY_REVISION = "m2_001_identity_continuity"
+M2_OAUTH_SESSIONS_REVISION = "m2_001a_oauth_sessions"
+M2_WORKSPACE_SYNC_REVISION = "m2_002_workspace_sync"
+M2_CONVERSATIONS_REVISION = "m2_003_conversations"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -98,6 +102,39 @@ M1_HANDOFF_REQUIRED_TABLES = frozenset(
 M1_IDENTITY_SCOPE_REQUIRED_TABLES = frozenset(
     {"identity_workspaces", "principals", "workspace_memberships", "agent_identities", "scopes"}
 )
+M2_IDENTITY_CONTINUITY_REQUIRED_TABLES = frozenset(
+    {"accounts", "external_identities", "device_registrations", "session_records"}
+)
+M2_OAUTH_SESSIONS_REQUIRED_TABLES = frozenset(
+    {
+        "oauth_transactions",
+        "web_session_bindings",
+        "account_onboarding_versions",
+        "identity_idempotency",
+    }
+)
+M2_WORKSPACE_SYNC_REQUIRED_TABLES = frozenset(
+    {
+        "device_sync_acknowledgements",
+        "outbox_events",
+        "platform_idempotency",
+        "workspace_changes",
+        "workspace_sync_heads",
+    }
+)
+M2_CONVERSATIONS_REQUIRED_TABLES = frozenset(
+    {
+        "agent_run_events",
+        "agent_runs",
+        "attachments",
+        "message_attachments",
+        "messages",
+        "run_artifact_lineage",
+        "run_artifacts",
+        "thread_versions",
+        "threads",
+    }
+)
 M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES = frozenset(
     {
         "audit_anchor_recovery_checkpoints",
@@ -156,7 +193,30 @@ M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES = frozenset(
         "audit_result_bindings",
     }
 )
-M1_AUTHORITY_FAMILY_NAMES = M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES
+M1_AUDIT_PROOF_V6_AUTHORITY_FAMILY_NAMES = M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES
+M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        *M1_AUDIT_PROOF_V6_AUTHORITY_FAMILY_NAMES,
+        "accounts",
+        "device_registrations",
+        "external_identities",
+        "session_records",
+    }
+)
+M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        *M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES,
+        *M2_WORKSPACE_SYNC_REQUIRED_TABLES,
+    }
+)
+M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        *M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES,
+        *M2_CONVERSATIONS_REQUIRED_TABLES,
+    }
+)
+# Compatibility name retained for existing callers; this is always the active manifest family set.
+M1_AUTHORITY_FAMILY_NAMES = M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
@@ -234,6 +294,61 @@ M1_IDENTITY_SCOPE_TRIGGERS = frozenset(
         f"{table_name}_{operation}"
         for table_name in M1_IDENTITY_SCOPE_REQUIRED_TABLES
         for operation in ("no_delete", "no_update")
+    }
+)
+M2_IDENTITY_CONTINUITY_TRIGGERS = frozenset(
+    {
+        f"{table_name}_{operation}"
+        for table_name in M2_IDENTITY_CONTINUITY_REQUIRED_TABLES
+        for operation in ("no_delete", "no_update")
+    }
+)
+M2_OAUTH_SESSIONS_TRIGGERS = frozenset(
+    {
+        f"{table_name}_{operation}"
+        for table_name in (
+            "web_session_bindings",
+            "account_onboarding_versions",
+            "identity_idempotency",
+        )
+        for operation in ("no_delete", "no_update")
+    }
+)
+M2_WORKSPACE_SYNC_TRIGGERS = frozenset(
+    {
+        "workspace_sync_heads_no_delete",
+        *(
+            f"{table_name}_{operation}"
+            for table_name in (
+                "device_sync_acknowledgements",
+                "outbox_events",
+                "platform_idempotency",
+                "workspace_changes",
+            )
+            for operation in ("no_delete", "no_update")
+        ),
+    }
+)
+M2_CONVERSATIONS_TRIGGERS = frozenset(
+    {
+        f"{table_name}_{operation}"
+        for table_name in M2_CONVERSATIONS_REQUIRED_TABLES
+        for operation in ("no_delete", "no_update")
+    }
+)
+M2_CONVERSATIONS_REQUIRED_INDEXES = frozenset(
+    {
+        "ix_agent_run_events_page",
+        "ix_agent_runs_thread",
+        "ix_artifact_lineage_parent",
+        "ix_attachments_owner",
+        "ix_messages_page",
+        "ix_run_artifacts_run",
+        "ix_thread_versions_current",
+        "ix_threads_workspace_created",
+        "uq_agent_identities_workspace_id_version",
+        "uq_agent_run_provider_event",
+        "uq_projects_workspace_id_id",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -744,6 +859,276 @@ M1_IDENTITY_SCOPE_REQUIRED_COLUMNS = {
         }
     ),
 }
+M2_IDENTITY_CONTINUITY_REQUIRED_COLUMNS = {
+    "accounts": frozenset(
+        {
+            "id",
+            "principal_id",
+            "normalized_email",
+            "experience_kind",
+            "status",
+            "created_at",
+            "updated_at",
+            "version",
+            "payload_json",
+        }
+    ),
+    "external_identities": frozenset(
+        {
+            "id",
+            "account_id",
+            "issuer",
+            "subject",
+            "normalized_email",
+            "email_verified",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "device_registrations": frozenset(
+        {
+            "id",
+            "account_id",
+            "version",
+            "name",
+            "public_key_digest",
+            "status",
+            "revoked_at",
+            "created_at",
+            "updated_at",
+            "payload_json",
+        }
+    ),
+    "session_records": frozenset(
+        {
+            "id",
+            "account_id",
+            "device_id",
+            "device_version",
+            "version",
+            "token_digest",
+            "predecessor_digest",
+            "status",
+            "issued_at",
+            "expires_at",
+            "revoked_at",
+            "payload_json",
+        }
+    ),
+}
+M2_OAUTH_SESSIONS_REQUIRED_COLUMNS = {
+    "oauth_transactions": frozenset(
+        {
+            "id",
+            "state_digest",
+            "nonce_digest",
+            "redirect_uri",
+            "encrypted_pkce_verifier",
+            "created_at",
+            "expires_at",
+            "consumed_at",
+            "version",
+        }
+    ),
+    "web_session_bindings": frozenset(
+        {"session_id", "session_version", "csrf_digest", "created_at"}
+    ),
+    "account_onboarding_versions": frozenset(
+        {"account_id", "version", "experience_kind", "updated_at", "payload_json"}
+    ),
+    "identity_idempotency": frozenset(
+        {
+            "account_id",
+            "operation",
+            "idempotency_key",
+            "request_digest",
+            "result_json",
+            "created_at",
+        }
+    ),
+}
+M2_WORKSPACE_SYNC_REQUIRED_COLUMNS = {
+    "workspace_sync_heads": frozenset(
+        {
+            "workspace_id",
+            "workspace_version",
+            "current_sequence",
+            "retention_floor",
+            "chain_digest",
+            "version",
+            "updated_at",
+        }
+    ),
+    "workspace_changes": frozenset(
+        {
+            "workspace_id",
+            "workspace_version",
+            "sequence",
+            "previous_digest",
+            "change_digest",
+            "kind",
+            "operation",
+            "entity_id",
+            "entity_version",
+            "payload_json",
+            "account_id",
+            "principal_id",
+            "membership_version",
+            "device_id",
+            "device_version",
+            "created_at",
+        }
+    ),
+    "outbox_events": frozenset(
+        {
+            "workspace_id",
+            "sequence",
+            "change_digest",
+            "event_kind",
+            "payload_json",
+            "created_at",
+        }
+    ),
+    "device_sync_acknowledgements": frozenset(
+        {
+            "workspace_id",
+            "workspace_version",
+            "device_id",
+            "version",
+            "account_id",
+            "principal_id",
+            "membership_version",
+            "device_version",
+            "acknowledged_sequence",
+            "created_at",
+        }
+    ),
+    "platform_idempotency": frozenset(
+        {
+            "account_id",
+            "principal_id",
+            "scope_key",
+            "workspace_id",
+            "workspace_version",
+            "membership_version",
+            "device_id",
+            "device_version",
+            "operation",
+            "idempotency_key",
+            "request_digest",
+            "result_json",
+            "created_at",
+        }
+    ),
+}
+M2_CONVERSATIONS_REQUIRED_COLUMNS = {
+    "threads": frozenset(
+        {
+            "workspace_id",
+            "id",
+            "workspace_version",
+            "project_id",
+            "creator_principal_id",
+            "creator_membership_version",
+            "created_at",
+        }
+    ),
+    "thread_versions": frozenset(
+        {"workspace_id", "thread_id", "version", "title", "status", "updated_at"}
+    ),
+    "attachments": frozenset(
+        {
+            "workspace_id",
+            "id",
+            "owner_principal_id",
+            "owner_membership_version",
+            "display_name",
+            "media_type",
+            "byte_size",
+            "content_digest",
+            "metadata_json",
+            "created_at",
+        }
+    ),
+    "messages": frozenset(
+        {
+            "workspace_id",
+            "thread_id",
+            "sequence",
+            "id",
+            "content",
+            "content_digest",
+            "idempotency_key",
+            "request_digest",
+            "producing_run_id",
+            "author_kind",
+            "author_principal_id",
+            "author_membership_version",
+            "author_agent_id",
+            "author_agent_version",
+            "created_at",
+        }
+    ),
+    "message_attachments": frozenset(
+        {"workspace_id", "thread_id", "message_sequence", "attachment_id", "ordinal"}
+    ),
+    "agent_runs": frozenset(
+        {
+            "workspace_id",
+            "id",
+            "thread_id",
+            "message_sequence",
+            "requester_principal_id",
+            "requester_membership_version",
+            "authorization_snapshot_id",
+            "authorization_snapshot_digest",
+            "provider_binding_id",
+            "provider_binding_version",
+            "provider_binding_digest",
+            "canonical_request_digest",
+            "idempotency_key",
+            "request_digest",
+            "parent_run_id",
+            "root_run_id",
+            "created_at",
+        }
+    ),
+    "agent_run_events": frozenset(
+        {
+            "workspace_id",
+            "thread_id",
+            "run_id",
+            "sequence",
+            "handle_id",
+            "timestamp",
+            "event_type",
+            "payload_json",
+            "provider_event_id",
+            "tool_call_id",
+            "effect_authorization_decision_id",
+            "effect_authorization_decision_digest",
+            "previous_event_digest",
+            "event_digest",
+        }
+    ),
+    "run_artifacts": frozenset(
+        {
+            "workspace_id",
+            "id",
+            "run_id",
+            "producing_event_sequence",
+            "display_name",
+            "media_type",
+            "byte_size",
+            "content_digest",
+            "lineage_digest",
+            "created_at",
+        }
+    ),
+    "run_artifact_lineage": frozenset(
+        {"workspace_id", "artifact_id", "parent_artifact_id", "ordinal", "lineage_digest"}
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
@@ -769,6 +1154,30 @@ M1_HANDOFF_CURRENT_REQUIRED_COLUMNS = {
 M1_IDENTITY_SCOPE_CURRENT_REQUIRED_COLUMNS = {
     **M1_HANDOFF_CURRENT_REQUIRED_COLUMNS,
     **M1_IDENTITY_SCOPE_REQUIRED_COLUMNS,
+}
+M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS = {
+    **M1_IDENTITY_SCOPE_CURRENT_REQUIRED_COLUMNS,
+    **M2_IDENTITY_CONTINUITY_REQUIRED_COLUMNS,
+    "identity_workspaces": frozenset(
+        {*M1_IDENTITY_SCOPE_REQUIRED_COLUMNS["identity_workspaces"], "workspace_kind"}
+    ),
+}
+M2_OAUTH_SESSIONS_CURRENT_REQUIRED_COLUMNS = {
+    **M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS,
+    **M2_OAUTH_SESSIONS_REQUIRED_COLUMNS,
+}
+M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS = {
+    **M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS,
+    **{
+        key: value
+        for key, value in M2_OAUTH_SESSIONS_REQUIRED_COLUMNS.items()
+        if key != "identity_idempotency"
+    },
+    **M2_WORKSPACE_SYNC_REQUIRED_COLUMNS,
+}
+M2_CONVERSATIONS_CURRENT_REQUIRED_COLUMNS = {
+    **M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS,
+    **M2_CONVERSATIONS_REQUIRED_COLUMNS,
 }
 
 
@@ -918,7 +1327,10 @@ def _m1_registry_schema_controls_match(
         3: M1_HANDOFF_V3_FAMILY_NAMES,
         4: M1_IDENTITY_SCOPE_V4_AUTHORITY_FAMILY_NAMES,
         5: M1_NON_CIRCULAR_AUTHORITY_FAMILY_NAMES,
-        6: M1_AUTHORITY_FAMILY_NAMES,
+        6: M1_AUDIT_PROOF_V6_AUTHORITY_FAMILY_NAMES,
+        7: M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES,
+        8: M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES,
+        9: M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES,
     }
     for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
         expected_families = family_sets.get(int(schema_version))
@@ -991,6 +1403,102 @@ def _m1_identity_scope_controls_match(connection: sqlite3.Connection) -> bool:
         )
     )
     return M1_IDENTITY_SCOPE_TRIGGERS.issubset(triggers)
+
+
+def _m2_identity_continuity_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    return M2_IDENTITY_CONTINUITY_TRIGGERS.issubset(triggers)
+
+
+def _m2_oauth_sessions_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    tables = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        )
+    )
+    required = (
+        M2_OAUTH_SESSIONS_TRIGGERS
+        if "identity_idempotency" in tables
+        else frozenset(
+            trigger
+            for trigger in M2_OAUTH_SESSIONS_TRIGGERS
+            if not trigger.startswith("identity_idempotency_")
+        )
+    )
+    return required.issubset(triggers)
+
+
+def _m2_workspace_sync_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    account_binding_index = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'uq_accounts_id_principal'"
+    ).fetchone()
+    normalized_index = (
+        ""
+        if account_binding_index is None
+        else " ".join(str(account_binding_index[0] or "").casefold().split())
+    )
+    return M2_WORKSPACE_SYNC_TRIGGERS.issubset(triggers) and all(
+        fragment in normalized_index
+        for fragment in (
+            "create unique index",
+            "on accounts",
+            "id, principal_id",
+        )
+    )
+
+
+def _m2_conversation_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    indexes = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+        )
+    )
+    provider_event_index = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' "
+        "AND name = 'uq_agent_run_provider_event'"
+    ).fetchone()
+    normalized_provider_index = (
+        ""
+        if provider_event_index is None
+        else " ".join(str(provider_event_index[0] or "").casefold().split())
+    )
+    return (
+        M2_CONVERSATIONS_TRIGGERS.issubset(triggers)
+        and M2_CONVERSATIONS_REQUIRED_INDEXES.issubset(indexes)
+        and all(
+            fragment in normalized_provider_index
+            for fragment in (
+                "create unique index uq_agent_run_provider_event",
+                "on agent_run_events (workspace_id, run_id, provider_event_id)",
+                "where provider_event_id is not null",
+            )
+        )
+    )
 
 
 @contextmanager
@@ -1073,6 +1581,30 @@ def classify_database(path: Path) -> DatabaseStatus:
             m1_identity_scope_current_tables = frozenset(
                 {*m1_handoff_current_tables, *M1_IDENTITY_SCOPE_REQUIRED_TABLES}
             )
+            m2_identity_continuity_current_tables = frozenset(
+                {
+                    *m1_identity_scope_current_tables,
+                    *M2_IDENTITY_CONTINUITY_REQUIRED_TABLES,
+                }
+            )
+            m2_oauth_sessions_current_tables = frozenset(
+                {
+                    *m2_identity_continuity_current_tables,
+                    *M2_OAUTH_SESSIONS_REQUIRED_TABLES,
+                }
+            )
+            m2_workspace_sync_current_tables = frozenset(
+                {
+                    *(m2_oauth_sessions_current_tables - {"identity_idempotency"}),
+                    *M2_WORKSPACE_SYNC_REQUIRED_TABLES,
+                }
+            )
+            m2_conversations_current_tables = frozenset(
+                {
+                    *m2_workspace_sync_current_tables,
+                    *M2_CONVERSATIONS_REQUIRED_TABLES,
+                }
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
@@ -1083,6 +1615,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                 m1_authorization_input_current_tables,
                 m1_handoff_current_tables,
                 m1_identity_scope_current_tables,
+                m2_identity_continuity_current_tables,
+                m2_oauth_sessions_current_tables,
+                m2_workspace_sync_current_tables,
+                m2_conversations_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -1101,8 +1637,16 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = M1_AUTHORIZATION_INPUT_CURRENT_REQUIRED_COLUMNS
                 elif tables == m1_handoff_current_tables:
                     expected_columns = M1_HANDOFF_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m1_identity_scope_current_tables:
                     expected_columns = M1_IDENTITY_SCOPE_CURRENT_REQUIRED_COLUMNS
+                elif tables == m2_identity_continuity_current_tables:
+                    expected_columns = M2_IDENTITY_CONTINUITY_CURRENT_REQUIRED_COLUMNS
+                elif tables == m2_oauth_sessions_current_tables:
+                    expected_columns = M2_OAUTH_SESSIONS_CURRENT_REQUIRED_COLUMNS
+                elif tables == m2_workspace_sync_current_tables:
+                    expected_columns = M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M2_CONVERSATIONS_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -1134,7 +1678,19 @@ def classify_database(path: Path) -> DatabaseStatus:
                         else []
                     )
                     actual_revision = revision_rows[0][0] if len(revision_rows) == 1 else None
-                    if tables == m1_current_tables:
+                    if tables == m2_conversations_current_tables:
+                        expected_revision = M2_CONVERSATIONS_REVISION
+                        latest_manifest_schema_version = 9
+                    elif tables == m2_workspace_sync_current_tables:
+                        expected_revision = M2_WORKSPACE_SYNC_REVISION
+                        latest_manifest_schema_version = 8
+                    elif tables == m2_oauth_sessions_current_tables:
+                        expected_revision = M2_OAUTH_SESSIONS_REVISION
+                        latest_manifest_schema_version = 7
+                    elif tables == m2_identity_continuity_current_tables:
+                        expected_revision = M2_IDENTITY_CONTINUITY_REVISION
+                        latest_manifest_schema_version = 7
+                    elif tables == m1_current_tables:
                         expected_revision = M1_PROJECT_REVISION
                         latest_manifest_schema_version = 0
                     elif tables == m1_audit_current_tables:
@@ -1176,6 +1732,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_authorization_input_current_tables,
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
                     } or _m1_audit_triggers_match(connection)
                     authority_controls_match = tables not in {
                         m1_authority_current_tables,
@@ -1183,12 +1743,20 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_authorization_input_current_tables,
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
                     } or _m1_authority_schema_controls_match(connection)
                     registry_controls_match = tables not in {
                         m1_registry_current_tables,
                         m1_authorization_input_current_tables,
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
                     } or _m1_registry_schema_controls_match(
                         connection,
                         latest_schema_version=latest_manifest_schema_version,
@@ -1197,14 +1765,44 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m1_authorization_input_current_tables,
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
                     } or _m1_authorization_input_controls_match(connection)
                     handoff_controls_match = tables not in {
                         m1_handoff_current_tables,
                         m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
                     } or _m1_handoff_controls_match(connection)
-                    identity_scope_controls_match = (
-                        tables != m1_identity_scope_current_tables
-                        or _m1_identity_scope_controls_match(connection)
+                    identity_scope_controls_match = tables not in {
+                        m1_identity_scope_current_tables,
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
+                    } or _m1_identity_scope_controls_match(connection)
+                    identity_continuity_controls_match = tables not in {
+                        m2_identity_continuity_current_tables,
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
+                    } or _m2_identity_continuity_controls_match(connection)
+                    oauth_sessions_controls_match = tables not in {
+                        m2_oauth_sessions_current_tables,
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
+                    } or _m2_oauth_sessions_controls_match(connection)
+                    workspace_sync_controls_match = tables not in {
+                        m2_workspace_sync_current_tables,
+                        m2_conversations_current_tables,
+                    } or _m2_workspace_sync_controls_match(connection)
+                    conversation_controls_match = (
+                        tables != m2_conversations_current_tables
+                        or _m2_conversation_controls_match(connection)
                     )
                     if (
                         tables
@@ -1217,6 +1815,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                             m1_authorization_input_current_tables,
                             m1_handoff_current_tables,
                             m1_identity_scope_current_tables,
+                            m2_identity_continuity_current_tables,
+                            m2_oauth_sessions_current_tables,
+                            m2_workspace_sync_current_tables,
+                            m2_conversations_current_tables,
                         }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
@@ -1227,8 +1829,20 @@ def classify_database(path: Path) -> DatabaseStatus:
                         and authorization_input_controls_match
                         and handoff_controls_match
                         and identity_scope_controls_match
+                        and identity_continuity_controls_match
+                        and oauth_sessions_controls_match
+                        and workspace_sync_controls_match
+                        and conversation_controls_match
                     ):
-                        if tables == m1_identity_scope_current_tables:
+                        if tables == m2_conversations_current_tables:
+                            detail = "database schema is current with M2 conversations"
+                        elif tables == m2_workspace_sync_current_tables:
+                            detail = "database schema is current with M2 workspace sync"
+                        elif tables == m2_oauth_sessions_current_tables:
+                            detail = "database schema is current with M2 OAuth sessions"
+                        elif tables == m2_identity_continuity_current_tables:
+                            detail = "database schema is current with M2 identity continuity"
+                        elif tables == m1_identity_scope_current_tables:
                             detail = (
                                 "database schema is current with M1 identity and scope persistence"
                             )

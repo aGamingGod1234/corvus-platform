@@ -17,20 +17,23 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Credentials persist only as `env://` or `keyring://` references and are resolved only by the broker at an effect boundary.
 - Signed connector/channel envelopes remain proposals or untrusted input; server-side identity and authorization decide what is accepted.
 
-## Adaptive application shell (Milestone 1)
+## Google identity and cross-device continuity (Full-product Milestone 1)
 
-- The shared React client now starts with a versioned three-step chooser for Everyday/Developer, Personal/Team, and Local/Corvus Cloud.
-- Local is operational on the existing authoritative same-machine API and supervised Tauri sidecar. Corvus Cloud is explicitly labeled Preview and exposes no fake identity, purchase, or payment success.
-- One shell composes four distinct navigation/copy profiles without duplicating workflow, authority, approval, budget, audit, or credential logic.
-- Team selection is capability-honest and grants no membership or permissions; real shared collaboration remains deferred to its authorized database milestone.
-- Responsive behavior includes desktop rail/inspector, mobile bottom navigation and profile sheet, full-screen mobile inspector, focus restoration, skip navigation, and reduced-motion handling.
+- Hosted Corvus now starts with Google OAuth and keeps session, CSRF, authorized workspace selection, and ordered sync state in memory as server-owned authority.
+- Resumable onboarding persists Everyday/Developer with exact versions, requires explicit Individual or Team workspace creation, and never treats a persona choice as membership or permission.
+- The shell presents experience and workspace type as read-only identity, supports only authorized workspace selection, and routes profile changes to a truthful Settings surface.
+- Workspace synchronization is ordered, idempotent, conflict-aware, provenance-bound, secret-safe, and acknowledgement-after-reduction; stale workspace/auth operations cannot acknowledge or restore superseded state.
+- Real loopback Local mode remains authority-neutral and consumes the legacy pairing/session/project API without fabricating hosted account, workspace, CSRF, or migration truth. Corvus Cloud remains visibly disabled Preview.
+- Desktop, tablet, and mobile layouts preserve keyboard focus, nested dialog containment, reduced motion, 44px targets, and the four profile-specific navigation/copy adaptations.
 
-## Agent runtime foundation (M2A candidate)
+## Agent runtime foundation and local-agent fast track
 
 - Strict agent-run contracts bind the complete request, provider binding version/digest, executable or credential identity, model, scope, authorization snapshot, autonomy, credential, budget, kill-switch, sandbox, network, filesystem, tool, and idempotency inputs.
 - A verified agent-run authorization adapter reuses the canonical capability-intersection and authorization-snapshot verification core; it does not introduce a second policy engine.
 - Start, resume, cancel, event streaming, and audit receipts reject substituted runtime identities, non-proof resume changes, invalid event ordering, duplicate provider events, secret-bearing payload keys, and unacknowledged or tampered audit outcomes.
-- Capability discovery is fail-closed and typed. The only executable runtime remains deterministic/local; live Codex, Claude, Gemini, Cursor, and xAI/Grok adapters are not yet connected.
+- Capability discovery is fail-closed and typed. Deterministic contract adapters remain intact; installed native Codex and Claude CLIs are now discovered and connected for paired same-device runs. Gemini and xAI/Grok remain Preview, while Cursor remains unavailable.
+- The composer exposes verified providers, recommended models, thinking effort, Chat/Build mode, and explicit MCP opt-in. Messages plus provider-supplied safe reasoning summaries and generic work status stream over owner-scoped SSE.
+- Chat is read-only. Codex Build runs in a fresh workspace-write sandbox, always disables user plugins/apps/hooks, can use configured MCP servers only after explicit opt-in, and hands back a bounded, secret-screened ZIP with a SHA-256 manifest. Real Windows acceptance produced and verified the requested project artifact.
 - Durable provider binding, autonomy, credential, budget, kill-switch, and post-effect audit-reconciliation repositories remain an explicit later milestone. M2A does not claim those production integrations.
 
 ## Install and run
@@ -145,14 +148,14 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `680 passed` in 70.99 seconds after a clean serial rerun; active event-iterator, reusable payload-redactor, cancellation proof-digest, nested runtime-result, terminal cancellation-handle, camelCase usage-counter, quoted-secret, secret-shaped-key, authorization-decision, and cancellation-identity regressions passed; full Ruff, Ruff format, and mypy passed.
+- Python: `1050 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff, Ruff format, strict mypy, Bandit, and pip-audit passed.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `23 passed` across 7 files; Vite production build passed (48 modules, 246.53 kB JS / 74.88 kB gzip).
+- Web: `143 passed` across 24 files; Vite production build passed (62 modules, 302.93 kB JS / 89.69 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
-- M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 5 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt and Clippy with warnings denied passed; the full Tauri release and NSIS build passed; current `cargo check` passed. Windows Computer Use verified all four workspace profiles, the truthful Cloud Preview wall, Local connection, and graceful desktop/sidecar shutdown. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
+- M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 7 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt, Clippy with warnings denied, and `cargo check` passed. Windows Computer Use launched the exact worktree release binary, verified the simplified one-sidebar UI, detected Local Codex, streamed a live prompt through the sidecar, and rendered the exact `CORVUS_UI_OK` completion without HTTP 500. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
 - Release alpha: local Windows PyInstaller sidecar build passed and `--help` ran; Tauri NSIS release build passed; silent installer wrote `corvus-desktop.exe`, `corvus-mvp`, and `corvus-mvp.exe` into `%LOCALAPPDATA%\Corvus`; launching the installed app started both `corvus-desktop.exe` and the packaged `corvus-mvp.exe`. Vercel deployment `dpl_4kqEKRLSybjAHik6EUSAezPrRyYH` is Ready and aliased at `https://corvus-platform-tau.vercel.app`; project root was restored to `apps/web` for GitHub `main` deployments.
 - Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
-- Design blueprint: packet, provenance, source evidence, fixed viewport captures, and responsive visual inspection exist. Its automated gate still fails because the installed auditor unconditionally requires a restaurant `dish-selector`, requires packet approval after edits, and statically scans one React source file at a time; no fake restaurant artifact was added.
+- Design blueprint: the packet, source evidence, and fixed-viewport captures were completed and reviewed during implementation, then removed from the tracked submission by the explicitly approved `.antigravity/` repository-hygiene cleanup. The resulting UI, responsive behavior, and regression tests remain in the product source; no fake restaurant artifact was added to satisfy the incompatible legacy auditor.
 
 ## Final 20-point acceptance evidence
 
@@ -183,5 +186,5 @@ pnpm --dir apps/web build
 - No production cloud, PostgreSQL server, external OAuth registration, notarization, production signing, or multi-OS installer certification was attempted.
 - The container definition is authored but not locally exercised because no container engine is installed.
 - The unsigned alpha installers are not production signed, notarized, or certified. macOS and Linux artifacts are built and verified through GitHub Actions rather than this Windows workstation.
-- Live Codex, Claude, Gemini, Cursor, and xAI/Grok runtime adapters are not connected yet. M2A provides the verified contract and deterministic adapter boundary only.
+- Local Codex and Claude are selectable when their native CLIs are detected; each provider verifies its own sign-in when a run starts. Gemini and xAI/Grok remain Preview; Cursor is unavailable; API-key and Cloud provider execution remain deferred.
 - Durable current-state repositories for agent provider bindings, autonomy grants, credential proofs, runtime budgets, kill switches, and post-effect audit reconciliation require a later explicitly authorized persistence milestone.

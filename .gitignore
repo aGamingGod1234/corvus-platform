@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .pytest-tmp/
+.pytest-review-*/
+.pytest-full-review/
 .ruff_cache/
 .mypy_cache/
 .coverage
@@ -24,3 +26,7 @@ apps/desktop/src-tauri/binaries/
 .env.*
 !.env.example
 .vercel/
+.superpowers/
+/.antigravity/
+/.claude/
+/.runtime-*/

@@ -1176,3 +1176,828 @@
 
 ### Suggested Next Steps
 - Run full verification, push the repair, resolve all bot threads, and obtain fresh code-owner approval before merge.
+
+## 2026-07-16 — Specify the complete Corvus product platform
+
+### What Was Implemented
+- Consolidated the seven user-approved design sections into one decision-complete architecture specification.
+- Fixed the delivery boundary at seven milestone commits on one branch followed by one unmerged review pull request.
+- Documented authoritative state ownership, security invariants, data flow, UX adaptation, error handling, and integrated verification.
+
+### Files Modified
+- `docs/superpowers/specs/2026-07-16-corvus-full-product-platform-design.md` — records the approved modular Railway/PostgreSQL control-plane design.
+- `PROJECT_LOG.md` — records the design milestone and review gate.
+
+### Assumptions Made (flag these for review)
+- None beyond the decisions explicitly approved in the design conversation and recorded in the specification.
+
+### Known Issues / Deferred
+- Implementation has not started; the mandatory written-spec review and detailed `PLAN.md` remain the next gates.
+- Production database migration, paid billing activation, and automatic PR merge remain outside the authorized boundary.
+
+### Suggested Next Steps
+- Complete the specification self-review, commit it, obtain user approval of the written file, and then generate the seven-milestone implementation plan.
+
+## 2026-07-16 — Create the seven-milestone full-product implementation plan
+
+### What Was Implemented
+- Added a 735-line executable product plan with 39 red/green tasks across identity, agents, scheduling, settings, teams, runtimes, and final product verification.
+- Preserved the previous foundation plan unchanged beneath the new current plan.
+- Incorporated backend/frontend planning review corrections so existing workspace, membership, credential, runtime, authorization, and audit types remain authoritative.
+
+### Files Modified
+- <code>PLAN.md</code> — adds the current seven-milestone implementation checklist, interfaces, dependencies, tests, commit gates, and one-PR stop boundary.
+- <code>PROJECT_LOG.md</code> — records completion and self-review of the plan.
+
+### Assumptions Made (flag these for review)
+- The user's prior blanket dependency approval covers the explicitly listed Authlib, psycopg, E2B, recurrence, React product, Playwright, and axe packages.
+
+### Known Issues / Deferred
+- No product implementation task has been marked complete yet.
+- Live Google, Railway, and E2B credential checks remain environment-gated, while deterministic adapters and local contract tests are required in every case.
+
+### Suggested Next Steps
+- Commit the plan, invoke the subagent-driven-development skill, and execute Milestone 1 from its first unchecked task.
+
+## 2026-07-16 — Produce and approve the frontend design packet
+
+### What Was Implemented
+- Regenerated the required Antigravity packet from the approved seven-surface Corvus product design.
+- Replaced stale unrelated Sitesbuilder content with source-cited identity, conversation, run-flightpath, scheduling, settings/integrations, team-collaboration, and runtime-continuity contracts.
+- Recorded fetched and hashed Corvus, T3Code, ChatGPT, shadcn Button, and Lucide Send evidence with explicit adoption and copy boundaries.
+- Captured desktop, tablet, and mobile baselines, verified no horizontal overflow or console errors, verified reduced-motion behavior, and locked Lucas's approval hash.
+
+### Files Modified
+- `.antigravity/website-blueprint/` — approved design packet, research evidence, adoption map, interaction contract, responsive targets, and baseline screenshots.
+- `PROJECT_LOG.md` — records the Task 1.1 design-provenance milestone.
+- `.superpowers/sdd/task-1.1-report.md` — records commands, results, self-review, and concerns for the delegated task.
+
+### Assumptions Made (flag these for review)
+- None. The approved 2026-07-16 full-product specification and the task brief define the seven surfaces, sources, change boundary, and approval note.
+
+### Known Issues / Deferred
+- Product implementation and final after-build visual audit remain deferred to their named frontend milestones.
+- The Antigravity research client's direct fetch was blocked by private-repository access and ChatGPT's Cloudflare challenge; authenticated GitHub and browser-readable evidence were captured locally instead.
+
+### Suggested Next Steps
+- Review and squash the local Task 1.1 commit into the Milestone 1 commit after the remaining milestone tasks pass.
+
+## 2026-07-16 — Tighten frontend design packet review findings
+
+### What Was Implemented
+- Marked Cloud fallback and wake controls as non-rendered until the native runtime selector, real Cloud path, advertised capabilities, and authorized runtime binding exist.
+- Kept the Cloud label truthfully Preview throughout the runtime interaction and section contracts.
+- Replaced the orphan compatibility interaction with a real, globally mapped Workspace identity details control and mapped Mobile More to global navigation.
+- Removed an unrelated duplicate backend Task 1.1 section from the ignored delegated-task brief.
+- Reverified the packet, source/citation/orphan contracts, browser evidence, and Lucas approval hash.
+
+### Files Modified
+- `.antigravity/website-blueprint/INTERACTION_SPEC.json` — adds explicit Cloud render gates and real global interaction mappings.
+- `.antigravity/website-blueprint/SECTION_PLAN.json` — records global shell/navigation interactions and runtime availability truth.
+- `PROJECT_LOG.md` — records the review-fix milestone.
+- `.superpowers/sdd/task-1.1-brief.md` and `.superpowers/sdd/task-1.1-report.md` — clean ignored task coordination artifacts.
+
+### Assumptions Made (flag these for review)
+- None. The review findings explicitly define the required runtime truth and interaction mapping.
+
+### Known Issues / Deferred
+- The blueprint verifier still requires the legacy machine ID `dish-selector`; the packet gives it the canonical product name `workspace-identity-details`, real behavior, and a global-shell mapping. No dish UI or orphan compatibility behavior remains.
+- Cloud fallback and wake remain unavailable until their complete native/runtime capability gates exist.
+
+### Suggested Next Steps
+- Preserve these render gates when the native runtime selector and real Cloud lifecycle are implemented.
+
+## 2026-07-16 — Task 1.2 Hosted configuration and PostgreSQL support
+
+### What Was Implemented
+- Added immutable, fail-closed hosted settings with required SQLite/PostgreSQL URLs, distinct minimum-length signing secrets, and redacted representations and configuration errors.
+- Added URL-based SQLAlchemy engine and Alembic revision/upgrade APIs while preserving the existing SQLite `Path` APIs and classification gates.
+- Added a disposable PostgreSQL 17 test service and an environment-gated fresh-database integration test.
+- Made M1-002 through M1-009 migration triggers dialect-aware and preserved both partial unique constraints on PostgreSQL.
+
+### Files Modified
+- `corvus/platform/__init__.py` and `corvus/platform/config.py` — expose immutable hosted settings and validated engine creation.
+- `corvus/infrastructure/db.py` and `corvus/infrastructure/migrations/env.py` — add URL-based migration access and dialect-aware Alembic configuration.
+- `corvus/infrastructure/migrations/trigger_ddl.py` and M1-002 through M1-009 — emit equivalent SQLite and PostgreSQL trigger DDL and PostgreSQL partial-index predicates.
+- `compose.platform-test.yaml` — provides the disposable PostgreSQL integration-test service.
+- `pyproject.toml` and `uv.lock` — add the approved psycopg binary driver.
+- `tests/unit/platform/test_config.py` and `tests/integration/test_postgres_database.py` — cover fail-closed settings, redaction, engine URLs, fresh SQLite migration, and the real PostgreSQL migration contract.
+- `PROJECT_LOG.md` — records Task 1.2 implementation and verification status.
+
+### Assumptions Made (flag these for review)
+- None. Secret requirements, allowed database URLs, PostgreSQL test skipping, and SQLite compatibility were fixed by the approved Task 1.2 authority.
+
+### Known Issues / Deferred
+- Docker, PostgreSQL client tools, and `CORVUS_TEST_POSTGRES_URL` were unavailable on this workstation, so the real PostgreSQL integration test skipped with its explicit service-unavailable reason; it remains mandatory when the disposable service is available.
+- Hosted identity/session tables and OAuth flows are deferred to their later Milestone 1 tasks.
+
+### Suggested Next Steps
+- Run the PostgreSQL integration test against `compose.platform-test.yaml` in CI or on a workstation with Docker.
+- Continue with the next approved Milestone 1 task after Task 1.2 review.
+
+## 2026-07-16 — Harden Task 1.2 review findings
+
+### What Was Implemented
+- Reduced hosted-settings representation to the validated database driver so authority credentials and every query value remain absent.
+- Made direct settings construction reject all-whitespace secrets before minimum-length checks.
+- Added a destructive PostgreSQL test guard requiring an exact opt-in value, a database ending in `_test`, and a loopback or Compose-service host.
+- Strengthened the live PostgreSQL contract to verify all 59 triggers and functions, both partial unique indexes and behaviors, immutable update/delete rejection, downgrade cleanup, and re-upgrade restoration.
+- Added PostgreSQL offline Alembic rendering without a connection and deterministic offline manifest history for data-dependent migrations.
+- Added URL-based downgrade support and guaranteed disposal of internally created Alembic engines on connection or migration failure.
+
+### Files Modified
+- `corvus/platform/config.py` — uses driver-only redacted representations and rejects blank direct-constructor secrets.
+- `corvus/infrastructure/db.py` — adds the tested URL-based downgrade API.
+- `corvus/infrastructure/migrations/env.py` — supports offline SQL rendering and unconditional engine disposal.
+- `corvus/infrastructure/migrations/manifest_history.py` and M1-005 through M1-009 — provide deterministic offline manifest inputs while retaining online database validation.
+- `tests/postgres_safety.py`, `tests/unit/platform/test_postgres_safety.py`, and `compose.platform-test.yaml` — implement, prove, and document destructive-test authorization.
+- `tests/unit/platform/test_config.py` and `tests/integration/test_postgres_database.py` — add redaction, blank-secret, offline, disposal, downgrade, exact PostgreSQL DDL, and runtime-constraint coverage.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.2-report.md` — record the review repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The opt-in, disposable-name, host-policy, exact PostgreSQL proof, offline migration, disposal, and redaction requirements came directly from the Task 1.2 review.
+
+### Known Issues / Deferred
+- Docker, PostgreSQL client tools, and a test-service URL remain unavailable locally. The destructive integration test therefore stops before connecting with the explicit `postgres_reset_opt_in_required` skip; it does not accept or reset an arbitrary remote database.
+- The live exact-trigger/runtime/downgrade contract must still run in CI or a Docker-enabled workstation using the documented disposable service and explicit opt-in.
+
+### Suggested Next Steps
+- Start `compose.platform-test.yaml`, set `CORVUS_TEST_POSTGRES_RESET_ALLOWED=reset-disposable-database`, and run the focused PostgreSQL test for live evidence.
+- Continue to the next Milestone 1 task only after the follow-up commit is reviewed.
+
+## 2026-07-16 — Close Task 1.2 PostgreSQL query-override gap
+
+### What Was Implemented
+- Rejected every PostgreSQL test URL query parameter except one bounded `connect_timeout` value, including libpq routing, database, identity, password, service, and encoded-host overrides.
+- Kept effective PostgreSQL test routing fixed to the validated URL authority and path before engine creation.
+- Added a live contract assertion that two distinct quarantined commit-intent rows for one workspace both succeed, proving the documented finalized/quarantined partial-index exclusion.
+
+### Files Modified
+- `tests/postgres_safety.py` — adds the strict query allowlist and bounded timeout validation with secret-free errors.
+- `tests/unit/platform/test_postgres_safety.py` — proves routing/identity overrides, arbitrary keys, encoded keys, and ambiguous timeout values fail closed.
+- `tests/integration/test_postgres_database.py` — adds same-workspace quarantined-row acceptance to the service-gated live contract.
+- `compose.platform-test.yaml` — documents the only allowed query key and timeout range.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.2-report.md` — supersede the earlier host-only safety claim with the complete effective-target rule.
+
+### Assumptions Made (flag these for review)
+- None. The strict allowlist, effective-target validation, distinct quarantined-row assertion, and retained prior safety rules came directly from the final Task 1.2 review.
+
+### Known Issues / Deferred
+- The previous `fc2fe56` guard validated the URL driver, authority host, and database path but did not reject libpq query overrides; this entry records and closes that gap.
+- Live PostgreSQL remains unavailable locally, so the strengthened quarantined predicate assertion remains service-gated behind the unchanged opt-in and disposable-target controls.
+
+### Suggested Next Steps
+- Run the guarded live PostgreSQL test against the disposable Compose service for server-backed evidence.
+- Treat this strict query allowlist as part of the destructive-test safety boundary in future changes.
+
+## 2026-07-16 — Task 1.3 Identity continuity persistence
+
+### What Was Implemented
+- Added frozen account, external-identity, device-registration, and digest-only session contracts while retaining the existing USER Principal as the authority identity.
+- Added callback-ready verified Google identity completion with exact issuer/subject reuse, atomic first-time Principal/Account/ExternalIdentity creation, and fail-closed pre-provisioned email attachment.
+- Added SQLAlchemy 2 repositories that preserve SQLite Path APIs, accept caller-owned SQLite/PostgreSQL engines, keep workspace and membership reads tenant-scoped, and expose membership authority only through existing AccessBundle/CapabilityGrant records.
+- Added atomic append-only session rotation/revocation, predecessor replay denial, and bound-device revocation invalidation.
+- Added reversible `m2_001_identity_continuity`, schema-7 authority-root coverage, classifier/revision updates, and SQLite/PostgreSQL migration contracts.
+
+### Files Modified
+- `corvus/domain/account.py`, `corvus/domain/identity.py`, and `corvus/application/identity.py` — define identity-continuity contracts and application linking rules.
+- `corvus/infrastructure/repositories/accounts.py` and `corvus/infrastructure/repositories/identity_scope.py` — implement the portable repository contract without parallel workspace or membership types.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py`, `manifest_history.py`, `corvus/database.py`, and `corvus/infrastructure/db.py` — add the reversible schema, current revision, exact classification, and manifest history.
+- `corvus/infrastructure/authority_root.py` — scopes account, identity, device, and session families through existing workspace memberships.
+- Focused and regression tests under `tests/unit/domain`, `tests/unit/platform`, `tests/integration`, and `tests/contract` — cover identity linking, isolation, rotation/revocation, migration cycles, PostgreSQL guarding, and active-manifest compatibility.
+
+### Assumptions Made (flag these for review)
+- None. The Task 1.3 brief and the callback contract clarification fixed the identity-linking, authority, persistence, and service-gating behavior.
+
+### Known Issues / Deferred
+- The guarded live PostgreSQL repository and migration contract did not run locally because the explicit disposable reset opt-in/service was unavailable; the test skipped before engine creation with `postgres_reset_opt_in_required`.
+
+### Suggested Next Steps
+- Run `tests/integration/test_postgres_database.py` against the approved disposable PostgreSQL service with the documented reset opt-in.
+- Review the Task 1.3 commit before beginning OAuth transaction and cookie/session transport work in Task 1.4.
+
+## 2026-07-16 — Harden Task 1.3 review findings
+
+### What Was Implemented
+- Made M2 identity-continuity downgrade fail closed before changing triggers, manifests, or tables whenever any account, external identity, device, or session history exists; retained the empty downgrade/re-upgrade path.
+- Added `device_version` to session history and a portable composite foreign key that database-enforces an exact same-account device-version binding; repository creation also requires the current device version.
+- Scoped replay-history classification to the requested account and session, added cross-tenant rotate/revoke probes, and consolidated replacement-digest collisions under the value-free `session_replacement_conflict` code.
+- Added case-insensitive Owner/Admin/Manager/Member/Viewer capability ceilings over the existing AccessBundle/CapabilityGrant records, with unknown roles and out-of-ceiling allows failing closed while deny grants remain effective.
+- Made newly linked OAuth accounts truthfully retain `experience_kind=None` until onboarding, while preserving explicit experience values for pre-provisioned accounts.
+- Added populated SQLite preservation proof, a guarded PostgreSQL equivalent, direct schema probes, and focused/broad/security regression coverage.
+
+### Files Modified
+- `corvus/domain/account.py` — makes onboarding experience optional and records the bound device version on every session record.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py` and `corvus/database.py` — add nullable onboarding state, composite device/session integrity, classifier coverage, and the fail-closed downgrade guard.
+- `corvus/infrastructure/repositories/accounts.py` — enforces exact current-device binding, tenant-scoped replay classification, generic replacement conflicts, and unselected OAuth onboarding.
+- `corvus/infrastructure/repositories/identity_scope.py` — projects persisted grants through deterministic role ceilings without adding capabilities to memberships.
+- `tests/unit/domain/test_account.py`, `tests/unit/platform/test_config.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_postgres_database.py` — prove the reviewed behavior on models, rendered DDL, SQLite, and the guarded PostgreSQL contract.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.3-report.md` — record the corrected Task 1.3 contract and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The role matrix, case-insensitive labels, value-free failure behavior, downgrade boundary, session binding, replay scope, and onboarding sequence came directly from the Task 1.3 review clarification.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL test remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; its populated downgrade-preservation proof is retained for the approved disposable service.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL test against the approved disposable service to collect server-backed proof of the populated downgrade refusal.
+- Review the Task 1.3 follow-up commit before beginning Task 1.4.
+
+## 2026-07-16 — Close Task 1.3 stale-device and workspace-metadata gaps
+
+### What Was Implemented
+- Unified exact-device-version write denial under the value-free `session_device_version_stale` code for session creation, rotation, and revocation.
+- Made stale v1-bound rotation and revocation fail before appending session history, consuming the presented token, or minting/rebinding a replacement after the active device advances to v2.
+- Extended the M2 downgrade preflight to inspect workspace-kind column and payload metadata portably on SQLite and PostgreSQL before any trigger, manifest, table, or column change.
+- Refused downgrade for TEAM, unknown, non-default, invalid, or column/payload-divergent workspace metadata while preserving compatible default-individual rows with matching or absent legacy payload metadata.
+- Added independent SQLite rotate/revoke regressions, TEAM-only and divergence downgrade preservation proofs, a legacy-compatible default-individual cycle, a guarded PostgreSQL TEAM proof, and explicit offline fail-closed coverage.
+
+### Files Modified
+- `corvus/infrastructure/repositories/accounts.py` — blocks stale-device session creation, rotation, and revocation with one value-free denial.
+- `corvus/infrastructure/migrations/versions/m2_001_identity_continuity.py` — validates workspace metadata before online downgrade and retains offline refusal without history inspection.
+- `tests/integration/test_account_repository.py` — proves stale writes do not append/mint and workspace-only metadata cannot be lost or diverge.
+- `tests/integration/test_postgres_database.py` and `tests/unit/platform/test_config.py` — retain guarded PostgreSQL and offline downgrade proofs.
+- `PROJECT_LOG.md` and `.superpowers/sdd/task-1.3-report.md` — record the final Task 1.3 review closure and evidence.
+
+### Assumptions Made (flag these for review)
+- None. The shared denial code, stale rotate/revoke boundary, workspace compatibility rule, and offline behavior were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL proof remains locally skipped before connection because the disposable reset opt-in is not authorized; the TEAM-workspace preservation contract is ready for the approved service.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL test against the approved disposable service for server-backed TEAM-workspace downgrade evidence.
+- Review this final Task 1.3 follow-up commit before starting Task 1.4.
+
+## 2026-07-16 — Implement Task 1.4 Google OAuth and durable sessions
+
+### What Was Implemented
+- Added Google Authorization Code OAuth with S256 PKCE, HMAC-authenticated state, nonce binding, exact redirect allowlists, fixed Google endpoints, RS256/JWKS verification, verified-email policy, and late secret resolution through injectable ports.
+- Added encrypted, expiring, durably single-use OAuth transactions plus opaque browser-device/session credentials, digest-only persistence, HMAC-bound CSRF values, atomic login/session rotation, replay rejection, revocation, and secure host-only cookies.
+- Added the modular `/api/v2` identity, session, onboarding, workspace, and device routes with tenant scoping, optimistic versions, durable create idempotency, stable redacted errors, and truthful unconfigured `503` responses while preserving legacy pairing/static behavior.
+- Added the additive `m2_001a_oauth_sessions` migration and classifier/revision support for OAuth transactions, web-session bindings, onboarding versions, and identity idempotency records on SQLite and PostgreSQL-compatible SQLAlchemy paths.
+- Added a Vercel same-origin `/api/v2/**` proxy with a validated Railway origin, strict method/path/header forwarding, manual redirect handling, safe response-header filtering, and traversal/authority/header-injection tests without enabling credentialed cross-origin CORS.
+
+### Files Modified
+- `corvus/application/oauth.py`, `corvus/infrastructure/oauth/`, and `corvus/platform/api/` — define OAuth ports, Google verification, transaction persistence, hosted dependency composition, and v2 routes.
+- `corvus/infrastructure/repositories/accounts.py` and `corvus/infrastructure/repositories/platform_identity.py` — implement atomic browser login/session behavior and scoped onboarding/workspace/device persistence.
+- `corvus/infrastructure/migrations/versions/m2_001a_oauth_sessions.py`, `corvus/database.py`, and `corvus/infrastructure/db.py` — add and classify the Task 1.4 schema revision.
+- `corvus/platform/config.py`, `corvus/platform/__init__.py`, `.env.example`, `pyproject.toml`, and `uv.lock` — add fail-closed hosted OAuth configuration, documented deployment variables, and the approved Authlib dependency.
+- `corvus/mvp/api.py` — composes the v2 router exactly once before the catch-all static mount while retaining existing callers and legacy auth.
+- `apps/web/api/v2/[...path].ts`, `apps/web/vercel.json`, `apps/web/tsconfig.app.json`, and `apps/web/src/v2Proxy.test.ts` — add and verify the same-origin Vercel proxy boundary.
+- `tests/security/test_google_oauth.py`, `tests/integration/test_identity_api.py`, and `tests/unit/platform/test_config.py` — prove OAuth, session, route, cookie, persistence, redaction, and hosted-configuration behavior.
+- `PLAN.md` — records the completed Task 1.4 checklist.
+
+### Assumptions Made (flag these for review)
+- None. OAuth topology, algorithms, TTLs, cookie names, token formats, route contracts, migration revision, proxy boundary, and stop boundary were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- Live Google consent/token exchange, live Vercel-to-Railway proxy behavior, deployment, and desktop browser-to-app handoff remain intentionally deferred by the Task 1.4 stop boundary.
+- The guarded destructive PostgreSQL contract remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized.
+- A broad Bandit scan still reports three pre-existing low-severity B101 assertions in `corvus/application/agent_runtime.py`; the complete Task 1.4 module scan is clean.
+
+### Suggested Next Steps
+- Review the Task 1.4 commit and configure disposable hosted OAuth/proxy credentials before any authorized live integration exercise.
+- Run the guarded PostgreSQL test against the approved disposable service, then begin Task 1.5 only after explicit authorization.
+
+## 2026-07-16 — Harden Task 1.4 review findings
+
+### What Was Implemented
+- Restricted the Vercel proxy to credential-free, default-port HTTPS Railway-generated `*.up.railway.app` origins in production/preview, with loopback HTTP available only under an explicitly injected development/test environment; custom domains and IP/private/link-local targets fail closed.
+- Preserved only safe relative response redirects and the exact Google authorization endpoint, including a real proxied start-route test; external, authority-bearing, fragmented, credentialed, wrong-path, control-character, and backslash redirects are suppressed.
+- Added a terminal OAuth abort/consume path so provider denial and missing/malformed callback codes return one value-free `oauth_callback_rejected` response after valid state consumption; HMAC-invalid and non-canonical state representations fail before transaction lookup.
+- Converted only recognized optimistic version uniqueness and SQLite lock races for onboarding, workspace updates, and device revocation into stable `409` conflicts after rollback and authorized current-state reload; unrelated integrity failures remain unmodified.
+- Added Task 1.4 immutable-trigger classification, guarded PostgreSQL control expectations, populated-family downgrade preservation proofs, and empty downgrade/re-upgrade coverage.
+- Added adversarial nonce, signature, algorithm, time-claim, encrypted-transaction corruption, token/JWKS transport, recursive redaction, SSRF, and deterministic concurrent-writer coverage.
+
+### Files Modified
+- `apps/web/api/v2/[...path].ts`, `apps/web/src/v2Proxy.test.ts`, `.env.example`, and `apps/web/HOSTED_RUNTIME_SECURITY.md` — harden and document the same-origin redirect and Railway-origin boundary.
+- `corvus/application/oauth.py`, `corvus/infrastructure/oauth/google.py`, and `corvus/platform/api/identity.py` — add terminal callback consumption, canonical state validation, and stable API rejection.
+- `corvus/infrastructure/repositories/platform_identity.py` — normalize only recognized optimistic races after scoped state reload.
+- `corvus/database.py` — require all Task 1.4 immutable controls for current-schema classification.
+- `tests/security/test_google_oauth.py`, `tests/integration/test_identity_api.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_postgres_database.py` — prove the reviewed security, race, classifier, and rollback behavior.
+
+### Assumptions Made (flag these for review)
+- None. Callback error code, state-consumption boundary, redirect rules, Vercel environment policy, race translation scope, classifier controls, and stop boundary were explicitly confirmed before remediation.
+
+### Known Issues / Deferred
+- The guarded destructive PostgreSQL proof remains locally skipped before connection because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; expected Task 1.4 controls and populated downgrade assertions are retained for the approved disposable service.
+- Custom Railway domains remain unsupported pending an explicit deployment allowlist design and security review.
+- Live Google, Vercel/Railway deployment, desktop handoff, and Task 1.5 remain outside this remediation boundary.
+
+### Suggested Next Steps
+- Review the Task 1.4 remediation commit and run the guarded PostgreSQL proof when disposable reset authorization is available.
+- Keep the branch/worktree intact for review; begin Task 1.5 only after explicit authorization.
+
+## 2026-07-16 — Implement Task 1.5 ordered workspace synchronization
+
+### What Was Implemented
+- Added the two-command typed sync protocol, exact-version conflicts, atomic batches of at most 100 mutations, generalized scoped idempotency, versioned device acknowledgements, bounded frozen-high-watermark pages, and explicit resync responses.
+- Added serialized per-workspace sequence allocation, canonical request/change hashing, append-only workspace changes and outbox records, hash-chain validation, stable account/workspace writer locks, and tenant/version-bound foreign keys across SQLite and PostgreSQL-compatible paths.
+- Added `m2_002_workspace_sync`, migrated Task 1.4 idempotency rows into the platform-wide contract, extended current-schema classification and authority-root manifest families, and made populated downgrade refuse before mutation.
+- Reused the existing session, CSRF, Origin, device, membership, and redacted error boundaries while composing the sync router exactly once in the platform API.
+- Added adversarial domain, repository, API/security, migration, concurrency, replay, tamper, tenant-isolation, downgrade, and guarded PostgreSQL contract coverage.
+
+### Files Modified
+- `corvus/domain/sync.py` and `corvus/application/sync.py` — define the closed mutation union, sync results/pages/errors, bounds, and service boundary.
+- `corvus/infrastructure/repositories/sync.py` and `corvus/infrastructure/repositories/platform_identity.py` — implement transactional sync and the shared platform idempotency authority.
+- `corvus/infrastructure/migrations/versions/m2_002_workspace_sync.py`, `corvus/database.py`, `corvus/infrastructure/db.py`, and `corvus/infrastructure/migrations/manifest_history.py` — add, classify, migrate, and safely downgrade the sync schema.
+- `corvus/infrastructure/authority_root.py` — projects the five new authority families into workspace/account roots.
+- `corvus/platform/api/sync.py`, `corvus/platform/api/app.py`, `corvus/platform/api/dependencies.py`, and `corvus/platform/api/identity.py` — add the authenticated sync API while reusing identity security controls.
+- `corvus/security.py` — adds recursive secret rejection and stable canonical JSON normalization for persisted sync material.
+- `tests/unit/domain/test_sync.py`, `tests/integration/test_sync_repository.py`, `tests/security/test_sync_replay.py`, and `tests/integration/test_sync_migration.py` — prove protocol, persistence, API, concurrency, integrity, and migration behavior.
+- Existing account, PostgreSQL, authority-manifest, and real-project contract tests — update expected current-schema and manifest behavior without weakening earlier coverage.
+- `PLAN.md` — records the completed Task 1.5 checklist.
+
+### Assumptions Made (flag these for review)
+- None. The mutation vocabulary, transaction boundary, lock ordering, cursor/acknowledgement semantics, idempotency scope, hash inputs, migration behavior, router composition, and stop boundary were explicitly resolved in the approved Task 1.5 brief.
+
+### Known Issues / Deferred
+- The two destructive PostgreSQL sync cases and the existing PostgreSQL migration contract remain locally skipped before engine creation because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; their server-backed assertions and expected controls are retained.
+- SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment remain intentionally outside the Task 1.5 scope guard.
+
+### Suggested Next Steps
+- Run the guarded PostgreSQL contracts against the approved disposable service for live row-lock and DDL evidence.
+- Review the Task 1.5 commit before authorizing Task 1.6 onboarding and client sync work.
+
+## 2026-07-16 — Harden Task 1.5 independent review findings
+
+### What Was Implemented
+- Validated the locked workspace head and fully recomputed its typed canonical tail before every apply-path acknowledgement, replay, entity, outbox, or idempotency write; forged, missing, and broken previous-link tails now fail atomically with `sync_change_integrity_invalid`.
+- Required exact canonical payload bytes, duplicate-free finite JSON, timezone-aware canonical timestamps, closed profile schemas, kind/operation coherence, recursive sensitive-value rejection, and stable integrity-error mapping even when a page is empty at the high watermark.
+- Added one value-free `RequestValidationError` boundary for malformed or rejected requests: v2 returns only a stable code and correlation ID, while legacy routes retain a stable value-free envelope.
+- Bound sync changes, acknowledgements, and scoped idempotency rows to the exact account/principal pair and current workspace membership version while retaining workspace/version, device/account, and account-scope foreign keys.
+- Included membership version in request/change hashes, outbox evidence, replay authority checks, and returned change provenance; generalized schema classification now also requires the Task 1.5 account/principal unique index.
+- Added adversarial apply/replay/ack rollback, empty-page tail, canonical JSON, typed-profile, secret/nonfinite/naive-time, API canary, migration, direct SQLite transplant, offline PostgreSQL DDL, and guarded PostgreSQL transplant coverage.
+
+### Files Modified
+- `corvus/infrastructure/repositories/sync.py` — performs pre-write head/tail integrity checks, typed canonical read validation, stable replay authority checks, and exact membership provenance persistence.
+- `corvus/infrastructure/migrations/versions/m2_002_workspace_sync.py` and `corvus/database.py` — add and classify exact membership/account-principal constraints and safely remove the supporting index on downgrade.
+- `corvus/domain/sync.py` — adds closed account/workspace profile contracts and workspace, membership, and device provenance to changes.
+- `corvus/mvp/api.py` and `corvus/platform/api/sync.py` — provide value-free request validation responses and use the non-deprecated 422 status alias.
+- `tests/integration/test_sync_repository.py`, `tests/security/test_sync_replay.py`, and `tests/integration/test_sync_migration.py` — reproduce and prevent every confirmed review finding across repository, API, SQLite, PostgreSQL-guarded, and offline-DDL boundaries.
+
+### Assumptions Made (flag these for review)
+- None. The four repair areas, exact binding requirements, required adversarial cases, stop boundary, separate-commit requirement, and no-push boundary came directly from the confirmed independent review.
+
+### Known Issues / Deferred
+- The destructive PostgreSQL migration contract and three guarded sync PostgreSQL cases remain locally skipped before engine creation because `CORVUS_TEST_POSTGRES_RESET_ALLOWED` is not authorized; their exact FK, DDL, and row-lock assertions are retained.
+- The original Task 1.5 scope guard still defers SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment.
+
+### Suggested Next Steps
+- Run the four guarded PostgreSQL cases against the approved disposable service for live constraint and lock evidence.
+- Re-review the separate Task 1.5 hardening commit before authorizing Task 1.6.
+
+## 2026-07-17 — Close Task 1.5 residual integrity findings
+
+### What Was Implemented
+- Distinguished a truly new workspace from a deleted or missing sync head by checking all workspace-scoped change, outbox, acknowledgement, and idempotency history before treating sequence zero as genesis.
+- Made page, acknowledgement-only apply, idempotent replay, and new mutation paths fail before writes with the stable redacted `sync_change_integrity_invalid` error when a head is missing but scoped history remains.
+- Bound account-profile entity and payload provenance to the recorded authenticated account, and workspace-profile entity/payload identity and version to the authoritative workspace/version columns already protected by foreign keys.
+- Added recomputed canonical substitution attacks against account IDs, workspace IDs, and workspace versions, including empty-page high-watermark reads where only the tail validator runs.
+
+### Files Modified
+- `corvus/infrastructure/repositories/sync.py` — rejects orphan-history genesis and enforces kind-specific account/workspace entity provenance during full tail recomputation.
+- `tests/integration/test_sync_repository.py` — proves four missing-head request paths roll back without writes, true genesis remains available, and recomputed account/workspace substitutions fail closed.
+- `PROJECT_LOG.md` — records this consolidated residual review closure and evidence boundary.
+
+### Assumptions Made (flag these for review)
+- None. The orphan-history families, request paths, stable error, entity/version bindings, TDD order, separate-commit requirement, and no-push boundary were explicitly confirmed before implementation.
+
+### Known Issues / Deferred
+- The existing PostgreSQL migration contract and three sync PostgreSQL cases remain guarded before engine creation because disposable reset authorization is unavailable; this residual repair changes repository validation only and adds no DDL.
+- The original Task 1.5 scope guard continues to defer SSE, retention/snapshot workers, outbox delivery, arbitrary entity sync, and deployment.
+
+### Suggested Next Steps
+- Run the four guarded PostgreSQL cases against the approved disposable service when reset authorization is available.
+- Re-run independent review on the complete Task 1.5 commit chain before authorizing Task 1.6.
+
+## 2026-07-17 — Implement Task 1.6 Google-first onboarding and synchronized profiles
+
+### What Was Implemented
+- Added a single hosted composition root with in-memory authentication and ordered workspace synchronization providers.
+- Added Google-first, server-resumable onboarding with exact versions, stable idempotent workspace creation, explicit Team creation, unavailable Join, and disabled Cloud Preview.
+- Added strict sequence/digest/provenance reduction, acknowledgement-after-reduction, conflict/resync/offline/403 behavior, and explicit authority re-selection.
+- Replaced experience/scope switches with read-only identity labels and authorized workspace selection on desktop/mobile.
+- Reduced V1 browser preferences to one-time post-auth migration input and preserved the authenticated hosted-to-loopback boundary.
+- Added explicit V2 request/response/error schemas and regenerated deterministic OpenAPI/TypeScript contracts.
+
+### Files Modified
+- `apps/web/src/auth/`, `apps/web/src/sync/`, `apps/web/src/PlatformApp.tsx`, `apps/web/src/App.tsx`, and `apps/web/src/main.tsx` — compose session, onboarding, selection, sync, and local runtime boundaries.
+- `apps/web/src/app/`, `apps/web/src/components/`, `apps/web/src/runtime/`, and web styles/tests — implement resumable onboarding, migration, read-only identity, responsive navigation, handoff, and coverage.
+- `corvus/platform/api/identity.py`, `corvus/platform/api/sync.py`, `openapi/corvus-mvp.json`, and `apps/web/src/generated/api.ts` — provide explicit typed V2 contracts in configured and unavailable modes.
+- `tests/mvp/test_openapi_export.py` and `.superpowers/sdd/task-1.6-report.md` — prove and record typed export and completion evidence.
+
+### Assumptions Made (flag these for review)
+- None. All state ownership, failure, migration, vocabulary, runtime, viewport, and stop-boundary decisions were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy still reports five pre-existing migration typing errors unrelated to Task 1.6.
+- Four destructive PostgreSQL cases remain guarded before engine creation without disposable reset authorization.
+- Invitations, organization roles, durable active selection, offline mutation queues, native OAuth handoff, real cloud execution, billing, deployment, profile Settings, and Task 2 are deferred.
+
+### Suggested Next Steps
+- Independently review the Task 1.6 commit and required viewport captures.
+- Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Close Task 1.6 consolidated review findings
+
+### What Was Implemented
+- Split loopback composition from hosted identity so `localhost`, `127.0.0.1`, and IPv6 loopback open the legacy local pairing boundary without booting hosted session or synchronization APIs.
+- Added generation fences for authentication discovery, workspace discovery/selection, local project/workflow/operations loads, event streams, and workspace-derived mutation results; confirmed workspace changes now reset every derived UI state.
+- Centralized mutation-time 401 authority invalidation, refreshed authorized workspace lists on 403 while preserving the last-safe read-only display, and rejected stale workspace selections.
+- Added explicit conflict versions with reload/retry actions, including onboarding truth refresh that preserves the selected form value and retries with the new exact account version.
+- Added real Settings routes with a truthful read-only placeholder, keyboard-contained identity and mobile More dialogs, and valid legacy candidate cleanup or explicit dismissal for returning users.
+
+### Files Modified
+- `apps/web/src/auth/`, `apps/web/src/sync/`, `apps/web/src/PlatformApp.tsx`, and `apps/web/src/App.tsx` — enforce runtime authority separation, centralized invalidation, conflict recovery, and async generation fencing.
+- `apps/web/src/app/` and `apps/web/src/components/` — add Settings navigation, conflict UI, legacy cleanup controls, alternate-workspace recovery, and accessible dialog focus behavior.
+- Web unit and integration tests — reproduce all consolidated review races, authority failures, conflict paths, runtime boundaries, migration cleanup, Settings behavior, and keyboard interactions.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record the review closure and final evidence.
+
+### Assumptions Made (flag these for review)
+- None. Loopback host matching, authority behavior, reset scope, conflict actions, Settings boundary, focus behavior, generation fencing, separate-commit requirement, and no-push/no-deployment stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Five baseline full-mypy errors remain in pre-existing migration files; no Task 1.6 review-fix file is implicated.
+- Four destructive PostgreSQL tests remain guarded before engine creation because disposable reset authorization is unavailable.
+- Settings is intentionally read-only; invitations, organization roles, persisted active-workspace preference, offline mutation queues, native desktop OAuth, real cloud execution, billing, deployment, and Task 2 remain deferred.
+
+### Suggested Next Steps
+- Independently review the separate Task 1.6 consolidated-fix commit.
+- Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Close Task 1.6 authority and stale-operation re-review
+
+### What Was Implemented
+- Removed fabricated loopback account, workspace, profile, and CSRF authority; loopback now consumes only the legacy session/pairing/project API while hosted composition remains Google-first.
+- Added generation fencing to stale authentication reloads, workspace profile mutations, conflict reload/retry actions, and their 401/403 recovery paths.
+- Centralized mutation and retry 403 membership refresh so the last-safe workspace remains visible but immutable until an explicit fresh selection.
+- Added truthful no-access guidance for empty refreshed membership and contained nested identity Escape handling so the parent More dialog stays open with focus restored locally.
+- Added direct transport tests for credentialed session/pairing requests and session-derived CSRF mutation headers.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/PlatformApp.tsx`, and their tests — provide authority-neutral loopback composition backed by real legacy session truth.
+- `apps/web/src/auth/AuthProvider.tsx` and tests — ignore stale reload failures after newer authenticated truth wins.
+- `apps/web/src/sync/SyncProvider.tsx` and tests — fence mutation/conflict operations and centralize fresh-membership recovery.
+- `apps/web/src/components/WorkspaceSwitcher.tsx`, responsive navigation tests, and identity tests — provide truthful empty membership and nested Escape behavior.
+- `apps/web/src/api.test.ts` — prove credential and CSRF transport consumption.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record final repair evidence and scope boundaries.
+
+### Assumptions Made (flag these for review)
+- None. Loopback authority ownership, operation generations, 403 recovery, accessibility behavior, required gates, separate commit, and no-push/no-Task-2 boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy still reports the same five pre-existing migration typing errors in `m1_006` through `m1_009` and migration `env.py`; no changed Task 1.6 file is implicated.
+- Four destructive PostgreSQL tests remain guarded before engine creation because disposable reset authorization is unavailable.
+- Invitations, organization roles, durable active selection, offline mutation queues, native desktop OAuth, real cloud execution, billing, deployment, editable Settings, and Task 2 remain deferred.
+
+### Suggested Next Steps
+- Independently review the separate Task 1.6 authority/stale-operation repair commit and retained browser captures.
+- Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 — Fence stale explicit-resync acknowledgements
+
+### What Was Implemented
+- Added a generation fence after explicit-resync page fetch/reduction and immediately before acknowledgement.
+- Added a regression that defers workspace A's resync page, selects workspace B, then proves late A cannot send an acknowledgement or mutate B's ready snapshot.
+
+### Files Modified
+- `apps/web/src/sync/SyncProvider.tsx` — prevents superseded explicit-resync work from acknowledging a stale cursor.
+- `apps/web/src/sync/SyncProvider.test.tsx` — reproduces and permanently covers the stale pre-ACK race.
+- `.superpowers/sdd/task-1.6-report.md` and `PROJECT_LOG.md` — record the final review closure and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The race shape, generation boundary, frontend-only verification scope, documentation, separate commit, and stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy retains the five previously documented migration typing errors; this frontend-only repair does not touch those files.
+- Four destructive PostgreSQL tests remain guarded without disposable reset authorization.
+- No push, deployment, PR, or Task 2 work was authorized.
+
+### Suggested Next Steps
+- Independently review the final explicit-resync fence commit.
+- Begin Task 2 only after explicit authorization.
+
+## 2026-07-17 - Persist workspace-scoped conversations, runs, events, and artifacts
+
+### What Was Implemented
+- Added frozen, extra-forbid conversation domain contracts for threads, attachment metadata, messages, immutable run records, hash-chained run events, numeric event pages, artifacts, and canonical lineage.
+- Added a fail-closed conversation application service and authority/audit lifecycle ports. Mutations bind request context, client surface, authorization snapshot, idempotency digest, live roots, audit receipt, and finalized result before repository writes are exposed.
+- Added a dual-dialect `ConversationRepository` with transaction-time active-membership checks, SQLite `BEGIN IMMEDIATE`, PostgreSQL row locks, exact idempotency replay, gap-free sequence allocation, frozen event paging, artifact DAG validation, and stable tenant-safe errors.
+- Added `m2_003_conversations`, manifest schema version 9, nine in-root authority families, classifier/root coverage, immutable triggers, portable composite foreign keys, partial provider-event uniqueness, and deterministic empty downgrade/re-upgrade behavior.
+- Generalized head-level downgrade preflight so populated conversation, sync, OAuth, identity, or incompatible identity-workspace history refuses before any newer schema layer is mutated.
+- Added domain, SQLite/PostgreSQL repository, migration/root, and security regression coverage, including tamper, tenant transplant, replay mismatch, revoked membership, cursor, event-chain, and artifact-lineage cases.
+
+### Files Modified
+- `corvus/domain/conversations.py` - defines the immutable conversation persistence contracts and canonical validation helpers.
+- `corvus/application/conversations.py` and `corvus/application/ports.py` - provide the fail-closed service boundary and generalized mutation lifecycle contracts.
+- `corvus/infrastructure/repositories/conversations.py` - implements tenant-safe transactional persistence and paging.
+- `corvus/infrastructure/migrations/versions/m2_003_conversations.py` - creates the nine conversation authority families and manifest version 9.
+- `corvus/database.py`, `corvus/infrastructure/db.py`, `corvus/infrastructure/migrations/manifest_history.py`, and `corvus/infrastructure/authority_root.py` - register the new current revision, classifier, downgrade preflight, history, and root projections.
+- `tests/unit/domain/test_conversations.py`, `tests/integration/test_conversation_repository.py`, `tests/integration/test_conversation_migration.py`, and `tests/security/test_conversation_isolation.py` - cover the new domain, repository, migration, and security contracts.
+- `tests/contract/test_real_project_vertical.py`, `tests/integration/test_account_repository.py`, and `tests/integration/test_non_circular_root_manifest.py` - advance active-manifest expectations and preserve whole-path downgrade atomicity.
+- `.superpowers/sdd/task-2.1-report.md` and `PROJECT_LOG.md` - record Task 2.1 scope, TDD evidence, verification, and stop boundaries.
+
+### Assumptions Made (flag these for review)
+- Provider binding and authorization snapshot identifiers are immutable value bindings only; Task 2.1 does not introduce provider or authorization authority tables.
+- PostgreSQL destructive runtime checks remain guarded unless an explicit disposable reset opt-in is present; portable PostgreSQL DDL is still verified offline.
+- No API, SSE, provider runtime, process execution, binary blob storage, retention worker, web UI, deployment, push, or Task 2.2 work is included.
+
+### Known Issues / Deferred
+- Full `mypy corvus` retains five pre-existing errors in untouched certified migration files: migration `env.py` and revisions `m1_006`, `m1_007`, `m1_008`, and `m1_009`. All changed/new Task 2.1 source modules pass targeted mypy.
+- Five PostgreSQL destructive tests are skipped by the existing `postgres_reset_opt_in_required` guard because disposable reset authorization is unavailable.
+- Opaque authenticated API cursors, provider adapters, runtime execution, retention deletion, API/SSE transport, and UI remain deferred to later authorized tasks.
+
+### Suggested Next Steps
+- Independently review the separate Task 2.1 commit and the evidence in `.superpowers/sdd/task-2.1-report.md`.
+- Progress to Task 2.2 after independent Task 2.1 approval.
+
+## 2026-07-17 - Close Task 2.1 authority-binding and event-chain review findings
+
+### What Was Implemented
+- Added fail-closed application-boundary authority binding for attachment registration, message append, run creation, event append, and artifact recording before lifecycle or repository invocation.
+- Bound every affected payload to the request workspace and its provable scope; denied delegated attachment ownership and principal/agent authorship, and bound run requester plus authorization snapshot ID/digest exactly to `RequestContext`.
+- Required attachment and artifact mutations to use an exact workspace scope because neither payload exposes a provable thread scope; retained transactional producing-run/event/parent validation for artifacts.
+- Changed event paging to validate the complete persisted chain from genesis through the frozen high watermark, including sequence, predecessor/event digests, run handle, workspace/thread/run envelope, terminal transitions, and tool-state prerequisites.
+- Added adversarial coverage for all five mutation families, identity/snapshot/scope transplants, and a disconnected predecessor whose event digest was recomputed to remain locally valid.
+
+### Files Modified
+- `corvus/application/conversations.py` - rejects authority transplants with the stable non-enumerating `conversation_authority_binding_mismatch` before lifecycle/repository access.
+- `corvus/infrastructure/repositories/conversations.py` - validates the full frozen persisted event chain before returning any page slice.
+- `tests/security/test_conversation_isolation.py` - reproduces both High findings and covers all confirmed binding rules.
+- `.superpowers/sdd/task-2.1-report.md` and `PROJECT_LOG.md` - record review repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. Workspace/scope, owner/author/requester, authority-version, snapshot, chain-validation, stable-error, test, commit, and no-push boundaries were explicitly confirmed.
+
+### Known Issues / Deferred
+- Full mypy retains the five documented errors in unchanged certified migration files; the review-fix source files pass targeted mypy.
+- PostgreSQL destructive tests remain guarded without explicit disposable reset authorization.
+- No API/SSE/UI/provider runtime, Task 2.2 implementation, push, pull request, or deployment is included in this repair.
+
+### Suggested Next Steps
+- Independently re-review the separate Task 2.1 High-finding repair commit.
+- Progress to Task 2.2 after Task 2.1 approval.
+## 2026-07-17 - Add provider-neutral registry and bounded process sessions
+
+### What Was Implemented
+- Added an immutable provider registry over the existing `AgentRuntimePort` with deterministic one-time factory construction, all-or-nothing scoped discovery, duplicate refusal, fail-closed capability intersection, stable redacted errors, and exact binding-owner dispatch.
+- Hardened `AgentRuntimeCoordinator` preflight to reconstruct provider models, validate exact workspace/project scope, require exactly one matching binding, and preserve `UNVERIFIED` as unavailable.
+- Added frozen bounded process-session contracts with executable digest pinning, direct argv spawning, canonical cwd/root checks, shell/link/reparse refusal, a rebuilt minimal environment, bounded stdin/stdout/stderr/frame/event handling, strict NDJSON, recursive redaction, cursor replay, timeout handling, and single-terminal-event serialization.
+- Added confirmed POSIX and Windows process-tree termination helpers while preserving `run_trusted_argv`; Windows taskkill failures remain explicitly unconfirmed.
+- Added Windows-focused registry, process, process-tree, consumer-cancellation, coordinator ambiguity, security-boundary, and regression coverage.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/registry.py` - immutable adapter factories, deterministic discovery, capability intersection, and exact runtime routing.
+- `corvus/infrastructure/agent_runtimes/process_session.py` - bounded invocation/session/event contracts and strict streaming lifecycle.
+- `corvus/infrastructure/agent_runtimes/__init__.py` - exports the Task 2.2 infrastructure surfaces.
+- `corvus/application/agent_runtime.py` - revalidates provider preflight models and rejects ambiguous discovery.
+- `corvus/safe_process.py` - adds reusable clean-environment, grouped-spawn, path, and confirmed tree-termination helpers without changing the trusted argv API.
+- `tests/unit/infrastructure/test_provider_registry.py` - provider registry construction, discovery, routing, intersection, and stable-error coverage.
+- `tests/unit/infrastructure/test_process_session.py` - invocation, stream, bounds, redaction, replay, timeout, tree-kill, and cancellation coverage.
+- `tests/unit/application/test_agent_runtime_coordinator.py` - ambiguous matching-provider regression.
+- `.superpowers/sdd/task-2.2-report.md` - Task 2.2 TDD, verification, security, and stop-boundary evidence.
+
+### Assumptions Made (flag these for review)
+- None beyond the confirmed Task 2.2 checklist. Stable reason codes, frozen infrastructure-local process contracts, derived clean environment, conservative named limits, immediate pre-spawn digest pinning, and cross-platform termination rules were confirmed before implementation.
+
+### Known Issues / Deferred
+- Cwd containment is not a filesystem sandbox; provider tool/sandbox restrictions remain Task 2.3.
+- Digest pinning immediately before spawn is not an atomic OS open/exec guarantee.
+- Provider-specific CLI arguments/parsers, API providers, persistence, API/SSE/UI surfaces, and durable process resurrection remain outside Task 2.2.
+- Destructive PostgreSQL tests remain intentionally skipped without explicit reset opt-in.
+
+### Suggested Next Steps
+- Independently review the Task 2.2 commit and security boundaries.
+- Begin Task 2.3 only after Task 2.2 approval.
+
+## 2026-07-17 - Close Task 2.2 process lifecycle release blockers
+
+### What Was Implemented
+- Moved bounded stdin delivery into the supervised process lifecycle so stdout/stderr readers, stdin feed/close, process wait, and timeout handling run concurrently without pipe-order deadlock.
+- Shielded cancellable process creation, recovered any created handle, and confirmed whole-tree cleanup before propagating caller cancellation.
+- Hardened POSIX process-tree termination to probe the process group after leader exit, escalate TERM-ignoring descendants to KILL, and require ESRCH plus leader reaping before reporting confirmation.
+- Added large stdout-before-stdin, cancellable spawn with descendant, real POSIX parent-exits-first, and deterministic TERM-to-KILL escalation regressions.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/process_session.py` - supervises stdin concurrently and recovers cancelled spawn handles for confirmed cleanup.
+- `corvus/safe_process.py` - confirms POSIX process-group absence rather than trusting leader exit.
+- `tests/unit/infrastructure/test_process_session.py` - covers pipe-order progress and spawn-cancellation tree cleanup.
+- `tests/unit/test_safe_process.py` - covers real and deterministic parent-exits-first descendant termination.
+- `.superpowers/sdd/task-2.2-report.md` - records the two High repairs, evidence, and consolidated-gate boundary.
+
+### Assumptions Made (flag these for review)
+- None. The concurrent stdin lifecycle, shielded spawn recovery, ESRCH-only POSIX absence proof, no-full-suite deadline boundary, and exact stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- The real POSIX regression is skipped on Windows and will run in the existing Linux/macOS matrix; deterministic escalation logic is covered locally.
+- The fresh 5.5-minute full suite is intentionally deferred to the single final consolidated vertical-MVP release gate; focused runtime/security/static gates cover this repair commit.
+- Provider-specific adapters and all Task 2.3 work remain out of scope.
+
+### Suggested Next Steps
+- Independently re-review the two Task 2.2 High repairs.
+- Begin Task 2.3 only after approval.
+
+## 2026-07-17 - Ship truthful same-device Codex chat MVP
+
+### What Was Implemented
+- Added a bounded, text-only Codex CLI adapter that pins the executable, runs without a shell in a read-only sandbox, redacts diagnostics, rejects tool events, normalizes run events, and supports cancellation.
+- Added paired-session local chat routes for idempotent run start, owner-scoped signed-cursor SSE replay, and cancellation.
+- Kept run handles/events in daemon memory and explicitly labels responses as `this_device`; transcripts remain client-local and no Task 2.1 conversation persistence is claimed or written.
+- Uses the user's configured Codex default by omitting `--model`; optional model identifiers are strictly bounded and cannot inject flags.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` - bounded local Codex process adapter.
+- `corvus/mvp/local_chat.py` - owner-scoped in-memory local run service and Codex backend bridge.
+- `corvus/mvp/api.py` - authenticated/CSRF-protected local chat start, SSE, and cancel routes.
+- `tests/contract/providers/test_codex_adapter.py` - adapter bounds, normalization, redaction, cancellation, and model validation.
+- `tests/mvp/test_local_chat_api.py` - route auth, isolation, idempotency, cursor, cancellation, and redaction coverage.
+
+### Assumptions Made (flag these for review)
+- None. The hackathon scope was explicitly narrowed to a truthful same-device local Codex flow with daemon-lifetime events and client-local transcripts.
+
+### Known Issues / Deferred
+- Runs and server-side events do not survive daemon restart; cross-device sync and durable conversation storage are deferred.
+- Cloud runtimes, API-key providers, tools, repository writes, scheduling, and full-auto execution are not included in this slice.
+- The Codex executable must be locally installed and authenticated; unavailable installations return a stable service error.
+
+### Suggested Next Steps
+- Connect the device-local web transcript adapter to these routes and verify the desktop flow visually.
+- Add durable/cloud execution only through the separately authorized runtime and identity milestones.
+
+## 2026-07-17 - Deliver hackathon chat-first product vertical
+
+### What Was Implemented
+- Added a chat-first local workspace with versioned device-only threads, transcript, composer, Local Codex/default-model controls, durable SSE output, stop control, and Plan-to-Work-to-Result run status.
+- Added real Schedule/Routines create, list, and run-now surfaces over the existing authorized routine APIs while labeling timed recurrence Coming soon.
+- Added real Settings for light/dark/system theme, response tone, custom rules, synced profile changes on hosted accounts, and truthful MCP/integration placeholders.
+- Reordered all four adaptive persona/workspace profiles around Conversations/Threads and Schedule while preserving distinct everyday/developer and individual/team information density.
+- Kept Google-first hosted onboarding, local pairing, authority, sync, Cloud Preview, and local-runtime handoff boundaries intact.
+
+### Files Modified
+- `apps/web/src/App.tsx` - wires local chat, routines, settings, theme restoration, and chat-first local navigation.
+- `apps/web/src/app/ConversationWorkspace.tsx`, `conversationApi.ts`, and `conversationStorage.ts` - paired Local Codex execution, SSE presentation, cancellation, and strict device-only transcript storage.
+- `apps/web/src/app/SettingsPanel.tsx` and `devicePreferences.ts` - account profile control plus versioned workspace/device settings.
+- `apps/web/src/app/RoutinesWorkspace.tsx` - authorized routine creation and run-now surface.
+- `apps/web/src/app/workspaceProfiles.ts` - four coherent chat-first navigation profiles.
+- `apps/web/src/styles/product-workspace.css` and `apps/web/src/main.tsx` - responsive product UI and explicit theme tokens.
+- Focused and integration web tests - RED/GREEN coverage for storage, API proofs, chat/run/stop, settings, routines, profiles, and legacy navigation.
+
+### Assumptions Made (flag these for review)
+- The local-chat contract confirmed during implementation is stable: paired `corvus_session`, legacy CSRF, idempotency key, Local Codex configured default, cookie-auth SSE, and device-only storage labeling.
+- Direct loopback sessions do not invent a synced persona; profile editing is disabled there and points to the signed-in web app.
+
+### Known Issues / Deferred
+- Conversation transcript synchronization, Cloud execution, E2B, additional model providers, executable MCP connections, integration OAuth, timed recurrence, advanced team administration, and billing remain deferred.
+- Responsive Computer Use screenshots and real desktop acceptance are owned by the consolidated root verification pass.
+
+### Suggested Next Steps
+- Run the paired local-chat backend and complete desktop/mobile Computer Use acceptance.
+- Review the combined backend/frontend vertical before the single hackathon PR.
+
+## 2026-07-17 - Repair Windows local Codex launch in the current desktop app
+
+### What Was Implemented
+- Changed Windows local-Codex discovery to prefer the official user-owned native binary installed behind `codex.cmd` instead of an inaccessible packaged WindowsApps executable.
+- Kept a validated direct executable fallback and retained the existing non-Windows discovery path.
+- Translated supervised process-spawn failures into the stable `codex_process_unavailable` adapter error instead of leaking an unhandled exception as HTTP 500.
+- Added regressions for Windows executable selection and process-spawn error translation.
+- Restarted the current release desktop and sidecar, then reproduced the original `hi` request through the real UI; the run reached `completed` and returned a Codex response.
+
+### Files Modified
+- `corvus/mvp/local_chat.py` - resolves the supported Windows npm native Codex binary before the packaged executable fallback.
+- `corvus/infrastructure/agent_runtimes/codex.py` - converts supervised process launch failures into a stable adapter error.
+- `tests/mvp/test_local_chat_api.py` - proves the Windows npm-native executable is selected over an inaccessible packaged binary.
+- `tests/contract/providers/test_codex_adapter.py` - proves spawn failures are translated without an unhandled server error.
+- `PROJECT_LOG.md` - records the repair and fresh acceptance evidence.
+
+### Assumptions Made (flag these for review)
+- The supported Windows npm package layout remains the authoritative local Codex CLI installation when `codex.cmd` is present; both currently published nested and legacy vendor layouts are recognized.
+
+### Known Issues / Deferred
+- A machine without an installed and authenticated native Codex CLI still receives the existing stable unavailable-service response.
+- Claude, Gemini, Cursor, and xAI/Grok runtime adapters remain outside this fast-track local Codex slice.
+
+### Suggested Next Steps
+- Run the consolidated Python, web, Rust, and repository release gates.
+- Push the verified branch and open the single unmerged review PR.
+
+## 2026-07-17 - Close consolidated Python release-quality blockers
+
+### What Was Implemented
+- Normalized migration query rows into explicit tuple shapes so strict typing matches the already-supported offline migration path without changing stored values or manifest construction.
+- Added an explicit missing-URL failure for offline Alembic configuration instead of relying on an optional-string attribute error.
+- Replaced three optimization-removable authorization assertions with explicit fail-closed `agent_run_authorization_unavailable` results.
+- Applied the repository formatter to the local-chat API and recorded narrow Bandit suppressions for the hardened fixed-argv subprocess boundary and a capability field named `shell` that is not process execution.
+
+### Files Modified
+- `corvus/infrastructure/migrations/env.py` and revisions `m1_006` through `m1_009` - close strict typing gaps while retaining the existing migration data flow.
+- `corvus/application/agent_runtime.py` - keeps impossible authorization states fail closed under optimized Python.
+- `corvus/safe_process.py` and `corvus/infrastructure/agent_runtimes/codex.py` - document two precise Bandit false positives.
+- `corvus/mvp/api.py` - applies deterministic repository formatting.
+- `PROJECT_LOG.md` - records the repair scope and verification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The changes preserve existing runtime and migration behavior while making the fail-closed path explicit.
+
+### Known Issues / Deferred
+- Destructive PostgreSQL tests remain opt-in and POSIX process-group behavior remains CI-only on this Windows workstation.
+
+### Suggested Next Steps
+- Add the newly requested provider, streaming, MCP discovery, scratch-build handoff, and simplified interface vertical.
+- Rerun the complete release matrix after that vertical is integrated.
+
+## 2026-07-17 - Deliver the hackathon local-agent workspace
+
+### What Was Implemented
+- Simplified the desktop/web product shell to one sidebar and one main canvas with on-demand history, icon-first actions, overlay-only inspection, and profile-aware local identity.
+- Connected installed Codex and Claude CLIs through bounded fixed-argv adapters with truthful provider/model discovery, model and thinking selection, cancellation, and live safe message/reasoning/status streaming.
+- Added explicit Chat/Build behavior, MCP opt-in, a fresh Codex workspace-write sandbox, plugin/app/hook isolation by default, and bounded project ZIP handoff with a SHA-256 manifest.
+- Added owner-scoped provider and artifact API routes, fail-closed provider discovery/retry UX, and regression coverage for provider dispatch, selected options, streaming, isolation, artifact access, and adaptive profiles.
+- Preserved provider-specific thinking levels in the web contract, added Claude Maximum selection, handled both structured and string FastAPI errors, and gave empty provider discovery an install-and-retry path without claiming sign-in was verified by executable discovery.
+- Verified a real Windows Codex Build run that streamed to completion and produced a digest-valid ZIP containing the requested project and manifest.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py`, `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, and `corvus/mvp/{api,local_chat,provider_catalog}.py` - provider, streaming, Build, MCP, and artifact runtime vertical.
+- `apps/web/src/app/`, `apps/web/src/components/`, and web styles/tests - simplified shell, agent composer, fail-closed catalog, local profile identity, and responsive interaction coverage.
+- `tests/contract/providers/` and `tests/mvp/` - adapter, catalog, dispatch, owner isolation, streaming, and artifact regressions.
+- `README.md`, `HACKATHON_STATUS.md`, `PLAN.md`, and `PROJECT_LOG.md` - truthful delivered/deferred scope and acceptance record.
+
+### Assumptions Made (flag these for review)
+- Provider-supplied reasoning summaries are safe user-facing progress; hidden chain-of-thought and raw command/tool output remain excluded.
+- The selected legacy local preference is presentation input only and does not manufacture hosted membership, Team authority, or runtime permission.
+
+### Known Issues / Deferred
+- Gemini and xAI/Grok remain Preview, Cursor is unavailable, and API-key routing is not implemented.
+- Corvus Cloud/E2B, production multi-user collaboration, timed scheduler workers, and durable cross-device conversation persistence remain at their explicit later milestone boundaries.
+- MCP-off Build disables plugins/apps/hooks and user configuration; configured MCP access occurs only after the user enables it for that Build run.
+
+### Suggested Next Steps
+- Complete the consolidated release gates and GUI acceptance, then open the single unmerged review PR.
+- Add production Cloud/runtime placement and durable provider authority only in their separately reviewed milestones.
+
+## 2026-07-17 - Simplify the current agent workspace and certify live execution
+
+### What Was Implemented
+- Removed the duplicate local page header and made the active route the accessible name of the main region.
+- Reduced the idle conversation surface to one workspace header, one centered invitation, and one compact bottom composer; the Plan/Work/Result flightline now appears only for an active or terminal run.
+- Kept provider, model, thinking, Chat/Build, MCP, history, and new-thread controls directly in the familiar conversation flow without adding another rail.
+- Cleared transient thinking/work notes when a run reaches a terminal state so completed conversations do not retain stale activity text.
+- Rebuilt and launched the exact worktree release binary, then sent a real Local Codex prompt through the Windows UI and received the streamed `CORVUS_UI_OK` completion.
+- Derived local navigation from the selected Everyday/Developer and Individual/Team profile, with every label mapped to an existing local surface and covered across all four combinations.
+- Added permanent SSE-loss recovery, per-owner/idempotency-key start serialization, truthful detected-versus-authenticated provider labels, safe generic hidden-reasoning checkpoints, post-exit Build packaging, and broader credential screening.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and `apps/web/src/App.test.tsx` - remove the duplicate bar, preserve visible errors, and verify accessible single-shell navigation.
+- `apps/web/src/app/ConversationWorkspace.tsx`, `apps/web/src/app/conversationApi.ts`, `apps/web/src/styles/product-workspace.css`, and their tests - compact the agent conversation surface, recover from terminal stream loss, conditionally expose run progress, and clear terminal stale state.
+- `corvus/mvp/local_chat.py`, `corvus/mvp/provider_catalog.py`, `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, and focused tests - serialize duplicate starts, label provider detection truthfully, suppress raw reasoning, and harden artifact finalization/credential screening.
+- `HACKATHON_STATUS.md` and `PROJECT_LOG.md` - record current verified behavior and certification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The UX changes preserve the existing provider/runtime authority and only remove duplicate presentation chrome.
+
+### Known Issues / Deferred
+- The native Codex Security diff scan remains pending because its Start action must be pressed by the user; no terminal substitute or bypass was used.
+- Gemini and xAI/Grok remain Preview, Cursor remains unavailable, and Cloud/E2B, production OAuth continuity, billing, and durable multi-user collaboration remain outside this local hackathon slice.
+
+### Verification
+- Python: 1045 passed, 6 intentional platform/database skips; Ruff, format, strict mypy, Bandit, and pip-audit passed.
+- Web: 141 passed across 24 files; production build passed.
+- Desktop: 7 Rust tests, Cargo format, Clippy with warnings denied, and `cargo check` passed; `git diff --check` was clean apart from Windows line-ending notices.
+
+### Suggested Next Steps
+- When the user can access the Codex desktop UI, start the native security diff scan and address any verified findings before review freeze.
+- Open the consolidated branch as one unmerged PR after the final diff review completes.
+
+## 2026-07-17 - Resolve PR 6 security, correctness, and cross-platform review findings
+
+### What Was Implemented
+- Bound Google OAuth state to the initiating browser with a short-lived secure HttpOnly cookie, and kept Google client secrets outside browser sources.
+- Fenced Vercel proxy origins, rebound Railway cookies to the public host-only root path, and documented the hosted trust boundary.
+- Returned the original Codex handle on idempotent replay, allowed opaque credential references, rejected directory symlinks before traversal, and replaced unsafe string-enum identity comparisons.
+- Reinitialized conversation state when the authenticated local user changes, rejected blank workspace names, and made non-following local-chat event polls return after their current buffered batch.
+- Made Windows-only process attributes portable under strict mypy so the same source type-checks on Windows, Linux, and macOS.
+
+### Files Modified
+- `apps/web/api/v2/[...path].ts`, `apps/web/src/{App.tsx,v2Proxy.test.ts}`, and `apps/web/HOSTED_RUNTIME_SECURITY.md` - proxy, cookie, origin, workspace remount, tests, and security contract.
+- `corvus/platform/api/identity.py` and identity/sync security tests - browser-bound OAuth and normalized workspace names.
+- `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, conversation/account domain and repository files, and `corvus/safe_process.py` - runtime replay, artifact, enum, and platform typing repairs.
+- `corvus/mvp/{api,local_chat}.py` and focused tests - bounded non-following event polling.
+- `tests/security/test_hosted_secret_boundary.py`, `.gitignore`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - secret-boundary regression, isolated test-temp hygiene, and current certification evidence.
+
+### Assumptions Made (flag these for review)
+- The public request URL origin is the canonical Vercel origin presented to the proxy; Railway still enforces its independently configured public origin on mutations.
+
+### Known Issues / Deferred
+- Destructive PostgreSQL integration tests remain explicitly opt-in, and POSIX process-group behavior remains CI-only on this Windows workstation.
+- Docker and Podman are not running locally, so the already-green GitHub Docker sandbox job remains the authoritative container gate.
+
+### Verification
+- Python: 1050 passed with 6 intentional platform/database skips; Ruff, format, strict mypy, Bandit, pip-audit, compile, wheel, CLI help, and doctor smoke passed.
+- Web: 143 tests passed and the Vite production build passed.
+- Desktop: 7 Rust tests passed.
+
+### Suggested Next Steps
+- Push the repair commit, resolve the addressed review threads, and let PR 6 rerun its protected GitHub and Vercel checks without merging it.

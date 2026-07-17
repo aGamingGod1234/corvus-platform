@@ -1,20 +1,20 @@
-import type { WorkspacePreference } from "../app/preferences";
+import type { components } from "../generated/api";
 import { localWorkspaceUrl } from "./localRuntime";
 
 interface LocalRuntimeLauncherProps {
-  onChangeSetup: () => void;
-  preference: WorkspacePreference;
+  experience: components["schemas"]["ExperienceKind"];
+  workspaceKind: components["schemas"]["WorkspaceKind"];
 }
 
 export function LocalRuntimeLauncher({
-  onChangeSetup,
-  preference
+  experience,
+  workspaceKind
 }: LocalRuntimeLauncherProps) {
   return (
-    <main className="local-launch-shell" id="main-content">
+    <div className="local-launch-shell">
       <section className="local-launch-panel" aria-labelledby="local-launch-title">
         <div className="preview-badge">Local workspace</div>
-        <p className="eyebrow">{preference.experience} · {preference.scope}</p>
+        <p className="eyebrow">{experience} · {workspaceKind}</p>
         <h1 id="local-launch-title">Open Corvus on this computer.</h1>
         <p className="local-launch-lede">
           The hosted page never receives your local session or pairing value. Continue on the
@@ -28,13 +28,12 @@ export function LocalRuntimeLauncher({
         </ol>
         <div className="cloud-preview-actions">
           <a className="button button--primary" href={localWorkspaceUrl()}>Open local Corvus</a>
-          <button className="text-button" onClick={onChangeSetup} type="button">Change workspace setup</button>
         </div>
         <p className="local-launch-note">
           Requires Corvus at 127.0.0.1:8080. This alpha handoff does not verify which app owns
           port 8080; start Corvus yourself before continuing.
         </p>
       </section>
-    </main>
+    </div>
   );
 }

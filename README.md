@@ -2,6 +2,20 @@
 
 Corvus is a local-first AI workspace for turning outcomes into governed, auditable work. One authoritative Python core powers the CLI, API, web client, and Windows desktop shell so approvals, budgets, credentials, audit, and kill switches behave the same everywhere.
 
+## Hackathon pitch
+
+Most AI agent products force everyone into the same developer-shaped interface and hide where work actually runs. Corvus gives everyday users, developers, individuals, and teams a familiar workspace while preserving one governed execution core underneath.
+
+The reliable end-to-end demo path is deliberately short:
+
+1. Open the desktop app and choose a work style, workspace scope, and **On this computer**.
+2. Start a thread, select a detected local Codex or Claude provider, model, and thinking level, then watch safe reasoning summaries and the answer stream live.
+3. Switch Codex from **Chat** to **Build** to execute a coding task in a fresh scratch sandbox.
+4. Download the completed project as a bounded ZIP with a SHA-256 manifest.
+5. Open Settings to show theme, response style, custom rules, MCP consent, and integration controls.
+
+Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The demo never implies those paths are complete.
+
 ## A workspace that fits the user
 
 Corvus adapts its language and navigation without creating separate products or separate security rules.
@@ -28,8 +42,17 @@ Local and future Cloud runtimes share contracts; clients never grant themselves 
 - Local/demo collaboration, governed memory, versioned skills and routines, signed offline intents, and signed channel ingress.
 - Adaptive Everyday/Developer and Personal/Team workspace profiles with responsive desktop and mobile navigation.
 - A security-focused agent-runtime foundation with immutable requests, provider-binding digests, verified authority receipts, bounded autonomy proofs, fail-closed capability discovery, redacted hash-chained events, replay resistance, and explicit audit-pending results.
+- A chat-first local agent workspace with on-demand history, provider/model/thinking controls, safe streamed reasoning summaries and work status, explicit MCP opt-in, and downloadable project artifacts.
 
-The agent-runtime foundation currently uses a deterministic simulator and verified input adapters. Live Codex, Claude, Gemini, Cursor, and xAI/Grok CLI or API adapters are the next integration milestone; no README claim treats them as connected today. Credentials remain references resolved only at the effect boundary and are never stored in prompts, events, runtime configuration, or audit output.
+Local Codex and Claude run through native CLIs detected on the device; the provider verifies its own sign-in when a run starts. Chat is read-only. Codex Build mode uses a fresh workspace-write sandbox, always disables user plugins/apps/hooks, enables MCP only after explicit consent, streams only safe summaries/status, and returns a bounded ZIP with a SHA-256 manifest. Gemini and xAI/Grok are labeled Preview and Cursor is labeled unavailable until real adapters exist. Credentials remain references resolved only at the effect boundary and are never stored in prompts, events, synchronized state, artifacts, or audit output.
+
+## Codex Usage
+
+OpenAI Codex was used as the primary engineering agent for planning, implementation, code review remediation, security hardening, cross-platform CI repair, and end-to-end verification. Corvus also integrates the user's installed Codex CLI as a local runtime: the user can select recommended GPT-5.6 models and thinking levels, stream safe progress, opt into MCP tools, and run a coding task inside the bounded Build workspace before downloading the result.
+
+The final Devpost recording should capture the Codex `/feedback` session ID alongside the sub-three-minute demo. That ID is intentionally not fabricated or committed in advance.
+
+Key Codex-assisted safeguards include fixed-argument process invocation, provider-bound model validation, explicit MCP consent, plugin/app/hook isolation, secret-screened artifact packaging, signed cursors, reconnect-safe event replay, and fail-closed provider discovery.
 
 ## Quick start
 
@@ -81,7 +104,7 @@ Unsigned alpha desktop installers are built by `.github/workflows/desktop-releas
 - macOS x64 DMG
 - Linux x64 AppImage and `.deb`
 
-The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell. It uploads installer artifacts on pull requests for review, and creates a GitHub prerelease with `SHA256SUMS.txt` only when a reviewed `v0.2.0-alpha.1` tag is pushed from `main`.
+The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A GitHub prerelease with `SHA256SUMS.txt` is created only when a reviewed `v0.2.0-alpha.1` tag points to a commit already on `main`.
 
 These installers are intentionally unsigned alpha artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and release channels remain later work.
 
@@ -106,7 +129,7 @@ python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc8
 
 ## Status and scope
 
-This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell and the in-review M2A agent-runtime foundation. It is not formal certification. Real E2B lifecycle management, Google-backed continuity, live provider adapters, durable provider/autonomy/credential/budget/kill repositories, and production signing remain explicit later milestones.
+This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, and the local Codex/Claude agent fast track. It is not formal certification. Real E2B lifecycle management, API-key providers, Gemini/Cursor/xAI adapters, durable provider/autonomy/credential/budget/kill repositories, and production signing remain explicit later milestones.
 
 See [HACKATHON_STATUS.md](HACKATHON_STATUS.md) for verified commands and limitations, [ROADMAP.md](ROADMAP.md) for the readable delivery outline, and [PLAN.md](PLAN.md) for the authoritative security specification.
 
@@ -115,3 +138,7 @@ Changes target `main` through ready pull requests. Review findings are fixed on 
 ## Attribution
 
 Corvus is developed by Lucas with AI-assisted engineering from **OpenAI Codex**. This is honest tool attribution, not a fabricated GitHub account or identity.
+
+## License
+
+Corvus is proprietary. See [LICENSE.md](LICENSE.md).

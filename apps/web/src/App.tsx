@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createCorvusApi,
@@ -16,6 +16,7 @@ import {
   type ProviderConnection,
   type RetrievedMemory,
   type Routine,
+  type Session,
   type SkillVersion,
   type Team,
   type WorkItem,
@@ -28,15 +29,23 @@ import { AppShell } from "./app/AppShell";
 import { WorkspaceRouter } from "./app/WorkspaceRouter";
 import { WorkspaceErrorBoundary } from "./app/WorkspaceErrorBoundary";
 import {
-  clearWorkspacePreference,
-  loadWorkspacePreference,
-  saveWorkspacePreference,
-  type WorkspacePreference
+  completeLegacyPreferenceMigration,
+  dismissLegacyPreferenceMigration,
+  loadLegacyWorkspacePreference,
+  type LegacyPreferenceCandidate
 } from "./app/preferences";
-import { getWorkspaceProfile } from "./app/workspaceProfiles";
-import { CloudPreview } from "./runtime/CloudPreview";
+import { getWorkspaceProfile, type WorkspaceProfile } from "./app/workspaceProfiles";
+import { useOptionalAuth } from "./auth/AuthProvider";
+import { AuthApiError } from "./auth/authApi";
+import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncProvider";
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
+import { SyncConflictPanel } from "./components/SyncConflictPanel";
+import { ConversationWorkspace } from "./app/ConversationWorkspace";
+import { createConversationApi } from "./app/conversationApi";
+import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
+import { SettingsPanel } from "./app/SettingsPanel";
+import { loadDevicePreferences } from "./app/devicePreferences";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -72,6 +81,7 @@ const DEFAULT_WORK_ITEMS: WorkItemDefinition[] = [
 
 interface AppProps {
   api?: CorvusApi;
+  authorityMode?: "auto" | "hosted" | "local";
   locationHostname?: string;
   preferenceStorage?: Storage;
 }
@@ -127,24 +137,32 @@ const EMPTY_OPERATIONS: OperationsDetail = {
 
 export function App({
   api = browserApi,
+  authorityMode = "auto",
   locationHostname = window.location.hostname,
   preferenceStorage = window.localStorage
 }: AppProps) {
+  const auth = useOptionalAuth();
+  const workspaceSync = useOptionalWorkspaceSync();
+  const localRuntime =
+    authorityMode === "local" ||
+    (authorityMode === "auto" && isLoopbackRuntimeHost(locationHostname));
+  const localPreference = localRuntime
+    ? loadLegacyWorkspacePreference(preferenceStorage).candidate
+    : null;
+  const localProfile = getWorkspaceProfile(
+    localPreference?.experience ?? "developer",
+    localPreference?.workspaceKind ?? "individual"
+  );
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
-  const initialPreference = useMemo(
-    () => loadWorkspacePreference(preferenceStorage),
-    [preferenceStorage]
-  );
-  const [preference, setPreference] = useState<WorkspacePreference | null>(
-    initialPreference.preference
-  );
-  const profile = useMemo(
-    () =>
-      preference === null
-        ? null
-        : getWorkspaceProfile(preference.experience, preference.scope),
-    [preference]
-  );
+  const workspaceGenerationRef = useRef(0);
+  const [legacyPreference, setLegacyPreference] = useState<LegacyPreferenceCandidate | null>(null);
+  const experience =
+    workspaceSync?.accountProfile?.experience_kind ?? auth?.session?.experience_kind ?? null;
+  const selectedWorkspace = workspaceSync?.selectedWorkspace ?? null;
+  const profile =
+    experience === null || selectedWorkspace === null
+      ? null
+      : getWorkspaceProfile(experience, selectedWorkspace.workspace_kind);
   const [activeRoute, setActiveRoute] = useState("");
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -159,24 +177,72 @@ export function App({
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [localSession, setLocalSession] = useState<Session | null>(null);
   const hostedLocalHandoff =
-    preference?.runtime === "local" && !isLoopbackRuntimeHost(locationHostname);
+    selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
 
-  const loadProjects = useCallback(async () => {
+  useEffect(() => {
+    const deviceScope = selectedWorkspace?.id ?? localSession?.user_id ?? null;
+    if (deviceScope === null) return;
+    document.documentElement.dataset.theme = loadDevicePreferences(
+      preferenceStorage,
+      deviceScope
+    ).theme;
+  }, [localSession?.user_id, preferenceStorage, selectedWorkspace?.id]);
+
+  useEffect(() => {
+    if (localRuntime || auth?.status !== "authenticated") return;
+    setLegacyPreference(loadLegacyWorkspacePreference(preferenceStorage).candidate);
+  }, [auth?.status, localRuntime, preferenceStorage]);
+
+  useEffect(() => {
+    if (
+      legacyPreference === null ||
+      localRuntime ||
+      experience === null ||
+      selectedWorkspace === null ||
+      workspaceSync?.status !== "ready"
+    ) return;
+    if (
+      legacyPreference.experience === experience &&
+      legacyPreference.workspaceKind === selectedWorkspace.workspace_kind
+    ) {
+      completeLegacyPreferenceMigration(preferenceStorage, {
+        experienceConfirmed: true,
+        workspaceCreationConfirmed: true
+      });
+      setLegacyPreference(null);
+    }
+  }, [experience, legacyPreference, localRuntime, preferenceStorage, selectedWorkspace, workspaceSync?.status]);
+
+  const loadProjects = useCallback(async (generation = workspaceGenerationRef.current) => {
     const loaded = await api.listProjects();
+    if (generation !== workspaceGenerationRef.current) return false;
     setProjects(loaded);
     setActiveProject((current) => current ?? loaded[0] ?? null);
+    return true;
   }, [api]);
 
   useEffect(() => {
-    if (preference?.runtime !== "local" || hostedLocalHandoff) return;
+    if (!localRuntime) return;
+    const generation = ++workspaceGenerationRef.current;
+    setPhase("checking");
+    setActiveRoute("threads");
+    setProjects([]);
+    setActiveProject(null);
+    setLocalSession(null);
+    setError("");
     let active = true;
-    api
-      .session()
-      .then(loadProjects)
-      .then(() => active && setPhase("ready"))
+
+    api.session()
+      .then(async (session) => {
+        if (!active || generation !== workspaceGenerationRef.current) return;
+        setLocalSession(session);
+        await loadProjects(generation);
+        if (active && generation === workspaceGenerationRef.current) setPhase("ready");
+      })
       .catch(async () => {
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         const pairingValue = takeDesktopPairingValue();
         if (pairingValue === null) {
           setPhase("pairing");
@@ -185,8 +251,64 @@ export function App({
         try {
           desktopPairingAttempt.current ??= api.pair(pairingValue);
           await desktopPairingAttempt.current;
-          await loadProjects();
-          if (active) setPhase("ready");
+          const session = await api.session();
+          if (!active || generation !== workspaceGenerationRef.current) return;
+          setLocalSession(session);
+          await loadProjects(generation);
+          if (active && generation === workspaceGenerationRef.current) setPhase("ready");
+        } catch (reason: unknown) {
+          if (!active || generation !== workspaceGenerationRef.current) return;
+          setError(messageFor(reason));
+          setPhase("pairing");
+        }
+      });
+
+    return () => {
+      active = false;
+      if (generation === workspaceGenerationRef.current) workspaceGenerationRef.current += 1;
+    };
+  }, [api, loadProjects, localRuntime]);
+
+  useEffect(() => {
+    if (
+      localRuntime ||
+      profile === null ||
+      selectedWorkspace === null ||
+      workspaceSync?.status !== "ready" ||
+      hostedLocalHandoff
+    ) return;
+    const generation = ++workspaceGenerationRef.current;
+    setPhase("checking");
+    setActiveRoute(profile.routes[0].id);
+    setProjects([]);
+    setActiveProject(null);
+    setOutcomes([]);
+    setWorkflow(null);
+    setDetail(EMPTY_DETAIL);
+    setSelectedItem(null);
+    setOperations(EMPTY_OPERATIONS);
+    setAutonomy(null);
+    setRetrievedMemories([]);
+    setActivity([]);
+    setError("");
+    setBusy(false);
+    let active = true;
+    api
+      .session()
+      .then(() => loadProjects(generation))
+      .then(() => active && generation === workspaceGenerationRef.current && setPhase("ready"))
+      .catch(async () => {
+        if (!active || generation !== workspaceGenerationRef.current) return;
+        const pairingValue = takeDesktopPairingValue();
+        if (pairingValue === null) {
+          setPhase("pairing");
+          return;
+        }
+        try {
+          desktopPairingAttempt.current ??= api.pair(pairingValue);
+          await desktopPairingAttempt.current;
+          await loadProjects(generation);
+          if (active && generation === workspaceGenerationRef.current) setPhase("ready");
         } catch (reason: unknown) {
           if (!active) return;
           setError(messageFor(reason));
@@ -195,8 +317,9 @@ export function App({
       });
     return () => {
       active = false;
+      if (generation === workspaceGenerationRef.current) workspaceGenerationRef.current += 1;
     };
-  }, [api, hostedLocalHandoff, loadProjects, preference]);
+  }, [api, hostedLocalHandoff, loadProjects, localRuntime, profile, selectedWorkspace, workspaceSync?.status]);
 
   useEffect(() => {
     if (profile === null) return;
@@ -204,7 +327,11 @@ export function App({
   }, [profile]);
 
   const refreshWorkflow = useCallback(
-    async (workflowId: string, projectId: string) => {
+    async (
+      workflowId: string,
+      projectId: string,
+      generation = workspaceGenerationRef.current
+    ) => {
       const [current, items, effects, budget, artifacts, conversation] = await Promise.all([
         api.getWorkflow(workflowId),
         api.listWorkItems(workflowId),
@@ -213,6 +340,7 @@ export function App({
         api.listArtifacts(workflowId),
         api.listConversation(workflowId)
       ]);
+      if (generation !== workspaceGenerationRef.current) return null;
       setWorkflow(current);
       setDetail({ items, effects, budget, artifacts, conversation });
       setSelectedItem((currentItem) =>
@@ -224,7 +352,7 @@ export function App({
   );
 
   const loadOperations = useCallback(
-    async (projectId: string) => {
+    async (projectId: string, generation = workspaceGenerationRef.current) => {
       const [teams, providers, memories, skills, routines, offlineIntents, channelEvents] =
         await Promise.all([
           api.listTeams(projectId),
@@ -235,6 +363,7 @@ export function App({
           api.listOfflineIntents(),
           api.listChannelEvents()
         ]);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations({ teams, providers, memories, skills, routines, offlineIntents, channelEvents });
     },
     [api]
@@ -248,11 +377,12 @@ export function App({
       return;
     }
     let active = true;
+    const generation = workspaceGenerationRef.current;
     const project = activeProject;
     api
       .listOutcomes(project.id)
       .then(async (loadedOutcomes) => {
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         setOutcomes(loadedOutcomes);
         const latestOutcome = loadedOutcomes.at(-1);
         if (!latestOutcome) {
@@ -262,11 +392,15 @@ export function App({
         }
         const loadedWorkflows = await api.listWorkflows(latestOutcome.id);
         const latestWorkflow = loadedWorkflows.at(-1) ?? null;
-        if (!active) return;
+        if (!active || generation !== workspaceGenerationRef.current) return;
         setWorkflow(latestWorkflow);
-        if (latestWorkflow) await refreshWorkflow(latestWorkflow.id, project.id);
+        if (latestWorkflow) await refreshWorkflow(latestWorkflow.id, project.id, generation);
       })
-      .catch((reason: unknown) => active && setError(messageFor(reason)));
+      .catch((reason: unknown) => {
+        if (active && generation === workspaceGenerationRef.current) {
+          setError(messageFor(reason));
+        }
+      });
     return () => {
       active = false;
     };
@@ -278,8 +412,9 @@ export function App({
       return;
     }
     let active = true;
-    loadOperations(activeProject.id).catch((reason: unknown) => {
-      if (active) setError(messageFor(reason));
+    const generation = workspaceGenerationRef.current;
+    loadOperations(activeProject.id, generation).catch((reason: unknown) => {
+      if (active && generation === workspaceGenerationRef.current) setError(messageFor(reason));
     });
     return () => {
       active = false;
@@ -289,6 +424,7 @@ export function App({
   useEffect(() => {
     const workflowId = workflow?.id;
     const projectId = activeProject?.id;
+    const generation = workspaceGenerationRef.current;
     if (!workflowId || !projectId || typeof EventSource === "undefined") return;
     const stream = new EventSource(`/api/workflows/${workflowId}/events`);
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -305,8 +441,8 @@ export function App({
         }
         refreshing = true;
         try {
-          const current = await refreshWorkflow(workflowId, projectId);
-          if (current.status === "succeeded") stream.close();
+          const current = await refreshWorkflow(workflowId, projectId, generation);
+          if (current?.status === "succeeded") stream.close();
         } catch (reason) {
           if (!closed) setError(messageFor(reason));
         } finally {
@@ -328,12 +464,15 @@ export function App({
         } catch {
           // EventSource may deliver an empty test event; refresh still uses durable API state.
         }
+        if (generation !== workspaceGenerationRef.current) return;
         setActivity((current) => [...current, { id: eventId, type: eventType }].slice(-8));
         scheduleRefresh();
       })
     );
     stream.onerror = () => {
-      if (!closed) setError("Live updates reconnecting. Durable state remains available.");
+      if (!closed && generation === workspaceGenerationRef.current) {
+        setError("Live updates reconnecting. Durable state remains available.");
+      }
     };
     return () => {
       closed = true;
@@ -343,16 +482,20 @@ export function App({
   }, [activeProject?.id, refreshWorkflow, workflow?.id]);
 
   async function pair(value: string) {
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.pair(value);
-      await loadProjects();
-      setPhase("ready");
+      const session = await api.session();
+      if (generation !== workspaceGenerationRef.current) return;
+      setLocalSession(session);
+      await loadProjects(generation);
+      if (generation === workspaceGenerationRef.current) setPhase("ready");
     });
   }
 
   async function createProject(name: string) {
-    await perform(async () => {
+    await perform(async (generation) => {
       const created = await api.createProject(name);
+      if (generation !== workspaceGenerationRef.current) return;
       setProjects((current) => [...current, created]);
       setActiveProject(created);
     });
@@ -360,72 +503,86 @@ export function App({
 
   async function createWorkflow(title: string, criterion: string, name: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.setBudget(activeProject.id, DEFAULT_DEMO_BUDGET_UNITS);
+      if (generation !== workspaceGenerationRef.current) return;
       const outcome = await api.createOutcome(activeProject.id, title, criterion);
+      if (generation !== workspaceGenerationRef.current) return;
       const created = await api.createWorkflow(outcome.id, name, DEFAULT_WORK_ITEMS);
+      if (generation !== workspaceGenerationRef.current) return;
       setOutcomes((current) => [...current, outcome]);
       setWorkflow(created);
-      await refreshWorkflow(created.id, activeProject.id);
+      await refreshWorkflow(created.id, activeProject.id, generation);
     });
   }
 
   async function mutateWorkflow(action: "start" | "run") {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       if (action === "start") await api.startWorkflow(workflow.id);
       else await api.runNext(workflow.id);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function approve(effectId: string) {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.approveEffect(effectId);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function reject(effectId: string) {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       await api.rejectEffect(effectId);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function controlWorkflow(action: "pause" | "resume" | "cancel" | "kill") {
     if (!workflow || !activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       if (action === "pause") await api.pauseWorkflow(workflow.id);
       if (action === "resume") await api.resumeWorkflow(workflow.id);
       if (action === "cancel") await api.cancelWorkflow(workflow.id);
       if (action === "kill") await api.setWorkflowKillSwitch(workflow.id, true);
-      await refreshWorkflow(workflow.id, activeProject.id);
+      if (generation === workspaceGenerationRef.current) {
+        await refreshWorkflow(workflow.id, activeProject.id, generation);
+      }
     });
   }
 
   async function updateBudget(limitUnits: number) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const budget = await api.setBudget(activeProject.id, limitUnits);
+      if (generation !== workspaceGenerationRef.current) return;
       setDetail((current) => ({ ...current, budget }));
     });
   }
 
   async function createTeam(name: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const team = await api.createTeam(activeProject.id, name);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, teams: [...current.teams, team] }));
     });
   }
 
   async function createProvider(provider: string, credentialRef: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const connection = await api.createProvider(activeProject.id, provider, credentialRef);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({
         ...current,
         providers: [...current.providers, connection]
@@ -435,39 +592,45 @@ export function App({
 
   async function evaluateAutonomy() {
     if (!activeProject) return;
-    await perform(async () => {
-      setAutonomy(await api.evaluateAutonomy(activeProject.id, "model.generate"));
+    await perform(async (generation) => {
+      const decision = await api.evaluateAutonomy(activeProject.id, "model.generate");
+      if (generation === workspaceGenerationRef.current) setAutonomy(decision);
     });
   }
 
   async function storeMemory(content: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const memory = await api.storeMemory(activeProject.id, content);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, memories: [...current.memories, memory] }));
     });
   }
 
   async function searchMemory(query: string) {
     if (!activeProject) return;
-    await perform(async () => {
-      setRetrievedMemories(await api.retrieveMemory(activeProject.id, query));
+    await perform(async (generation) => {
+      const memories = await api.retrieveMemory(activeProject.id, query);
+      if (generation === workspaceGenerationRef.current) setRetrievedMemories(memories);
     });
   }
 
   async function createSkill(name: string, content: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const draft = await api.createSkill(activeProject.id, name, content);
+      if (generation !== workspaceGenerationRef.current) return;
       const active = await api.activateSkill(draft.id);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, skills: [...current.skills, active] }));
     });
   }
 
   async function createRoutine(name: string, skillVersionId: string) {
     if (!activeProject) return;
-    await perform(async () => {
+    await perform(async (generation) => {
       const routine = await api.createRoutine(activeProject.id, name, skillVersionId);
+      if (generation !== workspaceGenerationRef.current) return;
       setOperations((current) => ({ ...current, routines: [...current.routines, routine] }));
     });
   }
@@ -478,67 +641,18 @@ export function App({
     });
   }
 
-  async function perform(action: () => Promise<void>) {
+  async function perform(action: (generation: number) => Promise<void>) {
+    const generation = workspaceGenerationRef.current;
     setBusy(true);
     setError("");
     try {
-      await action();
+      await action(generation);
     } catch (reason) {
-      setError(messageFor(reason));
+      if (generation === workspaceGenerationRef.current) setError(messageFor(reason));
     } finally {
-      setBusy(false);
+      if (generation === workspaceGenerationRef.current) setBusy(false);
     }
   }
-
-  function completeOnboarding(nextPreference: WorkspacePreference) {
-    saveWorkspacePreference(nextPreference, preferenceStorage);
-    setPreference(nextPreference);
-  }
-
-  function useLocalWorkspace() {
-    if (preference === null) return;
-    const localPreference: WorkspacePreference = { ...preference, runtime: "local" };
-    saveWorkspacePreference(localPreference, preferenceStorage);
-    setPreference(localPreference);
-  }
-
-  function changeWorkspaceSetup() {
-    clearWorkspacePreference(preferenceStorage);
-    setPreference(null);
-    setPhase("checking");
-  }
-
-  function changeWorkspacePreference(nextPreference: WorkspacePreference) {
-    saveWorkspacePreference(nextPreference, preferenceStorage);
-    setPreference(nextPreference);
-    setSelectedItem(null);
-  }
-
-  if (preference === null) {
-    return <OnboardingFlow onComplete={completeOnboarding} recovered={initialPreference.recovered} />;
-  }
-  if (preference.runtime === "corvus_cloud") {
-    return (
-      <CloudPreview
-        authAvailable={false}
-        onChangeSetup={changeWorkspaceSetup}
-        onUseLocal={useLocalWorkspace}
-        preference={preference}
-      />
-    );
-  }
-  if (hostedLocalHandoff) {
-    return (
-      <LocalRuntimeLauncher
-        onChangeSetup={changeWorkspaceSetup}
-        preference={preference}
-      />
-    );
-  }
-  if (profile === null) return <LoadingScreen />;
-
-  if (phase === "checking") return <LoadingScreen />;
-  if (phase === "pairing") return <PairingScreen busy={busy} error={error} onPair={pair} />;
 
   const executionSurface = (
     <ExecutionCanvas
@@ -576,10 +690,147 @@ export function App({
     />
   );
 
+  if (localRuntime) {
+    if (phase === "checking") return <LoadingScreen />;
+    if (phase === "pairing" || localSession === null) {
+      return <PairingScreen busy={busy} error={error} onPair={pair} />;
+    }
+    const localRoute = localProfile.routes.some((route) => route.id === activeRoute)
+      ? activeRoute
+      : localProfile.routes[0].id;
+    const localSurface = localSurfaceForRoute(localRoute);
+    return (
+      <LocalRuntimeShell
+        activeRoute={localRoute}
+        error={error}
+        inspector={(
+          <Inspector
+            artifacts={detail.artifacts}
+            budget={detail.budget}
+            effects={detail.effects}
+            item={selectedItem}
+            onApprove={approve}
+            onClose={() => setSelectedItem(null)}
+            onReject={reject}
+            onUpdateBudget={updateBudget}
+            conversation={detail.conversation}
+          />
+        )}
+        inspectorOpen={selectedItem !== null}
+        onNavigate={(routeId) => {
+          setActiveRoute(routeId);
+          setSelectedItem(null);
+        }}
+        profile={localProfile}
+        session={localSession}
+      >
+        {localSurface === "conversations" ? (
+          <ConversationWorkspace
+            key={localSession.user_id}
+            api={createConversationApi(localSession.csrf_token)}
+            experience={localProfile.experience}
+            storage={preferenceStorage}
+            storageScope={localSession.user_id}
+          />
+        ) : localSurface === "schedule" ? (
+          <RoutinesWorkspace
+            busy={busy}
+            onCreate={createRoutine}
+            onRun={runRoutine}
+            projectName={activeProject?.name ?? null}
+            routines={operations.routines}
+            skills={operations.skills}
+          />
+        ) : localSurface === "settings" ? (
+          <SettingsPanel
+            experience={localProfile.experience}
+            onExperienceChange={async () => undefined}
+            profileEditable={false}
+            storage={preferenceStorage}
+            workspaceId={localSession.user_id}
+            workspaceKind={localProfile.workspaceKind}
+          />
+        ) : localSurface === "operations" ? operationsSurface : executionSurface}
+      </LocalRuntimeShell>
+    );
+  }
+
+  if (auth === null || workspaceSync === null) {
+    throw new Error("Hosted Corvus requires authenticated workspace providers");
+  }
+
+  if (auth.status === "checking") return <LoadingScreen label="Checking your Corvus identity…" />;
+  if (auth.status === "retryable_error") {
+    return <RetryScreen message={auth.error?.message ?? "Corvus could not verify your identity."} onRetry={auth.retry} />;
+  }
+  if (auth.status === "unauthenticated") {
+    return (
+      <OnboardingFlow
+        accountVersion={0}
+        authStatus="unauthenticated"
+        experienceKind={null}
+        onCreateWorkspace={() => Promise.reject(new Error("session_required"))}
+        onExperienceSaved={() => Promise.reject(new Error("session_required"))}
+        onGoogleStart={auth.startGoogle}
+        onWorkspaceConfirmed={() => undefined}
+      />
+    );
+  }
+  if (auth.session === null) return <LoadingScreen label="Checking your Corvus identity…" />;
+  if (workspaceSync.status === "idle" || workspaceSync.status === "loading" || workspaceSync.status === "resyncing") {
+    return <LoadingScreen label="Opening your authorized workspaces…" />;
+  }
+  if (workspaceSync.status === "onboarding_required") {
+    return (
+      <OnboardingFlow
+        accountVersion={workspaceSync.accountProfile?.version ?? auth.session.account_version}
+        authStatus="authenticated"
+        experienceKind={experience}
+        onCreateWorkspace={workspaceSync.createWorkspace}
+        onDismissMigration={() => {
+          dismissLegacyPreferenceMigration(preferenceStorage);
+          setLegacyPreference(null);
+        }}
+        onExperienceSaved={async (experienceKind, expectedVersion) => {
+          try {
+            const saved = await workspaceSync.saveExperience(experienceKind, expectedVersion);
+            await auth.reloadSession();
+            return saved;
+          } catch (reason) {
+            if (
+              reason instanceof AuthApiError &&
+              reason.status === 409 &&
+              reason.code === "account_version_conflict"
+            ) {
+              await auth.reloadSession();
+            }
+            throw reason;
+          }
+        }}
+        onGoogleStart={auth.startGoogle}
+        onWorkspaceConfirmed={() => {
+          completeLegacyPreferenceMigration(preferenceStorage, {
+            experienceConfirmed: true,
+            workspaceCreationConfirmed: true
+          });
+          setLegacyPreference(null);
+        }}
+        preselection={legacyPreference}
+      />
+    );
+  }
+  if (workspaceSync.status === "selection_required" && selectedWorkspace === null) {
+    return <WorkspaceSelection accountEmail={auth.session.email} onSelect={workspaceSync.selectWorkspace} workspaces={workspaceSync.workspaces} />;
+  }
+  if (profile === null || selectedWorkspace === null) {
+    return <RetryScreen message={workspaceSync.error?.message ?? "No authorized workspace is available."} onRetry={workspaceSync.refresh} />;
+  }
+
   return (
     <AppShell
+      accountEmail={auth.session.email}
       activeRoute={activeRoute || profile.routes[0].id}
-      error={error}
+      error={error || workspaceSync.error?.message || ""}
       inspector={(
         <Inspector
           artifacts={detail.artifacts}
@@ -594,13 +845,16 @@ export function App({
         />
       )}
       inspectorOpen={selectedItem !== null}
-      onChangeSetup={changeWorkspaceSetup}
+      legacyPreferencePending={legacyPreference !== null}
+      onDismissLegacyPreference={() => {
+        dismissLegacyPreferenceMigration(preferenceStorage);
+        setLegacyPreference(null);
+      }}
       onNavigate={(routeId) => {
         setActiveRoute(routeId);
         setSelectedItem(null);
       }}
-      onPreferenceChange={changeWorkspacePreference}
-      preference={preference}
+      onWorkspaceSelect={workspaceSync.selectWorkspace}
       profile={profile}
       projectContext={(
         <ProjectRail
@@ -611,22 +865,195 @@ export function App({
           projects={projects}
         />
       )}
+      selectedWorkspace={selectedWorkspace}
+      selectionRequired={workspaceSync.status === "forbidden"}
+      workspaces={workspaceSync.workspaces}
     >
       <WorkspaceErrorBoundary>
-        <WorkspaceRouter
-          activeRoute={activeRoute || profile.routes[0].id}
-          executionSurface={executionSurface}
-          operationsSurface={operationsSurface}
-          profile={profile}
-          projectName={activeProject?.name ?? null}
-        />
+        {workspaceSync.status === "conflict" && workspaceSync.conflict !== null ? (
+          <SyncConflictPanel
+            currentVersion={workspaceSync.conflict.currentVersion}
+            desiredVersion={workspaceSync.conflict.submittedExpectedVersion}
+            onReload={workspaceSync.reloadConflict}
+            onRetry={workspaceSync.retryConflict}
+          />
+        ) : (activeRoute || profile.routes[0].id) === "settings" ? (
+          <SettingsPanel
+            experience={profile.experience}
+            onExperienceChange={async (nextExperience) => {
+              if (nextExperience === profile.experience) return;
+              const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
+              await workspaceSync.saveExperience(nextExperience, expectedVersion);
+              await auth.reloadSession();
+            }}
+            storage={preferenceStorage}
+            workspaceId={selectedWorkspace.id}
+            workspaceKind={selectedWorkspace.workspace_kind}
+          />
+        ) : hostedLocalHandoff ? (
+          <LocalRuntimeLauncher
+            experience={experience ?? profile.experience}
+            workspaceKind={selectedWorkspace.workspace_kind}
+          />
+        ) : phase === "checking" ? (
+          <LoadingScreen />
+        ) : phase === "pairing" ? (
+          <PairingScreen busy={busy} error={error} onPair={pair} />
+        ) : (
+          <WorkspaceRouter
+            activeRoute={activeRoute || profile.routes[0].id}
+            executionSurface={executionSurface}
+            operationsSurface={operationsSurface}
+            profile={profile}
+            projectName={activeProject?.name ?? null}
+          />
+        )}
       </WorkspaceErrorBoundary>
     </AppShell>
   );
 }
 
-function LoadingScreen() {
-  return <div className="loading-screen">Opening local workspace…</div>;
+function LocalRuntimeShell({
+  activeRoute,
+  children,
+  error,
+  inspector,
+  inspectorOpen,
+  onNavigate,
+  profile,
+  session
+}: {
+  activeRoute: string;
+  children: ReactNode;
+  error: string;
+  inspector: ReactNode;
+  inspectorOpen: boolean;
+  onNavigate(routeId: string): void;
+  profile: WorkspaceProfile;
+  session: Session;
+}) {
+  const routes = profile.routes;
+  const routeLabel = routes.find((route) => route.id === activeRoute)?.label ?? routes[0].label;
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    mainRef.current?.focus();
+  }, [activeRoute]);
+
+  return (
+    <>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"}>
+        <aside aria-label="Local workspace" className="local-sidebar">
+          <div className="local-sidebar__wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
+          <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
+            {routes.map((route) => (
+              <a
+                aria-current={activeRoute === route.id ? "page" : undefined}
+                href={`#${route.id}`}
+                key={route.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onNavigate(route.id);
+                }}
+              >
+                <LocalNavigationIcon routeId={route.id} />{route.label}
+              </a>
+            ))}
+          </nav>
+          <div className="local-sidebar__connection"><span aria-hidden="true" />On this computer</div>
+        </aside>
+        <main aria-label={routeLabel} className="local-main" id="main-content" ref={mainRef} tabIndex={-1}>
+          {error && <p className="local-main__error" role="alert">{error}</p>}
+          {children}
+        </main>
+        {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
+      </div>
+    </>
+  );
+}
+
+type LocalSurface = "conversations" | "execution" | "schedule" | "operations" | "settings";
+
+function localSurfaceForRoute(routeId: string): LocalSurface {
+  if (routeId === "threads") return "conversations";
+  if (routeId === "schedule") return "schedule";
+  if (routeId === "settings") return "settings";
+  if (routeId === "skills" || routeId === "people" || routeId === "policies") return "operations";
+  return "execution";
+}
+
+function LocalNavigationIcon({ routeId }: { routeId: string }) {
+  const commonProps = {
+    "aria-hidden": true,
+    className: "nav-icon",
+    fill: "none",
+    viewBox: "0 0 24 24"
+  } as const;
+
+  if (routeId === "threads") return <svg {...commonProps}><path d="M5 5.5h14v10H9l-4 3v-13Z" /></svg>;
+  if (["repositories", "files", "my-work", "assigned-work"].includes(routeId)) return <svg {...commonProps}><path d="M3.5 6.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6.5Z" /></svg>;
+  if (routeId === "schedule") return <svg {...commonProps}><path d="M6 3v3m12-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13H4V6a1 1 0 0 1 1-1Z" /></svg>;
+  if (["skills", "people", "policies"].includes(routeId)) return <svg {...commonProps}><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Zm6 12 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></svg>;
+  if (["runs", "reviews", "approvals"].includes(routeId)) return <svg {...commonProps}><path d="m9 7 7 5-7 5V7Z" /><circle cx="12" cy="12" r="9" /></svg>;
+  return <svg {...commonProps}><circle cx="12" cy="12" r="3" /><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.5 1a8 8 0 0 0-1.8-1L14.2 3h-4.4l-.4 3a8 8 0 0 0-1.8 1L5.1 6 3 9.4 5.1 11a7 7 0 0 0 0 2L3 14.6 5.1 18l2.5-1a8 8 0 0 0 1.8 1l.4 3h4.4l.4-3a8 8 0 0 0 1.8-1l2.5 1 2-3.4-2-1.6a7 7 0 0 0 .1-1Z" /></svg>;
+}
+
+function LoadingScreen({ label = "Opening local workspace…" }: { label?: string }) {
+  return <div className="loading-screen" role="status">{label}</div>;
+}
+
+function RetryScreen({ message, onRetry }: { message: string; onRetry(): Promise<void> }) {
+  return (
+    <main className="pairing-screen" id="main-content">
+      <section className="pairing-panel" aria-labelledby="retry-title">
+        <p className="eyebrow">Connection interrupted</p>
+        <h1 id="retry-title">Corvus could not finish opening.</h1>
+        <p role="alert">{message}</p>
+        <button className="button button--primary" onClick={() => void onRetry()} type="button">Try again</button>
+      </section>
+    </main>
+  );
+}
+
+function WorkspaceSelection({
+  accountEmail,
+  onSelect,
+  workspaces
+}: {
+  accountEmail: string;
+  onSelect(workspaceId: string): Promise<void>;
+  workspaces: WorkspaceSyncState["workspaces"];
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  return (
+    <main className="onboarding-shell" id="main-content">
+      <section className="onboarding-panel" aria-labelledby="workspace-selection-title">
+        <p className="eyebrow">Signed in as {accountEmail}</p>
+        <h1 id="workspace-selection-title">Choose an authorized workspace</h1>
+        <p className="onboarding-lede">Corvus never guesses when more than one workspace is available.</p>
+        <div className="workspace-selection-list">
+          {workspaces.map((workspace) => (
+            <button
+              className="choice-card"
+              disabled={busyId !== null || workspace.id === undefined}
+              key={workspace.id ?? workspace.name}
+              onClick={() => {
+                if (workspace.id === undefined) return;
+                setBusyId(workspace.id);
+                void onSelect(workspace.id).finally(() => setBusyId(null));
+              }}
+              type="button"
+            >
+              <span><strong>{workspace.name}</strong><small>{workspace.workspace_kind}</small></span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function PairingScreen({
@@ -648,7 +1075,7 @@ function PairingScreen({
   }
 
   return (
-    <main className="pairing-screen">
+    <div className="pairing-screen">
       <section className="pairing-panel">
         <p className="eyebrow">Local authority boundary</p>
         <h1>Pair this browser with Corvus.</h1>
@@ -669,7 +1096,7 @@ function PairingScreen({
         </form>
         {error && <p className="inline-error" role="alert">{error}</p>}
       </section>
-    </main>
+    </div>
   );
 }
 

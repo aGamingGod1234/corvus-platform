@@ -405,6 +405,7 @@ def compute_autonomy_grant_digest(grant: AutonomyGrant) -> str:
 
 class AgentRunEventType(StrEnum):
     STARTED = "started"
+    REASONING_DELTA = "reasoning_delta"
     MESSAGE_DELTA = "message_delta"
     TOOL_REQUESTED = "tool_requested"
     TOOL_BLOCKED = "tool_blocked"
@@ -413,6 +414,7 @@ class AgentRunEventType(StrEnum):
     USAGE = "usage"
     APPROVAL_REQUIRED = "approval_required"
     CHECKPOINT = "checkpoint"
+    ARTIFACT = "artifact"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"

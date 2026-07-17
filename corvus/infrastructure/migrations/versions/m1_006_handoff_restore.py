@@ -13,6 +13,14 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.manifest_history import M1_005_FAMILY_NAMES
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    create_reject_trigger,
+    drop_immutable_triggers,
+    drop_reject_trigger,
+)
+
 revision: str = "m1_006_handoff_restore"
 down_revision: str | None = "m1_005_authorization_inputs"
 branch_labels: str | Sequence[str] | None = None
@@ -28,14 +36,7 @@ _NEW_FAMILIES = {
 
 
 def _immutable(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def upgrade() -> None:
@@ -124,19 +125,27 @@ def upgrade() -> None:
     _immutable("authority_close_certificates", "authority close certificates")
     _immutable("authority_handoff_activations", "authority handoff activations")
     _immutable("restore_validation_receipts", "restore validation receipts")
-    op.execute(
-        "CREATE TRIGGER authority_handoffs_no_delete BEFORE DELETE ON authority_handoffs "
-        "BEGIN SELECT RAISE(ABORT, 'authority handoffs cannot be deleted'); END"
+    create_reject_trigger(
+        "authority_handoffs",
+        "DELETE",
+        "authority handoffs cannot be deleted",
     )
 
     bind = op.get_bind()
-    prior_rows = bind.execute(
-        sa.text(
-            "SELECT family_name, coverage_kind, external_proof_kind, canonicalization_version "
-            "FROM authority_state_root_leaf_families WHERE manifest_version_id = "
-            "'00000000-0000-4000-8000-000000000005' ORDER BY ordinal"
-        )
-    ).fetchall()
+    if op.get_context().as_sql:
+        prior_rows = [(name,) for name in M1_005_FAMILY_NAMES]
+    else:
+        prior_rows = [
+            (row[0],)
+            for row in bind.execute(
+                sa.text(
+                    "SELECT family_name, coverage_kind, external_proof_kind, "
+                    "canonicalization_version FROM authority_state_root_leaf_families "
+                    "WHERE manifest_version_id = "
+                    "'00000000-0000-4000-8000-000000000005' ORDER BY ordinal"
+                )
+            ).fetchall()
+        ]
     names = {str(row[0]) for row in prior_rows} | _NEW_FAMILIES
     families = [
         {
@@ -200,10 +209,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_update")
-    op.execute("DROP TRIGGER authority_state_root_leaf_families_no_delete")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_update")
-    op.execute("DROP TRIGGER authority_state_root_manifests_no_delete")
+    drop_immutable_triggers("authority_state_root_leaf_families")
+    drop_immutable_triggers("authority_state_root_manifests")
     bind = op.get_bind()
     bind.execute(
         sa.text("DELETE FROM authority_state_root_leaf_families WHERE manifest_version_id = :id"),
@@ -216,14 +223,13 @@ def downgrade() -> None:
     _immutable("authority_state_root_manifests", "authority state-root manifests")
     _immutable("authority_state_root_leaf_families", "authority state-root leaf families")
 
-    op.execute("DROP TRIGGER authority_handoffs_no_delete")
+    drop_reject_trigger("authority_handoffs", "DELETE")
     for table_name in (
         "restore_validation_receipts",
         "authority_handoff_activations",
         "authority_close_certificates",
     ):
-        op.execute(f"DROP TRIGGER {table_name}_no_update")
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
+        drop_immutable_triggers(table_name)
     op.drop_index("ix_restore_receipts_workspace_time", table_name="restore_validation_receipts")
     op.drop_table("restore_validation_receipts")
     op.drop_table("authority_handoff_activations")

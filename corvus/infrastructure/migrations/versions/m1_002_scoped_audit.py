@@ -11,6 +11,12 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_reject_trigger,
+    drop_immutable_triggers,
+    drop_reject_trigger,
+)
+
 revision: str = "m1_002_scoped_audit"
 down_revision: str | None = "m1_001_projects"
 branch_labels: str | Sequence[str] | None = None
@@ -24,14 +30,8 @@ _IMMUTABLE_TABLES = (
 
 
 def _create_immutable_triggers(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_reject_trigger(table_name, "UPDATE", f"{label} are immutable")
+    create_reject_trigger(table_name, "DELETE", f"{label} are immutable")
 
 
 def upgrade() -> None:
@@ -165,10 +165,10 @@ def upgrade() -> None:
         ["workspace_id", "state", "updated_at", "id"],
         unique=False,
     )
-    op.execute(
-        "CREATE TRIGGER audit_anchor_recovery_checkpoints_no_delete "
-        "BEFORE DELETE ON audit_anchor_recovery_checkpoints "
-        "BEGIN SELECT RAISE(ABORT, 'audit recovery checkpoints cannot be deleted'); END"
+    create_reject_trigger(
+        "audit_anchor_recovery_checkpoints",
+        "DELETE",
+        "audit recovery checkpoints cannot be deleted",
     )
 
     _create_immutable_triggers(
@@ -180,10 +180,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER audit_anchor_recovery_checkpoints_no_delete")
+    drop_reject_trigger("audit_anchor_recovery_checkpoints", "DELETE")
     for table_name in reversed(_IMMUTABLE_TABLES):
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
-        op.execute(f"DROP TRIGGER {table_name}_no_update")
+        drop_immutable_triggers(table_name)
     op.drop_index(
         "ix_audit_anchor_recovery_workspace_state",
         table_name="audit_anchor_recovery_checkpoints",

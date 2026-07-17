@@ -37,9 +37,13 @@ _SELF_REFERENTIAL_FIELDS = {
 _VERSION_MARKERS = ("version", "sequence", "generation")
 _FAMILY_SELECT_ALL = {
     "access_bundles": "SELECT * FROM access_bundles",
+    "accounts": "SELECT * FROM accounts",
+    "agent_run_events": "SELECT * FROM agent_run_events",
+    "agent_runs": "SELECT * FROM agent_runs",
     "agent_grants": "SELECT * FROM agent_grants",
     "agent_identities": "SELECT * FROM agent_identities",
     "audience_policy_snapshots": "SELECT * FROM audience_policy_snapshots",
+    "attachments": "SELECT * FROM attachments",
     "audit_anchor_recovery_checkpoints": "SELECT * FROM audit_anchor_recovery_checkpoints",
     "audit_receipts": "SELECT * FROM audit_receipts",
     "audit_result_bindings": "SELECT * FROM audit_result_bindings",
@@ -59,15 +63,29 @@ _FAMILY_SELECT_ALL = {
     "delegation_grants": "SELECT * FROM delegation_grants",
     "deployment_instance_leases": "SELECT * FROM deployment_instance_leases",
     "deployment_instances": "SELECT * FROM deployment_instances",
+    "device_registrations": "SELECT * FROM device_registrations",
+    "device_sync_acknowledgements": "SELECT * FROM device_sync_acknowledgements",
     "idempotency_envelopes": "SELECT * FROM idempotency_envelopes",
     "identity_workspaces": "SELECT * FROM identity_workspaces",
+    "message_attachments": "SELECT * FROM message_attachments",
+    "messages": "SELECT * FROM messages",
+    "outbox_events": "SELECT * FROM outbox_events",
+    "platform_idempotency": "SELECT * FROM platform_idempotency",
+    "external_identities": "SELECT * FROM external_identities",
     "principals": "SELECT * FROM principals",
     "projects": "SELECT * FROM projects",
     "restore_validation_receipts": "SELECT * FROM restore_validation_receipts",
+    "run_artifact_lineage": "SELECT * FROM run_artifact_lineage",
+    "run_artifacts": "SELECT * FROM run_artifacts",
     "scopes": "SELECT * FROM scopes",
+    "session_records": "SELECT * FROM session_records",
+    "thread_versions": "SELECT * FROM thread_versions",
+    "threads": "SELECT * FROM threads",
     "workspace_authorities": "SELECT * FROM workspace_authorities",
+    "workspace_changes": "SELECT * FROM workspace_changes",
     "workspace_memberships": "SELECT * FROM workspace_memberships",
     "workspace_signing_key_versions": "SELECT * FROM workspace_signing_key_versions",
+    "workspace_sync_heads": "SELECT * FROM workspace_sync_heads",
 }
 if frozenset(_FAMILY_SELECT_ALL) != M1_AUTHORITY_FAMILY_NAMES:
     raise RuntimeError("authority root query allowlist does not match the active manifest families")
@@ -236,19 +254,31 @@ class AuthorityRootCalculator:
         with self._connect() as connection:
             columns = self._table_columns(connection, family_name)
             rows = connection.execute(_FAMILY_SELECT_ALL[family_name]).fetchall()
-            if "workspace_id" in columns:
+            if family_name == "platform_idempotency":
+                account_ids = self._workspace_account_ids(connection, workspace_id)
+                rows = [
+                    row
+                    for row in rows
+                    if row["workspace_id"] == str(workspace_id)
+                    or (row["workspace_id"] is None and row["account_id"] in account_ids)
+                ]
+            elif "workspace_id" in columns:
                 rows = [row for row in rows if row["workspace_id"] == str(workspace_id)]
             elif family_name == "identity_workspaces":
                 rows = [row for row in rows if row["id"] == str(workspace_id)]
             elif family_name == "principals":
-                principal_ids = {
-                    str(row[0])
-                    for row in connection.execute(
-                        "SELECT principal_id FROM workspace_memberships WHERE workspace_id = ?",
-                        (str(workspace_id),),
-                    ).fetchall()
-                }
+                principal_ids = self._workspace_principal_ids(connection, workspace_id)
                 rows = [row for row in rows if row["id"] in principal_ids]
+            elif family_name == "accounts":
+                principal_ids = self._workspace_principal_ids(connection, workspace_id)
+                rows = [row for row in rows if row["principal_id"] in principal_ids]
+            elif family_name in {
+                "external_identities",
+                "device_registrations",
+                "session_records",
+            }:
+                account_ids = self._workspace_account_ids(connection, workspace_id)
+                rows = [row for row in rows if row["account_id"] in account_ids]
             elif family_name == "deployment_instances":
                 instance_ids = {
                     str(row[0])
@@ -273,6 +303,34 @@ class AuthorityRootCalculator:
                 raise AuthorityRootCalculationError("authority_projection_rule_missing")
         return tuple(dict(row) for row in rows)
 
+    @staticmethod
+    def _workspace_principal_ids(
+        connection: sqlite3.Connection,
+        workspace_id: UUID,
+    ) -> set[str]:
+        return {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT principal_id FROM workspace_memberships WHERE workspace_id = ?",
+                (str(workspace_id),),
+            ).fetchall()
+        }
+
+    @classmethod
+    def _workspace_account_ids(
+        cls,
+        connection: sqlite3.Connection,
+        workspace_id: UUID,
+    ) -> set[str]:
+        principal_ids = cls._workspace_principal_ids(connection, workspace_id)
+        if not principal_ids:
+            return set()
+        return {
+            str(row[0])
+            for row in connection.execute("SELECT id, principal_id FROM accounts").fetchall()
+            if str(row[1]) in principal_ids
+        }
+
     def _latest_active_manifest(self) -> AuthorityStateRootManifestVersion:
         with self._connect() as connection:
             row = connection.execute(
@@ -295,16 +353,31 @@ class AuthorityRootCalculator:
     ) -> tuple[dict[str, Any], ...]:
         with self._connect() as connection:
             expected_columns = set(self._table_columns(connection, family_name))
+            principal_ids = self._workspace_principal_ids(connection, workspace_id)
+            account_ids = self._workspace_account_ids(connection, workspace_id)
         normalized: list[dict[str, Any]] = []
         for row in rows:
             normalized_row = dict(row)
             if set(normalized_row) != expected_columns:
                 raise AuthorityRootCalculationError("authority_projection_columns_mismatch")
-            if "workspace_id" in expected_columns and normalized_row["workspace_id"] != str(
-                workspace_id
+            if (
+                "workspace_id" in expected_columns
+                and normalized_row["workspace_id"] != str(workspace_id)
+                and not (
+                    family_name == "platform_idempotency"
+                    and normalized_row["workspace_id"] is None
+                    and normalized_row["account_id"] in account_ids
+                )
             ):
                 raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
             if family_name == "identity_workspaces" and normalized_row["id"] != str(workspace_id):
+                raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
+            if family_name == "accounts" and normalized_row["principal_id"] not in principal_ids:
+                raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
+            if (
+                family_name in {"external_identities", "device_registrations", "session_records"}
+                and normalized_row["account_id"] not in account_ids
+            ):
                 raise AuthorityRootCalculationError("authority_projection_workspace_mismatch")
             normalized.append(normalized_row)
         return tuple(normalized)

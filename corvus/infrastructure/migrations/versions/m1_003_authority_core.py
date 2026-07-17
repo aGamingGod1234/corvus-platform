@@ -11,6 +11,13 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from corvus.infrastructure.migrations.trigger_ddl import (
+    create_immutable_triggers,
+    create_reject_trigger,
+    drop_immutable_triggers,
+    drop_reject_trigger,
+)
+
 revision: str = "m1_003_authority_core"
 down_revision: str | None = "m1_002_scoped_audit"
 branch_labels: str | Sequence[str] | None = None
@@ -18,18 +25,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _no_delete(table_name: str, label: str) -> None:
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_delete BEFORE DELETE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} cannot be deleted'); END"
-    )
+    create_reject_trigger(table_name, "DELETE", f"{label} cannot be deleted")
 
 
 def _immutable(table_name: str, label: str) -> None:
-    _no_delete(table_name, label)
-    op.execute(
-        f"CREATE TRIGGER {table_name}_no_update BEFORE UPDATE ON {table_name} "
-        f"BEGIN SELECT RAISE(ABORT, '{label} are immutable'); END"
-    )
+    create_immutable_triggers(table_name, label)
 
 
 def upgrade() -> None:
@@ -147,6 +147,7 @@ def upgrade() -> None:
         ["workspace_id", "authority_epoch"],
         unique=True,
         sqlite_where=sa.text("released_at IS NULL"),
+        postgresql_where=sa.text("released_at IS NULL"),
     )
 
     op.create_table(
@@ -231,6 +232,7 @@ def upgrade() -> None:
         ["workspace_id"],
         unique=True,
         sqlite_where=sa.text("state NOT IN ('anchor_finalized', 'quarantined')"),
+        postgresql_where=sa.text("state NOT IN ('anchor_finalized', 'quarantined')"),
     )
 
     _immutable("deployment_profiles", "deployment profiles")
@@ -254,9 +256,8 @@ def downgrade() -> None:
         "authority_epoch_credentials",
         "deployment_instances",
     ):
-        op.execute(f"DROP TRIGGER {table_name}_no_delete")
-    op.execute("DROP TRIGGER deployment_profiles_no_update")
-    op.execute("DROP TRIGGER deployment_profiles_no_delete")
+        drop_reject_trigger(table_name, "DELETE")
+    drop_immutable_triggers("deployment_profiles")
     op.drop_index(
         "uq_authority_commit_intents_inflight_workspace",
         table_name="authority_commit_intents",

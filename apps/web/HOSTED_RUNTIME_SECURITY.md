@@ -8,9 +8,28 @@ requests and a same-origin `EventSource` endpoint only after the browser has nav
 Vercel to the local Corvus origin. Therefore the deployed Content Security Policy deliberately
 keeps `connect-src 'self'`.
 
-Adding Railway, E2B, Google OAuth, or any other hosted API, SSE, or WebSocket origin requires an
-explicit CSP change, a security review, and regression coverage. Wildcard network origins are not
-permitted.
+The full-product `/api/v2/**` identity surface remains same-origin in the browser and is forwarded
+by a Vercel function to one configured Railway service. Production and preview accept only a
+credential-free HTTPS hostname ending in `.up.railway.app`; arbitrary custom domains, IP literals,
+private/link-local addresses, userinfo, paths, queries, and fragments are rejected. Custom Railway
+domains remain unsupported until an explicit deployment allowlist is designed and reviewed.
+
+The proxy forwards only an explicit request-header allowlist. A browser `Origin` must exactly match
+the public request URL origin; spoofed values are rejected, and the matching value is canonicalized
+before Railway sees it. Upstream cookies are rebound to the public same-origin boundary: any
+`Domain` attribute is removed, `Path` is normalized to `/`, and `Secure` is enforced for HTTPS
+requests. Redirects remain limited to relative application paths and Google's fixed authorization
+endpoint.
+
+Google OAuth client secrets and their credential references are server-only configuration. They
+are resolved by the Python control plane and are not referenced by `apps/web/src`, exposed through
+Vite variables, or placed in browser source maps. A security regression test enforces this source
+boundary.
+
+Loopback proxy origins are accepted only when the function receives an explicit `development` or
+`test` environment. They are rejected in production, preview, and unspecified environments.
+Adding E2B or any other hosted API, SSE, or WebSocket origin still requires an explicit CSP change,
+a security review, and regression coverage. Wildcard network origins are not permitted.
 
 ## Loopback handoff trust status
 
