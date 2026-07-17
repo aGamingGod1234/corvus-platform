@@ -33,11 +33,11 @@ describe("ConversationWorkspace", () => {
   it("creates a thread, runs Local Codex, and renders durable output", async () => {
     const stream = new FakeRunStream();
     const api = conversationApi(stream);
-    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="everyday" />);
+    const storage = new MemoryStorage();
+    const view = render(<ConversationWorkspace api={api} storage={storage} storageScope="device" experience="everyday" />);
     const user = userEvent.setup();
 
-    expect(await screen.findByText("No conversations yet")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(screen.getByText("No conversations yet")).toBeVisible();
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Draft release notes");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -49,6 +49,9 @@ describe("ConversationWorkspace", () => {
 
     expect(await screen.findByText("Release ready.")).toBeVisible();
     expect(await screen.findByText("Completed")).toBeVisible();
+    view.unmount();
+    render(<ConversationWorkspace api={api} storage={storage} storageScope="device" experience="everyday" />);
+    expect(screen.getByText("Release ready.")).toBeVisible();
   });
 
   it("cancels the active run without treating a closed stream as success", async () => {

@@ -20,6 +20,8 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
   const streamRef = useRef<RunEventStream | null>(null);
   const [threads, setThreads] = useState<DeviceThread[]>(() => loadDeviceThreads(storage, storageScope));
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => threads[0]?.id ?? null);
+  const activeThreadIdRef = useRef<string | null>(selectedThreadId);
+  const assistantTextRef = useRef("");
   const [composer, setComposer] = useState("");
   const [assistantText, setAssistantText] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -43,20 +45,24 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     };
     setThreads((current) => [created, ...current]);
     setSelectedThreadId(created.id);
+    activeThreadIdRef.current = created.id;
     setAssistantText("");
+    assistantTextRef.current = "";
     return created;
   }
 
   function finishRun(status: Exclude<RunStatus, "idle" | "working">, text?: string): void {
-    if (text && selectedThreadId) {
+    const threadId = activeThreadIdRef.current;
+    if (text && threadId) {
       const now = new Date().toISOString();
-      setThreads((current) => current.map((thread) => thread.id === selectedThreadId ? {
+      setThreads((current) => current.map((thread) => thread.id === threadId ? {
         ...thread,
         updatedAt: now,
         messages: [...thread.messages, { id: crypto.randomUUID(), role: "assistant", content: text, createdAt: now }]
       } : thread));
     }
     setAssistantText("");
+    assistantTextRef.current = "";
     setRunStatus(status);
     streamRef.current?.close();
     streamRef.current = null;
@@ -68,10 +74,13 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     stream.addEventListener("message", ({ data }) => {
       try {
         const event = JSON.parse(data) as { payload?: { text?: unknown } };
-        if (typeof event.payload?.text === "string") setAssistantText((current) => current + event.payload!.text);
+        if (typeof event.payload?.text === "string") {
+          assistantTextRef.current += event.payload.text;
+          setAssistantText(assistantTextRef.current);
+        }
       } catch { setError("Corvus received an unreadable run event."); }
     });
-    stream.addEventListener("completed", () => setAssistantText((text) => { finishRun("completed", text); return ""; }));
+    stream.addEventListener("completed", () => finishRun("completed", assistantTextRef.current));
     stream.addEventListener("cancelled", () => finishRun("cancelled"));
     stream.addEventListener("failed", ({ data }) => {
       try {
@@ -95,6 +104,8 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     } : item));
     setComposer("");
     setAssistantText("");
+    assistantTextRef.current = "";
+    activeThreadIdRef.current = thread.id;
     setRunStatus("working");
     setBusy(true);
     setError("");
@@ -123,7 +134,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
       <aside className="thread-list" aria-label={`${noun} list`}>
         <div className="thread-list__heading"><div><span className="eyebrow">This device</span><strong>{experience === "developer" ? "Threads" : "Conversations"}</strong></div><button className="button button--quiet" onClick={createConversation} type="button">New {noun}</button></div>
         {threads.length === 0 ? <p className="thread-list__empty">No conversations yet</p> : null}
-        <div className="thread-list__items">{threads.map((thread) => <button aria-current={selectedThreadId === thread.id ? "true" : undefined} key={thread.id} onClick={() => { setSelectedThreadId(thread.id); setAssistantText(""); }} type="button"><strong>{thread.title}</strong><span>{new Date(thread.updatedAt).toLocaleDateString()}</span></button>)}</div>
+        <div className="thread-list__items">{threads.map((thread) => <button aria-current={selectedThreadId === thread.id ? "true" : undefined} key={thread.id} onClick={() => { setSelectedThreadId(thread.id); activeThreadIdRef.current = thread.id; setAssistantText(""); assistantTextRef.current = ""; }} type="button"><strong>{thread.title}</strong><span>{new Date(thread.updatedAt).toLocaleDateString()}</span></button>)}</div>
       </aside>
       <div className="conversation-panel">
         <header className="conversation-panel__header"><div><span className="eyebrow">This device</span><h1>{selected?.title ?? "What should Corvus do?"}</h1></div><div className="runtime-chip"><span aria-hidden="true" /> Local Codex · Codex default</div></header>
