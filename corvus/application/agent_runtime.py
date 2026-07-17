@@ -23,12 +23,15 @@ from corvus.application.ports import (
     compute_agent_run_audit_receipt_digest,
 )
 from corvus.domain.agent_runtime import (
+    AgentCapabilities,
     AgentRunHandle,
     AgentRunRequest,
     AgentRunStartResult,
     CancellationResult,
     CapabilitySupport,
+    ProviderCandidate,
     ProviderDiscoveryQuery,
+    ProviderHealth,
     ProviderStatus,
     compute_agent_run_request_digest,
 )
@@ -68,6 +71,24 @@ def _revalidate_start_result(value: object) -> AgentRunStartResult:
         handle=_revalidate_handle(value.handle),
         replayed=value.replayed,
     )
+
+
+def _revalidate_candidate(value: object) -> ProviderCandidate:
+    if not isinstance(value, ProviderCandidate):
+        raise TypeError("agent_run_provider_candidate_invalid")
+    return ProviderCandidate.model_validate(value.model_dump(mode="python"))
+
+
+def _revalidate_capabilities(value: object) -> AgentCapabilities:
+    if not isinstance(value, AgentCapabilities):
+        raise TypeError("agent_run_provider_capabilities_invalid")
+    return AgentCapabilities.model_validate(value.model_dump(mode="python"))
+
+
+def _revalidate_health(value: object) -> ProviderHealth:
+    if not isinstance(value, ProviderHealth):
+        raise TypeError("agent_run_provider_health_invalid")
+    return ProviderHealth.model_validate(value.model_dump(mode="python"))
 
 
 def _revalidate_cancellation_result(value: object) -> CancellationResult:
@@ -518,24 +539,34 @@ class AgentRuntimeCoordinator:
     ) -> str | None:
         run_request = request.request
         try:
-            candidates = await self._runtime.discover(
-                ProviderDiscoveryQuery(
-                    workspace_id=run_request.workspace_id,
-                    project_id=run_request.project_id,
-                )
+            query = ProviderDiscoveryQuery(
+                workspace_id=run_request.workspace_id,
+                project_id=run_request.project_id,
             )
-            candidate = next(
-                (item for item in candidates if item.binding.id == run_request.provider_binding_id),
-                None,
-            )
-            if candidate is None:
+            raw_candidates = await self._runtime.discover(query)
+            if not isinstance(raw_candidates, tuple):
                 return "agent_run_provider_unavailable"
+            candidates = tuple(_revalidate_candidate(item) for item in raw_candidates)
+            if any(
+                item.binding.workspace_id != query.workspace_id
+                or item.binding.project_id != query.project_id
+                for item in candidates
+            ):
+                return "agent_run_provider_unavailable"
+            matching = tuple(
+                item for item in candidates if item.binding.id == run_request.provider_binding_id
+            )
+            if len(matching) != 1:
+                return "agent_run_provider_unavailable"
+            candidate = matching[0]
             if (
                 candidate.binding_version != run_request.provider_binding_version
                 or candidate.binding_digest != run_request.provider_binding_digest
             ):
                 return "provider_binding_digest_mismatch"
-            runtime_capabilities = self._runtime.capabilities(candidate.binding)
+            runtime_capabilities = _revalidate_capabilities(
+                self._runtime.capabilities(candidate.binding)
+            )
             required_capabilities = self._required_capabilities(run_request, operation)
             if any(
                 getattr(candidate.binding.capabilities, capability)
@@ -546,7 +577,7 @@ class AgentRuntimeCoordinator:
                 return _CAPABILITY_UNAVAILABLE_REASON
             if operation is AgentRunOperation.CANCEL:
                 return None
-            health = await self._runtime.health(candidate.binding)
+            health = _revalidate_health(await self._runtime.health(candidate.binding))
             if (
                 health.binding_id != run_request.provider_binding_id
                 or health.binding_version != run_request.provider_binding_version

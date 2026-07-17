@@ -1275,6 +1275,38 @@ async def test_provider_preflight_rejects_missing_candidate(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_provider_preflight_rejects_ambiguous_matching_candidates(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+
+    class _AmbiguousDiscoveryRuntime(_RecordingRuntime):
+        async def discover(
+            self,
+            query: ProviderDiscoveryQuery,
+        ) -> tuple[ProviderCandidate, ...]:
+            candidates = await super().discover(query)
+            return (candidates[0], candidates[0])
+
+    runtime = _AmbiguousDiscoveryRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={}),
+        order,
+    )
+    coordinator, _, audit = _coordinator(runtime=runtime, order=order)
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_provider_unavailable"
+    assert "runtime:capabilities" not in order
+    assert "runtime:start" not in order
+    assert audit.events[-1].phase == "outcome"
+    assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
 async def test_provider_preflight_rejects_unverified_requested_tool_capability(
     tmp_path: Path,
 ) -> None:

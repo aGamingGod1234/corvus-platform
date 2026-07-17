@@ -1740,3 +1740,35 @@
 ### Suggested Next Steps
 - Independently re-review the separate Task 2.1 High-finding repair commit.
 - Progress to Task 2.2 after Task 2.1 approval.
+## 2026-07-17 - Add provider-neutral registry and bounded process sessions
+
+### What Was Implemented
+- Added an immutable provider registry over the existing `AgentRuntimePort` with deterministic one-time factory construction, all-or-nothing scoped discovery, duplicate refusal, fail-closed capability intersection, stable redacted errors, and exact binding-owner dispatch.
+- Hardened `AgentRuntimeCoordinator` preflight to reconstruct provider models, validate exact workspace/project scope, require exactly one matching binding, and preserve `UNVERIFIED` as unavailable.
+- Added frozen bounded process-session contracts with executable digest pinning, direct argv spawning, canonical cwd/root checks, shell/link/reparse refusal, a rebuilt minimal environment, bounded stdin/stdout/stderr/frame/event handling, strict NDJSON, recursive redaction, cursor replay, timeout handling, and single-terminal-event serialization.
+- Added confirmed POSIX and Windows process-tree termination helpers while preserving `run_trusted_argv`; Windows taskkill failures remain explicitly unconfirmed.
+- Added Windows-focused registry, process, process-tree, consumer-cancellation, coordinator ambiguity, security-boundary, and regression coverage.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/registry.py` - immutable adapter factories, deterministic discovery, capability intersection, and exact runtime routing.
+- `corvus/infrastructure/agent_runtimes/process_session.py` - bounded invocation/session/event contracts and strict streaming lifecycle.
+- `corvus/infrastructure/agent_runtimes/__init__.py` - exports the Task 2.2 infrastructure surfaces.
+- `corvus/application/agent_runtime.py` - revalidates provider preflight models and rejects ambiguous discovery.
+- `corvus/safe_process.py` - adds reusable clean-environment, grouped-spawn, path, and confirmed tree-termination helpers without changing the trusted argv API.
+- `tests/unit/infrastructure/test_provider_registry.py` - provider registry construction, discovery, routing, intersection, and stable-error coverage.
+- `tests/unit/infrastructure/test_process_session.py` - invocation, stream, bounds, redaction, replay, timeout, tree-kill, and cancellation coverage.
+- `tests/unit/application/test_agent_runtime_coordinator.py` - ambiguous matching-provider regression.
+- `.superpowers/sdd/task-2.2-report.md` - Task 2.2 TDD, verification, security, and stop-boundary evidence.
+
+### Assumptions Made (flag these for review)
+- None beyond the confirmed Task 2.2 checklist. Stable reason codes, frozen infrastructure-local process contracts, derived clean environment, conservative named limits, immediate pre-spawn digest pinning, and cross-platform termination rules were confirmed before implementation.
+
+### Known Issues / Deferred
+- Cwd containment is not a filesystem sandbox; provider tool/sandbox restrictions remain Task 2.3.
+- Digest pinning immediately before spawn is not an atomic OS open/exec guarantee.
+- Provider-specific CLI arguments/parsers, API providers, persistence, API/SSE/UI surfaces, and durable process resurrection remain outside Task 2.2.
+- Destructive PostgreSQL tests remain intentionally skipped without explicit reset opt-in.
+
+### Suggested Next Steps
+- Independently review the Task 2.2 commit and security boundaries.
+- Begin Task 2.3 only after Task 2.2 approval.
