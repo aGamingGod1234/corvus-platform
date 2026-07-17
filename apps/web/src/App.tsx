@@ -34,7 +34,7 @@ import {
   loadLegacyWorkspacePreference,
   type LegacyPreferenceCandidate
 } from "./app/preferences";
-import { getWorkspaceProfile } from "./app/workspaceProfiles";
+import { getWorkspaceProfile, type WorkspaceProfile } from "./app/workspaceProfiles";
 import { useOptionalAuth } from "./auth/AuthProvider";
 import { AuthApiError } from "./auth/authApi";
 import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncProvider";
@@ -146,6 +146,13 @@ export function App({
   const localRuntime =
     authorityMode === "local" ||
     (authorityMode === "auto" && isLoopbackRuntimeHost(locationHostname));
+  const localPreference = localRuntime
+    ? loadLegacyWorkspacePreference(preferenceStorage).candidate
+    : null;
+  const localProfile = getWorkspaceProfile(
+    localPreference?.experience ?? "developer",
+    localPreference?.workspaceKind ?? "individual"
+  );
   const desktopPairingAttempt = useRef<Promise<void> | null>(null);
   const workspaceGenerationRef = useRef(0);
   const [legacyPreference, setLegacyPreference] = useState<LegacyPreferenceCandidate | null>(null);
@@ -688,9 +695,13 @@ export function App({
     if (phase === "pairing" || localSession === null) {
       return <PairingScreen busy={busy} error={error} onPair={pair} />;
     }
+    const localRoute = localProfile.routes.some((route) => route.id === activeRoute)
+      ? activeRoute
+      : localProfile.routes[0].id;
+    const localSurface = localSurfaceForRoute(localRoute);
     return (
       <LocalRuntimeShell
-        activeRoute={activeRoute || "threads"}
+        activeRoute={localRoute}
         error={error}
         inspector={(
           <Inspector
@@ -705,29 +716,22 @@ export function App({
             conversation={detail.conversation}
           />
         )}
+        inspectorOpen={selectedItem !== null}
         onNavigate={(routeId) => {
           setActiveRoute(routeId);
           setSelectedItem(null);
         }}
-        projectContext={(
-          <ProjectRail
-            activeProject={activeProject}
-            busy={busy}
-            onCreate={createProject}
-            onSelect={setActiveProject}
-            projects={projects}
-          />
-        )}
+        profile={localProfile}
         session={localSession}
       >
-        {(activeRoute || "threads") === "threads" ? (
+        {localSurface === "conversations" ? (
           <ConversationWorkspace
             api={createConversationApi(localSession.csrf_token)}
-            experience="developer"
+            experience={localProfile.experience}
             storage={preferenceStorage}
             storageScope={localSession.user_id}
           />
-        ) : activeRoute === "schedule" ? (
+        ) : localSurface === "schedule" ? (
           <RoutinesWorkspace
             busy={busy}
             onCreate={createRoutine}
@@ -736,16 +740,16 @@ export function App({
             routines={operations.routines}
             skills={operations.skills}
           />
-        ) : activeRoute === "settings" ? (
+        ) : localSurface === "settings" ? (
           <SettingsPanel
-            experience="developer"
+            experience={localProfile.experience}
             onExperienceChange={async () => undefined}
             profileEditable={false}
             storage={preferenceStorage}
             workspaceId={localSession.user_id}
-            workspaceKind="individual"
+            workspaceKind={localProfile.workspaceKind}
           />
-        ) : activeRoute === "skills" ? operationsSurface : executionSurface}
+        ) : localSurface === "operations" ? operationsSurface : executionSurface}
       </LocalRuntimeShell>
     );
   }
@@ -913,82 +917,86 @@ function LocalRuntimeShell({
   children,
   error,
   inspector,
+  inspectorOpen,
   onNavigate,
-  projectContext,
+  profile,
   session
 }: {
   activeRoute: string;
   children: ReactNode;
   error: string;
   inspector: ReactNode;
-  onNavigate(routeId: "threads" | "execution" | "schedule" | "skills" | "settings"): void;
-  projectContext: ReactNode;
+  inspectorOpen: boolean;
+  onNavigate(routeId: string): void;
+  profile: WorkspaceProfile;
   session: Session;
 }) {
+  const routes = profile.routes;
+  const routeLabel = routes.find((route) => route.id === activeRoute)?.label ?? routes[0].label;
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    mainRef.current?.focus();
+  }, [activeRoute]);
+
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <div className="wordmark">Corvus</div>
-        <nav aria-label="Local runtime navigation" className="view-switcher">
-          <a
-            aria-current={activeRoute === "threads" ? "page" : undefined}
-            href="#threads"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("threads");
-            }}
-          >
-            Threads
-          </a>
-          <a
-            aria-current={activeRoute === "execution" ? "page" : undefined}
-            href="#execution"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("execution");
-            }}
-          >
-            Repositories
-          </a>
-          <a
-            aria-current={activeRoute === "schedule" ? "page" : undefined}
-            href="#schedule"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("schedule");
-            }}
-          >
-            Schedule
-          </a>
-          <a
-            aria-current={activeRoute === "skills" ? "page" : undefined}
-            href="#skills"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("skills");
-            }}
-          >
-            Skills
-          </a>
-          <a
-            aria-current={activeRoute === "settings" ? "page" : undefined}
-            href="#settings"
-            onClick={(event) => {
-              event.preventDefault();
-              onNavigate("settings");
-            }}
-          >
-            Settings
-          </a>
-        </nav>
-        <div className="connection-state"><span />{session.username}</div>
-        {error && <p className="header-error" role="alert">{error}</p>}
-      </header>
-      {projectContext}
-      <main id="main-content">{children}</main>
-      {inspector}
-    </div>
+    <>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"}>
+        <aside aria-label="Local workspace" className="local-sidebar">
+          <div className="local-sidebar__wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
+          <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
+            {routes.map((route) => (
+              <a
+                aria-current={activeRoute === route.id ? "page" : undefined}
+                href={`#${route.id}`}
+                key={route.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onNavigate(route.id);
+                }}
+              >
+                <LocalNavigationIcon routeId={route.id} />{route.label}
+              </a>
+            ))}
+          </nav>
+          <div className="local-sidebar__connection"><span aria-hidden="true" />On this computer</div>
+        </aside>
+        <main aria-label={routeLabel} className="local-main" id="main-content" ref={mainRef} tabIndex={-1}>
+          {error && <p className="local-main__error" role="alert">{error}</p>}
+          {children}
+        </main>
+        {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
+      </div>
+    </>
   );
+}
+
+type LocalSurface = "conversations" | "execution" | "schedule" | "operations" | "settings";
+
+function localSurfaceForRoute(routeId: string): LocalSurface {
+  if (routeId === "threads") return "conversations";
+  if (routeId === "schedule") return "schedule";
+  if (routeId === "settings") return "settings";
+  if (routeId === "skills" || routeId === "people" || routeId === "policies") return "operations";
+  return "execution";
+}
+
+function LocalNavigationIcon({ routeId }: { routeId: string }) {
+  const commonProps = {
+    "aria-hidden": true,
+    className: "nav-icon",
+    fill: "none",
+    viewBox: "0 0 24 24"
+  } as const;
+
+  if (routeId === "threads") return <svg {...commonProps}><path d="M5 5.5h14v10H9l-4 3v-13Z" /></svg>;
+  if (["repositories", "files", "my-work", "assigned-work"].includes(routeId)) return <svg {...commonProps}><path d="M3.5 6.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6.5Z" /></svg>;
+  if (routeId === "schedule") return <svg {...commonProps}><path d="M6 3v3m12-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13H4V6a1 1 0 0 1 1-1Z" /></svg>;
+  if (["skills", "people", "policies"].includes(routeId)) return <svg {...commonProps}><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Zm6 12 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></svg>;
+  if (["runs", "reviews", "approvals"].includes(routeId)) return <svg {...commonProps}><path d="m9 7 7 5-7 5V7Z" /><circle cx="12" cy="12" r="9" /></svg>;
+  return <svg {...commonProps}><circle cx="12" cy="12" r="3" /><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.5 1a8 8 0 0 0-1.8-1L14.2 3h-4.4l-.4 3a8 8 0 0 0-1.8 1L5.1 6 3 9.4 5.1 11a7 7 0 0 0 0 2L3 14.6 5.1 18l2.5-1a8 8 0 0 0 1.8 1l.4 3h4.4l.4-3a8 8 0 0 0 1.8-1l2.5 1 2-3.4-2-1.6a7 7 0 0 0 .1-1Z" /></svg>;
 }
 
 function LoadingScreen({ label = "Opening local workspace…" }: { label?: string }) {

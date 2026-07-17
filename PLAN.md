@@ -59,6 +59,18 @@ Do not add Redis, a second web framework, a second ORM, or a distributed queue. 
 
 For every task: write the stated failing test, run the focused command and observe failure, implement the smallest complete behavior, rerun the focused test, then run the milestone suite. Mark checkboxes only after fresh evidence. Subagents may implement bounded non-overlapping tasks, but the root agent owns integration, security review, plan tracking, and milestone commits.
 
+## Hackathon fast-track delivery (2026-07-17)
+
+- [x] Replace permanent secondary rails with one fixed sidebar, one main canvas, on-demand history, icon-first actions, responsive navigation, and an overlay-only inspector.
+- [x] Connect installed local Codex and Claude CLIs through bounded fixed-argv adapters and publish a truthful provider/model catalog; keep Gemini/xAI Preview and Cursor unavailable.
+- [x] Stream messages, provider-supplied safe reasoning summaries, generic tool/work status, usage, terminal state, and cancellation through the paired owner-scoped API.
+- [x] Add Chat/Build, model, thinking, and explicit MCP controls to the composer; fail closed when provider discovery cannot verify a ready runtime.
+- [x] Run Codex Build inside a fresh workspace-write scratch sandbox and return a bounded ZIP plus SHA-256 manifest only after completion.
+- [x] Preserve the four Everyday/Developer and Individual/Team identities in the hosted and local desktop shells, with profile changes routed through Settings/onboarding authority.
+- [ ] Complete the final consolidated Python, web, Rust, security, packaging, and GUI acceptance gates; then push one branch and open one unmerged PR.
+
+This fast track is the functional hackathon surface, not a claim that every later full-platform item below is complete. Durable v2 conversation APIs, production multi-user collaboration, real E2B lifecycle, API-key providers, timed scheduler workers, and full cross-device conversation persistence remain on their original milestone boundaries.
+
 ---
 
 ## Milestone 1 — Google Identity and Cross-Device Continuity

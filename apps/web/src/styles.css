@@ -33,6 +33,7 @@ textarea { font: inherit; }
 
 button { color: inherit; }
 
+a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -58,57 +59,142 @@ h1 {
 
 h2 { font-size: 1.15rem; }
 
-.app-shell {
+.local-shell {
   display: grid;
-  grid-template-columns: 248px minmax(420px, 1fr) 340px;
-  grid-template-rows: 58px minmax(0, calc(100vh - 58px));
+  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 100vh);
   min-height: 100vh;
   background:
     linear-gradient(90deg, transparent 31px, color-mix(in oklch, var(--line) 55%, transparent) 32px, transparent 33px) 0 0 / 64px 64px,
     var(--paper);
 }
 
-.app-header {
-  z-index: 5;
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 248px auto auto 1fr;
-  align-items: center;
-  border-bottom: 1px solid var(--line);
+.local-sidebar {
+  grid-row: 1 / -1;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
   background: color-mix(in oklch, var(--raised) 88%, transparent);
-  backdrop-filter: blur(18px);
 }
 
-.view-switcher { display: flex; gap: 0.25rem; margin-left: 1.25rem; }
-.view-switcher button { border: 0; border-radius: 6px; padding: 0.42rem 0.7rem; color: var(--muted); background: transparent; cursor: pointer; font-size: 0.82rem; font-weight: 650; }
-.view-switcher button[aria-current="page"] { color: var(--ink); background: var(--soft-signal); }
-
-.wordmark {
-  padding-left: 1.4rem;
-  font-family: "Fraunces Variable", Georgia, serif;
-  font-size: 1.4rem;
-  font-weight: 650;
-  letter-spacing: -0.04em;
-}
-
-.connection-state {
-  display: inline-flex;
-  gap: 0.5rem;
+.local-sidebar__wordmark {
+  display: flex;
+  gap: 0.7rem;
   align-items: center;
-  padding-left: 1.25rem;
+  min-height: 64px;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--line);
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 1.25rem;
+}
+
+.local-sidebar__wordmark span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50% 50% 42% 58%;
+  color: white;
+  background: var(--signal);
+}
+
+.local-sidebar__identity {
+  display: grid;
+  gap: 0.18rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.local-sidebar__identity span {
+  overflow: hidden;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-sidebar__identity strong {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 620;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.local-sidebar__navigation { display: grid; padding: 0.75rem 0.6rem; }
+
+.local-sidebar__navigation a {
+  display: grid;
+  grid-template-columns: 1.65rem 1fr;
+  align-items: center;
+  min-height: 44px;
+  border-radius: 0.48rem;
+  padding: 0.58rem 0.55rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+.local-sidebar__navigation a .nav-icon {
+  width: 1rem;
+  height: 1rem;
+  opacity: 0.72;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.local-sidebar__navigation a:hover {
+  color: var(--ink);
+  background: color-mix(in oklch, var(--signal) 6%, transparent);
+}
+
+.local-sidebar__navigation a[aria-current="page"] {
+  color: var(--ink);
+  background: var(--soft-signal);
+}
+
+.local-sidebar__connection {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  min-height: 44px;
+  margin: auto 1rem 1rem;
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
 }
 
-.connection-state span {
+.local-sidebar__connection span {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--success);
   box-shadow: 0 0 0 4px var(--soft-success);
+}
+
+.local-main {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.local-main__error {
+  position: sticky;
+  z-index: 12;
+  top: 0;
+  margin: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--danger) 30%, var(--line));
+  padding: 0.65rem 1.25rem;
+  color: var(--danger);
+  background: color-mix(in oklch, var(--danger) 7%, var(--raised));
+  font-size: 0.82rem;
 }
 
 .header-error {
@@ -298,19 +384,36 @@ textarea { min-height: 92px; resize: vertical; }
 .loading-screen { color: var(--muted); font-family: "IBM Plex Mono", monospace; }
 .icon { flex: 0 0 auto; }
 
-@media (max-width: 1100px) {
-  .app-shell { grid-template-columns: 210px minmax(0, 1fr); }
-  .app-header { grid-template-columns: 210px auto auto 1fr; }
-  .inspector { position: fixed; z-index: 10; top: 58px; right: 0; bottom: 0; width: min(90vw, 380px); box-shadow: var(--shadow); transform: translateX(105%); transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1); }
-  .inspector--open { transform: translateX(0); }
-}
-
 @media (max-width: 720px) {
-  .app-shell { display: block; padding-top: 58px; }
-  .app-header { position: fixed; top: 0; right: 0; left: 0; grid-template-columns: auto auto; padding-right: 1rem; }
-  .connection-state { display: none; }
-  .view-switcher { justify-self: end; margin-left: 0; }
-  .header-error { display: none; }
+  .local-shell { grid-template-columns: 1fr; grid-template-rows: minmax(0, calc(100dvh - 70px)) 70px; min-height: 100dvh; }
+  .local-sidebar {
+    position: fixed;
+    z-index: 20;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: block;
+    min-height: 70px;
+    overflow: visible;
+    border-top: 1px solid var(--line);
+    border-right: 0;
+    background: color-mix(in oklch, var(--raised) 94%, transparent);
+    backdrop-filter: blur(18px);
+  }
+  .local-sidebar__wordmark,
+  .local-sidebar__identity,
+  .local-sidebar__connection { display: none; }
+  .local-sidebar__navigation { grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 0; }
+  .local-sidebar__navigation a {
+    grid-template-columns: 1fr;
+    place-items: center;
+    min-height: 70px;
+    padding: 0.45rem 0.2rem;
+    text-align: center;
+    font-size: 0.68rem;
+  }
+  .local-sidebar__navigation a .nav-icon { width: 1.05rem; height: 1.05rem; }
+  .local-main { grid-column: 1; grid-row: 1; padding-bottom: 0; }
   .project-rail { max-height: 240px; border-right: 0; border-bottom: 1px solid var(--line); }
   .execution-canvas { min-height: calc(100vh - 58px); padding: 2rem 1.15rem 5rem; }
   .workflow-heading { display: grid; }

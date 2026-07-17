@@ -2,8 +2,9 @@ export interface LocalChatRun {
   run_id: string;
   handle_id: string;
   state: "running" | "completed" | "failed";
-  provider: "codex";
+  provider: "codex" | "claude";
   model: string;
+  mode: "chat" | "build";
   storage: "this_device";
   created_at: string;
 }
@@ -19,20 +20,71 @@ export interface RunEventMessage { data: string; }
 export type RunEventListener = (event: RunEventMessage) => void;
 export interface RunEventStream {
   addEventListener(type: string, listener: RunEventListener): void;
+  onTerminalError(listener: () => void): void;
   close(): void;
 }
 
+class BrowserRunEventStream implements RunEventStream {
+  constructor(private readonly source: EventSource) {}
+
+  addEventListener(type: string, listener: RunEventListener): void {
+    this.source.addEventListener(type, listener as unknown as EventListener);
+  }
+
+  onTerminalError(listener: () => void): void {
+    this.source.addEventListener("error", () => {
+      if (this.source.readyState === this.source.CLOSED) listener();
+    });
+  }
+
+  close(): void {
+    this.source.close();
+  }
+}
+
+export type ProviderId = "codex" | "claude" | "gemini" | "cursor" | "grok";
+export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type RunMode = "chat" | "build";
+
+export interface ProviderModel {
+  id: string;
+  label: string;
+  recommended: boolean;
+}
+
+export interface ProviderCatalogEntry {
+  id: ProviderId;
+  label: string;
+  status: "ready" | "preview" | "unavailable";
+  runtime: "local" | "api";
+  models: ProviderModel[];
+  status_label: string;
+  thinking_levels: ThinkingLevel[];
+  supports_mcp: boolean;
+}
+
+export interface LocalChatRequest {
+  provider: "codex" | "claude";
+  model: string | null;
+  effort: ThinkingLevel;
+  mode: RunMode;
+  mcp_enabled: boolean;
+}
+
 export interface ConversationApi {
+  listProviders(): Promise<ProviderCatalogEntry[]>;
   startRun(
     prompt: string,
-    request: { model: null; effort: "normal" | "high" },
+    request: LocalChatRequest,
     idempotencyKey: string
   ): Promise<LocalChatRun>;
   cancelRun(runId: string): Promise<LocalChatCancel>;
   openRunEvents(runId: string): RunEventStream;
+  artifactUrl(runId: string): string;
 }
 
-interface ApiErrorBody { detail?: { code?: string; correlation_id?: string }; }
+interface ApiErrorDetail { code?: string; correlation_id?: string; }
+interface ApiErrorBody { detail?: string | ApiErrorDetail; }
 
 export class ConversationApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly correlationId: string | null) {
@@ -51,11 +103,14 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
     if (!response.ok) {
       let body: ApiErrorBody = {};
       try { body = await response.json() as ApiErrorBody; } catch { /* Never expose raw bodies. */ }
-      throw new ConversationApiError(
-        response.status,
-        body.detail?.code ?? `request_failed_${response.status}`,
-        body.detail?.correlation_id ?? null
-      );
+      const detail = body.detail;
+      const code = typeof detail === "string"
+        ? detail
+        : detail?.code ?? `request_failed_${response.status}`;
+      const correlationId = typeof detail === "object" && detail !== null
+        ? detail.correlation_id ?? null
+        : null;
+      throw new ConversationApiError(response.status, code, correlationId);
     }
     return await response.json() as T;
   }
@@ -70,6 +125,10 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
   }
 
   return {
+    listProviders: () => requestJson("/api/local-chat/providers", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
     startRun: (prompt, request, idempotencyKey) => requestJson("/api/local-chat/runs", {
       method: "POST",
       headers: mutationHeaders(idempotencyKey),
@@ -80,9 +139,10 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       headers: mutationHeaders()
     }),
     openRunEvents(runId) {
-      return new EventSource(`${baseUrl}/api/local-chat/runs/${runId}/events?follow=true`, {
+      return new BrowserRunEventStream(new EventSource(`${baseUrl}/api/local-chat/runs/${runId}/events?follow=true`, {
         withCredentials: true
-      }) as unknown as RunEventStream;
-    }
+      }));
+    },
+    artifactUrl: (runId) => `${baseUrl}/api/local-chat/runs/${runId}/artifact`
   };
 }

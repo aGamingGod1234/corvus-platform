@@ -115,8 +115,8 @@ export function SettingsPanel({
         </section>
 
         <section className="settings-card">
-          <div className="section-heading"><h2>MCP servers</h2><span>Coming soon</span></div>
-          <p>MCP execution is coming soon. Corvus will require explicit server approval before any tool becomes available.</p>
+          <div className="section-heading"><h2>MCP servers</h2><span>Build mode</span></div>
+          <p>Your configured Codex MCP servers are available in Build mode when you explicitly enable MCP tools. MCP servers may access external systems, so leave them off for ordinary chats.</p>
           <label htmlFor="settings-mcp-notes">Server notes</label>
           <textarea id="settings-mcp-notes" onChange={(event) => update("mcpNotes", event.target.value)} placeholder="Keep setup notes on this device" rows={3} value={preferences.mcpNotes} />
         </section>

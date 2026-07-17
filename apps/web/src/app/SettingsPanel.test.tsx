@@ -33,6 +33,7 @@ describe("SettingsPanel", () => {
       customRules: "Always show the next action."
     });
     expect(screen.getByText("Saved on this device")).toBeVisible();
-    expect(screen.getByText(/MCP execution is coming soon/i)).toBeVisible();
+    expect(screen.getByText(/configured Codex MCP servers are available in Build mode/i)).toBeVisible();
+    expect(screen.getByText(/may access external systems/i)).toBeVisible();
   });
 });

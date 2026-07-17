@@ -25,3 +25,6 @@ apps/desktop/src-tauri/binaries/
 !.env.example
 .vercel/
 .superpowers/
+/.antigravity/
+/.claude/
+/.runtime-*/

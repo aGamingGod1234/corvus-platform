@@ -233,6 +233,7 @@ describe("adaptive Corvus bootstrap", () => {
       WORKSPACES[1].id
     );
     await act(async () => { secondProjects.resolve([projectB]); });
+    await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(await screen.findByRole("button", { name: /Project B/ })).toBeVisible();
     await act(async () => { firstProjects.resolve([projectA]); });
 

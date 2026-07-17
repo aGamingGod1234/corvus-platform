@@ -1,6 +1,0 @@
-{
-  "library": "lucide",
-  "icon": "cloud",
-  "sourceUrl": "https://unpkg.com/lucide-static@1.24.0/icons/cloud.svg",
-  "svg": "<!-- @license lucide-static v1.24.0 - ISC -->\n<svg\n  class=\"lucide lucide-cloud\"\n  xmlns=\"http://www.w3.org/2000/svg\"\n  width=\"24\"\n  height=\"24\"\n  viewBox=\"0 0 24 24\"\n  fill=\"none\"\n  stroke=\"currentColor\"\n  stroke-width=\"2\"\n  stroke-linecap=\"round\"\n  stroke-linejoin=\"round\"\n>\n  <path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />\n</svg>\n"
-}

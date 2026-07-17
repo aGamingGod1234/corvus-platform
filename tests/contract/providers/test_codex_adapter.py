@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -64,6 +66,105 @@ class _Starter:
 class _FailingStarter:
     async def __call__(self, _invocation: ProcessInvocation) -> _Session:
         raise ProcessSessionError("process_spawn_failed")
+
+
+class _GatedSession:
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def events(self, after_sequence: int = 0) -> AsyncIterator[ProcessSessionEvent]:
+        events = (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "streaming-thread"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reason-1",
+                        "type": "reasoning",
+                        "summary": "Checking inputs",
+                        "text": "do-not-expose-hidden-reasoning",
+                    },
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=3,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {"id": "message-1", "type": "agent_message", "text": "done"},
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=4,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=5, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        )
+        for event in events:
+            if event.sequence <= after_sequence:
+                continue
+            if event.sequence == 2:
+                await self.release.wait()
+            yield event
+
+    async def cancel(self) -> bool:
+        self.release.set()
+        return True
+
+
+class _GatedStarter:
+    def __init__(self) -> None:
+        self.session = _GatedSession()
+
+    async def __call__(self, _invocation: ProcessInvocation) -> _GatedSession:
+        return self.session
+
+
+class _BuildExitGatedSession:
+    def __init__(self) -> None:
+        self.release_exit = asyncio.Event()
+
+    async def events(self, after_sequence: int = 0) -> AsyncIterator[ProcessSessionEvent]:
+        events = (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "build-exit-gate"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=3, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        )
+        for process_event in events:
+            if process_event.sequence <= after_sequence:
+                continue
+            if process_event.sequence == 3:
+                await self.release_exit.wait()
+            yield process_event
+
+    async def cancel(self) -> bool:
+        self.release_exit.set()
+        return True
+
+
+class _BuildExitGatedStarter:
+    def __init__(self) -> None:
+        self.session = _BuildExitGatedSession()
+        self.invocation: ProcessInvocation | None = None
+
+    async def __call__(self, invocation: ProcessInvocation) -> _BuildExitGatedSession:
+        self.invocation = invocation
+        return self.session
 
 
 def _request(binding_id: UUID, binding_digest: str, **updates: object) -> AgentRunRequest:
@@ -195,6 +296,456 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
     ]
     assert events[1].redacted_payload == {"text": "hello"}
     assert start.handle.state is AgentRunState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_streams_safe_reasoning_before_terminal(tmp_path: Path) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    starter = _GatedStarter()
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "runs",
+        clock=lambda: NOW,
+        session_starter=starter,
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start(_request(binding.binding.id, binding.binding_digest))
+    stream = adapter.events(start.handle)
+
+    first = await asyncio.wait_for(anext(stream), timeout=0.2)
+
+    assert first.event_type is AgentRunEventType.STARTED
+    starter.session.release.set()
+    remaining = [event async for event in stream]
+    assert [event.event_type for event in remaining] == [
+        AgentRunEventType.REASONING_DELTA,
+        AgentRunEventType.MESSAGE_DELTA,
+        AgentRunEventType.USAGE,
+        AgentRunEventType.COMPLETED,
+    ]
+    assert remaining[0].redacted_payload == {"text": "Checking inputs"}
+    assert "do-not-expose-hidden-reasoning" not in repr(remaining)
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_replaces_raw_reasoning_with_generic_status(tmp_path: Path) -> None:
+    adapter, _starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "raw-reasoning"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reason-1",
+                        "type": "reasoning",
+                        "text": "do-not-expose-hidden-reasoning",
+                    },
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=3,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=4, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start(_request(binding.binding.id, binding.binding_digest))
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert [event.event_type for event in events] == [
+        AgentRunEventType.STARTED,
+        AgentRunEventType.CHECKPOINT,
+        AgentRunEventType.USAGE,
+        AgentRunEventType.COMPLETED,
+    ]
+    assert events[1].redacted_payload == {"activity": "provider", "status": "thinking"}
+    assert "do-not-expose-hidden-reasoning" not in repr(events)
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_bounds_and_redacts_provider_reasoning_summary(
+    tmp_path: Path,
+) -> None:
+    adapter, _starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "bounded-summary"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {
+                        "id": "reason-1",
+                        "type": "reasoning",
+                        "summary": ("S" * 600) + ' api_key="alllettersecretvalue"',
+                        "text": "do-not-expose-hidden-reasoning",
+                    },
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=3,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=4, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start(_request(binding.binding.id, binding.binding_digest))
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    summary = events[1].redacted_payload["text"]
+    assert isinstance(summary, str)
+    assert len(summary) <= 512
+    assert "alllettersecretvalue" not in repr(events)
+    assert "do-not-expose-hidden-reasoning" not in repr(events)
+
+
+@pytest.mark.asyncio
+async def test_codex_build_packages_only_after_natural_process_exit(tmp_path: Path) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    starter = _BuildExitGatedStarter()
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "runs",
+        clock=lambda: NOW,
+        session_starter=starter,
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build a complete small project.",
+            idempotency_key="build-exit-gated",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    (starter.invocation.cwd / "index.html").write_text("<h1>Built</h1>", encoding="utf-8")
+    stream = adapter.events(start.handle)
+
+    assert (await anext(stream)).event_type is AgentRunEventType.STARTED
+    assert (await anext(stream)).event_type is AgentRunEventType.USAGE
+    pending = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0)
+    assert not pending.done()
+    assert adapter.artifact(start.handle) is None
+
+    starter.session.release_exit.set()
+    artifact_event = await asyncio.wait_for(pending, timeout=0.2)
+    remaining = [event async for event in stream]
+
+    assert artifact_event.event_type is AgentRunEventType.ARTIFACT
+    assert [event.event_type for event in remaining] == [AgentRunEventType.COMPLETED]
+    assert adapter.artifact(start.handle) is not None
+
+
+@pytest.mark.asyncio
+async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
+    tmp_path: Path,
+) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "build-thread"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.started",
+                    "item": {
+                        "id": "tool-1",
+                        "type": "command_execution",
+                        "command": "do-not-expose-this-command",
+                    },
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=3,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {"id": "tool-1", "type": "command_execution", "status": "completed"},
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=4,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=5, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build a complete small project.",
+            idempotency_key="local-build",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            mcp_enabled=False,
+        ),
+    )
+    assert starter.invocation is not None
+    (starter.invocation.cwd / "index.html").write_text("<h1>Built</h1>", encoding="utf-8")
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert "workspace-write" in starter.invocation.arguments
+    assert "--ephemeral" in starter.invocation.arguments
+    assert "--ignore-user-config" in starter.invocation.arguments
+    assert "--ignore-rules" in starter.invocation.arguments
+    for feature in ("plugins", "apps", "hooks"):
+        feature_index = starter.invocation.arguments.index(feature)
+        assert starter.invocation.arguments[feature_index - 1] == "--disable"
+    if os.name == "nt":
+        assert 'windows.sandbox="unelevated"' in starter.invocation.arguments
+    assert [event.event_type for event in events] == [
+        AgentRunEventType.STARTED,
+        AgentRunEventType.CHECKPOINT,
+        AgentRunEventType.CHECKPOINT,
+        AgentRunEventType.USAGE,
+        AgentRunEventType.ARTIFACT,
+        AgentRunEventType.COMPLETED,
+    ]
+    assert events[1].redacted_payload == {"activity": "command", "status": "started"}
+    assert "do-not-expose-this-command" not in repr(events)
+    artifact = adapter.artifact(start.handle)
+    assert artifact is not None
+    assert artifact.path.is_file()
+    assert artifact.download_name.endswith(".zip")
+
+
+@pytest.mark.asyncio
+async def test_codex_mcp_opt_in_still_disables_non_mcp_extensions(tmp_path: Path) -> None:
+    adapter, starter = _adapter(tmp_path, ())
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Use the configured MCP server.",
+            idempotency_key="local-mcp",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mcp_enabled=True,
+        ),
+    )
+
+    assert starter.invocation is not None
+    assert "--ignore-user-config" not in starter.invocation.arguments
+    for feature in ("plugins", "apps", "hooks"):
+        feature_index = starter.invocation.arguments.index(feature)
+        assert starter.invocation.arguments[feature_index - 1] == "--disable"
+
+
+@pytest.mark.asyncio
+async def test_codex_build_fails_when_process_exits_before_protocol_completion(
+    tmp_path: Path,
+) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "truncated-build"},
+            ),
+            ProcessSessionEvent(sequence=2, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build the project.",
+            idempotency_key="truncated-build",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    (starter.invocation.cwd / "index.html").write_text("<h1>Partial</h1>", encoding="utf-8")
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert [event.event_type for event in events] == [
+        AgentRunEventType.STARTED,
+        AgentRunEventType.FAILED,
+    ]
+    assert events[-1].redacted_payload == {"reason_code": "codex_stream_incomplete"}
+    assert adapter.artifact(start.handle) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        Path(".npmrc"),
+        Path(".aws") / "credentials",
+        Path(".config") / "gcloud" / "application_default_credentials.json",
+        Path(".ssh") / "id_ed25519.pub",
+    ),
+)
+async def test_codex_build_rejects_common_credential_paths(
+    tmp_path: Path,
+    relative_path: Path,
+) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=2, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build the project.",
+            idempotency_key=f"credential-path-{relative_path.as_posix()}",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    credential = starter.invocation.cwd / relative_path
+    credential.parent.mkdir(parents=True, exist_ok=True)
+    credential.write_text("credential material", encoding="utf-8")
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-1].event_type is AgentRunEventType.FAILED
+    assert events[-1].redacted_payload == {"reason_code": "codex_build_secret_file_rejected"}
+    assert adapter.artifact(start.handle) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    (
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material",
+        'api_key = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4"',
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abcd1234.efgh5678",
+        'password = "correcthorsebatterystaple"',
+        'cookie = "sessioncookievalue"',
+        'credential = "credentialmaterialonlyletters"',
+        'private_key = "privatekeymaterialonlyletters"',
+    ),
+)
+async def test_codex_build_rejects_secret_content_in_ordinary_files(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=2, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build the project.",
+            idempotency_key=f"secret-content-{hash(content)}",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    (starter.invocation.cwd / "notes.txt").write_text(content, encoding="utf-8")
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-1].event_type is AgentRunEventType.FAILED
+    assert events[-1].redacted_payload == {"reason_code": "codex_build_secret_file_rejected"}
+    assert content not in repr(events)
+    assert adapter.artifact(start.handle) is None
+
+
+@pytest.mark.asyncio
+async def test_codex_build_allows_non_secret_examples_in_ordinary_files(tmp_path: Path) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=2, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Build the project.",
+            idempotency_key="safe-example-content",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+        ),
+    )
+    assert starter.invocation is not None
+    (starter.invocation.cwd / "README.md").write_text(
+        "\n".join(
+            (
+                'Set api_key = "your-api-key-here" before running.',
+                "Example: sk-proj-replace-with-your-api-key-here-123456",
+                "Authorization: Bearer your-placeholder-token-goes-here-123456",
+                "password: SecretStr",
+                "credential: CredentialReference",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-2].event_type is AgentRunEventType.ARTIFACT
+    assert events[-1].event_type is AgentRunEventType.COMPLETED
 
 
 @pytest.mark.asyncio

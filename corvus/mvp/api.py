@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -167,21 +167,25 @@ class MutationStatus(ApiModel):
 
 class LocalChatStartRequest(ApiModel):
     prompt: str = Field(min_length=1, max_length=1_000_000)
+    provider: Literal["codex", "claude"] = "codex"
     model: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
     )
-    effort: Literal["normal", "high"] = "normal"
+    effort: Literal["normal", "low", "medium", "high", "xhigh", "max"] = "normal"
+    mode: Literal["chat", "build"] = "chat"
+    mcp_enabled: bool = False
 
 
 class LocalChatStartResponse(ApiModel):
     run_id: str
     handle_id: str
     state: Literal["running", "completed", "failed"]
-    provider: Literal["codex"]
+    provider: Literal["codex", "claude"]
     model: str
+    mode: Literal["chat", "build"]
     storage: Literal["this_device"]
     created_at: str
 
@@ -498,8 +502,11 @@ def create_app(
             return await local_chat.start(
                 owner=f"{principal.tenant_id}:{principal.user_id}",
                 prompt=body.prompt,
+                provider=body.provider,
                 model=body.model,
                 effort=body.effort,
+                mode=body.mode,
+                mcp_enabled=body.mcp_enabled,
                 idempotency_key=idempotency_key,
             )
         except LocalChatConflict as error:
@@ -512,6 +519,14 @@ def create_app(
                 detail=error.reason_code,
             ) from error
 
+    @app.get("/api/local-chat/providers")
+    def local_chat_providers(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, object]]:
+        if local_chat is None:
+            return []
+        return list(local_chat.provider_catalog())
+
     @app.get("/api/local-chat/runs/{run_id}/events")
     async def local_chat_events(
         run_id: UUID,
@@ -519,14 +534,13 @@ def create_app(
         follow: bool = True,
         last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
     ) -> StreamingResponse:
-        del follow
         if local_chat is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="codex_unavailable",
             )
         try:
-            events = await local_chat.events(
+            events = local_chat.events(
                 owner=f"{principal.tenant_id}:{principal.user_id}",
                 run_id=run_id,
                 cursor=last_event_id,
@@ -541,7 +555,7 @@ def create_app(
             ) from error
 
         async def stream() -> AsyncIterator[str]:
-            for cursor, event in events:
+            async for cursor, event in events:
                 payload = {
                     "run_id": str(run_id),
                     "sequence": event.sequence,
@@ -554,11 +568,39 @@ def create_app(
                     f"event: {event.type}\n"
                     f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
                 )
+                if not follow and event.type in {"completed", "failed", "cancelled"}:
+                    return
 
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/local-chat/runs/{run_id}/artifact")
+    async def local_chat_artifact(
+        run_id: UUID,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> FileResponse:
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            artifact = local_chat.artifact(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                run_id=run_id,
+            )
+        except LocalChatNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error.reason_code,
+            ) from error
+        return FileResponse(
+            artifact.path,
+            media_type="application/zip",
+            filename=artifact.download_name,
         )
 
     @app.post(

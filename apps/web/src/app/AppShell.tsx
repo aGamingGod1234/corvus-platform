@@ -55,6 +55,7 @@ export function AppShell({
       <div
         className="adaptive-shell"
         data-experience={profile.experience}
+        data-inspector={inspectorOpen ? "open" : "closed"}
         data-scope={profile.workspaceKind}
       >
         <NavigationRail
@@ -75,7 +76,7 @@ export function AppShell({
           <ConnectionBanner error={error} />
         </header>
         <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>{children}</main>
-        <div className={`adaptive-inspector-slot${inspectorOpen ? " adaptive-inspector-slot--open" : ""}`}>{inspector}</div>
+        {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
         <ResponsiveNavigation
           accountEmail={accountEmail}
           activeRoute={activeRoute}

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import os
 import re
+import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import JsonValue
@@ -43,6 +46,8 @@ from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessSessionEventKind,
     ProcessSessionLimits,
 )
+from corvus.safe_process import path_is_link_or_reparse
+from corvus.security import SecretRedactor, is_sensitive_field_name
 
 _FIRST_EVENT_DIGEST = "0" * 64
 _DEFAULT_MODEL_LABEL = "Codex default"
@@ -51,6 +56,66 @@ _MAX_TIMEOUT_SECONDS = 120.0
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
 _MAX_FRAMES = 10_000
+_MAX_BUILD_FILES = 128
+_MAX_BUILD_FILE_BYTES = 1_000_000
+_MAX_BUILD_TOTAL_BYTES = 10_000_000
+_MAX_REASONING_SUMMARY_CHARACTERS = 512
+_BUILD_EXCLUDED_PARTS = frozenset({".git", "__pycache__", "node_modules"})
+_BUILD_SECRET_NAMES = frozenset(
+    {
+        ".env",
+        ".git-credentials",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        "credentials.json",
+        "secrets.json",
+    }
+)
+_BUILD_SECRET_PATHS = frozenset(
+    {
+        (".aws", "credentials"),
+        (".azure", "accesstokens.json"),
+        (".config", "gcloud", "application_default_credentials.json"),
+        (".config", "gcloud", "credentials.db"),
+        (".docker", "config.json"),
+        (".kube", "config"),
+        (".terraform.d", "credentials.tfrc.json"),
+    }
+)
+_BUILD_SECRET_DIRECTORIES = frozenset({".ssh"})
+_PRIVATE_KEY_PATTERN = re.compile(
+    rb"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----",
+    re.IGNORECASE,
+)
+_KNOWN_TOKEN_PATTERN = re.compile(
+    rb"(?:"
+    rb"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"
+    rb"|github_pat_[A-Za-z0-9_]{20,}"
+    rb"|gh[pousr]_[A-Za-z0-9]{20,}"
+    rb"|xox[baprs]-[A-Za-z0-9-]{20,}"
+    rb"|AKIA[0-9A-Z]{16}"
+    rb"|AIza[0-9A-Za-z_-]{30,}"
+    rb")"
+)
+_BEARER_TOKEN_PATTERN = re.compile(
+    rb"\bBearer\s+[A-Za-z0-9._~+/-]{24,}={0,2}",
+    re.IGNORECASE,
+)
+_ASSIGNED_VALUE_PATTERN = re.compile(
+    r"""["']?([A-Za-z][A-Za-z0-9_-]{1,63})["']?\s*([:=])\s*"""
+    r"""(?:"([^"\r\n]{4,})"|'([^'\r\n]{4,})'|([A-Za-z0-9_~+/=-]{8,}))""",
+    re.IGNORECASE,
+)
+_TYPE_REFERENCE_PATTERN = re.compile(
+    r"^[A-Z][A-Za-z0-9]*(?:Bytes|Model|Ref|Reference|Str|String|Type)$"
+)
+_PLACEHOLDER_SECRET_PATTERN = re.compile(
+    rb"^(?:Bearer\s+|sk-(?:proj-)?|github_pat_|gh[pousr]_|xox[baprs]-)?"
+    rb"(?:your|replace|example|placeholder|changeme|dummy|not[-_]a[-_]real)(?:[-_]|$)",
+    re.IGNORECASE,
+)
+_SUMMARY_REDACTOR = SecretRedactor()
 _TOOL_ITEM_TYPES = frozenset(
     {
         "command_execution",
@@ -75,7 +140,18 @@ class LocalCodexTextRequest:
     idempotency_key: str
     deadline: datetime
     model: str | None = None
+    effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+    mode: Literal["chat", "build"] = "chat"
+    mcp_enabled: bool = False
     max_output_bytes: int = 100_000
+
+
+@dataclass(frozen=True, slots=True)
+class LocalBuildArtifact:
+    path: Path
+    download_name: str
+    sha256_digest: str
+    size_bytes: int
 
 
 class _ProcessSessionLike(Protocol):
@@ -92,11 +168,23 @@ async def _start_process_session(invocation: ProcessInvocation) -> _ProcessSessi
 
 
 class _RunSession:
-    def __init__(self, process: _ProcessSessionLike) -> None:
+    def __init__(
+        self,
+        process: _ProcessSessionLike,
+        *,
+        scratch: Path,
+        mode: Literal["chat", "build"],
+    ) -> None:
         self.process = process
-        self.events: tuple[AgentRunEvent, ...] | None = None
+        self.events: list[AgentRunEvent] = []
         self.lock = asyncio.Lock()
         self.terminal_state: AgentRunState | None = None
+        self.process_sequence = 0
+        self.stream_complete = False
+        self.scratch = scratch
+        self.mode = mode
+        self.artifact: LocalBuildArtifact | None = None
+        self.provider_completed = False
 
 
 class CodexCliAdapter(AgentRuntimePort):
@@ -180,6 +268,9 @@ class CodexCliAdapter(AgentRuntimePort):
             run_id=request.run_id,
             prompt=prompt,
             model=request.model,
+            effort=_normalize_effort(request.effort),
+            mode="chat",
+            mcp_enabled=False,
             idempotency_key=request.idempotency_key,
             deadline=request.deadline,
             max_output_bytes=request.max_output_bytes,
@@ -196,6 +287,9 @@ class CodexCliAdapter(AgentRuntimePort):
             run_id=request.run_id,
             prompt=request.prompt,
             model=request.model,
+            effort=request.effort,
+            mode=request.mode,
+            mcp_enabled=request.mcp_enabled,
             idempotency_key=request.idempotency_key,
             deadline=request.deadline,
             max_output_bytes=request.max_output_bytes,
@@ -208,6 +302,9 @@ class CodexCliAdapter(AgentRuntimePort):
         run_id: UUID,
         prompt: str,
         model: str | None,
+        effort: Literal["low", "medium", "high", "xhigh"],
+        mode: Literal["chat", "build"],
+        mcp_enabled: bool,
         idempotency_key: str,
         deadline: datetime,
         max_output_bytes: int,
@@ -237,18 +334,39 @@ class CodexCliAdapter(AgentRuntimePort):
             raise CodexAdapterError("codex_model_invalid")
         scratch = self._scratch_root / str(run_id)
         scratch.mkdir(parents=True, exist_ok=False)
+        sandbox = "workspace-write" if mode == "build" else "read-only"
         arguments = [
             "exec",
             "--json",
             "--color",
             "never",
             "--sandbox",
-            "read-only",
+            sandbox,
             "--skip-git-repo-check",
+            "--ephemeral",
+            "--ignore-rules",
         ]
+        if not mcp_enabled:
+            arguments.append("--ignore-user-config")
+            if os.name == "nt":
+                # Ignoring config also drops Codex's Windows sandbox backend choice.
+                # Restore that runtime selection without loading any user MCP/plugin config.
+                arguments.extend(("--config", 'windows.sandbox="unelevated"'))
+        # MCP opt-in permits configured MCP servers only. Other user extensions stay disabled.
+        arguments.extend(
+            (
+                "--disable",
+                "plugins",
+                "--disable",
+                "apps",
+                "--disable",
+                "hooks",
+            )
+        )
         if model is not None:
             arguments.extend(("--model", model))
-        arguments.append(prompt)
+        arguments.extend(("--config", f'model_reasoning_effort="{effort}"'))
+        arguments.append(_build_prompt(prompt) if mode == "build" else prompt)
         limits = ProcessSessionLimits(
             max_stdout_bytes=max_output_bytes,
             max_stderr_bytes=min(max_output_bytes, _MAX_STDERR_BYTES),
@@ -279,7 +397,7 @@ class CodexCliAdapter(AgentRuntimePort):
             created_at=self._clock(),
             state=AgentRunState.RUNNING,
         )
-        run_session = _RunSession(process)
+        run_session = _RunSession(process, scratch=scratch, mode=mode)
         run_session.request_key = idempotency_key  # type: ignore[attr-defined]
         self._sessions[handle.id] = run_session
         return AgentRunStartResult(handle=handle, replayed=False)
@@ -291,11 +409,19 @@ class CodexCliAdapter(AgentRuntimePort):
     ) -> AsyncIterator[AgentRunEvent]:
         session = self._require_session(handle)
         async with session.lock:
-            if session.events is None:
-                session.events = await self._normalize_events(handle, session)
-        for event in session.events:
-            if event.sequence > after_sequence:
-                yield event
+            for event in session.events:
+                if event.sequence > after_sequence:
+                    yield event
+            if session.stream_complete:
+                return
+            async for event in self._stream_events(handle, session):
+                session.events.append(event)
+                if event.sequence > after_sequence:
+                    yield event
+            session.stream_complete = True
+
+    def artifact(self, handle: AgentRunHandle) -> LocalBuildArtifact | None:
+        return self._require_session(handle).artifact
 
     async def cancel(
         self,
@@ -377,17 +503,16 @@ class CodexCliAdapter(AgentRuntimePort):
             raise CodexAdapterError("codex_handle_unknown")
         return session
 
-    async def _normalize_events(
+    async def _stream_events(
         self,
         handle: AgentRunHandle,
         session: _RunSession,
-    ) -> tuple[AgentRunEvent, ...]:
-        normalized: list[AgentRunEvent] = []
+    ) -> AsyncIterator[AgentRunEvent]:
         terminal = False
 
-        def emit(event_type: AgentRunEventType, payload: dict[str, JsonValue]) -> None:
-            previous = normalized[-1].event_digest if normalized else _FIRST_EVENT_DIGEST
-            sequence = len(normalized) + 1
+        def event(event_type: AgentRunEventType, payload: dict[str, JsonValue]) -> AgentRunEvent:
+            previous = session.events[-1].event_digest if session.events else _FIRST_EVENT_DIGEST
+            sequence = len(session.events) + 1
             timestamp = self._clock()
             digest = compute_agent_run_event_digest(
                 run_id=handle.run_id,
@@ -402,39 +527,73 @@ class CodexCliAdapter(AgentRuntimePort):
                 effect_authorization_decision_id=None,
                 effect_authorization_decision_digest=None,
             )
-            normalized.append(
-                AgentRunEvent(
-                    run_id=handle.run_id,
-                    handle_id=handle.id,
-                    sequence=sequence,
-                    timestamp=timestamp,
-                    event_type=event_type,
-                    redacted_payload=payload,
-                    previous_event_digest=previous,
-                    event_digest=digest,
-                )
+            return AgentRunEvent(
+                run_id=handle.run_id,
+                handle_id=handle.id,
+                sequence=sequence,
+                timestamp=timestamp,
+                event_type=event_type,
+                redacted_payload=payload,
+                previous_event_digest=previous,
+                event_digest=digest,
             )
 
-        async for event in session.process.events():
+        async for process_event in session.process.events(session.process_sequence):
+            session.process_sequence = max(session.process_sequence, process_event.sequence)
             if terminal:
                 continue
-            if event.kind is ProcessSessionEventKind.FRAME and event.frame is not None:
-                frame_type = event.frame.get("type")
-                item = event.frame.get("item")
+            if (
+                process_event.kind is ProcessSessionEventKind.FRAME
+                and process_event.frame is not None
+            ):
+                frame_type = process_event.frame.get("type")
+                item = process_event.frame.get("item")
                 item_type = item.get("type") if isinstance(item, Mapping) else None
                 if item_type in _TOOL_ITEM_TYPES:
-                    await session.process.cancel()
-                    emit(AgentRunEventType.FAILED, {"reason_code": "codex_tool_event_blocked"})
-                    session.terminal_state = AgentRunState.FAILED
-                    terminal = True
+                    if session.mode == "chat":
+                        await session.process.cancel()
+                        yield event(
+                            AgentRunEventType.FAILED,
+                            {"reason_code": "codex_tool_event_blocked"},
+                        )
+                        session.terminal_state = AgentRunState.FAILED
+                        terminal = True
+                    else:
+                        yield event(
+                            AgentRunEventType.CHECKPOINT,
+                            {
+                                "activity": _safe_activity(item_type),
+                                "status": "started"
+                                if frame_type == "item.started"
+                                else "completed",
+                            },
+                        )
                 elif frame_type == "thread.started":
-                    emit(AgentRunEventType.STARTED, {"status": "started"})
+                    yield event(AgentRunEventType.STARTED, {"status": "started"})
+                elif item_type == "reasoning" and isinstance(item, Mapping):
+                    summary = item.get("summary")
+                    if isinstance(summary, str) and summary:
+                        bounded = _SUMMARY_REDACTOR.bound_text(
+                            summary,
+                            max_characters=_MAX_REASONING_SUMMARY_CHARACTERS,
+                        )
+                        if bounded.text:
+                            yield event(
+                                AgentRunEventType.REASONING_DELTA,
+                                {"text": bounded.text},
+                            )
+                    else:
+                        yield event(
+                            AgentRunEventType.CHECKPOINT,
+                            {"activity": "provider", "status": "thinking"},
+                        )
                 elif item_type == "agent_message" and isinstance(item, Mapping):
                     text = item.get("text")
                     if isinstance(text, str) and text:
-                        emit(AgentRunEventType.MESSAGE_DELTA, {"text": text})
+                        yield event(AgentRunEventType.MESSAGE_DELTA, {"text": text})
                 elif frame_type == "turn.completed":
-                    usage = event.frame.get("usage")
+                    session.provider_completed = True
+                    usage = process_event.frame.get("usage")
                     if isinstance(usage, Mapping):
                         safe_usage: dict[str, JsonValue] = {
                             key: value
@@ -444,33 +603,212 @@ class CodexCliAdapter(AgentRuntimePort):
                             and not isinstance(value, bool)
                             and value >= 0
                         }
-                        emit(AgentRunEventType.USAGE, safe_usage)
-                    emit(AgentRunEventType.COMPLETED, {"status": "completed"})
-                    session.terminal_state = AgentRunState.COMPLETED
-                    terminal = True
-            elif event.kind is ProcessSessionEventKind.CANCELLED:
-                emit(AgentRunEventType.CANCELLED, {"reason_code": "agent_run_cancelled"})
+                        yield event(AgentRunEventType.USAGE, safe_usage)
+            elif process_event.kind is ProcessSessionEventKind.CANCELLED:
+                yield event(AgentRunEventType.CANCELLED, {"reason_code": "agent_run_cancelled"})
                 session.terminal_state = AgentRunState.CANCELLED
                 terminal = True
-            elif event.kind is ProcessSessionEventKind.FAILED:
-                emit(
+            elif process_event.kind is ProcessSessionEventKind.FAILED:
+                yield event(
                     AgentRunEventType.FAILED,
-                    {"reason_code": event.reason_code or "codex_process_failed"},
+                    {"reason_code": process_event.reason_code or "codex_process_failed"},
                 )
                 session.terminal_state = AgentRunState.FAILED
                 terminal = True
-            elif event.kind is ProcessSessionEventKind.EXITED and not terminal:
-                if event.return_code == 0:
-                    emit(AgentRunEventType.COMPLETED, {"status": "completed"})
-                    session.terminal_state = AgentRunState.COMPLETED
-                else:
-                    emit(AgentRunEventType.FAILED, {"reason_code": "codex_process_failed"})
+            elif process_event.kind is ProcessSessionEventKind.EXITED and not terminal:
+                if process_event.return_code != 0:
+                    yield event(
+                        AgentRunEventType.FAILED,
+                        {"reason_code": "codex_process_failed"},
+                    )
                     session.terminal_state = AgentRunState.FAILED
+                    terminal = True
+                    continue
+                if not session.provider_completed:
+                    yield event(
+                        AgentRunEventType.FAILED,
+                        {"reason_code": "codex_stream_incomplete"},
+                    )
+                    session.terminal_state = AgentRunState.FAILED
+                    terminal = True
+                    continue
+                if session.mode == "build":
+                    try:
+                        session.artifact = _package_workspace(session.scratch, handle.run_id)
+                    except CodexAdapterError as error:
+                        yield event(
+                            AgentRunEventType.FAILED,
+                            {"reason_code": error.reason_code},
+                        )
+                        session.terminal_state = AgentRunState.FAILED
+                        terminal = True
+                        continue
+                    yield event(
+                        AgentRunEventType.ARTIFACT,
+                        {
+                            "download_name": session.artifact.download_name,
+                            "sha256_digest": session.artifact.sha256_digest,
+                            "size_bytes": session.artifact.size_bytes,
+                        },
+                    )
+                yield event(AgentRunEventType.COMPLETED, {"status": "completed"})
+                session.terminal_state = AgentRunState.COMPLETED
                 terminal = True
         if not terminal:
-            emit(AgentRunEventType.FAILED, {"reason_code": "codex_stream_incomplete"})
+            yield event(AgentRunEventType.FAILED, {"reason_code": "codex_stream_incomplete"})
             session.terminal_state = AgentRunState.FAILED
-        return tuple(normalized)
+
+
+def _normalize_effort(value: str) -> Literal["low", "medium", "high", "xhigh"]:
+    normalized = value.lower()
+    if normalized == "normal":
+        return "medium"
+    if normalized in {"low", "medium", "high", "xhigh"}:
+        return normalized  # type: ignore[return-value]
+    raise CodexAdapterError("codex_effort_invalid")
+
+
+def _build_prompt(prompt: str) -> str:
+    return (
+        "Build the complete requested project inside the current isolated workspace. "
+        "Work autonomously, create all required files, run appropriate checks, and do not stop at "
+        "a plan or partial scaffold. Do not read or modify files outside the current workspace. "
+        "When the project is complete, summarize what was built and the checks you ran.\n\n"
+        f"User request:\n{prompt}"
+    )
+
+
+def _safe_activity(item_type: object) -> str:
+    mapping = {
+        "command_execution": "command",
+        "file_change": "files",
+        "mcp_tool_call": "mcp",
+        "tool_call": "tool",
+        "web_search": "search",
+    }
+    return mapping.get(str(item_type), "tool")
+
+
+def _is_sensitive_build_path(relative: Path) -> bool:
+    parts = tuple(part.lower() for part in relative.parts)
+    if relative.name.lower() in _BUILD_SECRET_NAMES:
+        return True
+    if any(part in _BUILD_SECRET_DIRECTORIES for part in parts):
+        return True
+    return any(
+        len(parts) >= len(secret_path) and parts[-len(secret_path) :] == secret_path
+        for secret_path in _BUILD_SECRET_PATHS
+    )
+
+
+def _contains_sensitive_build_content(content: bytes) -> bool:
+    if _PRIVATE_KEY_PATTERN.search(content) is not None:
+        return True
+    if any(
+        not _is_placeholder_secret(match.group(0))
+        for match in _KNOWN_TOKEN_PATTERN.finditer(content)
+    ):
+        return True
+    if any(
+        not _is_placeholder_secret(match.group(0))
+        for match in _BEARER_TOKEN_PATTERN.finditer(content)
+    ):
+        return True
+    try:
+        text = content.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    for assigned in _ASSIGNED_VALUE_PATTERN.finditer(text):
+        key = assigned.group(1)
+        separator = assigned.group(2)
+        value = next(
+            (candidate for candidate in assigned.groups()[2:] if candidate is not None),
+            "",
+        ).strip()
+        unquoted_value = assigned.group(5)
+        if (
+            is_sensitive_field_name(key)
+            and len(value) >= 8
+            and not _is_placeholder_secret(value)
+            and not (
+                separator == ":"
+                and unquoted_value is not None
+                and _TYPE_REFERENCE_PATTERN.fullmatch(unquoted_value) is not None
+            )
+        ):
+            return True
+    return False
+
+
+def _is_placeholder_secret(value: bytes | str) -> bool:
+    encoded = value.encode("utf-8") if isinstance(value, str) else value
+    return _PLACEHOLDER_SECRET_PATTERN.match(encoded) is not None
+
+
+def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
+    root = scratch.resolve(strict=True)
+    files: list[tuple[Path, str, bytes]] = []
+    total_bytes = 0
+    for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if candidate.is_dir():
+            continue
+        relative = candidate.relative_to(root)
+        if any(part in _BUILD_EXCLUDED_PARTS for part in relative.parts):
+            continue
+        if path_is_link_or_reparse(candidate):
+            raise CodexAdapterError("codex_build_link_rejected")
+        name = candidate.name.lower()
+        if _is_sensitive_build_path(relative) or (
+            name.startswith(".env.") or candidate.suffix.lower() in {".key", ".pem"}
+        ):
+            raise CodexAdapterError("codex_build_secret_file_rejected")
+        canonical = candidate.resolve(strict=True)
+        if not canonical.is_relative_to(root):
+            raise CodexAdapterError("codex_build_path_escape")
+        content = canonical.read_bytes()
+        if len(content) > _MAX_BUILD_FILE_BYTES:
+            raise CodexAdapterError("codex_build_file_too_large")
+        if _contains_sensitive_build_content(content):
+            raise CodexAdapterError("codex_build_secret_file_rejected")
+        total_bytes += len(content)
+        if total_bytes > _MAX_BUILD_TOTAL_BYTES:
+            raise CodexAdapterError("codex_build_too_large")
+        files.append((canonical, relative.as_posix(), content))
+        if len(files) > _MAX_BUILD_FILES:
+            raise CodexAdapterError("codex_build_too_many_files")
+    if not files:
+        raise CodexAdapterError("codex_build_empty")
+
+    download_name = f"corvus-build-{run_id}.zip"
+    archive = root.parent / download_name
+    if archive.exists():
+        raise CodexAdapterError("codex_build_artifact_conflict")
+    manifest_files = [
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        }
+        for _canonical, relative, content in files
+    ]
+    manifest = json.dumps(
+        {"schema_version": 1, "run_id": str(run_id), "files": manifest_files},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    try:
+        with zipfile.ZipFile(archive, mode="x", compression=zipfile.ZIP_DEFLATED) as package:
+            for _canonical, archive_path, content in files:
+                package.writestr(archive_path, content)
+            package.writestr("corvus-manifest.json", manifest)
+    except (OSError, zipfile.BadZipFile) as error:
+        raise CodexAdapterError("codex_build_package_failed") from error
+    return LocalBuildArtifact(
+        path=archive,
+        download_name=download_name,
+        sha256_digest=_sha256_file(archive),
+        size_bytes=archive.stat().st_size,
+    )
 
 
 def _sha256_file(path: Path) -> str:

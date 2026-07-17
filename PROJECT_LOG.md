@@ -1908,3 +1908,65 @@
 ### Suggested Next Steps
 - Add the newly requested provider, streaming, MCP discovery, scratch-build handoff, and simplified interface vertical.
 - Rerun the complete release matrix after that vertical is integrated.
+
+## 2026-07-17 - Deliver the hackathon local-agent workspace
+
+### What Was Implemented
+- Simplified the desktop/web product shell to one sidebar and one main canvas with on-demand history, icon-first actions, overlay-only inspection, and profile-aware local identity.
+- Connected installed Codex and Claude CLIs through bounded fixed-argv adapters with truthful provider/model discovery, model and thinking selection, cancellation, and live safe message/reasoning/status streaming.
+- Added explicit Chat/Build behavior, MCP opt-in, a fresh Codex workspace-write sandbox, plugin/app/hook isolation by default, and bounded project ZIP handoff with a SHA-256 manifest.
+- Added owner-scoped provider and artifact API routes, fail-closed provider discovery/retry UX, and regression coverage for provider dispatch, selected options, streaming, isolation, artifact access, and adaptive profiles.
+- Preserved provider-specific thinking levels in the web contract, added Claude Maximum selection, handled both structured and string FastAPI errors, and gave empty provider discovery an install-and-retry path without claiming sign-in was verified by executable discovery.
+- Verified a real Windows Codex Build run that streamed to completion and produced a digest-valid ZIP containing the requested project and manifest.
+
+### Files Modified
+- `corvus/domain/agent_runtime.py`, `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, and `corvus/mvp/{api,local_chat,provider_catalog}.py` - provider, streaming, Build, MCP, and artifact runtime vertical.
+- `apps/web/src/app/`, `apps/web/src/components/`, and web styles/tests - simplified shell, agent composer, fail-closed catalog, local profile identity, and responsive interaction coverage.
+- `tests/contract/providers/` and `tests/mvp/` - adapter, catalog, dispatch, owner isolation, streaming, and artifact regressions.
+- `README.md`, `HACKATHON_STATUS.md`, `PLAN.md`, and `PROJECT_LOG.md` - truthful delivered/deferred scope and acceptance record.
+
+### Assumptions Made (flag these for review)
+- Provider-supplied reasoning summaries are safe user-facing progress; hidden chain-of-thought and raw command/tool output remain excluded.
+- The selected legacy local preference is presentation input only and does not manufacture hosted membership, Team authority, or runtime permission.
+
+### Known Issues / Deferred
+- Gemini and xAI/Grok remain Preview, Cursor is unavailable, and API-key routing is not implemented.
+- Corvus Cloud/E2B, production multi-user collaboration, timed scheduler workers, and durable cross-device conversation persistence remain at their explicit later milestone boundaries.
+- MCP-off Build disables plugins/apps/hooks and user configuration; configured MCP access occurs only after the user enables it for that Build run.
+
+### Suggested Next Steps
+- Complete the consolidated release gates and GUI acceptance, then open the single unmerged review PR.
+- Add production Cloud/runtime placement and durable provider authority only in their separately reviewed milestones.
+
+## 2026-07-17 - Simplify the current agent workspace and certify live execution
+
+### What Was Implemented
+- Removed the duplicate local page header and made the active route the accessible name of the main region.
+- Reduced the idle conversation surface to one workspace header, one centered invitation, and one compact bottom composer; the Plan/Work/Result flightline now appears only for an active or terminal run.
+- Kept provider, model, thinking, Chat/Build, MCP, history, and new-thread controls directly in the familiar conversation flow without adding another rail.
+- Cleared transient thinking/work notes when a run reaches a terminal state so completed conversations do not retain stale activity text.
+- Rebuilt and launched the exact worktree release binary, then sent a real Local Codex prompt through the Windows UI and received the streamed `CORVUS_UI_OK` completion.
+- Derived local navigation from the selected Everyday/Developer and Individual/Team profile, with every label mapped to an existing local surface and covered across all four combinations.
+- Added permanent SSE-loss recovery, per-owner/idempotency-key start serialization, truthful detected-versus-authenticated provider labels, safe generic hidden-reasoning checkpoints, post-exit Build packaging, and broader credential screening.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/styles.css`, and `apps/web/src/App.test.tsx` - remove the duplicate bar, preserve visible errors, and verify accessible single-shell navigation.
+- `apps/web/src/app/ConversationWorkspace.tsx`, `apps/web/src/app/conversationApi.ts`, `apps/web/src/styles/product-workspace.css`, and their tests - compact the agent conversation surface, recover from terminal stream loss, conditionally expose run progress, and clear terminal stale state.
+- `corvus/mvp/local_chat.py`, `corvus/mvp/provider_catalog.py`, `corvus/infrastructure/agent_runtimes/{codex,claude}.py`, and focused tests - serialize duplicate starts, label provider detection truthfully, suppress raw reasoning, and harden artifact finalization/credential screening.
+- `HACKATHON_STATUS.md` and `PROJECT_LOG.md` - record current verified behavior and certification evidence.
+
+### Assumptions Made (flag these for review)
+- None. The UX changes preserve the existing provider/runtime authority and only remove duplicate presentation chrome.
+
+### Known Issues / Deferred
+- The native Codex Security diff scan remains pending because its Start action must be pressed by the user; no terminal substitute or bypass was used.
+- Gemini and xAI/Grok remain Preview, Cursor remains unavailable, and Cloud/E2B, production OAuth continuity, billing, and durable multi-user collaboration remain outside this local hackathon slice.
+
+### Verification
+- Python: 1045 passed, 6 intentional platform/database skips; Ruff, format, strict mypy, Bandit, and pip-audit passed.
+- Web: 141 passed across 24 files; production build passed.
+- Desktop: 7 Rust tests, Cargo format, Clippy with warnings denied, and `cargo check` passed; `git diff --check` was clean apart from Windows line-ending notices.
+
+### Suggested Next Steps
+- When the user can access the Codex desktop UI, start the native security diff scan and address any verified findings before review freeze.
+- Open the consolidated branch as one unmerged PR after the final diff review completes.

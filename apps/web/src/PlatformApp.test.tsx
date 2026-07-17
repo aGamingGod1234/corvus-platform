@@ -133,11 +133,35 @@ describe("PlatformApp composition", () => {
     );
 
     expect(await screen.findByText("real-operator")).toBeVisible();
-    expect(screen.getByRole("button", { name: /Local launch control/ })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Local launch control/ })).not.toBeInTheDocument();
     expect(screen.queryByText("local-runtime@corvus.invalid")).not.toBeInTheDocument();
     expect(storage.getItem("corvus.workspace-preference")).not.toBeNull();
     expect(hostedApi.getSession).not.toHaveBeenCalled();
     expect(hostedApi.listWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it("shows the selected everyday team profile in the local desktop shell", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "everyday",
+      scope: "team",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+
+    render(
+      <PlatformApp
+        hostedApi={platformApi()}
+        locationHostname="127.0.0.1"
+        loopbackApi={readyLoopbackApi()}
+        preferenceStorage={storage}
+      />
+    );
+
+    expect(await screen.findByText("Everyday · Team")).toBeVisible();
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeVisible();
   });
 
   it("refreshes onboarding conflict truth and retries with the new exact version", async () => {
