@@ -38,6 +38,7 @@ from corvus.domain.agent_runtime import (
 from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessInvocation,
     ProcessSession,
+    ProcessSessionError,
     ProcessSessionEvent,
     ProcessSessionEventKind,
     ProcessSessionLimits,
@@ -268,7 +269,10 @@ class CodexCliAdapter(AgentRuntimePort):
             environment=MappingProxyType({"NO_COLOR": "1"}),
             limits=limits,
         )
-        process = await self._session_starter(invocation)
+        try:
+            process = await self._session_starter(invocation)
+        except ProcessSessionError as error:
+            raise CodexAdapterError("codex_process_unavailable") from error
         handle = AgentRunHandle(
             run_id=run_id,
             provider_binding_id=binding.id,

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
+from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
 from corvus.mvp.local_chat import (
     LocalChatBackendEvent,
@@ -136,10 +139,13 @@ def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:
     assert stream.status_code == 200
     assert [event[1]["type"] for event in events] == ["started", "message", "completed"]
     assert "sk-secret" not in stream.text
-    assert owner.get(
-        f"/api/local-chat/runs/{run_id}/events?follow=false",
-        headers={"Last-Event-ID": cursor + "tampered"},
-    ).status_code == 400
+    assert (
+        owner.get(
+            f"/api/local-chat/runs/{run_id}/events?follow=false",
+            headers={"Last-Event-ID": cursor + "tampered"},
+        ).status_code
+        == 400
+    )
     assert stranger.get(f"/api/local-chat/runs/{run_id}/events?follow=false").status_code == 404
     cancellable = owner.post(
         "/api/local-chat/runs",
@@ -147,13 +153,14 @@ def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:
         headers={**owner_headers, "Idempotency-Key": "cancel-run"},
     ).json()
     cancel_run_id = cancellable["run_id"]
-    assert stranger.post(
-        f"/api/local-chat/runs/{cancel_run_id}/cancel", headers=stranger_headers
-    ).status_code == 404
-
-    cancelled = owner.post(
-        f"/api/local-chat/runs/{cancel_run_id}/cancel", headers=owner_headers
+    assert (
+        stranger.post(
+            f"/api/local-chat/runs/{cancel_run_id}/cancel", headers=stranger_headers
+        ).status_code
+        == 404
     )
+
+    cancelled = owner.post(f"/api/local-chat/runs/{cancel_run_id}/cancel", headers=owner_headers)
     assert cancelled.status_code == 200
     assert cancelled.json() == {
         "run_id": cancel_run_id,
@@ -161,3 +168,50 @@ def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:
         "accepted": True,
         "reason_code": "agent_run_cancelled",
     }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Codex launcher layout")
+def test_default_local_chat_prefers_npm_native_codex_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    npm_root = tmp_path / "npm"
+    wrapper = npm_root / "codex.cmd"
+    packaged = tmp_path / "WindowsApps" / "codex.exe"
+    native = (
+        npm_root
+        / "node_modules"
+        / "@openai"
+        / "codex"
+        / "node_modules"
+        / "@openai"
+        / "codex-win32-x64"
+        / "vendor"
+        / "x86_64-pc-windows-msvc"
+        / "bin"
+        / "codex.exe"
+    )
+    for candidate in (wrapper, packaged, native):
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(b"codex")
+
+    candidates = {
+        "codex.exe": os.fspath(packaged),
+        "codex.cmd": os.fspath(wrapper),
+        "codex": os.fspath(wrapper),
+    }
+    monkeypatch.setattr(
+        local_chat_module.shutil,
+        "which",
+        lambda name: candidates.get(name),
+    )
+
+    service = local_chat_module.build_default_local_chat_service(
+        scratch_root=tmp_path / "runs",
+        cursor_secret=b"c" * 32,
+    )
+
+    assert service is not None
+    backend = service._backend
+    assert isinstance(backend, local_chat_module.CodexLocalChatBackend)
+    assert backend._adapter._executable == native.resolve()

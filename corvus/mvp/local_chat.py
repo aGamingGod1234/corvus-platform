@@ -4,6 +4,8 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import platform
 import shutil
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -28,6 +30,10 @@ _CODEX_DEFAULT_LABEL = "Codex default"
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
+_WINDOWS_CODEX_TARGETS = {
+    "amd64": ("codex-win32-x64", "x86_64-pc-windows-msvc"),
+    "arm64": ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
+}
 
 
 class LocalChatError(RuntimeError):
@@ -303,14 +309,15 @@ def build_default_local_chat_service(
     scratch_root: Path,
     cursor_secret: bytes,
 ) -> LocalChatService | None:
-    executable = shutil.which("codex.exe") or shutil.which("codex")
-    if executable is None or Path(executable).suffix.lower() not in {"", ".exe"}:
+    executable = _discover_codex_executable()
+    if executable is None:
         return None
+
     def clock() -> datetime:
         return datetime.now(UTC)
 
     adapter = CodexCliAdapter(
-        executable=Path(executable),
+        executable=executable,
         version="local",
         scratch_root=scratch_root,
         clock=clock,
@@ -320,6 +327,43 @@ def build_default_local_chat_service(
         cursor_secret=cursor_secret,
         clock=clock,
     )
+
+
+def _discover_codex_executable() -> Path | None:
+    if os.name == "nt":
+        npm_binary = _windows_npm_codex_executable()
+        if npm_binary is not None:
+            return npm_binary
+        direct = shutil.which("codex.exe")
+    else:
+        direct = shutil.which("codex")
+    if direct is None:
+        return None
+    candidate = Path(direct)
+    if candidate.suffix.lower() not in {"", ".exe"} or not candidate.is_file():
+        return None
+    return candidate.resolve()
+
+
+def _windows_npm_codex_executable() -> Path | None:
+    target = _WINDOWS_CODEX_TARGETS.get(platform.machine().lower())
+    wrapper = shutil.which("codex.cmd")
+    if target is None or wrapper is None:
+        return None
+    package_name, target_triple = target
+    package_root = Path(wrapper).resolve().parent / "node_modules" / "@openai" / "codex"
+    candidates = (
+        package_root
+        / "node_modules"
+        / "@openai"
+        / package_name
+        / "vendor"
+        / target_triple
+        / "bin"
+        / "codex.exe",
+        package_root / "vendor" / target_triple / "bin" / "codex.exe",
+    )
+    return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
 
 
 def _request_digest(prompt: str, model: str | None, effort: str) -> str:
@@ -332,7 +376,10 @@ def _request_digest(prompt: str, model: str | None, effort: str) -> str:
 
 
 def _event_name(event_type: AgentRunEventType) -> str:
-    mapping: dict[AgentRunEventType, Literal["started", "message", "usage", "completed", "failed", "cancelled"]] = {
+    mapping: dict[
+        AgentRunEventType,
+        Literal["started", "message", "usage", "completed", "failed", "cancelled"],
+    ] = {
         AgentRunEventType.STARTED: "started",
         AgentRunEventType.MESSAGE_DELTA: "message",
         AgentRunEventType.USAGE: "usage",

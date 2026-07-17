@@ -23,6 +23,7 @@ from corvus.infrastructure.agent_runtimes.codex import (
 )
 from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessInvocation,
+    ProcessSessionError,
     ProcessSessionEvent,
     ProcessSessionEventKind,
 )
@@ -58,6 +59,11 @@ class _Starter:
     async def __call__(self, invocation: ProcessInvocation) -> _Session:
         self.invocation = invocation
         return self.session
+
+
+class _FailingStarter:
+    async def __call__(self, _invocation: ProcessInvocation) -> _Session:
+        raise ProcessSessionError("process_spawn_failed")
 
 
 def _request(binding_id: UUID, binding_digest: str, **updates: object) -> AgentRunRequest:
@@ -218,6 +224,31 @@ async def test_local_codex_default_omits_model_flag_and_rejects_flag_injection(
                 prompt="hello",
                 model="--dangerous-flag",
                 idempotency_key="local-invalid",
+                deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_translates_process_spawn_failure(tmp_path: Path) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "runs",
+        clock=lambda: NOW,
+        session_starter=_FailingStarter(),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    with pytest.raises(CodexAdapterError, match="^codex_process_unavailable$"):
+        await adapter.start_local_text(
+            binding.binding,
+            LocalCodexTextRequest(
+                run_id=uuid4(),
+                prompt="hello",
+                idempotency_key="local-spawn-failure",
                 deadline=datetime(2026, 7, 18, tzinfo=UTC),
             ),
         )

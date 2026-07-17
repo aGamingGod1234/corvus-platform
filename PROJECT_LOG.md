@@ -1856,3 +1856,30 @@
 ### Suggested Next Steps
 - Run the paired local-chat backend and complete desktop/mobile Computer Use acceptance.
 - Review the combined backend/frontend vertical before the single hackathon PR.
+
+## 2026-07-17 - Repair Windows local Codex launch in the current desktop app
+
+### What Was Implemented
+- Changed Windows local-Codex discovery to prefer the official user-owned native binary installed behind `codex.cmd` instead of an inaccessible packaged WindowsApps executable.
+- Kept a validated direct executable fallback and retained the existing non-Windows discovery path.
+- Translated supervised process-spawn failures into the stable `codex_process_unavailable` adapter error instead of leaking an unhandled exception as HTTP 500.
+- Added regressions for Windows executable selection and process-spawn error translation.
+- Restarted the current release desktop and sidecar, then reproduced the original `hi` request through the real UI; the run reached `completed` and returned a Codex response.
+
+### Files Modified
+- `corvus/mvp/local_chat.py` - resolves the supported Windows npm native Codex binary before the packaged executable fallback.
+- `corvus/infrastructure/agent_runtimes/codex.py` - converts supervised process launch failures into a stable adapter error.
+- `tests/mvp/test_local_chat_api.py` - proves the Windows npm-native executable is selected over an inaccessible packaged binary.
+- `tests/contract/providers/test_codex_adapter.py` - proves spawn failures are translated without an unhandled server error.
+- `PROJECT_LOG.md` - records the repair and fresh acceptance evidence.
+
+### Assumptions Made (flag these for review)
+- The supported Windows npm package layout remains the authoritative local Codex CLI installation when `codex.cmd` is present; both currently published nested and legacy vendor layouts are recognized.
+
+### Known Issues / Deferred
+- A machine without an installed and authenticated native Codex CLI still receives the existing stable unavailable-service response.
+- Claude, Gemini, Cursor, and xAI/Grok runtime adapters remain outside this fast-track local Codex slice.
+
+### Suggested Next Steps
+- Run the consolidated Python, web, Rust, and repository release gates.
+- Push the verified branch and open the single unmerged review PR.
