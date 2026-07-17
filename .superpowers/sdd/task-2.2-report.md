@@ -87,3 +87,26 @@ API/SSE surfaces, UI, or durable process resurrection.
 - HTTP/API adapters, persistent runs, conversation APIs, resumable SSE, UI,
   durable process resurrection, push, PR, deployment, and production changes are
   not part of Task 2.2.
+
+## Post-Review High Repairs
+
+- Moved stdin write/drain/close into the same supervised, timeout-bounded task set
+  as stdout, stderr, and process wait. Session construction now precedes stdin
+  feeding so a child can fill stdout before reading a large stdin payload without
+  deadlocking.
+- Shielded subprocess creation from caller cancellation, recovered any created
+  process handle, and required confirmed whole-tree cleanup before propagating
+  cancellation. Cleanup also closes stdin and drains closed output transports.
+- Changed POSIX tree confirmation so leader exit is never sufficient. The helper
+  probes the process group, escalates TERM to KILL while descendants remain, and
+  reports success only after group-probe ESRCH and leader reaping. Permission or
+  bounded-wait exhaustion remains unconfirmed.
+- Added a 4 MiB stdin / 3 MiB stdout pipe-order regression, a cancellable-spawn
+  parent-and-child cleanup regression, a real POSIX parent-exits-first and
+  TERM-ignoring-child test, and a Windows-runnable deterministic TERM-to-KILL
+  group-confirmation test.
+- Repair verification: **182 passed, 1 real-POSIX skip** in 19.43 seconds; the
+  deterministic process-group regression passed separately. Targeted Ruff,
+  formatting, mypy, Bandit, lock, and diff checks are recorded after the repair.
+  Per the approved deadline boundary, the next full 5.5-minute suite is deferred
+  to the single consolidated vertical-MVP release gate.

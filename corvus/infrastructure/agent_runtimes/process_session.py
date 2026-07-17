@@ -202,34 +202,31 @@ class ProcessSession:
         stdin_mode = (
             asyncio.subprocess.PIPE if invocation.stdin is not None else asyncio.subprocess.DEVNULL
         )
-        try:
-            process = await create_grouped_process(
+        spawn_task = asyncio.create_task(
+            create_grouped_process(
                 (os.fspath(executable), *invocation.arguments),
                 cwd=cwd,
                 env=environment,
                 stdin=stdin_mode,
+            ),
+            name="corvus-process-session-spawn",
+        )
+        try:
+            process = await asyncio.shield(spawn_task)
+        except asyncio.CancelledError as cancellation:
+            try:
+                process = await _await_spawn_completion(spawn_task)
+            except Exception:
+                raise cancellation from None
+            confirmed = await _shielded_spawn_cleanup(
+                process,
+                grace_seconds=invocation.limits.cancellation_grace_seconds,
             )
+            if not confirmed:
+                raise ProcessSessionError("process_tree_termination_unconfirmed") from None
+            raise cancellation
         except (OSError, RuntimeError, ValueError):
             raise ProcessSessionError("process_spawn_failed") from None
-        if invocation.stdin is not None:
-            writer = process.stdin
-            if writer is None:  # pragma: no cover - guarded by PIPE selection
-                await terminate_process_tree(
-                    process,
-                    grace_seconds=invocation.limits.cancellation_grace_seconds,
-                )
-                raise ProcessSessionError("process_stdin_unavailable")
-            try:
-                writer.write(invocation.stdin)
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                await terminate_process_tree(
-                    process,
-                    grace_seconds=invocation.limits.cancellation_grace_seconds,
-                )
-                raise ProcessSessionError("process_stdin_write_failed") from None
         return cls(
             invocation=invocation,
             process=process,
@@ -289,8 +286,9 @@ class ProcessSession:
             return
         stdout_task = asyncio.create_task(self._read_stdout(stdout))
         stderr_task = asyncio.create_task(self._read_stderr(stderr))
+        stdin_task = asyncio.create_task(self._feed_stdin())
         wait_task = asyncio.create_task(self._process.wait())
-        tasks = (stdout_task, stderr_task, wait_task)
+        tasks = (stdout_task, stderr_task, stdin_task, wait_task)
         failure_reason: str | None = None
         try:
             await asyncio.wait_for(
@@ -313,6 +311,25 @@ class ProcessSession:
             await self._fail(failure_reason)
             return
         await self._finish_natural_exit()
+
+    async def _feed_stdin(self) -> None:
+        payload = self._invocation.stdin
+        if payload is None:
+            return
+        writer = self._process.stdin
+        if writer is None:  # pragma: no cover - guarded by PIPE selection
+            raise _ProcessProtocolFailure("process_stdin_unavailable")
+        try:
+            writer.write(payload)
+            await writer.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            raise _ProcessProtocolFailure("process_stdin_write_failed") from None
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
 
     async def _read_stdout(self, reader: asyncio.StreamReader) -> None:
         limits = self._invocation.limits
@@ -610,6 +627,44 @@ def _freeze_value(value: object) -> object:
     if isinstance(value, list | tuple):
         return tuple(_freeze_value(item) for item in value)
     return value
+
+
+async def _await_spawn_completion(
+    spawn_task: asyncio.Task[asyncio.subprocess.Process],
+) -> asyncio.subprocess.Process:
+    while True:
+        try:
+            return await asyncio.shield(spawn_task)
+        except asyncio.CancelledError:
+            if spawn_task.cancelled():
+                raise
+            continue
+
+
+async def _shielded_spawn_cleanup(
+    process: asyncio.subprocess.Process,
+    *,
+    grace_seconds: float,
+) -> bool:
+    async def cleanup() -> bool:
+        writer = process.stdin
+        if writer is not None:
+            writer.close()
+        confirmed = await terminate_process_tree(process, grace_seconds=grace_seconds)
+        readers = tuple(reader for reader in (process.stdout, process.stderr) if reader is not None)
+        if readers:
+            await asyncio.gather(*(reader.read() for reader in readers), return_exceptions=True)
+        return confirmed
+
+    cleanup_task = asyncio.create_task(
+        cleanup(),
+        name="corvus-process-session-cancelled-spawn-cleanup",
+    )
+    while True:
+        try:
+            return await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            continue
 
 
 __all__ = [

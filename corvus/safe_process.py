@@ -127,9 +127,9 @@ async def terminate_process_tree(
 ) -> bool:
     """Terminate a process tree and report only confirmed tree termination."""
 
-    if process.returncode is not None:
-        return True
     if os.name == "nt":
+        if process.returncode is not None:
+            return True
         confirmed = await _terminate_windows_process_tree(process)
         if confirmed:
             return True
@@ -147,24 +147,74 @@ async def _terminate_posix_process_tree(
         Callable[[int, int], None],
         os.killpg,  # type: ignore[attr-defined]
     )
+    process_group_id = process.pid
+    if not _posix_process_group_exists(process_group_id, kill_process_group):
+        return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
     try:
-        kill_process_group(process.pid, int(signal.SIGTERM))
+        kill_process_group(process_group_id, int(signal.SIGTERM))
     except ProcessLookupError:
-        await process.wait()
-        return True
-    try:
-        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
-        return True
-    except TimeoutError:
-        pass
+        return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
+    if await _wait_for_posix_group_absence(
+        process_group_id,
+        kill_process_group,
+        timeout_seconds=grace_seconds,
+    ):
+        return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
     try:
         kill_process_group(
-            process.pid,
+            process_group_id,
             cast(int, signal.SIGKILL),  # type: ignore[attr-defined]
         )
     except ProcessLookupError:
-        pass
-    await process.wait()
+        return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
+    if not await _wait_for_posix_group_absence(
+        process_group_id,
+        kill_process_group,
+        timeout_seconds=grace_seconds,
+    ):
+        return False
+    return await _confirm_posix_leader_reaped(process, grace_seconds=grace_seconds)
+
+
+def _posix_process_group_exists(
+    process_group_id: int,
+    kill_process_group: Callable[[int, int], None],
+) -> bool:
+    try:
+        kill_process_group(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+async def _wait_for_posix_group_absence(
+    process_group_id: int,
+    kill_process_group: Callable[[int, int], None],
+    *,
+    timeout_seconds: float,
+) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        if not _posix_process_group_exists(process_group_id, kill_process_group):
+            return True
+        await asyncio.sleep(min(0.05, timeout_seconds))
+    return not _posix_process_group_exists(process_group_id, kill_process_group)
+
+
+async def _confirm_posix_leader_reaped(
+    process: asyncio.subprocess.Process,
+    *,
+    grace_seconds: float,
+) -> bool:
+    if process.returncode is not None:
+        return True
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
+    except TimeoutError:
+        return False
     return True
 
 

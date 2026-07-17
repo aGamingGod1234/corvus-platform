@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import signal
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from corvus.safe_process import TrustedProcessError, run_trusted_argv
+import corvus.safe_process as safe_process_module
+from corvus.safe_process import (
+    TrustedProcessError,
+    build_clean_process_environment,
+    create_grouped_process,
+    run_trusted_argv,
+    terminate_process_tree,
+)
 
 
 def test_trusted_process_runs_absolute_executable_without_a_shell(tmp_path: Path) -> None:
@@ -25,3 +36,84 @@ def test_trusted_process_rejects_path_lookup_and_missing_working_directory(tmp_p
         run_trusted_argv(["python", "-V"], cwd=tmp_path)
     with pytest.raises(TrustedProcessError, match="working directory"):
         run_trusted_argv([sys.executable, "-V"], cwd=tmp_path / "missing")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+async def test_tree_termination_confirms_descendants_after_leader_exits_first(
+    tmp_path: Path,
+) -> None:
+    executable = Path(sys.executable).resolve()
+    code = """
+import json, signal, subprocess, sys
+child = subprocess.Popen([
+    sys.executable,
+    '-c',
+    'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)',
+], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(json.dumps({'child_pid': child.pid}), flush=True)
+"""
+    process = await create_grouped_process(
+        (str(executable), "-c", code),
+        cwd=tmp_path,
+        env=build_clean_process_environment(executable, {}),
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    assert process.stdout is not None
+    payload = await asyncio.wait_for(process.stdout.readline(), timeout=5)
+    child_pid = int(__import__("json").loads(payload)["child_pid"])
+    await asyncio.wait_for(process.wait(), timeout=5)
+    try:
+        assert await terminate_process_tree(process, grace_seconds=0.2)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_posix_group_confirmation_escalates_after_leader_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_group_id = 42_424
+    signal_kill = 9
+    group_present = True
+    sent_signals: list[int] = []
+
+    def fake_kill_process_group(group_id: int, sent_signal: int) -> None:
+        nonlocal group_present
+        assert group_id == process_group_id
+        if sent_signal == 0:
+            if not group_present:
+                raise ProcessLookupError
+            return
+        sent_signals.append(sent_signal)
+        if sent_signal == signal_kill:
+            group_present = False
+
+    class _ReapedLeader:
+        pid = process_group_id
+        returncode = 0
+
+        async def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        safe_process_module.os,
+        "killpg",
+        fake_kill_process_group,
+        raising=False,
+    )
+    monkeypatch.setattr(safe_process_module.signal, "SIGKILL", signal_kill, raising=False)
+
+    confirmed = await safe_process_module._terminate_posix_process_tree(
+        cast(asyncio.subprocess.Process, _ReapedLeader()),
+        grace_seconds=0.01,
+    )
+
+    assert confirmed
+    assert sent_signals == [int(signal.SIGTERM), signal_kill]
+    assert not group_present

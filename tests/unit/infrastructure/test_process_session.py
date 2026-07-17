@@ -14,6 +14,7 @@ from typing import cast
 
 import pytest
 
+import corvus.infrastructure.agent_runtimes.process_session as process_session_module
 from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessInvocation,
     ProcessSession,
@@ -465,3 +466,92 @@ time.sleep(60)
         assert events[-1].reason_code == "process_consumer_cancelled"
     finally:
         _emergency_kill(pid)
+
+
+@pytest.mark.asyncio
+async def test_start_reads_stdout_while_feeding_large_stdin_without_pipe_deadlock(
+    tmp_path: Path,
+) -> None:
+    pid_path = tmp_path / "pipe-parent.pid"
+    stdin_payload = b"i" * 4_194_304
+    code = f"""
+import json, os, pathlib, sys
+pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()), encoding='utf-8')
+frame = json.dumps({{'blob': 'o' * 3_145_728}}, separators=(',', ':')).encode() + b'\\n'
+os.write(1, frame)
+received = sys.stdin.buffer.read()
+print(json.dumps({{'stdin_bytes': len(received)}}), flush=True)
+"""
+    parent_pid: int | None = None
+    try:
+        session = await asyncio.wait_for(
+            ProcessSession.start(
+                _invocation(
+                    tmp_path,
+                    code,
+                    stdin=stdin_payload,
+                    limits=_limits(
+                        max_stdin_bytes=5_000_000,
+                        max_stdout_bytes=5_000_000,
+                        max_frame_bytes=4_000_000,
+                        timeout_seconds=10,
+                    ),
+                )
+            ),
+            timeout=2,
+        )
+        events = await asyncio.wait_for(_collect(session), timeout=12)
+        frames = [event.frame for event in events if event.frame is not None]
+        assert frames[-1] is not None
+        assert frames[-1]["stdin_bytes"] == len(stdin_payload)
+        assert events[-1].kind is ProcessSessionEventKind.EXITED
+    finally:
+        if pid_path.exists():
+            parent_pid = int(pid_path.read_text(encoding="utf-8"))
+        if parent_pid is not None:
+            _emergency_kill(parent_pid)
+
+
+@pytest.mark.asyncio
+async def test_start_cancellation_recovers_spawn_handle_and_confirms_tree_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child_pid_path = tmp_path / "spawn-child.pid"
+    code = f"""
+import pathlib, subprocess, sys, time
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid), encoding='utf-8')
+time.sleep(60)
+"""
+    real_create = process_session_module.create_grouped_process
+    created: asyncio.Future[asyncio.subprocess.Process] = asyncio.get_running_loop().create_future()
+    release = asyncio.Event()
+
+    async def delayed_create(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        process = await real_create(*args, **kwargs)  # type: ignore[arg-type]
+        created.set_result(process)
+        await release.wait()
+        return process
+
+    monkeypatch.setattr(process_session_module, "create_grouped_process", delayed_create)
+    start_task = asyncio.create_task(
+        ProcessSession.start(_invocation(tmp_path, code, limits=_limits(timeout_seconds=10)))
+    )
+    process = await asyncio.wait_for(created, timeout=5)
+    deadline = time.monotonic() + 5
+    while not child_pid_path.exists() and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert child_pid_path.exists()
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    try:
+        start_task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await start_task
+        assert not _process_exists(process.pid)
+        assert not _process_exists(child_pid)
+    finally:
+        release.set()
+        _emergency_kill(process.pid)
+        _emergency_kill(child_pid)

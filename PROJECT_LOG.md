@@ -1772,3 +1772,30 @@
 ### Suggested Next Steps
 - Independently review the Task 2.2 commit and security boundaries.
 - Begin Task 2.3 only after Task 2.2 approval.
+
+## 2026-07-17 - Close Task 2.2 process lifecycle release blockers
+
+### What Was Implemented
+- Moved bounded stdin delivery into the supervised process lifecycle so stdout/stderr readers, stdin feed/close, process wait, and timeout handling run concurrently without pipe-order deadlock.
+- Shielded cancellable process creation, recovered any created handle, and confirmed whole-tree cleanup before propagating caller cancellation.
+- Hardened POSIX process-tree termination to probe the process group after leader exit, escalate TERM-ignoring descendants to KILL, and require ESRCH plus leader reaping before reporting confirmation.
+- Added large stdout-before-stdin, cancellable spawn with descendant, real POSIX parent-exits-first, and deterministic TERM-to-KILL escalation regressions.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/process_session.py` - supervises stdin concurrently and recovers cancelled spawn handles for confirmed cleanup.
+- `corvus/safe_process.py` - confirms POSIX process-group absence rather than trusting leader exit.
+- `tests/unit/infrastructure/test_process_session.py` - covers pipe-order progress and spawn-cancellation tree cleanup.
+- `tests/unit/test_safe_process.py` - covers real and deterministic parent-exits-first descendant termination.
+- `.superpowers/sdd/task-2.2-report.md` - records the two High repairs, evidence, and consolidated-gate boundary.
+
+### Assumptions Made (flag these for review)
+- None. The concurrent stdin lifecycle, shielded spawn recovery, ESRCH-only POSIX absence proof, no-full-suite deadline boundary, and exact stop boundary were explicitly confirmed.
+
+### Known Issues / Deferred
+- The real POSIX regression is skipped on Windows and will run in the existing Linux/macOS matrix; deterministic escalation logic is covered locally.
+- The fresh 5.5-minute full suite is intentionally deferred to the single final consolidated vertical-MVP release gate; focused runtime/security/static gates cover this repair commit.
+- Provider-specific adapters and all Task 2.3 work remain out of scope.
+
+### Suggested Next Steps
+- Independently re-review the two Task 2.2 High repairs.
+- Begin Task 2.3 only after approval.
