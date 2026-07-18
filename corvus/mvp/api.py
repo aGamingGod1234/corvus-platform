@@ -3,7 +3,9 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
+import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from corvus.mvp.api_chat import ApiChatBackend, ApiProvider
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
+from corvus.mvp.git_process import GitProcess, GitProcessError
 from corvus.mvp.governance import (
     AutonomyDecision,
     GovernanceService,
@@ -71,7 +74,9 @@ from corvus.mvp.provider_credentials import (
     ProviderCredentialStatus,
     ProviderVerification,
 )
+from corvus.mvp.repository_workspace import RepositoryRecord, RepositoryWorkspaceService
 from corvus.mvp.safety import build_safety_preview
+from corvus.mvp.store import SqliteStore
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
@@ -103,6 +108,11 @@ class PairResponse(ApiModel):
 
 class ProjectCreateRequest(ApiModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+class RepositoryCreateRequest(ApiModel):
+    path: Path
+    display_name: str = Field(min_length=1, max_length=200)
 
 
 class OutcomeCreateRequest(ApiModel):
@@ -440,6 +450,16 @@ def _prompt_with_preferences(prompt: str, preferences: LocalPreferences) -> str:
     return "\n".join(preference_lines)
 
 
+def _build_repository_workspace(store: SqliteStore) -> RepositoryWorkspaceService | None:
+    executable = shutil.which("git.exe" if os.name == "nt" else "git")
+    if executable is None:
+        return None
+    try:
+        return RepositoryWorkspaceService(store, GitProcess(Path(executable)))
+    except GitProcessError:
+        return None
+
+
 def create_app(
     *,
     database: Path,
@@ -453,6 +473,7 @@ def create_app(
     identity_dependencies: IdentityApiDependencies | None = None,
     local_chat_service: LocalChatService | None = None,
     provider_credentials: ProviderCredentialService | None = None,
+    repository_workspace: RepositoryWorkspaceService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -494,6 +515,7 @@ def create_app(
     )
     local_preferences = LocalPreferencesService(service.store)
     credential_service = provider_credentials or ProviderCredentialService()
+    repositories = repository_workspace or _build_repository_workspace(service.store)
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
 
@@ -549,6 +571,14 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    def repository_service() -> RepositoryWorkspaceService:
+        if repositories is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return repositories
+
     @app.get("/ready")
     def ready(
         response: Response,
@@ -592,6 +622,53 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> dict[str, Any]:
         return principal.model_dump(mode="json")
+
+    @app.get("/api/local/repositories", response_model=list[RepositoryRecord])
+    def local_repositories(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in repository_service().list(principal.tenant_id)
+        ]
+
+    @app.post(
+        "/api/local/repositories",
+        response_model=RepositoryRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def register_local_repository(
+        body: RepositoryCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = repository_service().register_local(
+            principal.tenant_id,
+            body.path,
+            body.display_name,
+        )
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/repositories/{repository_id}/refresh",
+        response_model=RepositoryRecord,
+    )
+    def refresh_local_repository(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = repository_service().refresh(principal.tenant_id, repository_id)
+        return record.model_dump(mode="json")
+
+    @app.delete(
+        "/api/local/repositories/{repository_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def remove_local_repository(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> Response:
+        repository_service().remove(principal.tenant_id, repository_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
         "/api/provider-credentials",

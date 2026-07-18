@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 5
+SCHEMA_VERSION: Final = 6
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -345,6 +345,31 @@ CREATE TABLE mvp_local_preferences (
 );
 """
 
+_MIGRATION_006 = """
+CREATE TABLE mvp_repositories (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    canonical_path TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    remote_slug TEXT,
+    default_branch TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX mvp_repositories_tenant_idx
+    ON mvp_repositories(tenant_id, updated_at, id);
+CREATE TABLE mvp_repository_snapshots (
+    repository_id TEXT PRIMARY KEY REFERENCES mvp_repositories(id) ON DELETE CASCADE,
+    branch TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    clean INTEGER NOT NULL CHECK (clean IN (0, 1)),
+    ahead INTEGER NOT NULL CHECK (ahead >= 0),
+    behind INTEGER NOT NULL CHECK (behind >= 0),
+    health TEXT NOT NULL,
+    refreshed_at TEXT NOT NULL
+);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -421,4 +446,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(5)
+            if 6 not in versions:
+                connection.executescript(_MIGRATION_006)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )
