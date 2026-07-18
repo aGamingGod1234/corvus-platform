@@ -344,7 +344,7 @@ describe("Corvus operator console", () => {
     expect(screen.getByRole("main", { name: "Threads" })).toBeVisible();
   });
 
-  it("creates an approval-bearing workflow with a reserved demo budget", async () => {
+  it("starts a supervised repository run from the Runs workspace", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -353,125 +353,137 @@ describe("Corvus operator console", () => {
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
     });
-    api.setBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 10,
-      reserved_units: 0,
-      settled_units: 0
-    });
-    api.createOutcome = vi.fn().mockResolvedValue(OUTCOME);
-    api.createWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 10,
-      reserved_units: 0,
-      settled_units: 0
-    });
-    const user = userEvent.setup();
-    renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Runs" }));
-
-    await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
-    await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
-    await user.type(screen.getByLabelText("Workflow name"), "Governed flow");
-    await user.click(screen.getByRole("button", { name: "Create workflow" }));
-
-    expect(api.setBudget).toHaveBeenCalledWith(PROJECT.id, 10);
-    expect(api.createWorkflow).toHaveBeenCalledWith(
-      OUTCOME.id,
-      "Governed flow",
-      expect.arrayContaining([
-        expect.objectContaining({ key: "deliver", requires_approval: true, cost_units: 2 })
-      ])
-    );
-  });
-
-  it("coalesces an SSE event burst without reopening the stream", async () => {
-    const api = fakeApi([PROJECT]);
-    api.session = vi.fn().mockResolvedValue({
-      csrf_token: "csrf",
-      username: "operator",
-      user_id: "operator-1",
+    api.getLocalSafetyPreview = vi.fn().mockResolvedValue({ policy_digest: "b".repeat(64) });
+    const run = {
+      id: "run-1",
       tenant_id: "local",
-      expires_at: "2026-07-15T00:00:00Z"
-    });
-    api.listOutcomes = vi.fn().mockResolvedValue([OUTCOME]);
-    api.listWorkflows = vi.fn().mockResolvedValue([WORKFLOW]);
-    api.getWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 0,
-      reserved_units: 0,
-      settled_units: 0
-    });
-
-    const streams: FakeEventSource[] = [];
-    class FakeEventSource {
-      readonly listeners = new Map<string, EventListener[]>();
-      onerror: (() => void) | null = null;
-
-      constructor(readonly url: string) {
-        streams.push(this);
-      }
-
-      addEventListener(type: string, listener: EventListener) {
-        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-      }
-
-      close() {}
-
-      emit(type: string) {
-        this.listeners.get(type)?.forEach((listener) => listener(new Event(type)));
-      }
-    }
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
-
-    const user = userEvent.setup();
-    renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Runs" }));
-    await screen.findByText("Browser delivery");
-    await waitFor(() => expect(streams).toHaveLength(1));
-    streams[0].emit("work_item.running");
-    streams[0].emit("work_item.succeeded");
-    streams[0].emit("workflow.succeeded");
-
-    await waitFor(() => expect(api.getWorkflow).toHaveBeenCalledTimes(2));
-    expect(streams).toHaveLength(1);
-    vi.unstubAllGlobals();
-  });
-
-  it("creates and activates a reusable skill from the focused Skills page", async () => {
-    const api = fakeApi([PROJECT]);
-    api.session = vi.fn().mockResolvedValue({
-      csrf_token: "csrf",
-      username: "operator",
-      user_id: "operator-1",
-      tenant_id: "local",
-      expires_at: "2026-07-15T00:00:00Z"
-    });
-    const draft = {
-      id: "skill-1",
-      project_id: PROJECT.id,
-      name: "Release checklist",
-      version: 1,
-      content: "Verify tests and summarize risks.",
-      status: "draft",
-      created_at: "2026-07-18T00:00:00Z"
+      repository_id: PROJECT.id,
+      base_sha: "a".repeat(40),
+      task: "Add the demo feature",
+      provider: "codex",
+      model: null,
+      effort: "high",
+      mode: "build",
+      safety_digest: "b".repeat(64),
+      skill_version_id: null,
+      schedule_id: null,
+      occurrence_key: null,
+      output_policy: "prepare_contribution",
+      retry_of_run_id: null,
+      status: "running",
+      created_at: "2026-07-18T00:00:00Z",
+      updated_at: "2026-07-18T00:00:00Z",
+      started_at: "2026-07-18T00:00:00Z",
+      finished_at: null
     };
-    api.createSkill = vi.fn().mockResolvedValue(draft);
-    api.activateSkill = vi.fn().mockResolvedValue({ ...draft, status: "active" });
+    api.startLocalRun = vi.fn().mockResolvedValue(run);
+    api.getLocalRun = vi.fn().mockResolvedValue(run);
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Runs" }));
+
+    await user.click(await screen.findByRole("button", { name: "New run" }));
+    await user.type(screen.getByLabelText("Task"), "Add the demo feature");
+    await user.click(screen.getByRole("button", { name: "Start supervised run" }));
+
+    await waitFor(() => expect(api.startLocalRun).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryId: PROJECT.id,
+      task: "Add the demo feature",
+      safetyDigest: "b".repeat(64)
+    })));
+  });
+
+  it("creates a timezone-aware schedule from the Schedule workspace", async () => {
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    api.getLocalSafetyPreview = vi.fn().mockResolvedValue({ policy_digest: "c".repeat(64) });
+    api.createLocalSchedule = vi.fn().mockResolvedValue({
+      id: "schedule-1",
+      name: "Weekday review",
+      task: "Review changes",
+      status: "active",
+      version: 1,
+      recurrence: { kind: "weekdays", local_time: "09:00:00", weekdays: [] },
+      next_run_at: "2026-07-20T09:00:00Z",
+      mode: "chat",
+      timezone: "UTC"
+    });
+
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Schedule" }));
+    await user.click(await screen.findByRole("button", { name: "New schedule" }));
+    await user.type(screen.getByLabelText("Name"), "Weekday review");
+    await user.type(screen.getByLabelText("Task"), "Review changes");
+    await user.selectOptions(screen.getByLabelText("Cadence"), "weekdays");
+    await user.clear(screen.getByLabelText("Timezone"));
+    await user.type(screen.getByLabelText("Timezone"), "UTC");
+    await user.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(api.createLocalSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryId: PROJECT.id,
+      timezone: "UTC",
+      recurrence: expect.objectContaining({ kind: "weekdays" })
+    })));
+  });
+
+  it("reviews and imports a digest-pinned cross-agent skill", async () => {
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    const candidate = {
+      id: "a".repeat(64),
+      source: "claude",
+      name: "release-checklist",
+      path: "C:\\Users\\me\\.claude\\skills\\release-checklist",
+      kind: "package"
+    };
+    const preview = {
+      candidate,
+      name: "release-checklist",
+      description: "Verify tests and summarize risks.",
+      digest: "d".repeat(64),
+      compatibility: "ready",
+      findings: [],
+      files: ["SKILL.md"],
+      duplicate: "none"
+    };
+    api.listSkillImportSources = vi.fn().mockResolvedValue([candidate]);
+    api.previewSkillImport = vi.fn().mockResolvedValue(preview);
+    api.importPortableSkill = vi.fn().mockResolvedValue({
+      id: "skill-1",
+      tenant_id: "local",
+      name: preview.name,
+      description: preview.description,
+      version: 1,
+      digest: preview.digest,
+      source: "claude",
+      source_path: candidate.path,
+      package_path: "skills/skill-1",
+      status: "draft",
+      findings: [],
+      created_at: "2026-07-18T00:00:00Z"
+    });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("link", { name: "Skills" }));
-    await user.click(screen.getByRole("button", { name: "New skill" }));
-    await user.type(screen.getByLabelText("Skill name"), "Release checklist");
-    await user.type(screen.getByLabelText("Instructions"), "Verify tests and summarize risks.");
-    await user.click(screen.getByRole("button", { name: "Create and activate" }));
+    await user.click(await screen.findByRole("button", { name: /release-checklist/i }));
+    expect(await screen.findByRole("dialog", { name: "release-checklist" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Import as draft" }));
 
-    expect(api.createSkill).toHaveBeenCalledWith(PROJECT.id, "Release checklist", "Verify tests and summarize risks.");
-    expect(api.activateSkill).toHaveBeenCalledWith("skill-1");
-    expect(await screen.findByRole("row", { name: /Release checklist/ })).toBeVisible();
+    await waitFor(() => expect(api.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest));
+    expect(await screen.findByText("Verify tests and summarize risks.")).toBeVisible();
   });
 });
