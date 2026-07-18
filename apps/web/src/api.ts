@@ -17,6 +17,9 @@ export type LocalRun = components["schemas"]["RunRecord"];
 export type LocalRunEvent = components["schemas"]["RunEvent"];
 export type LocalRunEvidence = components["schemas"]["RunEvidence"];
 export type LocalSafetyPreview = components["schemas"]["SafetyPreviewResponse"];
+export type PortableSkill = components["schemas"]["PortableSkillVersion"];
+export type SkillImportCandidate = components["schemas"]["SkillCandidate"];
+export type SkillImportPreview = components["schemas"]["SkillImportPreview"];
 export type LocalWorktree = components["schemas"]["LocalWorktreeResponse"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
@@ -58,6 +61,12 @@ export interface CorvusApi {
   cancelLocalRun(runId: string): Promise<LocalRun>;
   retryLocalRun(runId: string): Promise<LocalRun>;
   discardLocalRun(runId: string): Promise<LocalRun>;
+  listPortableSkills(): Promise<PortableSkill[]>;
+  listSkillImportSources(): Promise<SkillImportCandidate[]>;
+  previewSkillImport(candidateId: string): Promise<SkillImportPreview>;
+  importPortableSkill(candidateId: string, expectedDigest: string): Promise<PortableSkill>;
+  activatePortableSkill(skillId: string): Promise<PortableSkill>;
+  archivePortableSkill(skillId: string): Promise<PortableSkill>;
   getRunChanges(runId: string): Promise<ChangeSet>;
   getContribution(runId: string): Promise<Contribution>;
   prepareContribution(
@@ -247,6 +256,33 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       return requireData(await client.POST("/api/local/runs/{run_id}/discard", {
         params: { path: { run_id: runId } },
         headers: mutationHeaders()
+      }));
+    },
+    async listPortableSkills() {
+      return requireData(await client.GET("/api/local/skills"));
+    },
+    async listSkillImportSources() {
+      return requireData(await client.GET("/api/local/skills/sources"));
+    },
+    async previewSkillImport(candidateId) {
+      return requireData(await client.GET("/api/local/skills/sources/{candidate_id}/preview", {
+        params: { path: { candidate_id: candidateId } }
+      }));
+    },
+    async importPortableSkill(candidateId, expectedDigest) {
+      return requireData(await client.POST("/api/local/skills/import", {
+        body: { candidate_id: candidateId, expected_digest: expectedDigest },
+        headers: mutationHeaders()
+      }));
+    },
+    async activatePortableSkill(skillId) {
+      return requireData(await client.POST("/api/local/skills/{skill_id}/activate", {
+        params: { path: { skill_id: skillId } }, headers: mutationHeaders()
+      }));
+    },
+    async archivePortableSkill(skillId) {
+      return requireData(await client.POST("/api/local/skills/{skill_id}/archive", {
+        params: { path: { skill_id: skillId } }, headers: mutationHeaders()
       }));
     },
     async getRunChanges(runId) {

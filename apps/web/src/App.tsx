@@ -47,6 +47,7 @@ import { createConversationApi } from "./app/conversationApi";
 import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
 import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
 import { RunsWorkspace } from "./app/RunsWorkspace";
+import { PortableSkillsWorkspace } from "./app/PortableSkillsWorkspace";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -698,14 +699,7 @@ export function App({
     />
   );
   const runsSurface = <RunsWorkspace api={api} />;
-  const skillsSurface = (
-    <SkillsWorkspace
-      busy={busy}
-      onCreate={createSkill}
-      project={activeProject}
-      skills={operations.skills}
-    />
-  );
+  const skillsSurface = <PortableSkillsWorkspace api={api} />;
 
   if (localRuntime) {
     if (phase === "checking") return <LoadingScreen />;

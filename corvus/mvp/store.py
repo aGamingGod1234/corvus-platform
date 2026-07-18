@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 9
+SCHEMA_VERSION: Final = 10
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -459,6 +459,27 @@ CREATE TABLE mvp_run_evidence (
 CREATE INDEX mvp_run_evidence_run_idx ON mvp_run_evidence(run_id, created_at, id);
 """
 
+_MIGRATION_010 = """
+CREATE TABLE mvp_portable_skill_versions (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    digest TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    package_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    findings_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(tenant_id, name, version),
+    UNIQUE(tenant_id, digest)
+);
+CREATE INDEX mvp_portable_skills_tenant_idx
+    ON mvp_portable_skill_versions(tenant_id, name, version DESC);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -563,4 +584,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(9)
+            if 10 not in versions:
+                connection.executescript(_MIGRATION_010)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (10, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )

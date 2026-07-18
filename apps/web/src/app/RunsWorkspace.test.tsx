@@ -53,7 +53,6 @@ function api(): RunsApi {
     retryLocalRun: vi.fn(),
     discardLocalRun: vi.fn(),
     getRunChanges: vi.fn(),
-    getContribution: vi.fn(),
     prepareContribution: vi.fn(),
     publishContribution: vi.fn()
   };

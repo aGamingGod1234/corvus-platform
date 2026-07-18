@@ -92,6 +92,13 @@ from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, StartRunRequ
 from corvus.mvp.run_store import RunStore, RunStoreConflict, RunStoreNotFound
 from corvus.mvp.safety import build_safety_preview
 from corvus.mvp.secret_scan import SecretScanner
+from corvus.mvp.skill_imports import (
+    PortableSkillVersion,
+    SkillCandidate,
+    SkillImportError,
+    SkillImportPreview,
+    SkillImportService,
+)
 from corvus.mvp.store import SqliteStore
 from corvus.mvp.worktrees import WorktreeManager, WorktreeOwnershipError
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
@@ -149,6 +156,11 @@ class ContributionPrepareRequest(ApiModel):
 
 
 class ContributionPublishRequest(ApiModel):
+    expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SkillImportRequest(ApiModel):
+    candidate_id: str = Field(min_length=64, max_length=64)
     expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
@@ -521,6 +533,7 @@ def create_app(
     worktree_manager: WorktreeManager | None = None,
     contribution_service: ContributionService | None = None,
     run_coordinator: RunCoordinator | None = None,
+    skill_import_service: SkillImportService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -577,6 +590,9 @@ def create_app(
             ).digest(),
         )
     contributions = contribution_service
+    skill_imports = skill_import_service or SkillImportService(
+        service.store, library_root=database.parent / ".corvus-skills"
+    )
     if contributions is None and git is not None and worktrees is not None:
         gh = _build_git_process("gh.exe" if os.name == "nt" else "gh")
         if gh is not None:
@@ -643,6 +659,15 @@ def create_app(
     @app.exception_handler(RunStoreNotFound)
     async def run_not_found_handler(_request: Request, error: RunStoreNotFound) -> JSONResponse:
         return _error_response(status.HTTP_404_NOT_FOUND, "not_found", str(error))
+
+    @app.exception_handler(SkillImportError)
+    async def skill_import_error_handler(_request: Request, error: SkillImportError) -> JSONResponse:
+        code = str(error)
+        response_status = (
+            status.HTTP_404_NOT_FOUND if code in {"skill_candidate_not_found", "skill_not_found"}
+            else status.HTTP_409_CONFLICT
+        )
+        return _error_response(response_status, "skill_import_error", code)
 
     @app.exception_handler(RunStoreConflict)
     @app.exception_handler(RunCoordinatorConflict)
@@ -736,6 +761,11 @@ def create_app(
         if row is None:
             raise DomainNotFound("local_run_not_found")
 
+    def local_repository_roots(tenant_id: str) -> tuple[Path, ...]:
+        if repositories is None:
+            return ()
+        return tuple(Path(item.path) for item in repositories.list(tenant_id))
+
     @app.get("/ready")
     def ready(
         response: Response,
@@ -788,6 +818,65 @@ def create_app(
             item.model_dump(mode="json")
             for item in repository_service().list(principal.tenant_id)
         ]
+
+    @app.get("/api/local/skills", response_model=list[PortableSkillVersion])
+    def local_skills(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in skill_imports.list(principal.tenant_id)]
+
+    @app.get("/api/local/skills/sources", response_model=list[SkillCandidate])
+    def local_skill_sources(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        candidates = skill_imports.discover(local_repository_roots(principal.tenant_id))
+        return [item.model_dump(mode="json") for item in candidates]
+
+    @app.get(
+        "/api/local/skills/sources/{candidate_id}/preview",
+        response_model=SkillImportPreview,
+    )
+    def preview_local_skill(
+        candidate_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        preview = skill_imports.preview(
+            principal.tenant_id,
+            candidate_id,
+            local_repository_roots(principal.tenant_id),
+        )
+        return preview.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/skills/import",
+        response_model=PortableSkillVersion,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_local_skill(
+        body: SkillImportRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = skill_imports.import_draft(
+            principal.tenant_id,
+            body.candidate_id,
+            body.expected_digest,
+            local_repository_roots(principal.tenant_id),
+        )
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/skills/{skill_id}/activate", response_model=PortableSkillVersion)
+    def activate_local_skill(
+        skill_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return skill_imports.activate(principal.tenant_id, skill_id).model_dump(mode="json")
+
+    @app.post("/api/local/skills/{skill_id}/archive", response_model=PortableSkillVersion)
+    def archive_local_skill(
+        skill_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return skill_imports.archive(principal.tenant_id, skill_id).model_dump(mode="json")
 
     @app.post(
         "/api/local/repositories",

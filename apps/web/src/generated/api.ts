@@ -518,6 +518,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Skills */
+        get: operations["local_skills_api_local_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Local Skill */
+        post: operations["import_local_skill_api_local_skills_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Skill Sources */
+        get: operations["local_skill_sources_api_local_skills_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/sources/{candidate_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Local Skill */
+        get: operations["preview_local_skill_api_local_skills_sources__candidate_id__preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/{skill_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Local Skill */
+        post: operations["activate_local_skill_api_local_skills__skill_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/{skill_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Local Skill */
+        post: operations["archive_local_skill_api_local_skills__skill_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -2003,6 +2105,39 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** PortableSkillVersion */
+        PortableSkillVersion: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /** Findings */
+            findings: components["schemas"]["SkillFinding"][];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Package Path */
+            package_path: string;
+            /** Source */
+            source: string;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "active" | "archived";
+            /** Tenant Id */
+            tenant_id: string;
+            /** Version */
+            version: number;
+        };
         /** Project */
         Project: {
             /**
@@ -2439,12 +2574,80 @@ export interface components {
             /** Session Version */
             session_version: number;
         };
+        /** SkillCandidate */
+        SkillCandidate: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default package
+             * @enum {string}
+             */
+            kind: "package" | "legacy_command";
+            /** Name */
+            name: string;
+            /**
+             * Path
+             * Format: path
+             */
+            path: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "codex" | "claude" | "hermes" | "agents" | "copilot" | "generic";
+        };
         /** SkillCreateRequest */
         SkillCreateRequest: {
             /** Content */
             content: string;
             /** Name */
             name: string;
+        };
+        /** SkillFinding */
+        SkillFinding: {
+            /** Code */
+            code: string;
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "review" | "blocked";
+        };
+        /** SkillImportPreview */
+        SkillImportPreview: {
+            candidate: components["schemas"]["SkillCandidate"];
+            /**
+             * Compatibility
+             * @enum {string}
+             */
+            compatibility: "ready" | "needs_review" | "blocked";
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Duplicate
+             * @enum {string}
+             */
+            duplicate: "none" | "exact" | "variant";
+            /** Files */
+            files: string[];
+            /** Findings */
+            findings: components["schemas"]["SkillFinding"][];
+            /** Name */
+            name: string;
+        };
+        /** SkillImportRequest */
+        SkillImportRequest: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Expected Digest */
+            expected_digest: string;
         };
         /** SkillVersion */
         SkillVersion: {
@@ -3930,6 +4133,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_skills_api_local_skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"][];
+                };
+            };
+        };
+    };
+    import_local_skill_api_local_skills_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_skill_sources_api_local_skills_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillCandidate"][];
+                };
+            };
+        };
+    };
+    preview_local_skill_api_local_skills_sources__candidate_id__preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillImportPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_local_skill_api_local_skills__skill_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_local_skill_api_local_skills__skill_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
                 };
             };
             /** @description Validation Error */
