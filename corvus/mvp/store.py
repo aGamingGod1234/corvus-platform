@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 8
+SCHEMA_VERSION: Final = 9
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -414,6 +414,51 @@ CREATE INDEX mvp_contributions_repository_idx
     ON mvp_contributions(repository_id, updated_at, id);
 """
 
+_MIGRATION_009 = """
+CREATE TABLE mvp_runs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    base_sha TEXT NOT NULL,
+    task TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    effort TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    safety_digest TEXT NOT NULL,
+    skill_version_id TEXT,
+    schedule_id TEXT,
+    occurrence_key TEXT,
+    output_policy TEXT NOT NULL,
+    retry_of_run_id TEXT REFERENCES mvp_runs(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE(schedule_id, occurrence_key)
+);
+CREATE INDEX mvp_runs_tenant_idx ON mvp_runs(tenant_id, updated_at DESC, id);
+CREATE INDEX mvp_runs_repository_idx ON mvp_runs(repository_id, updated_at DESC, id);
+CREATE TABLE mvp_run_events (
+    run_id TEXT NOT NULL REFERENCES mvp_runs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(run_id, sequence)
+);
+CREATE TABLE mvp_run_evidence (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES mvp_runs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX mvp_run_evidence_run_idx ON mvp_run_evidence(run_id, created_at, id);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -511,4 +556,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(8)
+            if 9 not in versions:
+                connection.executescript(_MIGRATION_009)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )
