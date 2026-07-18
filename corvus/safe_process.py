@@ -284,7 +284,10 @@ def _windows_process_snapshot() -> dict[int, int] | None:
     try:
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            return None
+        kernel32 = win_dll("kernel32", use_last_error=True)
 
         class ProcessEntry32W(ctypes.Structure):
             _fields_ = [
