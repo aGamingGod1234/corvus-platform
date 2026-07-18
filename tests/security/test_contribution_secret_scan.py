@@ -67,3 +67,16 @@ def test_scan_refuses_escape_symlinks_and_binary_files(tmp_path: Path) -> None:
     binary = SecretScanner().scan(tmp_path, ("binary.bin",))
     assert binary.status == "warning"
     assert binary.findings[0].kind == "binary_not_scanned"
+
+
+def test_large_file_is_streamed_for_digest_and_only_bounded_content_is_scanned(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "generated.txt"
+    target.write_bytes(b"ordinary-content\n" * 200_000)
+
+    result = SecretScanner().scan(tmp_path, ("generated.txt",))
+
+    assert result.status == "warning"
+    assert result.findings[0].kind == "large_file_not_scanned"
+    assert result.digest is not None

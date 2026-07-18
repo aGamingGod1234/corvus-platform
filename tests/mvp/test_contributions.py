@@ -361,3 +361,35 @@ def test_publish_recovers_existing_pr_after_partial_success(tmp_path: Path) -> N
 
     assert recovered.state == "published"
     assert recovered.pr_number == 19
+
+
+def test_publish_retry_rejects_remote_branch_changed_after_push(tmp_path: Path) -> None:
+    service, lease, git, github = _environment(tmp_path)
+    (lease.root / "feature.txt").write_text("reviewed\n", encoding="utf-8")  # type: ignore[attr-defined]
+    prepared = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("feature.txt",),
+        message="Add feature",
+        title="Add feature",
+        body="Evidence attached.",
+        draft=True,
+    )
+    github.fail_create = True
+    with pytest.raises(ContributionConflict, match="pull_request_failed"):
+        service.publish(
+            lease.run_id,  # type: ignore[attr-defined]
+            expected_digest=prepared.confirmation_digest,
+        )
+
+    (lease.root / "feature.txt").write_text("unreviewed\n", encoding="utf-8")  # type: ignore[attr-defined]
+    _run(git, lease.root, "add", "--", "feature.txt")  # type: ignore[attr-defined]
+    _run(git, lease.root, "commit", "--amend", "--no-edit", "--no-verify")  # type: ignore[attr-defined]
+    _run(git, lease.root, "push", "--force", "origin", f"HEAD:refs/heads/{prepared.branch}")  # type: ignore[attr-defined]
+    github.fail_create = False
+
+    with pytest.raises(ContributionConflict, match="remote_changed"):
+        service.publish(
+            lease.run_id,  # type: ignore[attr-defined]
+            expected_digest=prepared.confirmation_digest,
+        )
+    assert len(github.created) == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -105,7 +106,11 @@ class ChangeReviewService:
         if path_is_link_or_reparse(path):
             raise ChangeReviewError("change_review_path_invalid")
         if path.exists() and path.is_file():
-            sample = path.read_bytes()[:8192]
+            try:
+                with path.open("rb") as stream:
+                    sample = stream.read(8192)
+            except OSError as exc:
+                raise ChangeReviewError("change_review_file_unreadable") from exc
             binary = b"\0" in sample
         else:
             binary = False
@@ -131,15 +136,31 @@ class ChangeReviewService:
             )
             patch, patch_truncated = self._bounded_patch(patch_text.encode("utf-8"))
             return False, patch, input_truncated or patch_truncated
-        result = self.git.run(
-            root,
-            ("diff", "--no-ext-diff", "--binary", "--unified=3", "HEAD", "--", relative),
-        )
-        if result.returncode != 0:
-            raise ChangeReviewError("change_review_diff_failed")
-        if b"GIT binary patch" in result.stdout or b"Binary files " in result.stdout:
+        try:
+            with tempfile.TemporaryDirectory(prefix="corvus-diff-") as directory:
+                output = Path(directory) / "patch.diff"
+                result = self.git.run(
+                    root,
+                    (
+                        "diff",
+                        f"--output={output}",
+                        "--no-ext-diff",
+                        "--binary",
+                        "--unified=3",
+                        "HEAD",
+                        "--",
+                        relative,
+                    ),
+                )
+                if result.returncode != 0:
+                    raise ChangeReviewError("change_review_diff_failed")
+                with output.open("rb") as stream:
+                    raw = stream.read(self._max_patch_bytes + 1)
+        except OSError as exc:
+            raise ChangeReviewError("change_review_diff_failed") from exc
+        if b"GIT binary patch" in raw or b"Binary files " in raw:
             return True, None, False
-        patch, truncated = self._bounded_patch(result.stdout)
+        patch, truncated = self._bounded_patch(raw)
         return False, patch, truncated
 
     def _content_identity(

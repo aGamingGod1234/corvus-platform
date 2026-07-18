@@ -86,6 +86,19 @@ def test_patch_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
     assert len((change_set.files[0].patch or "").encode()) <= 64
 
 
+def test_large_tracked_patch_bypasses_process_output_limit_and_is_truncated(
+    tmp_path: Path,
+) -> None:
+    root, git = _repository(tmp_path)
+    (root / "modified.txt").write_text("changed line\n" * 250_000, encoding="utf-8")
+
+    change_set = ChangeReviewService(git, max_patch_bytes=64).snapshot(root)
+    modified = next(item for item in change_set.files if item.path == "modified.txt")
+
+    assert modified.patch_truncated is True
+    assert len((modified.patch or "").encode()) <= 64
+
+
 def test_digest_binds_full_binary_content_and_untracked_reads_are_bounded(tmp_path: Path) -> None:
     root, git = _repository(tmp_path)
     binary = root / "large.bin"

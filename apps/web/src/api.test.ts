@@ -78,4 +78,13 @@ describe("legacy Corvus transport authority", () => {
     expect(requests.every((request) => request.credentials === "include")).toBe(true);
     expect(requests[2].headers.get("X-CSRF-Token")).toBe("paired-transport-csrf");
   });
+
+  it("surfaces the safe message from a Corvus error envelope", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      error: { code: "conflict", message: "contribution_not_found" }
+    }, 409)));
+
+    await expect(createCorvusApi("http://127.0.0.1:8080").getContribution("run-1"))
+      .rejects.toThrow("contribution_not_found");
+  });
 });

@@ -100,8 +100,11 @@ class SecretScanner:
             if not canonical.is_relative_to(root) or not canonical.is_file():
                 raise SecretScanError("secret_scan_path_invalid")
             normalized_paths.append(relative)
-            content = canonical.read_bytes()
-            content_digests[relative] = hashlib.sha256(content).hexdigest()
+            try:
+                content_digest, content = self._read_bounded(canonical)
+            except OSError as exc:
+                raise SecretScanError("secret_scan_path_invalid") from exc
+            content_digests[relative] = content_digest
             findings.extend(self._scan_content(relative, content))
         status: Literal["passed", "warning", "blocked"]
         if any(finding.severity == "blocked" for finding in findings):
@@ -129,6 +132,18 @@ class SecretScanner:
             completed_at=completed_at,
             digest=digest,
         )
+
+    @staticmethod
+    def _read_bounded(path: Path) -> tuple[str, bytes]:
+        digest = hashlib.sha256()
+        sample = bytearray()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+                remaining = _MAX_FILE_BYTES + 1 - len(sample)
+                if remaining > 0:
+                    sample.extend(chunk[:remaining])
+        return digest.hexdigest(), bytes(sample)
 
     @staticmethod
     def _scan_content(path: str, content: bytes) -> list[SecretFinding]:

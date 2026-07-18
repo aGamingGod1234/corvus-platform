@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,10 @@ def test_git_process_preserves_each_argument_and_uses_explicit_environment(
     assert result == ProcessResult(returncode=0, stdout=b"ok\n", stderr=b"")
     assert executor.calls[0][0] == (
         str(executable.resolve()),
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
         "commit",
         "-m",
         "title with spaces; $(ignored)",

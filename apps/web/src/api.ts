@@ -627,6 +627,13 @@ function readDetail(error: unknown): unknown {
   if (typeof error === "object" && error !== null && "detail" in error) {
     return error.detail;
   }
+  if (typeof error === "object" && error !== null && "error" in error) {
+    const envelope = error.error;
+    if (typeof envelope === "object" && envelope !== null) {
+      if ("message" in envelope && typeof envelope.message === "string") return envelope.message;
+      if ("code" in envelope && typeof envelope.code === "string") return envelope.code;
+    }
+  }
   return error;
 }
 

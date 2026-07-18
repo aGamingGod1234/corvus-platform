@@ -258,6 +258,20 @@ class ContributionService:
                 remote_ref=f"refs/remotes/origin/{record.branch}",
             )
             record = self._required_for_run(run_id)
+        if record.commit_sha is None:
+            raise ContributionConflict("contribution_commit_missing")
+        remote_head = self.git.run(
+            lease.root,
+            ("ls-remote", "--exit-code", "origin", f"refs/heads/{record.branch}"),
+            timeout=60,
+        )
+        expected_remote = f"{record.commit_sha}\trefs/heads/{record.branch}"
+        if (
+            remote_head.returncode != 0
+            or remote_head.stdout.decode("ascii", errors="strict").strip() != expected_remote
+        ):
+            self._set_error(run_id, "contribution_remote_changed")
+            raise ContributionConflict("contribution_remote_changed")
         try:
             pr_url = self.github.create_pull_request(
                 repo=remote_slug,

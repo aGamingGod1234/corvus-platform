@@ -98,7 +98,19 @@ class GitProcess:
             raise GitProcessError("working directory is unavailable")
         if timeout <= 0:
             raise GitProcessError("process timeout must be positive")
-        argv = (os.fspath(self._executable), *args)
+        # Repository and global Git config are untrusted input. In particular,
+        # core.fsmonitor can execute a command during otherwise read-only status
+        # inspection, while core.hooksPath can run repository-controlled hooks
+        # during supervised commits. Command-line config has the highest
+        # precedence and applies consistently to every Git invocation.
+        argv = (
+            os.fspath(self._executable),
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            *args,
+        )
         try:
             result = self._executor(
                 argv,

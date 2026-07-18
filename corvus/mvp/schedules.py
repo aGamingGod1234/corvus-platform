@@ -16,6 +16,9 @@ class ScheduleError(RuntimeError):
     pass
 
 
+_CLAIM_LEASE = timedelta(minutes=5)
+
+
 class Recurrence(MvpModel):
     kind: Literal["once", "hourly", "daily", "weekdays", "weekly"]
     local_time: time | None = None
@@ -237,13 +240,24 @@ class ScheduleStore:
                         (row["revision_id"], scheduled_for.isoformat(), current.isoformat()),
                     )
                 except sqlite3.IntegrityError:
-                    continue
-                recurrence = Recurrence.model_validate_json(str(row["recurrence_json"]))
-                next_run = recurrence.next_after(current, str(row["timezone"]))
-                connection.execute(
-                    "UPDATE mvp_schedule_revisions SET next_run_at = ? WHERE id = ?",
-                    (next_run.isoformat() if next_run else None, row["revision_id"]),
-                )
+                    occurrence = connection.execute(
+                        "SELECT run_id, status, claimed_at FROM mvp_schedule_occurrences "
+                        "WHERE schedule_revision_id = ? AND scheduled_for = ?",
+                        (row["revision_id"], scheduled_for.isoformat()),
+                    ).fetchone()
+                    if (
+                        occurrence is None
+                        or occurrence["run_id"] is not None
+                        or str(occurrence["status"]) != "claimed"
+                        or datetime.fromisoformat(str(occurrence["claimed_at"]))
+                        > current - _CLAIM_LEASE
+                    ):
+                        continue
+                    connection.execute(
+                        "UPDATE mvp_schedule_occurrences SET claimed_at = ? "
+                        "WHERE schedule_revision_id = ? AND scheduled_for = ?",
+                        (current.isoformat(), row["revision_id"], scheduled_for.isoformat()),
+                    )
                 claims.append(
                     ScheduleClaim(
                         schedule=self.get(str(row["tenant_id"]), str(row["id"])),
@@ -259,10 +273,29 @@ class ScheduleStore:
         status: str = "started",
     ) -> None:
         with self.store.transaction() as connection:
-            connection.execute(
+            occurrence = connection.execute(
+                "SELECT claimed_at FROM mvp_schedule_occurrences "
+                "WHERE schedule_revision_id = ? AND scheduled_for = ? "
+                "AND run_id IS NULL AND status = 'claimed'",
+                (claim.schedule.revision_id, claim.scheduled_for.isoformat()),
+            ).fetchone()
+            if occurrence is None:
+                return
+            cursor = connection.execute(
                 "UPDATE mvp_schedule_occurrences SET run_id = ?, status = ? "
-                "WHERE schedule_revision_id = ? AND scheduled_for = ?",
+                "WHERE schedule_revision_id = ? AND scheduled_for = ? "
+                "AND run_id IS NULL AND status = 'claimed'",
                 (run_id, status, claim.schedule.revision_id, claim.scheduled_for.isoformat()),
+            )
+            if cursor.rowcount != 1:
+                return
+            next_run = claim.schedule.recurrence.next_after(
+                datetime.fromisoformat(str(occurrence["claimed_at"])),
+                claim.schedule.timezone,
+            )
+            connection.execute(
+                "UPDATE mvp_schedule_revisions SET next_run_at = ? WHERE id = ?",
+                (next_run.isoformat() if next_run else None, claim.schedule.revision_id),
             )
 
     @staticmethod

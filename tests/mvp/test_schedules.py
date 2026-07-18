@@ -62,6 +62,48 @@ def test_schedule_store_claims_each_occurrence_once(tmp_path: Path) -> None:
     assert len(first) == 1
     assert first[0].scheduled_for == datetime(2026, 7, 18, 11, tzinfo=UTC)
     assert schedules.claim_due(datetime(2026, 7, 18, 11, tzinfo=UTC)) == ()
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 11, tzinfo=UTC)
+    schedules.attach_run(first[0], None, "skipped")
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 12, tzinfo=UTC)
+
+
+def test_schedule_reclaims_abandoned_occurrence_without_advancing_early(tmp_path: Path) -> None:
+    git = _git()
+    source = tmp_path / "source"
+    source.mkdir()
+    _run(git, source, "init", "--initial-branch=main")
+    _run(git, source, "config", "user.email", "corvus@example.test")
+    _run(git, source, "config", "user.name", "Corvus Tests")
+    source.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run(git, source, "add", "--", "README.md")
+    _run(git, source, "commit", "-m", "initial")
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository = RepositoryWorkspaceService(store, git).register_local("local", source, "Source")
+    schedules = ScheduleStore(store)
+    schedule = schedules.create(
+        "local",
+        ScheduleCreateRequest(
+            name="Hourly recovery",
+            repository_id=repository.id,
+            task="Review changes",
+            recurrence=Recurrence(kind="hourly"),
+            timezone="UTC",
+            mode="chat",
+            safety_digest="a" * 64,
+            output_policy="report_only",
+        ),
+        now=datetime(2026, 7, 18, 10, 15, tzinfo=UTC),
+    )
+
+    original = schedules.claim_due(datetime(2026, 7, 18, 11, tzinfo=UTC))
+    assert len(original) == 1
+    assert schedules.claim_due(datetime(2026, 7, 18, 11, 4, tzinfo=UTC)) == ()
+
+    recovered = schedules.claim_due(datetime(2026, 7, 18, 11, 5, tzinfo=UTC))
+    assert len(recovered) == 1
+    assert recovered[0].scheduled_for == original[0].scheduled_for
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 11, tzinfo=UTC)
+    schedules.attach_run(recovered[0], None, "skipped")
     assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 12, tzinfo=UTC)
 
 
@@ -96,7 +138,7 @@ def test_schedule_claim_skips_missed_backlog_and_active_overlap(tmp_path: Path) 
     claims = schedules.claim_due(datetime(2026, 7, 18, 15, 30, tzinfo=UTC))
 
     assert claims[0].scheduled_for == datetime(2026, 7, 18, 11, tzinfo=UTC)
-    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 16, tzinfo=UTC)
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 11, tzinfo=UTC)
     run = RunStore(store).create(
         "local",
         StartRunRequest(
@@ -112,6 +154,7 @@ def test_schedule_claim_skips_missed_backlog_and_active_overlap(tmp_path: Path) 
     )
     schedules.attach_run(claims[0], run.id)
 
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 16, tzinfo=UTC)
     assert schedules.claim_due(datetime(2026, 7, 18, 16, tzinfo=UTC)) == ()
 
 
