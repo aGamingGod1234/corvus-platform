@@ -54,7 +54,9 @@ class ChangeReviewService:
         entries = self._parse_status(result.stdout)
         selected = None
         if selected_paths is not None:
-            selected = {self._relative_path(root, value, allow_missing=True) for value in selected_paths}
+            selected = {
+                self._relative_path(root, value, allow_missing=True) for value in selected_paths
+            }
         files: list[ChangedFile] = []
         for status, path, previous_path in entries:
             if selected is not None and path not in selected:
@@ -99,6 +101,8 @@ class ChangeReviewService:
         relative: str,
     ) -> tuple[bool, str | None, bool]:
         path = root / Path(PurePosixPath(relative))
+        if path_is_link_or_reparse(path):
+            raise ChangeReviewError("change_review_path_invalid")
         if path.exists() and path.is_file():
             sample = path.read_bytes()[:8192]
             binary = b"\0" in sample
@@ -108,7 +112,9 @@ class ChangeReviewService:
             return True, None, False
         if status == "untracked":
             try:
-                content = path.read_text(encoding="utf-8", errors="strict").splitlines(keepends=True)
+                content = path.read_text(encoding="utf-8", errors="strict").splitlines(
+                    keepends=True
+                )
             except (OSError, UnicodeDecodeError) as exc:
                 raise ChangeReviewError("change_review_file_unreadable") from exc
             patch_text = "".join(
@@ -173,9 +179,7 @@ class ChangeReviewService:
                     raise ChangeReviewError("change_review_status_invalid")
                 previous_path = tokens[index]
                 index += 1
-                status: Literal["added", "modified", "deleted", "renamed", "untracked"] = (
-                    "renamed"
-                )
+                status: Literal["added", "modified", "deleted", "renamed", "untracked"] = "renamed"
             elif code == "??":
                 status = "untracked"
             elif "D" in code:
@@ -216,4 +220,3 @@ class ChangeReviewService:
         elif not allow_missing:
             raise ChangeReviewError("change_review_path_invalid")
         return pure.as_posix()
-

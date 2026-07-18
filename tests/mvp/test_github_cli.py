@@ -97,9 +97,7 @@ def test_github_cli_redacts_command_failure_stderr(tmp_path: Path) -> None:
 
 
 def test_github_cli_creates_draft_pull_request_with_exact_arguments(tmp_path: Path) -> None:
-    runner = FakeRunner(
-        ProcessResult(0, b"https://github.com/team/corvus/pull/8\n", b"")
-    )
+    runner = FakeRunner(ProcessResult(0, b"https://github.com/team/corvus/pull/8\n", b""))
 
     url = GitHubCli(runner, cwd=tmp_path).create_pull_request(
         repo="team/corvus",

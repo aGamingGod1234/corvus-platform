@@ -827,6 +827,7 @@ def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
         download_name=download_name,
         sha256_digest=_sha256_file(archive),
         size_bytes=archive.stat().st_size,
+        secret_screening="passed",  # noqa: S106 - typed scan status, not a credential
     )
 
 

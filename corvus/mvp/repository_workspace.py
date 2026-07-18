@@ -189,21 +189,22 @@ class RepositoryWorkspaceService:
         return self.get(tenant_id, repository_id)
 
     def remove(self, tenant_id: str, repository_id: str) -> None:
-        with self.store.transaction() as connection:
-            cursor = connection.execute(
-                "DELETE FROM mvp_repositories WHERE tenant_id = ? AND id = ?",
-                (tenant_id, repository_id),
-            )
-            if cursor.rowcount != 1:
-                raise DomainNotFound("repository_not_found")
+        try:
+            with self.store.transaction() as connection:
+                cursor = connection.execute(
+                    "DELETE FROM mvp_repositories WHERE tenant_id = ? AND id = ?",
+                    (tenant_id, repository_id),
+                )
+                if cursor.rowcount != 1:
+                    raise DomainNotFound("repository_not_found")
+        except sqlite3.IntegrityError as exc:
+            raise DomainConflict("repository_in_use") from exc
 
     def _remote_slug(self, root: Path) -> str | None:
         result = self.git.run(root, ("remote", "get-url", "origin"))
         if result.returncode != 0:
             return None
-        return self._github_slug(
-            self._decode_single_line(result, "git_remote_invalid")
-        )
+        return self._github_slug(self._decode_single_line(result, "git_remote_invalid"))
 
     def _default_branch(self, root: Path) -> str | None:
         remote = self.git.run(
@@ -266,7 +267,9 @@ class RepositoryWorkspaceService:
         while current != current.parent:
             components.append(current)
             current = current.parent
-        return any(component.exists() and path_is_link_or_reparse(component) for component in components)
+        return any(
+            component.exists() and path_is_link_or_reparse(component) for component in components
+        )
 
     @staticmethod
     def _record(row: sqlite3.Row) -> RepositoryRecord:

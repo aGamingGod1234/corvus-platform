@@ -112,7 +112,9 @@ def test_durable_run_api_starts_lists_retries_and_discards(tmp_path: Path) -> No
         time.sleep(0.01)
     assert record["status"] == "completed"
     assert client.get("/api/local/runs").json()[0]["id"] == run_id
-    assert [event["event_type"] for event in client.get(f"/api/local/runs/{run_id}/events").json()] == [
+    assert [
+        event["event_type"] for event in client.get(f"/api/local/runs/{run_id}/events").json()
+    ] == [
         "provider.started",
         "provider.completed",
     ]

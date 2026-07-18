@@ -85,4 +85,3 @@ class RunEvidence(MvpModel):
     summary: str
     digest: str
     created_at: datetime
-

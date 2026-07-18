@@ -167,6 +167,58 @@ async def test_openai_api_chat_treats_provider_terminal_failures_as_failed(
 
 
 @pytest.mark.asyncio
+async def test_api_chat_fails_when_stream_closes_without_terminal_marker() -> None:
+    body = 'data: {"type":"response.output_text.delta","delta":"partial"}\n'
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Do not accept partial output",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-incomplete-eof",
+    )
+
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "message", "failed"]
+    assert events[-1].payload == {"reason_code": "provider_request_failed"}
+
+
+@pytest.mark.asyncio
+async def test_api_chat_keeps_text_from_a_terminal_provider_event() -> None:
+    body = 'data: {"candidates":[{"content":{"parts":[{"text":"final"}]},"finishReason":"STOP"}]}\n'
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
+    backend = ApiChatBackend(
+        provider="gemini",
+        credential="test-secret-value",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Keep the final chunk",
+        model="gemini-2.5-pro",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-terminal-delta",
+    )
+
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "message", "completed"]
+    assert events[1].payload == {"text": "final"}
+
+
+@pytest.mark.asyncio
 async def test_api_chat_cancel_before_events_does_not_open_provider_stream() -> None:
     requests: list[httpx.Request] = []
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -10,6 +11,7 @@ from corvus.mvp.core import DomainConflict, DomainNotFound
 from corvus.mvp.git_process import GitProcess
 from corvus.mvp.repository_workspace import RepositoryWorkspaceService
 from corvus.mvp.store import SqliteStore
+from corvus.mvp.worktrees import WorktreeManager
 
 
 def _git_process() -> GitProcess:
@@ -106,6 +108,23 @@ def test_remove_only_removes_registration_not_checkout(tmp_path: Path) -> None:
     assert root.is_dir()
     assert (root / "README.md").read_text(encoding="utf-8") == "hello\n"
     assert service.list("local") == ()
+
+
+def test_remove_translates_dependent_worktree_conflict(tmp_path: Path) -> None:
+    root, git = _repository(tmp_path)
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    service = RepositoryWorkspaceService(store, git)
+    registered = service.register_local("local", root, "Corvus")
+    manager = WorktreeManager(
+        store,
+        git,
+        root=tmp_path / "worktrees",
+        ownership_secret=b"repository-remove-test",
+    )
+    manager.create(registered, str(uuid4()), registered.snapshot.head_sha)
+
+    with pytest.raises(DomainConflict, match="repository_in_use"):
+        service.remove("local", registered.id)
 
 
 def test_refresh_reports_missing_checkout_without_disclosing_git_error(

@@ -18,7 +18,7 @@ class LocalScheduler:
             try:
                 run = await self._start_claim(claim)
             except RunCoordinatorConflict:
-                self.schedules.attach_run(claim, "", "skipped")
+                self.schedules.attach_run(claim, None, "skipped")
                 continue
             self.schedules.attach_run(claim, run.id)
             run_ids.append(run.id)

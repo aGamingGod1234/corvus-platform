@@ -117,4 +117,3 @@ class GitProcess:
             stdout=result.stdout,
             stderr=result.stderr,
         )
-

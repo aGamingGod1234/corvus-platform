@@ -22,7 +22,17 @@ _MAX_PACKAGE_BYTES = 20 * 1024 * 1024
 _MAX_FILES = 500
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _ALLOWED_SUFFIXES = {
-    ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".py", ".js", ".ts", ".sh", ".ps1"
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".py",
+    ".js",
+    ".ts",
+    ".sh",
+    ".ps1",
 }
 _EXECUTABLE_SUFFIXES = {".py", ".js", ".ts", ".sh", ".ps1"}
 
@@ -112,7 +122,9 @@ class SkillImportService:
                 if command.is_file() and not path_is_link_or_reparse(command):
                     candidate = self._candidate("claude", command, "legacy_command")
                     candidates[candidate.id] = candidate
-        return tuple(sorted(candidates.values(), key=lambda item: (item.source, item.name, str(item.path))))
+        return tuple(
+            sorted(candidates.values(), key=lambda item: (item.source, item.name, str(item.path)))
+        )
 
     def preview(
         self,
@@ -120,13 +132,15 @@ class SkillImportService:
         candidate_id: str,
         repository_roots: tuple[Path, ...] = (),
     ) -> SkillImportPreview:
-        candidate = next(
-            (item for item in self.discover(repository_roots) if item.id == candidate_id),
-            None,
-        )
-        if candidate is None:
-            raise SkillImportError("skill_candidate_not_found")
-        preview = self._read(candidate)
+        candidate = self._resolve_candidate(candidate_id, repository_roots)
+        preview, _files = self._read_snapshot(candidate)
+        return self._with_duplicate(tenant_id, preview)
+
+    def _with_duplicate(
+        self,
+        tenant_id: str,
+        preview: SkillImportPreview,
+    ) -> SkillImportPreview:
         with self.store.connect() as connection:
             exact = connection.execute(
                 "SELECT 1 FROM mvp_portable_skill_versions WHERE tenant_id = ? AND digest = ?",
@@ -146,7 +160,9 @@ class SkillImportService:
         expected_digest: str,
         repository_roots: tuple[Path, ...] = (),
     ) -> PortableSkillVersion:
-        preview = self.preview(tenant_id, candidate_id, repository_roots)
+        candidate = self._resolve_candidate(candidate_id, repository_roots)
+        reviewed_preview, reviewed_files = self._read_snapshot(candidate)
+        preview = self._with_duplicate(tenant_id, reviewed_preview)
         if preview.digest != expected_digest:
             raise SkillImportError("skill_candidate_changed")
         if preview.compatibility == "blocked":
@@ -173,7 +189,7 @@ class SkillImportService:
             raise SkillImportError("skill_staging_conflict")
         staging.mkdir(parents=True)
         try:
-            self._copy_candidate(preview.candidate, staging, preview)
+            self._copy_reviewed(reviewed_files, staging)
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging, target)
         except Exception:
@@ -199,8 +215,15 @@ class SkillImportService:
                 "(id, tenant_id, name, description, version, digest, source, source_path, "
                 "package_path, status, findings_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    record.id, record.tenant_id, record.name, record.description, record.version,
-                    record.digest, record.source, record.source_path, record.package_path,
+                    record.id,
+                    record.tenant_id,
+                    record.name,
+                    record.description,
+                    record.version,
+                    record.digest,
+                    record.source,
+                    record.source_path,
+                    record.package_path,
                     record.status,
                     json.dumps([item.model_dump(mode="json") for item in record.findings]),
                     record.created_at.isoformat(),
@@ -264,14 +287,32 @@ class SkillImportService:
                 found.append(package)
         return tuple(found)
 
+    def _resolve_candidate(
+        self,
+        candidate_id: str,
+        repository_roots: tuple[Path, ...],
+    ) -> SkillCandidate:
+        candidate = next(
+            (item for item in self.discover(repository_roots) if item.id == candidate_id),
+            None,
+        )
+        if candidate is None:
+            raise SkillImportError("skill_candidate_not_found")
+        return candidate
+
     @staticmethod
-    def _candidate(source: AnySource, path: Path, kind: Literal["package", "legacy_command"]) -> SkillCandidate:
+    def _candidate(
+        source: AnySource, path: Path, kind: Literal["package", "legacy_command"]
+    ) -> SkillCandidate:
         canonical = path.resolve(strict=True)
         name = _slug(path.stem if kind == "legacy_command" else path.name)
         identifier = hashlib.sha256(f"{source}\0{kind}\0{canonical}".encode()).hexdigest()
         return SkillCandidate(id=identifier, source=source, name=name, path=canonical, kind=kind)
 
-    def _read(self, candidate: SkillCandidate) -> SkillImportPreview:
+    def _read_snapshot(
+        self,
+        candidate: SkillCandidate,
+    ) -> tuple[SkillImportPreview, tuple[tuple[str, str], ...]]:
         findings: list[SkillFinding] = []
         files: tuple[tuple[str, str], ...]
         if candidate.kind == "legacy_command":
@@ -279,7 +320,14 @@ class SkillImportService:
             name = candidate.name
             description = f"Imported Claude command: {candidate.path.stem}"
             files = (("SKILL.md", _render_skill(name, description, content)),)
-            findings.append(SkillFinding(code="legacy_command", severity="review", location="SKILL.md", message="Claude command was normalized into an Agent Skill."))
+            findings.append(
+                SkillFinding(
+                    code="legacy_command",
+                    severity="review",
+                    location="SKILL.md",
+                    message="Claude command was normalized into an Agent Skill.",
+                )
+            )
         else:
             files = self._read_package(candidate.path)
             skill_content = dict(files).get("SKILL.md")
@@ -287,23 +335,72 @@ class SkillImportService:
                 raise SkillImportError("skill_manifest_missing")
             name, description, metadata = _frontmatter(skill_content)
             if name != candidate.name:
-                findings.append(SkillFinding(code="name_directory_mismatch", severity="blocked", location="SKILL.md", message="Skill name must match its directory."))
+                findings.append(
+                    SkillFinding(
+                        code="name_directory_mismatch",
+                        severity="blocked",
+                        location="SKILL.md",
+                        message="Skill name must match its directory.",
+                    )
+                )
             allowed_tools = metadata.get("allowed-tools")
             if allowed_tools:
-                findings.append(SkillFinding(code="unapproved_tools", severity="review", location="SKILL.md", message=f"Requested tools require approval: {allowed_tools}"))
+                findings.append(
+                    SkillFinding(
+                        code="unapproved_tools",
+                        severity="review",
+                        location="SKILL.md",
+                        message=f"Requested tools require approval: {allowed_tools}",
+                    )
+                )
         for relative, content in files:
             suffix = PurePosixPath(relative).suffix.lower()
             if suffix in _EXECUTABLE_SUFFIXES:
-                findings.append(SkillFinding(code="executable_content", severity="review", location=relative, message="Executable content is imported disabled and requires review."))
+                findings.append(
+                    SkillFinding(
+                        code="executable_content",
+                        severity="review",
+                        location=relative,
+                        message="Executable content is imported disabled and requires review.",
+                    )
+                )
             lowered = content.lower()
             if "curl " in lowered or "wget " in lowered or "invoke-webrequest" in lowered:
-                findings.append(SkillFinding(code="network_command", severity="review", location=relative, message="Network command detected."))
+                findings.append(
+                    SkillFinding(
+                        code="network_command",
+                        severity="review",
+                        location=relative,
+                        message="Network command detected.",
+                    )
+                )
             if "rm -rf" in lowered or "remove-item -recurse" in lowered:
-                findings.append(SkillFinding(code="destructive_command", severity="blocked", location=relative, message="Destructive recursive command detected."))
+                findings.append(
+                    SkillFinding(
+                        code="destructive_command",
+                        severity="blocked",
+                        location=relative,
+                        message="Destructive recursive command detected.",
+                    )
+                )
             if re.search(r"(?:sk-|ghp_|github_pat_)[a-z0-9_-]{16,}", content, re.IGNORECASE):
-                findings.append(SkillFinding(code="possible_secret", severity="blocked", location=relative, message="Possible embedded credential detected."))
+                findings.append(
+                    SkillFinding(
+                        code="possible_secret",
+                        severity="blocked",
+                        location=relative,
+                        message="Possible embedded credential detected.",
+                    )
+                )
             if "${claude_skill_dir}" in lowered or "!`" in content:
-                findings.append(SkillFinding(code="vendor_dynamic_substitution", severity="review", location=relative, message="Vendor-specific dynamic substitution requires review."))
+                findings.append(
+                    SkillFinding(
+                        code="vendor_dynamic_substitution",
+                        severity="review",
+                        location=relative,
+                        message="Vendor-specific dynamic substitution requires review.",
+                    )
+                )
         digest = hashlib.sha256()
         for relative, content in files:
             digest.update(relative.encode("utf-8") + b"\0" + content.encode("utf-8") + b"\0")
@@ -312,10 +409,18 @@ class SkillImportService:
             compatibility = "blocked"
         elif findings:
             compatibility = "needs_review"
-        return SkillImportPreview(
-            candidate=candidate, name=name, description=description, digest=digest.hexdigest(),
-            compatibility=compatibility, findings=tuple(findings),
-            files=tuple(relative for relative, _ in files), duplicate="none",
+        return (
+            SkillImportPreview(
+                candidate=candidate,
+                name=name,
+                description=description,
+                digest=digest.hexdigest(),
+                compatibility=compatibility,
+                findings=tuple(findings),
+                files=tuple(relative for relative, _ in files),
+                duplicate="none",
+            ),
+            files,
         )
 
     def _read_package(self, root: Path) -> tuple[tuple[str, str], ...]:
@@ -351,28 +456,31 @@ class SkillImportService:
         except (OSError, UnicodeError) as exc:
             raise SkillImportError("skill_package_text_invalid") from exc
 
-    def _copy_candidate(self, candidate: SkillCandidate, target: Path, preview: SkillImportPreview) -> None:
-        if candidate.kind == "legacy_command":
-            target.joinpath("SKILL.md").write_text(
-                _render_skill(preview.name, preview.description, self._read_file(candidate.path)),
-                encoding="utf-8",
-            )
-            return
-        for relative, content in self._read_package(candidate.path):
+    @staticmethod
+    def _copy_reviewed(files: tuple[tuple[str, str], ...], target: Path) -> None:
+        for relative, content in files:
             destination = target / PurePosixPath(relative)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(content, encoding="utf-8")
+            destination.write_bytes(content.encode("utf-8"))
 
     @staticmethod
     def _version(row: object) -> PortableSkillVersion:
         item = cast(dict[str, object], row)
         return PortableSkillVersion(
-            id=str(item["id"]), tenant_id=str(item["tenant_id"]), name=str(item["name"]),
-            description=str(item["description"]), version=int(cast(int, item["version"])),
-            digest=str(item["digest"]), source=str(item["source"]),
-            source_path=str(item["source_path"]), package_path=str(item["package_path"]),
+            id=str(item["id"]),
+            tenant_id=str(item["tenant_id"]),
+            name=str(item["name"]),
+            description=str(item["description"]),
+            version=int(cast(int, item["version"])),
+            digest=str(item["digest"]),
+            source=str(item["source"]),
+            source_path=str(item["source_path"]),
+            package_path=str(item["package_path"]),
             status=cast(Literal["draft", "active", "archived"], str(item["status"])),
-            findings=tuple(SkillFinding.model_validate(value) for value in json.loads(str(item["findings_json"]))),
+            findings=tuple(
+                SkillFinding.model_validate(value)
+                for value in json.loads(str(item["findings_json"]))
+            ),
             created_at=datetime.fromisoformat(str(item["created_at"])),
         )
 

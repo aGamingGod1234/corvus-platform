@@ -66,7 +66,7 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
       const recurrence = cadence === "hourly"
         ? { kind: cadence, weekdays: [] }
         : cadence === "weekly"
-          ? { kind: cadence, local_time: `${localTime}:00`, weekdays: [1] }
+          ? { kind: cadence, local_time: `${localTime}:00`, weekdays: [0] }
           : { kind: cadence, local_time: `${localTime}:00`, weekdays: [] };
       const record = await api.createLocalSchedule({
         name: name.trim(), repositoryId, task: task.trim(), recurrence, timezone,

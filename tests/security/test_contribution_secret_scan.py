@@ -41,9 +41,7 @@ def test_high_entropy_values_warn_and_git_metadata_is_ignored(tmp_path: Path) ->
     )
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
-    (git_dir / "credentials").write_text(
-        "ghp_abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8"
-    )
+    (git_dir / "credentials").write_text("ghp_abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
 
     result = SecretScanner().scan(tmp_path, ("candidate.txt",))
 

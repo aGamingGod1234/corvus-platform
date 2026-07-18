@@ -169,10 +169,12 @@ def test_publish_non_force_pushes_and_creates_draft_pr_once(tmp_path: Path) -> N
     )
 
     published = service.publish(
-        lease.run_id, expected_digest=prepared.confirmation_digest  # type: ignore[attr-defined]
+        lease.run_id,
+        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
     )
     resumed = service.publish(
-        lease.run_id, expected_digest=prepared.confirmation_digest  # type: ignore[attr-defined]
+        lease.run_id,
+        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
     )
 
     assert published.state == "published"
@@ -209,7 +211,8 @@ def test_publish_recovers_existing_pr_after_partial_success(tmp_path: Path) -> N
     )
 
     recovered = service.publish(
-        lease.run_id, expected_digest=prepared.confirmation_digest  # type: ignore[attr-defined]
+        lease.run_id,
+        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
     )
 
     assert recovered.state == "published"

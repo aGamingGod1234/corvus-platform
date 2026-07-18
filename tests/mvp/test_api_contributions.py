@@ -4,15 +4,19 @@ import secrets
 import shutil
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+import corvus.mvp.api as api_module
 from corvus.mvp.api import create_app
 from corvus.mvp.change_review import ChangeReviewService
 from corvus.mvp.contributions import ContributionService
 from corvus.mvp.git_process import GitProcess
 from corvus.mvp.repository_workspace import RepositoryWorkspaceService
+from corvus.mvp.run_models import RunStatus, StartRunRequest
+from corvus.mvp.run_store import RunStore
 from corvus.mvp.secret_scan import SecretScanner
 from corvus.mvp.store import SqliteStore
 from corvus.mvp.worktrees import WorktreeManager
@@ -95,6 +99,20 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
     assert created.status_code == 201, created.text
     run_id = created.json()["run_id"]
     lease = worktrees.get(run_id)
+    runs = RunStore(store)
+    runs.create(
+        "local",
+        StartRunRequest(
+            repository_id=repository.id,
+            task="Add feature",
+            safety_digest="a" * 64,
+            output_policy="prepare_contribution",
+        ),
+        base_sha=repository.snapshot.head_sha,
+        run_id=run_id,
+    )
+    runs.transition("local", run_id, RunStatus.RUNNING)
+    runs.transition("local", run_id, RunStatus.REVIEW_REQUIRED)
     (lease.root / "feature.txt").write_text("feature\n", encoding="utf-8")
 
     changes = client.get(f"/api/local/runs/{run_id}/changes")
@@ -114,6 +132,7 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
     )
     assert prepared.status_code == 200, prepared.text
     assert prepared.json()["state"] == "committed"
+    assert runs.get("local", run_id).status == RunStatus.CONTRIBUTION_READY
 
     mismatch = client.post(
         f"/api/local/runs/{run_id}/contribution/publish",
@@ -129,3 +148,53 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
     )
     assert published.status_code == 200, published.text
     assert published.json()["pr_number"] == 17
+    assert runs.get("local", run_id).status == RunStatus.PUBLISHED
+
+
+def test_changes_endpoint_works_without_github_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git = _git()
+    source = tmp_path / "source"
+    source.mkdir()
+    _run(git, source, "init", "--initial-branch=main")
+    _run(git, source, "config", "user.email", "corvus@example.test")
+    _run(git, source, "config", "user.name", "Corvus Tests")
+    source.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run(git, source, "add", "--", "README.md")
+    _run(git, source, "commit", "-m", "initial")
+    database = tmp_path / "corvus.sqlite3"
+    store = SqliteStore(database)
+    repositories = RepositoryWorkspaceService(store, git)
+    repository = repositories.register_local("local", source, "Source")
+    worktrees = WorktreeManager(
+        store,
+        git,
+        root=tmp_path / "worktrees",
+        ownership_secret=b"worktree-test-secret",
+    )
+    run_id = str(uuid4())
+    lease = worktrees.create(repository, run_id, repository.snapshot.head_sha)
+    lease.root.joinpath("feature.txt").write_text("feature\n", encoding="utf-8")
+    monkeypatch.setattr(
+        api_module,
+        "_build_git_process",
+        lambda executable: git if executable.startswith("git") else None,
+    )
+    token = secrets.token_urlsafe(32)
+    client = TestClient(
+        create_app(
+            database=database,
+            bootstrap_token=token,
+            session_secret=secrets.token_bytes(32),
+            repository_workspace=repositories,
+            worktree_manager=worktrees,
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+
+    changes = client.get(f"/api/local/runs/{run_id}/changes")
+
+    assert changes.status_code == 200, changes.text
+    assert changes.json()["files"][0]["path"] == "feature.txt"

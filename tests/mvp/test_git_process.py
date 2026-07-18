@@ -63,9 +63,7 @@ def test_git_process_rejects_output_over_limit(tmp_path: Path) -> None:
     executor = RecordingExecutor(TrustedProcessResult(0, b"x" * 17, b""))
 
     with pytest.raises(GitProcessError, match="output limit"):
-        GitProcess(executable, executor=executor, max_output_bytes=16).run(
-            tmp_path, ("status",)
-        )
+        GitProcess(executable, executor=executor, max_output_bytes=16).run(tmp_path, ("status",))
 
 
 def test_git_process_maps_executor_failure_without_leaking_details(
@@ -88,4 +86,3 @@ def test_git_process_maps_executor_failure_without_leaking_details(
         GitProcess(executable, executor=fail).run(tmp_path, ("status",))
 
     assert "ghp_super_secret" not in str(raised.value)
-

@@ -39,4 +39,19 @@ describe("SchedulesWorkspace", () => {
     })));
     expect(await screen.findByRole("heading", { name: "Weekday review" })).toBeVisible();
   });
+
+  it("uses the backend Monday index for weekly schedules", async () => {
+    const user = userEvent.setup();
+    const client = api();
+    render(<SchedulesWorkspace api={client} onOpenRun={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "New schedule" }));
+    await user.type(screen.getByLabelText("Name"), "Monday review");
+    await user.type(screen.getByLabelText("Task"), "Review every Monday");
+    await user.selectOptions(screen.getByLabelText("Cadence"), "weekly");
+    await user.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(client.createLocalSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ recurrence: expect.objectContaining({ weekdays: [0] }) })
+    ));
+  });
 });

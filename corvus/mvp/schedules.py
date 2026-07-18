@@ -56,7 +56,9 @@ class Recurrence(MvpModel):
         allowed = (
             {0, 1, 2, 3, 4}
             if self.kind == "weekdays"
-            else set(self.weekdays) if self.kind == "weekly" else set(range(7))
+            else set(self.weekdays)
+            if self.kind == "weekly"
+            else set(range(7))
         )
         for offset in range(0, 15):
             date = local_now.date() + timedelta(days=offset)
@@ -81,7 +83,9 @@ class ScheduleCreateRequest(MvpModel):
     mode: Literal["chat", "build"] = "build"
     safety_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     skill_version_id: str | None = None
-    output_policy: Literal["report_only", "prepare_changes", "prepare_contribution"] = "prepare_changes"
+    output_policy: Literal["report_only", "prepare_changes", "prepare_contribution"] = (
+        "prepare_changes"
+    )
 
 
 class ScheduleRecord(MvpModel):
@@ -116,21 +120,32 @@ class ScheduleStore:
     def __init__(self, store: SqliteStore) -> None:
         self.store = store
 
-    def create(self, tenant_id: str, request: ScheduleCreateRequest, *, now: datetime | None = None) -> ScheduleRecord:
+    def create(
+        self, tenant_id: str, request: ScheduleCreateRequest, *, now: datetime | None = None
+    ) -> ScheduleRecord:
         current = (now or datetime.now(UTC)).astimezone(UTC)
-        next_run = request.recurrence.next_after(current - timedelta(microseconds=1), request.timezone)
+        next_run = request.recurrence.next_after(
+            current - timedelta(microseconds=1), request.timezone
+        )
         schedule_id = str(uuid4())
         revision_id = str(uuid4())
         with self.store.transaction() as connection:
-            if connection.execute(
-                "SELECT 1 FROM mvp_repositories WHERE tenant_id = ? AND id = ?",
-                (tenant_id, request.repository_id),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM mvp_repositories WHERE tenant_id = ? AND id = ?",
+                    (tenant_id, request.repository_id),
+                ).fetchone()
+                is None
+            ):
                 raise ScheduleError("repository_not_found")
-            if request.skill_version_id is not None and connection.execute(
-                "SELECT 1 FROM mvp_portable_skill_versions WHERE tenant_id = ? AND id = ? AND status = 'active'",
-                (tenant_id, request.skill_version_id),
-            ).fetchone() is None:
+            if (
+                request.skill_version_id is not None
+                and connection.execute(
+                    "SELECT 1 FROM mvp_portable_skill_versions WHERE tenant_id = ? AND id = ? AND status = 'active'",
+                    (tenant_id, request.skill_version_id),
+                ).fetchone()
+                is None
+            ):
                 raise ScheduleError("schedule_active_skill_required")
             connection.execute(
                 "INSERT INTO mvp_schedules(id, tenant_id, name, status, current_revision, created_at, updated_at) "
@@ -143,11 +158,21 @@ class ScheduleStore:
                 "model, effort, mode, safety_digest, skill_version_id, output_policy, next_run_at, created_at) "
                 "VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    revision_id, schedule_id, request.repository_id, request.task,
-                    request.recurrence.model_dump_json(), request.timezone, request.provider,
-                    request.model, request.effort, request.mode, request.safety_digest,
-                    request.skill_version_id, request.output_policy,
-                    next_run.isoformat() if next_run else None, current.isoformat(),
+                    revision_id,
+                    schedule_id,
+                    request.repository_id,
+                    request.task,
+                    request.recurrence.model_dump_json(),
+                    request.timezone,
+                    request.provider,
+                    request.model,
+                    request.effort,
+                    request.mode,
+                    request.safety_digest,
+                    request.skill_version_id,
+                    request.output_policy,
+                    next_run.isoformat() if next_run else None,
+                    current.isoformat(),
                 ),
             )
         return self.get(tenant_id, schedule_id)
@@ -175,7 +200,9 @@ class ScheduleStore:
             ).fetchall()
         return tuple(self.get(tenant_id, str(row["id"])) for row in ids)
 
-    def set_status(self, tenant_id: str, schedule_id: str, status: Literal["active", "paused", "archived"]) -> ScheduleRecord:
+    def set_status(
+        self, tenant_id: str, schedule_id: str, status: Literal["active", "paused", "archived"]
+    ) -> ScheduleRecord:
         with self.store.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE mvp_schedules SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?",
@@ -194,6 +221,9 @@ class ScheduleStore:
                 "FROM mvp_schedules s JOIN mvp_schedule_revisions r "
                 "ON r.schedule_id = s.id AND r.version = s.current_revision "
                 "WHERE s.status = 'active' AND r.next_run_at IS NOT NULL AND r.next_run_at <= ? "
+                "AND NOT EXISTS (SELECT 1 FROM mvp_runs active_run "
+                "WHERE active_run.schedule_id = s.id AND active_run.status IN "
+                "('preparing', 'running', 'review_required', 'contribution_ready', 'publishing')) "
                 "ORDER BY r.next_run_at LIMIT ?",
                 (current.isoformat(), limit),
             ).fetchall()
@@ -209,18 +239,25 @@ class ScheduleStore:
                 except sqlite3.IntegrityError:
                     continue
                 recurrence = Recurrence.model_validate_json(str(row["recurrence_json"]))
-                next_run = recurrence.next_after(scheduled_for, str(row["timezone"]))
+                next_run = recurrence.next_after(current, str(row["timezone"]))
                 connection.execute(
                     "UPDATE mvp_schedule_revisions SET next_run_at = ? WHERE id = ?",
                     (next_run.isoformat() if next_run else None, row["revision_id"]),
                 )
-                claims.append(ScheduleClaim(
-                    schedule=self.get(str(row["tenant_id"]), str(row["id"])),
-                    scheduled_for=scheduled_for,
-                ))
+                claims.append(
+                    ScheduleClaim(
+                        schedule=self.get(str(row["tenant_id"]), str(row["id"])),
+                        scheduled_for=scheduled_for,
+                    )
+                )
         return tuple(claims)
 
-    def attach_run(self, claim: ScheduleClaim, run_id: str, status: str = "started") -> None:
+    def attach_run(
+        self,
+        claim: ScheduleClaim,
+        run_id: str | None,
+        status: str = "started",
+    ) -> None:
         with self.store.transaction() as connection:
             connection.execute(
                 "UPDATE mvp_schedule_occurrences SET run_id = ?, status = ? "
@@ -231,17 +268,28 @@ class ScheduleStore:
     @staticmethod
     def _record(row: sqlite3.Row) -> ScheduleRecord:
         return ScheduleRecord(
-            id=str(row["id"]), tenant_id=str(row["tenant_id"]), name=str(row["name"]),
-            status=cast(Any, str(row["status"])), revision_id=str(row["revision_id"]),
-            version=int(row["version"]), repository_id=str(row["repository_id"]),
-            task=str(row["task"]), recurrence=Recurrence.model_validate_json(str(row["recurrence_json"])),
-            timezone=str(row["timezone"]), provider="codex",
+            id=str(row["id"]),
+            tenant_id=str(row["tenant_id"]),
+            name=str(row["name"]),
+            status=cast(Any, str(row["status"])),
+            revision_id=str(row["revision_id"]),
+            version=int(row["version"]),
+            repository_id=str(row["repository_id"]),
+            task=str(row["task"]),
+            recurrence=Recurrence.model_validate_json(str(row["recurrence_json"])),
+            timezone=str(row["timezone"]),
+            provider="codex",
             model=str(row["model"]) if row["model"] is not None else None,
-            effort=cast(Any, str(row["effort"])), mode=cast(Any, str(row["mode"])),
+            effort=cast(Any, str(row["effort"])),
+            mode=cast(Any, str(row["mode"])),
             safety_digest=str(row["safety_digest"]),
-            skill_version_id=str(row["skill_version_id"]) if row["skill_version_id"] is not None else None,
+            skill_version_id=str(row["skill_version_id"])
+            if row["skill_version_id"] is not None
+            else None,
             output_policy=cast(Any, str(row["output_policy"])),
-            next_run_at=datetime.fromisoformat(str(row["next_run_at"])) if row["next_run_at"] else None,
+            next_run_at=datetime.fromisoformat(str(row["next_run_at"]))
+            if row["next_run_at"]
+            else None,
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
         )

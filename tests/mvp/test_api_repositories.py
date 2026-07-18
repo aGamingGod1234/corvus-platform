@@ -50,15 +50,21 @@ def test_repository_api_requires_session_and_mutation_auth(tmp_path: Path) -> No
     )
 
     assert client.get("/api/local/repositories").status_code == 401
-    assert client.post(
-        "/api/local/repositories", json={"path": str(root), "display_name": "Repo"}
-    ).status_code == 401
+    assert (
+        client.post(
+            "/api/local/repositories", json={"path": str(root), "display_name": "Repo"}
+        ).status_code
+        == 401
+    )
     assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
     session = client.get("/api/auth/session").json()
     csrf = cast(str, session["csrf_token"])
-    assert client.post(
-        "/api/local/repositories", json={"path": str(root), "display_name": "Repo"}
-    ).status_code == 403
+    assert (
+        client.post(
+            "/api/local/repositories", json={"path": str(root), "display_name": "Repo"}
+        ).status_code
+        == 403
+    )
 
     created = client.post(
         "/api/local/repositories",

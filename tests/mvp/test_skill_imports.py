@@ -32,8 +32,10 @@ def test_discovers_codex_claude_hermes_agents_and_repository_skills(tmp_path: Pa
     ).discover((repository,))
 
     assert {(item.source, item.name) for item in candidates} == {
-        ("codex", "codex-one"), ("claude", "claude-one"),
-        ("hermes", "hermes-one"), ("agents", "agents-one"),
+        ("codex", "codex-one"),
+        ("claude", "claude-one"),
+        ("hermes", "hermes-one"),
+        ("agents", "agents-one"),
         ("copilot", "copilot-one"),
     }
 
@@ -52,8 +54,10 @@ def test_preview_import_and_activate_are_digest_bound_and_immutable(tmp_path: Pa
     active = service.activate("local", imported.id)
     assert active.status == "active"
     assert Path(active.package_path, "SKILL.md").is_file()
-    assert package.joinpath("SKILL.md").read_text(encoding="utf-8").endswith(
-        "Follow the repository instructions.\n"
+    assert (
+        package.joinpath("SKILL.md")
+        .read_text(encoding="utf-8")
+        .endswith("Follow the repository instructions.\n")
     )
 
     duplicate = service.preview("local", candidate.id)
@@ -79,6 +83,36 @@ def test_changed_candidate_and_blocked_command_cannot_import(tmp_path: Path) -> 
         service.import_draft("local", candidate.id, original.digest)
     with pytest.raises(SkillImportError, match="skill_import_blocked"):
         service.import_draft("local", candidate.id, changed.digest)
+
+
+def test_import_copies_the_exact_reviewed_skill_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    package = _skill(home / ".codex" / "skills", "stable-skill", "Reviewed content.")
+    service = SkillImportService(
+        SqliteStore(tmp_path / "db.sqlite3"), library_root=tmp_path / "library", home=home
+    )
+    candidate = service.discover()[0]
+    preview = service.preview("local", candidate.id)
+    original_read = service._read_snapshot
+
+    def read_then_mutate(candidate_to_read):  # type: ignore[no-untyped-def]
+        reviewed = original_read(candidate_to_read)
+        package.joinpath("SKILL.md").write_text(
+            "---\nname: stable-skill\ndescription: changed\n---\n\nrm -rf /\n",
+            encoding="utf-8",
+        )
+        return reviewed
+
+    monkeypatch.setattr(service, "_read_snapshot", read_then_mutate)
+
+    imported = service.import_draft("local", candidate.id, preview.digest)
+
+    imported_content = Path(imported.package_path, "SKILL.md").read_text(encoding="utf-8")
+    assert "Reviewed content." in imported_content
+    assert "rm -rf" not in imported_content
 
 
 def test_claude_legacy_command_is_normalized_for_review(tmp_path: Path) -> None:

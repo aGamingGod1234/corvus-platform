@@ -165,32 +165,32 @@ class ContributionService:
         try:
             with self.store.transaction() as connection:
                 connection.execute(
-                        "INSERT INTO mvp_contributions "
-                        "(id, run_id, repository_id, branch, base_branch, selected_paths_json, "
-                        "request_digest, confirmation_digest, message, title, body, draft, "
-                        "change_digest, secret_scan_json, commit_sha, remote_ref, pr_number, "
-                        "pr_url, state, last_error, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, "
-                        "NULL, 'preparing', NULL, ?, ?)",
-                        (
-                            str(uuid4()),
-                            lease.run_id,
-                            lease.repository_id,
-                            branch,
-                            base_branch,
-                            json.dumps(normalized_selected),
-                            request_digest,
-                            confirmation_digest,
-                            message,
-                            title,
-                            body,
-                            int(draft),
-                            selected_changes.digest,
-                            scan.model_dump_json(),
-                            now.isoformat(),
-                            now.isoformat(),
-                        ),
-                    )
+                    "INSERT INTO mvp_contributions "
+                    "(id, run_id, repository_id, branch, base_branch, selected_paths_json, "
+                    "request_digest, confirmation_digest, message, title, body, draft, "
+                    "change_digest, secret_scan_json, commit_sha, remote_ref, pr_number, "
+                    "pr_url, state, last_error, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, "
+                    "NULL, 'preparing', NULL, ?, ?)",
+                    (
+                        str(uuid4()),
+                        lease.run_id,
+                        lease.repository_id,
+                        branch,
+                        base_branch,
+                        json.dumps(normalized_selected),
+                        request_digest,
+                        confirmation_digest,
+                        message,
+                        title,
+                        body,
+                        int(draft),
+                        selected_changes.digest,
+                        scan.model_dump_json(),
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
         except sqlite3.IntegrityError as exc:
             raise ContributionConflict("contribution_prepare_conflict") from exc
         return self._resume_prepare(
@@ -294,7 +294,10 @@ class ContributionService:
         if result.returncode == 0:
             return
         current = self.git.run(root, ("branch", "--show-current"))
-        if current.returncode != 0 or current.stdout.decode("utf-8", errors="strict").strip() != branch:
+        if (
+            current.returncode != 0
+            or current.stdout.decode("utf-8", errors="strict").strip() != branch
+        ):
             raise ContributionConflict("contribution_branch_failed")
 
     def _commit_selected(self, root: Path, record: ContributionRecord) -> str:
@@ -336,7 +339,9 @@ class ContributionService:
         if lease is None or head_sha == str(lease["base_sha"]):
             return None
         message = self.git.run(root, ("log", "-1", "--format=%B"))
-        paths = self.git.run(root, ("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"))
+        paths = self.git.run(
+            root, ("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+        )
         if message.returncode != 0 or paths.returncode != 0:
             return None
         changed = {

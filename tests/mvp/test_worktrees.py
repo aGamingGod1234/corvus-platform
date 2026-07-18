@@ -130,4 +130,3 @@ def test_create_rejects_untrusted_sha_and_linked_root(tmp_path: Path) -> None:
 
     with pytest.raises(WorktreeOwnershipError, match="root_invalid"):
         manager.create(repository, str(uuid4()), "not-a-sha")  # type: ignore[arg-type]
-

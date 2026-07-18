@@ -85,3 +85,16 @@ def test_patch_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
     assert change_set.files[0].patch_truncated is True
     assert len((change_set.files[0].patch or "").encode()) <= 64
 
+
+def test_snapshot_rejects_untracked_symlink_before_reading_target(tmp_path: Path) -> None:
+    root, git = _repository(tmp_path)
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("do-not-disclose\n", encoding="utf-8")
+    link = root / "leak.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("file symlinks are unavailable")
+
+    with pytest.raises(ChangeReviewError, match="path_invalid"):
+        ChangeReviewService(git).snapshot(root)

@@ -109,6 +109,7 @@ class ApiChatBackend:
                 )
             return
         request_failed = False
+        stream_completed = False
         try:
             async with self._http_client_factory() as client:
                 if handle.id in self._cancelled:
@@ -130,17 +131,20 @@ class ApiChatBackend:
                         async for line in response.aiter_lines():
                             if handle.id in self._cancelled:
                                 break
-                            if self._provider == "openai" and _openai_terminal_failure(line):
+                            terminal_state = self._terminal_state(line)
+                            if terminal_state == "failed":
                                 request_failed = True
                                 break
                             text = self._text_delta(line)
-                            if not text:
-                                continue
-                            sequence += 1
-                            if sequence > after_sequence:
-                                yield LocalChatBackendEvent(
-                                    sequence, self._clock(), "message", {"text": text}
-                                )
+                            if text:
+                                sequence += 1
+                                if sequence > after_sequence:
+                                    yield LocalChatBackendEvent(
+                                        sequence, self._clock(), "message", {"text": text}
+                                    )
+                            if terminal_state == "completed":
+                                stream_completed = True
+                                break
                     finally:
                         self._active_responses.pop(handle.id, None)
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
@@ -152,7 +156,7 @@ class ApiChatBackend:
                     sequence, self._clock(), "cancelled", {"status": "cancelled"}
                 )
             return
-        if request_failed:
+        if request_failed or not stream_completed:
             sequence += 1
             if sequence > after_sequence:
                 yield LocalChatBackendEvent(
@@ -252,25 +256,55 @@ class ApiChatBackend:
         delta = choices[0].get("delta")
         return cast(str | None, delta.get("content")) if isinstance(delta, dict) else None
 
+    def _terminal_state(self, line: str) -> Literal["completed", "failed"] | None:
+        if not line.startswith("data:"):
+            return None
+        raw = line.removeprefix("data:").strip()
+        if not raw:
+            return None
+        if raw == "[DONE]":
+            return "completed" if self._provider == "xai" else None
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return None
+        if self._provider == "openai":
+            event_type = payload.get("type")
+            if event_type == "response.completed":
+                return "completed"
+            if event_type in {"response.failed", "response.incomplete"}:
+                return "failed"
+            return None
+        if self._provider == "anthropic":
+            event_type = payload.get("type")
+            if event_type == "message_stop":
+                return "completed"
+            return "failed" if event_type == "error" else None
+        if self._provider == "gemini":
+            candidates = payload.get("candidates")
+            if (
+                not isinstance(candidates, list)
+                or not candidates
+                or not isinstance(candidates[0], dict)
+            ):
+                return None
+            reason = candidates[0].get("finishReason")
+            if not isinstance(reason, str) or not reason:
+                return None
+            return "completed" if reason == "STOP" else "failed"
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return None
+        reason = choices[0].get("finish_reason")
+        if not isinstance(reason, str) or not reason:
+            return None
+        return "completed" if reason == "stop" else "failed"
+
 
 def _supports_openai_reasoning_effort(model: str) -> bool:
     normalized = model.strip().lower()
     return normalized.startswith(("gpt-5", "gpt-oss-", "codex-")) or bool(
         re.fullmatch(r"o\d+(?:[-.].+)?", normalized)
     )
-
-
-def _openai_terminal_failure(line: str) -> bool:
-    if not line.startswith("data:"):
-        return False
-    raw = line.removeprefix("data:").strip()
-    if not raw or raw == "[DONE]":
-        return False
-    payload = json.loads(raw)
-    return isinstance(payload, dict) and payload.get("type") in {
-        "response.failed",
-        "response.incomplete",
-    }
 
 
 def _gemini_text(payload: dict[str, Any]) -> str | None:

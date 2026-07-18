@@ -89,7 +89,7 @@ from corvus.mvp.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConflict,
 )
-from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, StartRunRequest
+from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, RunStatus, StartRunRequest
 from corvus.mvp.run_store import RunStore, RunStoreConflict, RunStoreNotFound
 from corvus.mvp.safety import build_safety_preview
 from corvus.mvp.scheduler import LocalScheduler
@@ -584,6 +584,7 @@ def create_app(
     local_preferences = LocalPreferencesService(service.store)
     credential_service = provider_credentials or ProviderCredentialService()
     git = _build_git_process("git.exe" if os.name == "nt" else "git")
+    change_review = ChangeReviewService(git) if git is not None else None
     repositories = repository_workspace or _build_repository_workspace(service.store, git)
     worktrees = worktree_manager
     if worktrees is None and git is not None:
@@ -602,13 +603,14 @@ def create_app(
         service.store, library_root=database.parent / ".corvus-skills"
     )
     if contributions is None and git is not None and worktrees is not None:
+        assert change_review is not None
         gh = _build_git_process("gh.exe" if os.name == "nt" else "gh")
         if gh is not None:
             contributions = ContributionService(
                 service.store,
                 git,
                 worktrees,
-                ChangeReviewService(git),
+                change_review,
                 SecretScanner(),
                 GitHubCli(gh, cwd=database.parent),
                 confirmation_secret=hmac.new(
@@ -620,7 +622,13 @@ def create_app(
     durable_runs = RunStore(service.store)
     schedules = ScheduleStore(service.store)
     run_workflow = run_coordinator
-    if run_workflow is None and repositories is not None and worktrees is not None and git is not None:
+    if (
+        run_workflow is None
+        and repositories is not None
+        and worktrees is not None
+        and git is not None
+    ):
+        assert change_review is not None
         codex_executable = discover_codex_executable()
         if codex_executable is not None:
             from corvus.infrastructure.agent_runtimes.codex import CodexCliAdapter
@@ -637,7 +645,7 @@ def create_app(
                 durable_runs,
                 repositories,
                 worktrees,
-                ChangeReviewService(git),
+                change_review,
                 CodexWorkspaceBackend(adapter),
             )
     scheduler = LocalScheduler(schedules, run_workflow) if run_workflow is not None else None
@@ -658,9 +666,7 @@ def create_app(
         nonlocal scheduler_task
         if run_workflow is not None:
             run_workflow.recover_interrupted()
-            scheduler_task = asyncio.create_task(
-                scheduler_loop(), name="corvus-local-scheduler"
-            )
+            scheduler_task = asyncio.create_task(scheduler_loop(), name="corvus-local-scheduler")
         try:
             yield
         finally:
@@ -705,10 +711,13 @@ def create_app(
         return _error_response(status.HTTP_404_NOT_FOUND, "not_found", str(error))
 
     @app.exception_handler(SkillImportError)
-    async def skill_import_error_handler(_request: Request, error: SkillImportError) -> JSONResponse:
+    async def skill_import_error_handler(
+        _request: Request, error: SkillImportError
+    ) -> JSONResponse:
         code = str(error)
         response_status = (
-            status.HTTP_404_NOT_FOUND if code in {"skill_candidate_not_found", "skill_not_found"}
+            status.HTTP_404_NOT_FOUND
+            if code in {"skill_candidate_not_found", "skill_not_found"}
             else status.HTTP_409_CONFLICT
         )
         return _error_response(response_status, "skill_import_error", code)
@@ -716,7 +725,9 @@ def create_app(
     @app.exception_handler(ScheduleError)
     async def schedule_error_handler(_request: Request, error: ScheduleError) -> JSONResponse:
         code = str(error)
-        response_status = status.HTTP_404_NOT_FOUND if code == "schedule_not_found" else status.HTTP_409_CONFLICT
+        response_status = (
+            status.HTTP_404_NOT_FOUND if code == "schedule_not_found" else status.HTTP_409_CONFLICT
+        )
         return _error_response(response_status, "schedule_error", code)
 
     @app.exception_handler(RunStoreConflict)
@@ -791,6 +802,20 @@ def create_app(
                 detail="github_cli_unavailable",
             )
         return contributions
+
+    def change_review_service() -> ChangeReviewService:
+        if change_review is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return change_review
+
+    def optional_durable_run(tenant_id: str, run_id: str) -> RunRecord | None:
+        try:
+            return durable_runs.get(tenant_id, run_id)
+        except RunStoreNotFound:
+            return None
 
     def durable_run_workflow() -> RunCoordinator:
         if run_workflow is None:
@@ -873,8 +898,7 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> list[dict[str, Any]]:
         return [
-            item.model_dump(mode="json")
-            for item in repository_service().list(principal.tenant_id)
+            item.model_dump(mode="json") for item in repository_service().list(principal.tenant_id)
         ]
 
     @app.get("/api/local/skills", response_model=list[PortableSkillVersion])
@@ -966,21 +990,27 @@ def create_app(
         schedule_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> dict[str, Any]:
-        return schedules.set_status(principal.tenant_id, schedule_id, "paused").model_dump(mode="json")
+        return schedules.set_status(principal.tenant_id, schedule_id, "paused").model_dump(
+            mode="json"
+        )
 
     @app.post("/api/local/schedules/{schedule_id}/resume", response_model=ScheduleRecord)
     def resume_local_schedule(
         schedule_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> dict[str, Any]:
-        return schedules.set_status(principal.tenant_id, schedule_id, "active").model_dump(mode="json")
+        return schedules.set_status(principal.tenant_id, schedule_id, "active").model_dump(
+            mode="json"
+        )
 
     @app.post("/api/local/schedules/{schedule_id}/archive", response_model=ScheduleRecord)
     def archive_local_schedule(
         schedule_id: str,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> dict[str, Any]:
-        return schedules.set_status(principal.tenant_id, schedule_id, "archived").model_dump(mode="json")
+        return schedules.set_status(principal.tenant_id, schedule_id, "archived").model_dump(
+            mode="json"
+        )
 
     @app.post(
         "/api/local/repositories",
@@ -1123,7 +1153,8 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> dict[str, Any]:
         authorize_local_run(principal.tenant_id, run_id)
-        return contribution_workflow().changes(run_id).model_dump(mode="json")
+        lease = worktree_service().get(run_id)
+        return change_review_service().snapshot(lease.root).model_dump(mode="json")
 
     @app.get(
         "/api/local/runs/{run_id}/contribution",
@@ -1154,6 +1185,13 @@ def create_app(
             body=body.body,
             draft=body.draft,
         )
+        run = optional_durable_run(principal.tenant_id, run_id)
+        if run is not None and run.status == RunStatus.REVIEW_REQUIRED:
+            durable_runs.transition(
+                principal.tenant_id,
+                run_id,
+                RunStatus.CONTRIBUTION_READY,
+            )
         return record.model_dump(mode="json")
 
     @app.post(
@@ -1166,10 +1204,26 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> dict[str, Any]:
         authorize_local_run(principal.tenant_id, run_id)
-        return contribution_workflow().publish(
-            run_id,
-            expected_digest=body.expected_digest,
-        ).model_dump(mode="json")
+        run = optional_durable_run(principal.tenant_id, run_id)
+        transitioned = run is not None and run.status == RunStatus.CONTRIBUTION_READY
+        if transitioned:
+            durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHING)
+        try:
+            record = contribution_workflow().publish(
+                run_id,
+                expected_digest=body.expected_digest,
+            )
+        except Exception:
+            if transitioned:
+                durable_runs.transition(
+                    principal.tenant_id,
+                    run_id,
+                    RunStatus.CONTRIBUTION_READY,
+                )
+            raise
+        if transitioned:
+            durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHED)
+        return record.model_dump(mode="json")
 
     @app.get(
         "/api/provider-credentials",

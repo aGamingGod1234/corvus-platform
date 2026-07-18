@@ -74,7 +74,9 @@ class RunStore:
         run_id: str | None = None,
         retry_of_run_id: str | None = None,
     ) -> RunRecord:
-        if len(base_sha) != 40 or any(character not in "0123456789abcdef" for character in base_sha):
+        if len(base_sha) != 40 or any(
+            character not in "0123456789abcdef" for character in base_sha
+        ):
             raise RunStoreConflict("run_base_sha_invalid")
         with self.store.connect() as connection:
             repository = connection.execute(
@@ -151,7 +153,9 @@ class RunStore:
         if target not in _TRANSITIONS[current.status]:
             raise RunStoreConflict("run_transition_invalid")
         now = datetime.now(UTC)
-        started_at = now.isoformat() if target == RunStatus.RUNNING and current.started_at is None else None
+        started_at = (
+            now.isoformat() if target == RunStatus.RUNNING and current.started_at is None else None
+        )
         finished_at = now.isoformat() if target in _TERMINAL else None
         with self.store.transaction() as connection:
             cursor = connection.execute(
@@ -209,8 +213,7 @@ class RunStore:
         self.get(tenant_id, run_id)
         with self.store.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM mvp_run_events WHERE run_id = ? AND sequence > ? "
-                "ORDER BY sequence",
+                "SELECT * FROM mvp_run_events WHERE run_id = ? AND sequence > ? ORDER BY sequence",
                 (run_id, after),
             ).fetchall()
         return tuple(
