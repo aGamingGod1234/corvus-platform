@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -270,6 +271,34 @@ class SkillImportService:
                 raise SkillImportError("skill_not_found")
         return next(item for item in self.list(tenant_id) if item.id == skill_id)
 
+    def instructions(self, tenant_id: str, skill_id: str) -> str:
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_portable_skill_versions "
+                "WHERE tenant_id = ? AND id = ? AND status = 'active'",
+                (tenant_id, skill_id),
+            ).fetchone()
+        if row is None:
+            raise SkillImportError("skill_not_found")
+        try:
+            library_root = self.library_root.resolve(strict=True)
+            package = Path(str(row["package_path"])).resolve(strict=True)
+        except OSError as exc:
+            raise SkillImportError("skill_package_unsafe") from exc
+        if (
+            not package.is_relative_to(library_root)
+            or not self._safe_directory(library_root)
+            or not self._safe_directory(package)
+        ):
+            raise SkillImportError("skill_package_unsafe")
+        files = self._read_package(package)
+        if not hmac.compare_digest(self._files_digest(files), str(row["digest"])):
+            raise SkillImportError("skill_package_changed")
+        instructions = dict(files).get("SKILL.md")
+        if instructions is None:
+            raise SkillImportError("skill_manifest_missing")
+        return instructions
+
     @staticmethod
     def _safe_directory(path: Path) -> bool:
         try:
@@ -401,9 +430,6 @@ class SkillImportService:
                         message="Vendor-specific dynamic substitution requires review.",
                     )
                 )
-        digest = hashlib.sha256()
-        for relative, content in files:
-            digest.update(relative.encode("utf-8") + b"\0" + content.encode("utf-8") + b"\0")
         compatibility: Literal["ready", "needs_review", "blocked"] = "ready"
         if any(item.severity == "blocked" for item in findings):
             compatibility = "blocked"
@@ -414,7 +440,7 @@ class SkillImportService:
                 candidate=candidate,
                 name=name,
                 description=description,
-                digest=digest.hexdigest(),
+                digest=self._files_digest(files),
                 compatibility=compatibility,
                 findings=tuple(findings),
                 files=tuple(relative for relative, _ in files),
@@ -455,6 +481,13 @@ class SkillImportService:
             return path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise SkillImportError("skill_package_text_invalid") from exc
+
+    @staticmethod
+    def _files_digest(files: tuple[tuple[str, str], ...]) -> str:
+        digest = hashlib.sha256()
+        for relative, content in files:
+            digest.update(relative.encode("utf-8") + b"\0" + content.encode("utf-8") + b"\0")
+        return digest.hexdigest()
 
     @staticmethod
     def _copy_reviewed(files: tuple[tuple[str, str], ...], target: Path) -> None:

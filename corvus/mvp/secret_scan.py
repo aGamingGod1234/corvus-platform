@@ -56,8 +56,15 @@ class SecretScanner:
             digest=None,
         )
 
-    def scan(self, worktree: Path, paths: tuple[str, ...]) -> SecretScanResult:
+    def scan(
+        self,
+        worktree: Path,
+        paths: tuple[str, ...],
+        *,
+        deleted_paths: tuple[str, ...] = (),
+    ) -> SecretScanResult:
         root = self._root(worktree)
+        deleted = {self._path_shape(path) for path in deleted_paths}
         normalized_paths: list[str] = []
         findings: list[SecretFinding] = []
         content_digests: dict[str, str] = {}
@@ -66,8 +73,20 @@ class SecretScanner:
             if ".git" in PurePosixPath(relative).parts:
                 continue
             target = root.joinpath(*PurePosixPath(relative).parts)
-            if target.exists() and path_is_link_or_reparse(target):
+            if path_is_link_or_reparse(target):
                 raise SecretScanError("secret_scan_path_link_forbidden")
+            if not target.exists():
+                if relative not in deleted:
+                    raise SecretScanError("secret_scan_path_invalid")
+                try:
+                    canonical_parent = target.parent.resolve(strict=True)
+                except OSError as exc:
+                    raise SecretScanError("secret_scan_path_invalid") from exc
+                if not canonical_parent.is_relative_to(root):
+                    raise SecretScanError("secret_scan_path_invalid")
+                normalized_paths.append(relative)
+                content_digests[relative] = "deleted"
+                continue
             try:
                 canonical = target.resolve(strict=True)
             except OSError as exc:

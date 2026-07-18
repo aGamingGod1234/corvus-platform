@@ -98,6 +98,11 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
     )
     assert created.status_code == 201, created.text
     run_id = created.json()["run_id"]
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE mvp_repositories SET remote_slug = 'team/corvus' WHERE id = ?",
+            (repository.id,),
+        )
     lease = worktrees.get(run_id)
     runs = RunStore(store)
     runs.create(
@@ -140,6 +145,7 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
         headers={"X-CSRF-Token": csrf},
     )
     assert mismatch.status_code == 409
+    runs.transition("local", run_id, RunStatus.PUBLISHING)
 
     published = client.post(
         f"/api/local/runs/{run_id}/contribution/publish",

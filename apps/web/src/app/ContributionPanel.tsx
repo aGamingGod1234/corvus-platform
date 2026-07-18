@@ -4,6 +4,7 @@ import type { ChangeSet, Contribution } from "../api";
 
 export interface ContributionApi {
   getRunChanges(runId: string): Promise<ChangeSet>;
+  getContribution(runId: string): Promise<Contribution>;
   prepareContribution(
     runId: string,
     input: {
@@ -39,11 +40,18 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
     setPrepared(null);
     setConfirmed(false);
     setError("");
-    api.getRunChanges(runId)
-      .then((loaded) => {
+    Promise.all([
+      api.getRunChanges(runId),
+      api.getContribution(runId).catch((reason: unknown) => {
+        if (errorText(reason).includes("contribution_not_found")) return null;
+        throw reason;
+      })
+    ])
+      .then(([loaded, existing]) => {
         if (!active) return;
         setChanges(loaded);
         setSelected(new Set(loaded.files.map((file) => file.path)));
+        setPrepared(existing);
       })
       .catch((reason: unknown) => {
         if (active) setError(errorText(reason));

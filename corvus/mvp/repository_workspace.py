@@ -147,6 +147,10 @@ class RepositoryWorkspaceService:
             ahead = 0
             behind = 0
             health = "missing"
+            remote_slug = str(row["remote_slug"]) if row["remote_slug"] is not None else None
+            default_branch = (
+                str(row["default_branch"]) if row["default_branch"] is not None else None
+            )
         else:
             head = self._required_git(root, ("rev-parse", "--verify", "HEAD"))
             branch_result = self.git.run(root, ("branch", "--show-current"))
@@ -162,6 +166,8 @@ class RepositoryWorkspaceService:
             ahead, behind = self._ahead_behind(root)
             head_sha = head
             health = "healthy"
+            remote_slug = self._remote_slug(root)
+            default_branch = self._default_branch(root)
         with self.store.transaction() as connection:
             connection.execute(
                 "INSERT INTO mvp_repository_snapshots "
@@ -183,8 +189,9 @@ class RepositoryWorkspaceService:
                 ),
             )
             connection.execute(
-                "UPDATE mvp_repositories SET updated_at = ? WHERE id = ? AND tenant_id = ?",
-                (now.isoformat(), repository_id, tenant_id),
+                "UPDATE mvp_repositories SET remote_slug = ?, default_branch = ?, "
+                "updated_at = ? WHERE id = ? AND tenant_id = ?",
+                (remote_slug, default_branch, now.isoformat(), repository_id, tenant_id),
             )
         return self.get(tenant_id, repository_id)
 

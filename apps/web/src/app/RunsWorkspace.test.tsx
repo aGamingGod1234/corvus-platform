@@ -53,6 +53,7 @@ function api(): RunsApi {
     retryLocalRun: vi.fn(),
     discardLocalRun: vi.fn(),
     getRunChanges: vi.fn(),
+    getContribution: vi.fn().mockRejectedValue(new Error("contribution_not_found")),
     prepareContribution: vi.fn(),
     publishContribution: vi.fn()
   };

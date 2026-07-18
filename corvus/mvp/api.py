@@ -647,6 +647,7 @@ def create_app(
                 worktrees,
                 change_review,
                 CodexWorkspaceBackend(adapter),
+                skill_provider=skill_imports,
             )
     scheduler = LocalScheduler(schedules, run_workflow) if run_workflow is not None else None
     scheduler_task: asyncio.Task[None] | None = None
@@ -1205,8 +1206,11 @@ def create_app(
     ) -> dict[str, Any]:
         authorize_local_run(principal.tenant_id, run_id)
         run = optional_durable_run(principal.tenant_id, run_id)
-        transitioned = run is not None and run.status == RunStatus.CONTRIBUTION_READY
-        if transitioned:
+        publishable_run = run is not None and run.status in {
+            RunStatus.CONTRIBUTION_READY,
+            RunStatus.PUBLISHING,
+        }
+        if run is not None and run.status == RunStatus.CONTRIBUTION_READY:
             durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHING)
         try:
             record = contribution_workflow().publish(
@@ -1214,15 +1218,19 @@ def create_app(
                 expected_digest=body.expected_digest,
             )
         except Exception:
-            if transitioned:
-                durable_runs.transition(
-                    principal.tenant_id,
-                    run_id,
-                    RunStatus.CONTRIBUTION_READY,
-                )
+            if publishable_run:
+                current = durable_runs.get(principal.tenant_id, run_id)
+                if current.status == RunStatus.PUBLISHING:
+                    durable_runs.transition(
+                        principal.tenant_id,
+                        run_id,
+                        RunStatus.CONTRIBUTION_READY,
+                    )
             raise
-        if transitioned:
-            durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHED)
+        if publishable_run:
+            current = durable_runs.get(principal.tenant_id, run_id)
+            if current.status == RunStatus.PUBLISHING:
+                durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHED)
         return record.model_dump(mode="json")
 
     @app.get(

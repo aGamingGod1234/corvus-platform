@@ -60,6 +60,7 @@ const prepared: Contribution = {
 function api(): ContributionApi {
   return {
     getRunChanges: vi.fn().mockResolvedValue(changes),
+    getContribution: vi.fn().mockRejectedValue(new Error("contribution_not_found")),
     prepareContribution: vi.fn().mockResolvedValue(prepared),
     publishContribution: vi.fn().mockResolvedValue({
       ...prepared,
@@ -121,5 +122,16 @@ describe("ContributionPanel", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("contribution_secret_scan_blocked");
     expect(screen.queryByText("Secret scan passed")).not.toBeInTheDocument();
+  });
+
+  it("restores an existing prepared contribution after navigation", async () => {
+    const contributionApi = api();
+    vi.mocked(contributionApi.getContribution).mockResolvedValue(prepared);
+
+    render(<ContributionPanel api={contributionApi} runId="run-1" />);
+
+    expect(await screen.findByText("Secret scan passed")).toBeVisible();
+    expect(screen.queryByLabelText("Commit message")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish draft pull request" })).toBeDisabled();
   });
 });

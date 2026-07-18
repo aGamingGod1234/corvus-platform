@@ -156,6 +156,107 @@ def test_prepare_blocks_known_secret_and_digest_mismatch_blocks_publish(tmp_path
     assert prepared.state == "committed"
 
 
+def test_prepare_commits_a_selected_deletion(tmp_path: Path) -> None:
+    service, lease, git, _ = _environment(tmp_path)
+    lease.root.joinpath("README.md").unlink()  # type: ignore[attr-defined]
+
+    prepared = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("README.md",),
+        message="Remove readme",
+        title="Remove readme",
+        body="Reviewed deletion.",
+        draft=True,
+    )
+
+    assert prepared.state == "committed"
+    assert prepared.secret_scan.scanned_paths == ("README.md",)
+    assert _run(git, lease.root, "show", "--format=", "--name-status", "HEAD") == "D\tREADME.md"  # type: ignore[attr-defined]
+
+
+def test_prepare_stages_both_sides_of_a_selected_rename(tmp_path: Path) -> None:
+    service, lease, git, _ = _environment(tmp_path)
+    lease.root.joinpath("README.md").rename(lease.root / "GUIDE.md")  # type: ignore[attr-defined]
+    _run(git, lease.root, "add", "-A")  # type: ignore[attr-defined]
+
+    prepared = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("GUIDE.md",),
+        message="Rename guide",
+        title="Rename guide",
+        body="Reviewed rename.",
+        draft=True,
+    )
+
+    assert prepared.state == "committed"
+    changed = _run(git, lease.root, "show", "--format=", "--name-status", "-M", "HEAD")  # type: ignore[attr-defined]
+    assert "README.md" in changed
+    assert "GUIDE.md" in changed
+
+
+def test_resume_revalidates_prepared_content_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, lease, _, _ = _environment(tmp_path)
+    target = lease.root / "config.env"  # type: ignore[attr-defined]
+    target.write_text("SAFE=true\n", encoding="utf-8")
+    original_resume = service._resume_prepare
+    monkeypatch.setattr(service, "_resume_prepare", lambda _root, _sha, record: record)
+    pending = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("config.env",),
+        message="Add config",
+        title="Add config",
+        body="Reviewed config.",
+        draft=True,
+    )
+    assert pending.state == "preparing"
+    target.write_text("TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+    monkeypatch.setattr(service, "_resume_prepare", original_resume)
+
+    with pytest.raises(ContributionConflict, match="secret_scan_blocked"):
+        service.prepare(
+            lease.run_id,  # type: ignore[attr-defined]
+            selected_paths=("config.env",),
+            message="Add config",
+            title="Add config",
+            body="Reviewed config.",
+            draft=True,
+        )
+
+
+def test_resume_recovers_an_exact_commit_after_state_update_interruption(tmp_path: Path) -> None:
+    service, lease, _, _ = _environment(tmp_path)
+    lease.root.joinpath("feature.txt").write_text("feature\n", encoding="utf-8")  # type: ignore[attr-defined]
+    prepared = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("feature.txt",),
+        message="Add feature",
+        title="Add feature",
+        body="Reviewed feature.",
+        draft=True,
+    )
+    with service.store.transaction() as connection:
+        connection.execute(
+            "UPDATE mvp_contributions SET state = 'branch_created', commit_sha = NULL "
+            "WHERE run_id = ?",
+            (lease.run_id,),  # type: ignore[attr-defined]
+        )
+
+    recovered = service.prepare(
+        lease.run_id,  # type: ignore[attr-defined]
+        selected_paths=("feature.txt",),
+        message="Add feature",
+        title="Add feature",
+        body="Reviewed feature.",
+        draft=True,
+    )
+
+    assert recovered.state == "committed"
+    assert recovered.commit_sha == prepared.commit_sha
+
+
 def test_publish_non_force_pushes_and_creates_draft_pr_once(tmp_path: Path) -> None:
     service, lease, git, github = _environment(tmp_path)
     (lease.root / "feature.txt").write_text("feature\n", encoding="utf-8")  # type: ignore[attr-defined]
@@ -169,12 +270,12 @@ def test_publish_non_force_pushes_and_creates_draft_pr_once(tmp_path: Path) -> N
     )
 
     published = service.publish(
-        lease.run_id,
-        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
+        lease.run_id,  # type: ignore[attr-defined]
+        expected_digest=prepared.confirmation_digest,
     )
     resumed = service.publish(
-        lease.run_id,
-        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
+        lease.run_id,  # type: ignore[attr-defined]
+        expected_digest=prepared.confirmation_digest,
     )
 
     assert published.state == "published"
@@ -211,8 +312,8 @@ def test_publish_recovers_existing_pr_after_partial_success(tmp_path: Path) -> N
     )
 
     recovered = service.publish(
-        lease.run_id,
-        expected_digest=prepared.confirmation_digest,  # type: ignore[attr-defined]
+        lease.run_id,  # type: ignore[attr-defined]
+        expected_digest=prepared.confirmation_digest,
     )
 
     assert recovered.state == "published"

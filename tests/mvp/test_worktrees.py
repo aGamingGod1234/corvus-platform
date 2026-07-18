@@ -84,6 +84,8 @@ def test_duplicate_run_is_refused_and_discard_requires_terminal_run(tmp_path: Pa
     manager.discard(lease, run_terminal=True)
     assert not lease.root.exists()
     assert manager.get(run_id).status == "discarded"
+    with pytest.raises(DomainConflict, match="worktree_run_already_exists"):
+        manager.create(repository, run_id, base_sha)  # type: ignore[arg-type]
 
 
 def test_discard_rejects_tampered_database_path(tmp_path: Path) -> None:
@@ -106,9 +108,8 @@ def test_discard_rejects_tampered_database_path(tmp_path: Path) -> None:
             (str(outside), run_id),
         )
 
-    tampered = manager.get(run_id)
     with pytest.raises(WorktreeOwnershipError, match="ownership_invalid"):
-        manager.discard(tampered, run_terminal=True)
+        manager.get(run_id)
     assert marker.read_text(encoding="utf-8") == "keep"
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from corvus.mvp.core import DomainNotFound
 from corvus.mvp.repository_workspace import RepositoryWorkspaceService
 from corvus.mvp.run_coordinator import RunCoordinatorConflict
 from corvus.mvp.run_models import StartRunRequest
@@ -159,6 +160,65 @@ async def test_scheduler_records_conflicted_occurrence_as_skipped_without_run_id
     assert occurrence is not None
     assert occurrence["run_id"] is None
     assert occurrence["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_stale_repository_and_continues_tick(tmp_path: Path) -> None:
+    git = _git()
+    source = tmp_path / "source"
+    source.mkdir()
+    _run(git, source, "init", "--initial-branch=main")
+    _run(git, source, "config", "user.email", "corvus@example.test")
+    _run(git, source, "config", "user.name", "Corvus Tests")
+    source.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run(git, source, "add", "--", "README.md")
+    _run(git, source, "commit", "-m", "initial")
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository = RepositoryWorkspaceService(store, git).register_local("local", source, "Source")
+    schedules = ScheduleStore(store)
+    due = datetime(2026, 7, 18, 11, tzinfo=UTC)
+    for name in ("First", "Second"):
+        schedules.create(
+            "local",
+            ScheduleCreateRequest(
+                name=name,
+                repository_id=repository.id,
+                task="Review changes",
+                recurrence=Recurrence(kind="hourly"),
+                timezone="UTC",
+                mode="chat",
+                safety_digest="a" * 64,
+                output_policy="report_only",
+            ),
+            now=datetime(2026, 7, 18, 10, 15, tzinfo=UTC),
+        )
+
+    class StaleThenHealthyRuns:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def start(self, tenant_id: str, request: StartRunRequest):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                raise DomainNotFound("repository_not_found")
+            return RunStore(store).create(
+                tenant_id,
+                request,
+                base_sha=repository.snapshot.head_sha,
+            )
+
+    runs = StaleThenHealthyRuns()
+    scheduler = LocalScheduler(schedules, runs)  # type: ignore[arg-type]
+
+    started = await scheduler.tick(due)
+
+    assert len(started) == 1
+    assert runs.calls == 2
+    with store.connect() as connection:
+        statuses = connection.execute(
+            "SELECT status FROM mvp_schedule_occurrences ORDER BY status"
+        ).fetchall()
+    assert [row["status"] for row in statuses] == ["skipped", "started"]
 
 
 def test_schedule_pause_resume_and_archive(tmp_path: Path) -> None:

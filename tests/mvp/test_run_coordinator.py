@@ -13,6 +13,7 @@ from corvus.mvp.run_coordinator import (
     ProviderRunEvent,
     RunCoordinator,
     RunCoordinatorConflict,
+    RunSkillProvider,
 )
 from corvus.mvp.run_models import RunStatus, StartRunRequest
 from corvus.mvp.run_store import RunStore
@@ -56,6 +57,13 @@ class FakeBackend:
         return True
 
 
+class FakeSkills:
+    def instructions(self, tenant_id: str, skill_id: str) -> str:
+        assert tenant_id == "local"
+        assert skill_id == "skill-1"
+        return "Always run the focused verification command."
+
+
 def _git() -> GitProcess:
     executable = shutil.which("git")
     if executable is None:
@@ -69,7 +77,11 @@ def _run(git: GitProcess, cwd: Path, *args: str) -> str:
     return result.stdout.decode().strip()
 
 
-def _coordinator(tmp_path: Path, backend: FakeBackend) -> tuple[RunCoordinator, object, RunStore]:
+def _coordinator(
+    tmp_path: Path,
+    backend: FakeBackend,
+    skill_provider: RunSkillProvider | None = None,
+) -> tuple[RunCoordinator, object, RunStore]:
     git = _git()
     source = tmp_path / "source"
     source.mkdir()
@@ -94,6 +106,7 @@ def _coordinator(tmp_path: Path, backend: FakeBackend) -> tuple[RunCoordinator, 
         ),
         ChangeReviewService(git),
         backend,
+        skill_provider=skill_provider,
     )
     return coordinator, repository, runs
 
@@ -126,7 +139,7 @@ async def test_run_uses_exact_worktree_and_persists_events_before_notification(
 
     coordinator.event_notifier = notified
     started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
-    completed = await coordinator.wait(started.id)
+    completed = await coordinator.wait("local", started.id)
 
     assert backend.cwd is not None
     assert backend.cwd.name == started.id
@@ -146,7 +159,7 @@ async def test_read_only_completion_has_no_review_state(tmp_path: Path) -> None:
     coordinator, repository, _ = _coordinator(tmp_path, backend)
 
     started = await coordinator.start("local", _request(repository.id, mode="chat"))  # type: ignore[attr-defined]
-    completed = await coordinator.wait(started.id)
+    completed = await coordinator.wait("local", started.id)
 
     assert completed.status == RunStatus.COMPLETED
 
@@ -170,7 +183,7 @@ async def test_cancel_terminates_only_owned_backend_handle(tmp_path: Path) -> No
     await asyncio.sleep(0)
 
     cancelled = await coordinator.cancel("local", started.id)
-    terminal = await coordinator.wait(started.id)
+    terminal = await coordinator.wait("local", started.id)
 
     assert backend.cancelled is True
     assert cancelled.status == RunStatus.CANCELLED
@@ -182,10 +195,10 @@ async def test_retry_creates_new_worktree_with_lineage(tmp_path: Path) -> None:
     first_backend = FakeBackend(change_file=False)
     coordinator, repository, runs = _coordinator(tmp_path, first_backend)
     original = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
-    original = await coordinator.wait(original.id)
+    original = await coordinator.wait("local", original.id)
 
     retried = await coordinator.retry("local", original.id)
-    retried = await coordinator.wait(retried.id)
+    retried = await coordinator.wait("local", retried.id)
 
     assert retried.id != original.id
     assert retried.retry_of_run_id == original.id
@@ -197,10 +210,55 @@ async def test_discard_removes_terminal_managed_worktree(tmp_path: Path) -> None
     backend = FakeBackend(change_file=False)
     coordinator, repository, _ = _coordinator(tmp_path, backend)
     started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
-    terminal = await coordinator.wait(started.id)
+    terminal = await coordinator.wait("local", started.id)
     assert backend.cwd is not None and backend.cwd.exists()
 
     discarded = coordinator.discard("local", terminal.id)
 
     assert discarded.status == RunStatus.DISCARDED
     assert not backend.cwd.exists()
+
+
+@pytest.mark.asyncio
+async def test_wait_rejects_cross_tenant_cache_access(tmp_path: Path) -> None:
+    backend = FakeBackend(change_file=False)
+    coordinator, repository, _ = _coordinator(tmp_path, backend)
+    started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+
+    with pytest.raises(RunCoordinatorConflict, match="run_not_owned_by_coordinator"):
+        await coordinator.wait("another-tenant", started.id)
+    assert (await coordinator.wait("local", started.id)).status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_discard_allows_failed_start_without_a_worktree_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend(change_file=False)
+    coordinator, repository, runs = _coordinator(tmp_path, backend)
+
+    def fail_create(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("simulated startup failure")
+
+    monkeypatch.setattr(coordinator.worktrees, "create", fail_create)
+    with pytest.raises(RunCoordinatorConflict, match="run_provider_start_failed"):
+        await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    failed = runs.list("local")[0]
+
+    assert coordinator.discard("local", failed.id).status == RunStatus.DISCARDED
+
+
+@pytest.mark.asyncio
+async def test_selected_skill_instructions_are_tenant_scoped_and_added_to_prompt(
+    tmp_path: Path,
+) -> None:
+    backend = FakeBackend(change_file=False)
+    coordinator, repository, _ = _coordinator(tmp_path, backend, FakeSkills())
+    request = _request(repository.id).model_copy(update={"skill_version_id": "skill-1"})  # type: ignore[attr-defined]
+
+    started = await coordinator.start("local", request)
+    await coordinator.wait("local", started.id)
+
+    assert "Authorized skill instructions:" in backend.prompt
+    assert "Always run the focused verification command." in backend.prompt

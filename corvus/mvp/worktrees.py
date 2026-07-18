@@ -139,7 +139,7 @@ class WorktreeManager:
             ).fetchone()
         if row is None:
             raise DomainNotFound("worktree_lease_not_found")
-        return WorktreeLease(
+        lease = WorktreeLease(
             run_id=str(row["run_id"]),
             repository_id=str(row["repository_id"]),
             root=Path(str(row["root_path"])),
@@ -153,35 +153,24 @@ class WorktreeManager:
                 else None
             ),
         )
+        if lease.status == "active":
+            self._validate_active_lease(lease)
+        return lease
 
     def discard(self, lease: WorktreeLease, *, run_terminal: bool) -> WorktreeLease:
         current = self.get(lease.run_id)
+        if not (
+            lease.repository_id == current.repository_id
+            and lease.root == current.root
+            and lease.base_sha == current.base_sha
+            and hmac.compare_digest(lease.ownership_digest, current.ownership_digest)
+        ):
+            raise WorktreeOwnershipError("worktree_ownership_invalid")
         if current.status == "discarded":
             return current
         if not run_terminal:
             raise DomainConflict("worktree_run_still_active")
-        managed_root = self._initialize_root()
-        expected = managed_root / current.repository_id / current.run_id
-        expected_digest = self._ownership_digest(
-            current.run_id,
-            current.repository_id,
-            expected,
-            current.base_sha,
-        )
-        if not hmac.compare_digest(current.ownership_digest, expected_digest):
-            raise WorktreeOwnershipError("worktree_ownership_invalid")
-        if current.root != expected:
-            raise WorktreeOwnershipError("worktree_ownership_invalid")
-        try:
-            canonical_root = current.root.resolve(strict=True)
-        except OSError as exc:
-            raise WorktreeOwnershipError("worktree_ownership_invalid") from exc
-        if (
-            canonical_root != expected
-            or not canonical_root.is_relative_to(managed_root)
-            or path_is_link_or_reparse(canonical_root)
-        ):
-            raise WorktreeOwnershipError("worktree_ownership_invalid")
+        canonical_root = self._validate_active_lease(current)
         with self.store.connect() as connection:
             repository_row = connection.execute(
                 "SELECT canonical_path FROM mvp_repositories WHERE id = ?",
@@ -210,6 +199,31 @@ class WorktreeManager:
                 (discarded_at.isoformat(), current.run_id),
             )
         return self.get(current.run_id)
+
+    def _validate_active_lease(self, lease: WorktreeLease) -> Path:
+        managed_root = self._initialize_root()
+        expected = managed_root / lease.repository_id / lease.run_id
+        expected_digest = self._ownership_digest(
+            lease.run_id,
+            lease.repository_id,
+            expected,
+            lease.base_sha,
+        )
+        if lease.root != expected or not hmac.compare_digest(
+            lease.ownership_digest, expected_digest
+        ):
+            raise WorktreeOwnershipError("worktree_ownership_invalid")
+        try:
+            canonical_root = lease.root.resolve(strict=True)
+        except OSError as exc:
+            raise WorktreeOwnershipError("worktree_ownership_invalid") from exc
+        if (
+            canonical_root != expected
+            or not canonical_root.is_relative_to(managed_root)
+            or path_is_link_or_reparse(canonical_root)
+        ):
+            raise WorktreeOwnershipError("worktree_ownership_invalid")
+        return canonical_root
 
     def _initialize_root(self) -> Path:
         if self._configured_root.exists() and path_is_link_or_reparse(self._configured_root):

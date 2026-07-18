@@ -66,6 +66,12 @@ def test_registers_git_root_and_refreshes_real_state(tmp_path: Path) -> None:
     assert refreshed.snapshot.clean is False
     assert refreshed.snapshot.health == "healthy"
 
+    _run(git, root, "remote", "set-url", "origin", "git@github.com:team/renamed.git")
+    _run(git, root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+    refreshed = service.refresh("local", registered.id)
+    assert refreshed.remote_slug == "team/renamed"
+    assert refreshed.default_branch == "trunk"
+
 
 def test_duplicate_registration_conflicts_and_tenants_are_isolated(tmp_path: Path) -> None:
     root, git = _repository(tmp_path)

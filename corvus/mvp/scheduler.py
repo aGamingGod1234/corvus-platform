@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from corvus.mvp.core import DomainNotFound
 from corvus.mvp.run_coordinator import RunCoordinator, RunCoordinatorConflict
 from corvus.mvp.run_models import RunRecord, StartRunRequest
+from corvus.mvp.run_store import RunStoreNotFound
 from corvus.mvp.schedules import ScheduleClaim, ScheduleRecord, ScheduleStore
 
 
@@ -17,7 +19,7 @@ class LocalScheduler:
         for claim in self.schedules.claim_due(now or datetime.now(UTC)):
             try:
                 run = await self._start_claim(claim)
-            except RunCoordinatorConflict:
+            except (RunCoordinatorConflict, DomainNotFound, RunStoreNotFound):
                 self.schedules.attach_run(claim, None, "skipped")
                 continue
             self.schedules.attach_run(claim, run.id)

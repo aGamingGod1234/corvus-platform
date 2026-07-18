@@ -135,13 +135,10 @@ class ContributionService:
         changed_paths = {item.path for item in all_changes.files}
         if set(normalized_selected) - changed_paths:
             raise ContributionConflict("contribution_paths_not_changed")
-        selected_changes = self.review.snapshot(
-            lease.root,
-            selected_paths=normalized_selected,
-        )
+        selected_changes = self._selected_changes(lease.root, normalized_selected)
         if not selected_changes.files:
             raise ContributionConflict("contribution_paths_invalid")
-        scan = self.scanner.scan(lease.root, normalized_selected)
+        scan = self._scan_selected(lease.root, selected_changes)
         if scan.status == "blocked":
             raise ContributionConflict("contribution_secret_scan_blocked")
         request_payload = {
@@ -208,11 +205,19 @@ class ContributionService:
         if record.state in {"committed", "pushed", "published"}:
             return record
         if record.state == "preparing":
+            self._revalidate_prepare(root, record)
             self._create_or_resume_branch(root, record.branch, base_sha)
             self._set_state(record.run_id, "branch_created")
             record = self._required_for_run(record.run_id)
         if record.state == "branch_created":
-            commit_sha = self._commit_selected(root, record)
+            recovered_paths = self._existing_stage_paths(root, record)
+            if recovered_paths is not None:
+                recovered_sha = self._existing_commit(root, record, recovered_paths)
+                if recovered_sha is not None:
+                    self._set_state(record.run_id, "committed", commit_sha=recovered_sha)
+                    return self._required_for_run(record.run_id)
+            selected_changes = self._revalidate_prepare(root, record)
+            commit_sha = self._commit_selected(root, record, selected_changes)
             self._set_state(record.run_id, "committed", commit_sha=commit_sha)
         return self._required_for_run(record.run_id)
 
@@ -300,23 +305,32 @@ class ContributionService:
         ):
             raise ContributionConflict("contribution_branch_failed")
 
-    def _commit_selected(self, root: Path, record: ContributionRecord) -> str:
-        existing = self._existing_commit(root, record)
+    def _commit_selected(
+        self,
+        root: Path,
+        record: ContributionRecord,
+        changes: ChangeSet,
+    ) -> str:
+        stage_paths = self._stage_paths(changes)
+        existing = self._existing_commit(root, record, stage_paths)
         if existing is not None:
             return existing
         reset = self.git.run(root, ("reset", "--mixed", "HEAD"))
         if reset.returncode != 0:
             raise ContributionConflict("contribution_stage_failed")
-        added = self.git.run(root, ("add", "--", *record.selected_paths))
+        added = self.git.run(root, ("add", "--", *stage_paths))
         if added.returncode != 0:
             raise ContributionConflict("contribution_stage_failed")
-        staged = self.git.run(root, ("diff", "--cached", "--name-only", "-z"))
+        staged = self.git.run(
+            root,
+            ("diff", "--cached", "--name-only", "--no-renames", "-z"),
+        )
         if staged.returncode != 0:
             raise ContributionConflict("contribution_stage_failed")
         staged_paths = {
             item for item in staged.stdout.decode("utf-8", errors="strict").split("\0") if item
         }
-        if staged_paths != set(record.selected_paths):
+        if staged_paths != set(stage_paths):
             raise ContributionConflict("contribution_stage_selection_mismatch")
         committed = self.git.run(root, ("commit", "-m", record.message), timeout=120)
         if committed.returncode != 0:
@@ -326,7 +340,12 @@ class ContributionService:
             raise ContributionConflict("contribution_commit_failed")
         return head.stdout.decode("ascii", errors="strict").strip()
 
-    def _existing_commit(self, root: Path, record: ContributionRecord) -> str | None:
+    def _existing_commit(
+        self,
+        root: Path,
+        record: ContributionRecord,
+        stage_paths: tuple[str, ...],
+    ) -> str | None:
         head = self.git.run(root, ("rev-parse", "--verify", "HEAD"))
         if head.returncode != 0:
             return None
@@ -340,7 +359,16 @@ class ContributionService:
             return None
         message = self.git.run(root, ("log", "-1", "--format=%B"))
         paths = self.git.run(
-            root, ("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD")
+            root,
+            (
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "--no-renames",
+                "-r",
+                "-z",
+                "HEAD",
+            ),
         )
         if message.returncode != 0 or paths.returncode != 0:
             return None
@@ -349,9 +377,70 @@ class ContributionService:
         }
         if message.stdout.decode("utf-8", errors="strict").strip() != record.message:
             return None
-        if changed != set(record.selected_paths):
+        if changed != set(stage_paths):
             return None
         return head_sha
+
+    def _existing_stage_paths(
+        self,
+        root: Path,
+        record: ContributionRecord,
+    ) -> tuple[str, ...] | None:
+        result = self.git.run(
+            root,
+            ("diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "HEAD"),
+        )
+        if result.returncode != 0:
+            return None
+        current_paths: list[str] = []
+        stage_paths: list[str] = []
+        for line in result.stdout.decode("utf-8", errors="strict").splitlines():
+            fields = line.split("\t")
+            if len(fields) == 2 and fields[0][:1] in {"A", "M", "D", "T"}:
+                current_paths.append(fields[1])
+                stage_paths.append(fields[1])
+            elif len(fields) == 3 and fields[0][:1] == "R":
+                current_paths.append(fields[2])
+                stage_paths.extend((fields[2], fields[1]))
+            else:
+                return None
+        if set(current_paths) != set(record.selected_paths):
+            return None
+        return tuple(dict.fromkeys(stage_paths))
+
+    def _selected_changes(self, root: Path, selected_paths: tuple[str, ...]) -> ChangeSet:
+        changes = self.review.snapshot(root, selected_paths=selected_paths)
+        if {item.path for item in changes.files} != set(selected_paths):
+            raise ContributionConflict("contribution_paths_not_changed")
+        return changes
+
+    def _scan_selected(self, root: Path, changes: ChangeSet) -> SecretScanResult:
+        paths = tuple(item.path for item in changes.files)
+        deleted = tuple(item.path for item in changes.files if item.status == "deleted")
+        return self.scanner.scan(root, paths, deleted_paths=deleted)
+
+    def _revalidate_prepare(self, root: Path, record: ContributionRecord) -> ChangeSet:
+        changes = self._selected_changes(root, record.selected_paths)
+        scan = self._scan_selected(root, changes)
+        if scan.status == "blocked":
+            raise ContributionConflict("contribution_secret_scan_blocked")
+        if (
+            changes.digest != record.change_digest
+            or scan.status != record.secret_scan.status
+            or scan.scanned_paths != record.secret_scan.scanned_paths
+            or scan.findings != record.secret_scan.findings
+        ):
+            raise ContributionConflict("contribution_review_changed")
+        return changes
+
+    @staticmethod
+    def _stage_paths(changes: ChangeSet) -> tuple[str, ...]:
+        paths: list[str] = []
+        for item in changes.files:
+            paths.append(item.path)
+            if item.status == "renamed" and item.previous_path is not None:
+                paths.append(item.previous_path)
+        return tuple(dict.fromkeys(paths))
 
     def _for_run(self, run_id: str) -> ContributionRecord | None:
         with self.store.connect() as connection:

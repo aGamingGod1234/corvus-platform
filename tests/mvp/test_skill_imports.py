@@ -54,6 +54,9 @@ def test_preview_import_and_activate_are_digest_bound_and_immutable(tmp_path: Pa
     active = service.activate("local", imported.id)
     assert active.status == "active"
     assert Path(active.package_path, "SKILL.md").is_file()
+    assert "Follow the repository instructions." in service.instructions("local", active.id)
+    with pytest.raises(SkillImportError, match="skill_not_found"):
+        service.instructions("another-tenant", active.id)
     assert (
         package.joinpath("SKILL.md")
         .read_text(encoding="utf-8")
@@ -63,6 +66,10 @@ def test_preview_import_and_activate_are_digest_bound_and_immutable(tmp_path: Pa
     duplicate = service.preview("local", candidate.id)
     assert duplicate.duplicate == "exact"
     assert service.import_draft("local", candidate.id, duplicate.digest).id == imported.id
+
+    Path(active.package_path, "SKILL.md").write_text("tampered", encoding="utf-8")
+    with pytest.raises(SkillImportError, match="skill_package_changed"):
+        service.instructions("local", active.id)
 
 
 def test_changed_candidate_and_blocked_command_cannot_import(tmp_path: Path) -> None:

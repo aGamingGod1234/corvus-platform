@@ -16,6 +16,7 @@ from corvus.infrastructure.agent_runtimes.codex import (
     LocalCodexTextRequest,
 )
 from corvus.mvp.change_review import ChangeReviewService
+from corvus.mvp.core import DomainNotFound
 from corvus.mvp.repository_workspace import RepositoryWorkspaceService
 from corvus.mvp.run_models import RunEvent, RunRecord, RunStatus, StartRunRequest
 from corvus.mvp.run_store import RunStore, RunStoreConflict
@@ -48,6 +49,10 @@ class RepositoryRunBackend(Protocol):
     async def cancel(self, handle: str) -> bool: ...
 
 
+class RunSkillProvider(Protocol):
+    def instructions(self, tenant_id: str, skill_id: str) -> str: ...
+
+
 type EventNotifier = Callable[[RunEvent], Awaitable[None]]
 
 
@@ -60,6 +65,7 @@ class RunCoordinator:
         review: ChangeReviewService,
         backend: RepositoryRunBackend,
         *,
+        skill_provider: RunSkillProvider | None = None,
         event_notifier: EventNotifier | None = None,
     ) -> None:
         self.runs = runs
@@ -67,6 +73,7 @@ class RunCoordinator:
         self.worktrees = worktrees
         self.review = review
         self.backend = backend
+        self.skill_provider = skill_provider
         self.event_notifier = event_notifier
         self._handles: dict[str, str] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -87,6 +94,16 @@ class RunCoordinator:
         )
         if not hmac.compare_digest(preview.policy_digest, request.safety_digest):
             raise RunCoordinatorConflict("run_safety_digest_mismatch")
+        skill_instructions: str | None = None
+        if request.skill_version_id is not None:
+            if self.skill_provider is None:
+                raise RunCoordinatorConflict("run_skill_unavailable")
+            try:
+                skill_instructions = self.skill_provider.instructions(
+                    tenant_id, request.skill_version_id
+                )
+            except RuntimeError as exc:
+                raise RunCoordinatorConflict("run_skill_unavailable") from exc
         repository = self.repositories.refresh(tenant_id, request.repository_id)
         if repository.snapshot.health != "healthy" or not repository.snapshot.head_sha:
             raise RunCoordinatorConflict("run_repository_unavailable")
@@ -108,7 +125,7 @@ class RunCoordinator:
                 run_id=run_id,
                 cwd=lease.root,
                 request=request,
-                prompt=self._prompt(repository.display_name, request),
+                prompt=self._prompt(repository.display_name, request, skill_instructions),
             )
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
@@ -155,7 +172,13 @@ class RunCoordinator:
             raise RunCoordinatorConflict("run_discard_published")
         if current.status == RunStatus.DISCARDED:
             return current
-        self.worktrees.discard(self.worktrees.get(run_id), run_terminal=True)
+        try:
+            lease = self.worktrees.get(run_id)
+        except DomainNotFound:
+            if current.status != RunStatus.FAILED:
+                raise RunCoordinatorConflict("run_worktree_missing") from None
+        else:
+            self.worktrees.discard(lease, run_terminal=True)
         return self.runs.transition(tenant_id, run_id, RunStatus.DISCARDED)
 
     async def cancel(self, tenant_id: str, run_id: str) -> RunRecord:
@@ -181,13 +204,13 @@ class RunCoordinator:
                 return self.runs.transition(tenant_id, run_id, RunStatus.CANCELLED)
             return current
 
-    async def wait(self, run_id: str) -> RunRecord:
+    async def wait(self, tenant_id: str, run_id: str) -> RunRecord:
+        owner = self._owners.get(run_id)
+        if owner is None or not hmac.compare_digest(owner, tenant_id):
+            raise RunCoordinatorConflict("run_not_owned_by_coordinator")
         task = self._tasks.get(run_id)
         if task is not None:
             await task
-        tenant_id = self._owners.get(run_id)
-        if tenant_id is None:
-            raise RunCoordinatorConflict("run_not_owned_by_coordinator")
         return self.runs.get(tenant_id, run_id)
 
     def recover_interrupted(self) -> tuple[RunRecord, ...]:
@@ -268,8 +291,12 @@ class RunCoordinator:
             self.runs.transition(tenant_id, run_id, target)
 
     @staticmethod
-    def _prompt(repository_name: str, request: StartRunRequest) -> str:
-        return (
+    def _prompt(
+        repository_name: str,
+        request: StartRunRequest,
+        skill_instructions: str | None,
+    ) -> str:
+        prompt = (
             "You are working in a Corvus-managed isolated Git worktree for repository "
             f"{repository_name}. Implement the requested task completely in the current working "
             "directory. Inspect existing project instructions, make focused changes, and run "
@@ -279,6 +306,9 @@ class RunCoordinator:
             f"Output policy: {request.output_policy}\n\n"
             f"Task:\n{request.task}"
         )
+        if skill_instructions is not None:
+            prompt += f"\n\nAuthorized skill instructions:\n{skill_instructions}"
+        return prompt
 
 
 class CodexWorkspaceBackend:
