@@ -1,7 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "No Tauri IPC is exposed to the remote loopback operator console.",
+  "description": "The authenticated loopback console can invoke only registered Corvus commands.",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
   "permissions": []
 }

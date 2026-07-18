@@ -12,6 +12,25 @@
   background: var(--paper);
 }
 
+.repositories-workspace { width: 100%; min-height: 0; overflow-y: auto; padding: clamp(1rem, 3vw, 2.5rem); }
+.repository-connect { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: end; margin: 1rem 0 1.5rem; border: 1px solid var(--line); border-radius: .7rem; padding: 1rem; background: var(--raised); }
+.repository-connect label { display: block; margin-bottom: .35rem; color: var(--muted); font-size: .72rem; font-weight: 680; }
+.repository-connect input { width: 100%; min-height: 2.45rem; border: 1px solid var(--line); border-radius: .45rem; padding: 0 .7rem; color: var(--ink); background: var(--paper); }
+.repository-connect__path > div { display: flex; gap: .45rem; }
+.repository-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); gap: .8rem; margin-top: 1rem; }
+.repository-card { min-width: 0; border: 1px solid var(--line); border-radius: .7rem; padding: 1rem; background: var(--raised); }
+.repository-card > header, .repository-card > footer { display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
+.repository-card h2 { margin: 0; font-family: inherit; font-size: .98rem; }
+.repository-card header span, .repository-card > small { display: block; overflow: hidden; color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+.repository-card > small { margin: .85rem 0; }
+.repository-health { border-radius: 999px; padding: .28rem .48rem; color: var(--success) !important; background: color-mix(in oklch, var(--success) 10%, transparent); text-transform: capitalize; }
+.repository-health[data-health="missing"] { color: var(--danger) !important; background: color-mix(in oklch, var(--danger) 10%, transparent); }
+.repository-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin: 0 0 1rem; }
+.repository-card dl div { min-width: 0; }
+.repository-card dt { color: var(--muted); font-size: .66rem; }
+.repository-card dd { overflow: hidden; margin: .15rem 0 0; font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .repository-connect { grid-template-columns: 1fr; } }
+
 .conversation-panel { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; }
 .conversation-panel__header { position: relative; display: flex; gap: 1rem; align-items: center; justify-content: space-between; min-height: 58px; padding: .65rem 1.25rem; border-bottom: 1px solid var(--line); }
 .conversation-panel__header h1 { max-width: 52vw; overflow: hidden; margin: 0; font-family: inherit; font-size: .94rem; font-weight: 680; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }

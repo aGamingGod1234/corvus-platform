@@ -261,6 +261,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Repositories */
+        get: operations["local_repositories_api_local_repositories_get"];
+        put?: never;
+        /** Register Local Repository */
+        post: operations["register_local_repository_api_local_repositories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories/{repository_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Local Repository */
+        delete: operations["remove_local_repository_api_local_repositories__repository_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories/{repository_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Local Repository */
+        post: operations["refresh_local_repository_api_local_repositories__repository_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -1709,6 +1761,62 @@ export interface components {
          * @enum {string}
          */
         RecordStatus: "active" | "suspended" | "revoked" | "archived";
+        /** RepositoryCreateRequest */
+        RepositoryCreateRequest: {
+            /** Display Name */
+            display_name: string;
+            /**
+             * Path
+             * Format: path
+             */
+            path: string;
+        };
+        /** RepositoryRecord */
+        RepositoryRecord: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Default Branch */
+            default_branch: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
+            /** Remote Slug */
+            remote_slug: string | null;
+            snapshot: components["schemas"]["RepositorySnapshot"];
+            /** Tenant Id */
+            tenant_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** RepositorySnapshot */
+        RepositorySnapshot: {
+            /** Ahead */
+            ahead: number;
+            /** Behind */
+            behind: number;
+            /** Branch */
+            branch: string;
+            /** Clean */
+            clean: boolean;
+            /** Head Sha */
+            head_sha: string;
+            /** Health */
+            health: string;
+            /**
+             * Refreshed At
+             * Format: date-time
+             */
+            refreshed_at: string;
+        };
         /** RetrievedMemory */
         RetrievedMemory: {
             /** Context */
@@ -2783,6 +2891,125 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SafetyPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_repositories_api_local_repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"][];
+                };
+            };
+        };
+    };
+    register_local_repository_api_local_repositories_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositoryCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_local_repository_api_local_repositories__repository_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_local_repository_api_local_repositories__repository_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
                 };
             };
             /** @description Validation Error */

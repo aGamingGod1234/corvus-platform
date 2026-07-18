@@ -85,6 +85,28 @@ function fakeApi(projects: Project[] = []): CorvusApi {
     session: vi.fn().mockRejectedValue(new Error("authentication_required")),
     pair: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue(projects),
+    listRepositories: vi.fn().mockResolvedValue(projects.map((project) => ({
+      id: project.id,
+      tenant_id: project.tenant_id,
+      display_name: project.name,
+      path: `C:\\work\\${project.id}`,
+      remote_slug: null,
+      default_branch: "main",
+      created_at: project.created_at,
+      updated_at: project.created_at,
+      snapshot: {
+        branch: "main",
+        head_sha: "a".repeat(40),
+        clean: true,
+        ahead: 0,
+        behind: 0,
+        health: "healthy",
+        refreshed_at: project.created_at
+      }
+    }))),
+    registerRepository: vi.fn(),
+    refreshRepository: vi.fn(),
+    removeRepository: vi.fn(),
     createProject: vi.fn().mockResolvedValue(PROJECT),
     listOutcomes: vi.fn().mockResolvedValue([]),
     createOutcome: vi.fn(),
@@ -177,7 +199,7 @@ describe("Corvus operator console", () => {
     expect(api.session).toHaveBeenCalledTimes(2);
     expect(screen.getByText("paired-operator")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
-    expect(screen.getByRole("row", { name: /Launch control/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Launch control" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
   });
 

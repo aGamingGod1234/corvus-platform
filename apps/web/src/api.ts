@@ -10,6 +10,7 @@ export type ChannelEvent = components["schemas"]["ChannelEventRecord"];
 export type ConversationEntry = components["schemas"]["ConversationEntry"];
 export type Effect = components["schemas"]["EffectRecord"];
 export type MemoryEntry = components["schemas"]["MemoryEntry"];
+export type LocalRepository = components["schemas"]["RepositoryRecord"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
 export type Project = components["schemas"]["Project"];
@@ -28,6 +29,10 @@ export interface CorvusApi {
   session(): Promise<Session>;
   pair(value: string): Promise<void>;
   listProjects(): Promise<Project[]>;
+  listRepositories(): Promise<LocalRepository[]>;
+  registerRepository(path: string, displayName: string): Promise<LocalRepository>;
+  refreshRepository(repositoryId: string): Promise<LocalRepository>;
+  removeRepository(repositoryId: string): Promise<void>;
   createProject(name: string): Promise<Project>;
   listOutcomes(projectId: string): Promise<Outcome[]>;
   createOutcome(projectId: string, title: string, criterion: string): Promise<Outcome>;
@@ -113,6 +118,33 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async listProjects() {
       const result = await client.GET("/api/projects");
       return requireData(result);
+    },
+    async listRepositories() {
+      const result = await client.GET("/api/local/repositories");
+      return requireData(result);
+    },
+    async registerRepository(path, displayName) {
+      const result = await client.POST("/api/local/repositories", {
+        body: { path, display_name: displayName },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async refreshRepository(repositoryId) {
+      const result = await client.POST("/api/local/repositories/{repository_id}/refresh", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async removeRepository(repositoryId) {
+      const result = await client.DELETE("/api/local/repositories/{repository_id}", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      if (result.error) {
+        throw new ApiFailure(result.response.status, readDetail(result.error));
+      }
     },
     async createProject(name) {
       const result = await client.POST("/api/projects", {

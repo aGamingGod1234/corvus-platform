@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -369,8 +370,29 @@ pub fn build_desktop_url(base_url: &str, pairing_secret: &str) -> Result<tauri::
     Ok(url)
 }
 
+#[tauri::command]
+fn select_repository_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    app.dialog()
+        .file()
+        .set_title("Choose a Git repository")
+        .blocking_pick_folder()
+        .map(repository_directory_string)
+        .transpose()
+}
+
+fn repository_directory_string(selected: FilePath) -> Result<String, String> {
+    match selected {
+        FilePath::Path(path) => path
+            .into_os_string()
+            .into_string()
+            .map_err(|_| "repository_directory_not_unicode".to_owned()),
+        FilePath::Url(_) => Err("repository_directory_must_be_local".to_owned()),
+    }
+}
+
 pub fn run() -> Result<(), String> {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -378,6 +400,7 @@ pub fn run() -> Result<(), String> {
                 let _ = window.set_focus();
             }
         }))
+        .invoke_handler(tauri::generate_handler![select_repository_directory])
         .manage(DesktopState::default())
         .setup(|app| setup_app(app).map_err(|error| std::io::Error::other(error).into()))
         .build(tauri::generate_context!())
@@ -690,9 +713,10 @@ mod tests {
 
     use super::{
         SidecarLaunch, SidecarLifecycle, SidecarState, build_desktop_url, capture_bounded_stderr,
-        packaged_sidecar_candidates, readiness_probe, sanitize_diagnostics,
-        select_packaged_sidecar,
+        packaged_sidecar_candidates, readiness_probe, repository_directory_string,
+        sanitize_diagnostics, select_packaged_sidecar,
     };
+    use tauri_plugin_dialog::FilePath;
 
     #[test]
     fn lifecycle_records_ready_reconnect_and_stop() {
@@ -806,6 +830,19 @@ mod tests {
         assert_eq!(
             url.as_str().split('#').next(),
             Some("http://127.0.0.1:8123/")
+        );
+    }
+
+    #[test]
+    fn repository_picker_returns_only_local_paths() {
+        assert_eq!(
+            repository_directory_string(FilePath::Path(PathBuf::from("C:/Corvus"))).unwrap(),
+            "C:/Corvus"
+        );
+        let remote = tauri::Url::parse("https://example.test/repository").unwrap();
+        assert_eq!(
+            repository_directory_string(FilePath::Url(remote)).unwrap_err(),
+            "repository_directory_must_be_local"
         );
     }
 

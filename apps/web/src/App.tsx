@@ -45,6 +45,7 @@ import { BrandLockup } from "./components/Brand";
 import { ConversationWorkspace } from "./app/ConversationWorkspace";
 import { createConversationApi } from "./app/conversationApi";
 import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
+import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -692,11 +693,7 @@ export function App({
   );
   const repositoriesSurface = (
     <RepositoriesWorkspace
-      activeProject={activeProject}
-      busy={busy}
-      onCreate={createProject}
-      onSelect={setActiveProject}
-      projects={projects}
+      api={api}
     />
   );
   const skillsSurface = (
@@ -1124,53 +1121,6 @@ function PairingScreen({
         {error && <p className="inline-error" role="alert">{error}</p>}
       </section>
     </div>
-  );
-}
-
-function RepositoriesWorkspace({
-  activeProject,
-  busy,
-  onCreate,
-  onSelect,
-  projects
-}: {
-  activeProject: Project | null;
-  busy: boolean;
-  onCreate(name: string): Promise<void>;
-  onSelect(project: Project): void;
-  projects: readonly Project[];
-}) {
-  const [creating, setCreating] = useState(projects.length === 0);
-  const [name, setName] = useState("");
-
-  async function submit(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    const nextName = name.trim();
-    if (nextName === "") return;
-    await onCreate(nextName);
-    setName("");
-    setCreating(false);
-  }
-
-  return (
-    <section className="resource-workspace" aria-labelledby="repositories-title">
-      <header className="resource-heading">
-        <div><p className="eyebrow">Local workspace</p><h1 id="repositories-title">Repositories</h1><p>Choose the project boundary Corvus uses for runs, schedules, and skills.</p></div>
-        <button className="button button--primary" onClick={() => setCreating(true)} type="button">New repository</button>
-      </header>
-      {creating ? <form className="resource-create" onSubmit={(event) => void submit(event)}>
-        <div><label htmlFor="repository-name">Repository name</label><input autoFocus id="repository-name" onChange={(event) => setName(event.target.value)} placeholder="Corvus launch demo" value={name} /></div>
-        <div className="row-actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || name.trim() === ""} type="submit">Create repository</button></div>
-      </form> : null}
-      <div className="resource-table" role="table" aria-label="Repositories">
-        <div className="resource-table__header" role="row"><span role="columnheader">Repository</span><span role="columnheader">Runtime</span><span role="columnheader">Status</span></div>
-        {projects.length === 0 ? <div className="resource-empty"><strong>No repositories yet</strong><span>Create one to unlock governed runs and reusable skills.</span></div> : projects.map((project) => (
-          <button aria-pressed={project.id === activeProject?.id} className="resource-row" key={project.id} onClick={() => onSelect(project)} role="row" type="button">
-            <span role="cell"><strong>{project.name}</strong><small>{project.id}</small></span><span role="cell">This computer</span><span role="cell" className="resource-status"><i aria-hidden="true" />{project.id === activeProject?.id ? "Active" : "Ready"}</span>
-          </button>
-        ))}
-      </div>
-    </section>
   );
 }
 
