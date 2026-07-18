@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
@@ -91,6 +92,13 @@ from corvus.mvp.run_coordinator import (
 from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, StartRunRequest
 from corvus.mvp.run_store import RunStore, RunStoreConflict, RunStoreNotFound
 from corvus.mvp.safety import build_safety_preview
+from corvus.mvp.scheduler import LocalScheduler
+from corvus.mvp.schedules import (
+    ScheduleCreateRequest,
+    ScheduleError,
+    ScheduleRecord,
+    ScheduleStore,
+)
 from corvus.mvp.secret_scan import SecretScanner
 from corvus.mvp.skill_imports import (
     PortableSkillVersion,
@@ -610,6 +618,7 @@ def create_app(
                 ).digest(),
             )
     durable_runs = RunStore(service.store)
+    schedules = ScheduleStore(service.store)
     run_workflow = run_coordinator
     if run_workflow is None and repositories is not None and worktrees is not None and git is not None:
         codex_executable = discover_codex_executable()
@@ -631,7 +640,42 @@ def create_app(
                 ChangeReviewService(git),
                 CodexWorkspaceBackend(adapter),
             )
-    app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
+    scheduler = LocalScheduler(schedules, run_workflow) if run_workflow is not None else None
+    scheduler_task: asyncio.Task[None] | None = None
+
+    async def scheduler_loop() -> None:
+        while True:
+            await asyncio.sleep(15)
+            if scheduler is not None:
+                try:
+                    await scheduler.tick()
+                except Exception as error:
+                    # Surface diagnostic state while keeping the local API available.
+                    app.state.scheduler_error = str(error)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        nonlocal scheduler_task
+        if run_workflow is not None:
+            run_workflow.recover_interrupted()
+            scheduler_task = asyncio.create_task(
+                scheduler_loop(), name="corvus-local-scheduler"
+            )
+        try:
+            yield
+        finally:
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except asyncio.CancelledError:
+                    pass
+
+    app = FastAPI(
+        title="Corvus Hackathon MVP API",
+        version="0.2.0-hackathon",
+        lifespan=lifespan,
+    )
     app.middleware("http")(_security_headers)
 
     @app.exception_handler(DomainNotFound)
@@ -668,6 +712,12 @@ def create_app(
             else status.HTTP_409_CONFLICT
         )
         return _error_response(response_status, "skill_import_error", code)
+
+    @app.exception_handler(ScheduleError)
+    async def schedule_error_handler(_request: Request, error: ScheduleError) -> JSONResponse:
+        code = str(error)
+        response_status = status.HTTP_404_NOT_FOUND if code == "schedule_not_found" else status.HTTP_409_CONFLICT
+        return _error_response(response_status, "schedule_error", code)
 
     @app.exception_handler(RunStoreConflict)
     @app.exception_handler(RunCoordinatorConflict)
@@ -749,6 +799,14 @@ def create_app(
                 detail="codex_cli_unavailable",
             )
         return run_workflow
+
+    def local_scheduler() -> LocalScheduler:
+        if scheduler is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_cli_unavailable",
+            )
+        return scheduler
 
     def authorize_local_run(tenant_id: str, run_id: str) -> None:
         with service.store.connect() as connection:
@@ -877,6 +935,52 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> dict[str, Any]:
         return skill_imports.archive(principal.tenant_id, skill_id).model_dump(mode="json")
+
+    @app.get("/api/local/schedules", response_model=list[ScheduleRecord])
+    def local_schedules(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in schedules.list(principal.tenant_id)]
+
+    @app.post(
+        "/api/local/schedules",
+        response_model=ScheduleRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_local_schedule(
+        body: ScheduleCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.create(principal.tenant_id, body).model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/run-now", response_model=RunRecord)
+    async def run_local_schedule_now(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await local_scheduler().run_now(principal.tenant_id, schedule_id)
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/pause", response_model=ScheduleRecord)
+    def pause_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "paused").model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/resume", response_model=ScheduleRecord)
+    def resume_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "active").model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/archive", response_model=ScheduleRecord)
+    def archive_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "archived").model_dump(mode="json")
 
     @app.post(
         "/api/local/repositories",

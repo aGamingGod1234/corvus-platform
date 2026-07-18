@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, time
+from pathlib import Path
+
+from corvus.mvp.repository_workspace import RepositoryWorkspaceService
+from corvus.mvp.schedules import Recurrence, ScheduleCreateRequest, ScheduleStore
+from corvus.mvp.store import SqliteStore
+from tests.mvp.test_run_coordinator import _git, _run
+
+
+def test_recurrence_handles_hourly_weekdays_and_once() -> None:
+    friday = datetime(2026, 7, 17, 9, 30, tzinfo=UTC)
+    assert Recurrence(kind="hourly").next_after(friday, "UTC") == datetime(2026, 7, 17, 10, tzinfo=UTC)
+    weekdays = Recurrence(kind="weekdays", local_time=time(9))
+    assert weekdays.next_after(friday, "UTC") == datetime(2026, 7, 20, 9, tzinfo=UTC)
+    once_at = datetime(2026, 7, 18, 12, tzinfo=UTC)
+    assert Recurrence(kind="once", once_at=once_at).next_after(friday, "UTC") == once_at
+    assert Recurrence(kind="once", once_at=once_at).next_after(once_at, "UTC") is None
+
+
+def test_schedule_store_claims_each_occurrence_once(tmp_path: Path) -> None:
+    git = _git()
+    source = tmp_path / "source"
+    source.mkdir()
+    _run(git, source, "init", "--initial-branch=main")
+    _run(git, source, "config", "user.email", "corvus@example.test")
+    _run(git, source, "config", "user.name", "Corvus Tests")
+    source.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run(git, source, "add", "--", "README.md")
+    _run(git, source, "commit", "-m", "initial")
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository = RepositoryWorkspaceService(store, git).register_local("local", source, "Source")
+    schedules = ScheduleStore(store)
+    now = datetime(2026, 7, 18, 10, 15, tzinfo=UTC)
+    schedule = schedules.create(
+        "local",
+        ScheduleCreateRequest(
+            name="Hourly review",
+            repository_id=repository.id,
+            task="Review changes",
+            recurrence=Recurrence(kind="hourly"),
+            timezone="UTC",
+            mode="chat",
+            safety_digest="a" * 64,
+            output_policy="report_only",
+        ),
+        now=now,
+    )
+    assert schedule.next_run_at == datetime(2026, 7, 18, 11, tzinfo=UTC)
+
+    first = schedules.claim_due(datetime(2026, 7, 18, 11, tzinfo=UTC))
+    assert len(first) == 1
+    assert first[0].scheduled_for == datetime(2026, 7, 18, 11, tzinfo=UTC)
+    assert schedules.claim_due(datetime(2026, 7, 18, 11, tzinfo=UTC)) == ()
+    assert schedules.get("local", schedule.id).next_run_at == datetime(2026, 7, 18, 12, tzinfo=UTC)
+
+
+def test_schedule_pause_resume_and_archive(tmp_path: Path) -> None:
+    git = _git()
+    source = tmp_path / "source"
+    source.mkdir()
+    _run(git, source, "init", "--initial-branch=main")
+    _run(git, source, "config", "user.email", "corvus@example.test")
+    _run(git, source, "config", "user.name", "Corvus Tests")
+    source.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run(git, source, "add", "--", "README.md")
+    _run(git, source, "commit", "-m", "initial")
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository = RepositoryWorkspaceService(store, git).register_local("local", source, "Source")
+    schedules = ScheduleStore(store)
+    record = schedules.create("local", ScheduleCreateRequest(
+        name="Daily", repository_id=repository.id, task="Inspect", recurrence=Recurrence(kind="daily", local_time=time(9)), timezone="UTC", mode="chat", safety_digest="a" * 64, output_policy="report_only"
+    ))
+    assert schedules.set_status("local", record.id, "paused").status == "paused"
+    assert schedules.set_status("local", record.id, "active").status == "active"
+    assert schedules.set_status("local", record.id, "archived").status == "archived"

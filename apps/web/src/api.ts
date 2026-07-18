@@ -20,6 +20,7 @@ export type LocalSafetyPreview = components["schemas"]["SafetyPreviewResponse"];
 export type PortableSkill = components["schemas"]["PortableSkillVersion"];
 export type SkillImportCandidate = components["schemas"]["SkillCandidate"];
 export type SkillImportPreview = components["schemas"]["SkillImportPreview"];
+export type LocalSchedule = components["schemas"]["ScheduleRecord"];
 export type LocalWorktree = components["schemas"]["LocalWorktreeResponse"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
@@ -67,6 +68,23 @@ export interface CorvusApi {
   importPortableSkill(candidateId: string, expectedDigest: string): Promise<PortableSkill>;
   activatePortableSkill(skillId: string): Promise<PortableSkill>;
   archivePortableSkill(skillId: string): Promise<PortableSkill>;
+  listLocalSchedules(): Promise<LocalSchedule[]>;
+  createLocalSchedule(input: {
+    name: string;
+    repositoryId: string;
+    task: string;
+    recurrence: { kind: "once" | "hourly" | "daily" | "weekdays" | "weekly"; local_time?: string; weekdays: number[]; once_at?: string };
+    timezone: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    mode: "chat" | "build";
+    safetyDigest: string;
+    skillVersionId?: string;
+    outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
+  }): Promise<LocalSchedule>;
+  runLocalScheduleNow(scheduleId: string): Promise<LocalRun>;
+  pauseLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
+  resumeLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
+  archiveLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
   getRunChanges(runId: string): Promise<ChangeSet>;
   getContribution(runId: string): Promise<Contribution>;
   prepareContribution(
@@ -283,6 +301,47 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async archivePortableSkill(skillId) {
       return requireData(await client.POST("/api/local/skills/{skill_id}/archive", {
         params: { path: { skill_id: skillId } }, headers: mutationHeaders()
+      }));
+    },
+    async listLocalSchedules() {
+      return requireData(await client.GET("/api/local/schedules"));
+    },
+    async createLocalSchedule(input) {
+      return requireData(await client.POST("/api/local/schedules", {
+        body: {
+          name: input.name,
+          repository_id: input.repositoryId,
+          task: input.task,
+          recurrence: input.recurrence,
+          timezone: input.timezone,
+          provider: "codex",
+          effort: input.effort,
+          mode: input.mode,
+          safety_digest: input.safetyDigest,
+          skill_version_id: input.skillVersionId,
+          output_policy: input.outputPolicy
+        },
+        headers: mutationHeaders()
+      }));
+    },
+    async runLocalScheduleNow(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/run-now", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async pauseLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/pause", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async resumeLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/resume", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async archiveLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/archive", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
       }));
     },
     async getRunChanges(runId) {

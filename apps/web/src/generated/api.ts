@@ -518,6 +518,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Schedules */
+        get: operations["local_schedules_api_local_schedules_get"];
+        put?: never;
+        /** Create Local Schedule */
+        post: operations["create_local_schedule_api_local_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Local Schedule */
+        post: operations["archive_local_schedule_api_local_schedules__schedule_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Local Schedule */
+        post: operations["pause_local_schedule_api_local_schedules__schedule_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Local Schedule */
+        post: operations["resume_local_schedule_api_local_schedules__schedule_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Local Schedule Now */
+        post: operations["run_local_schedule_now_api_local_schedules__schedule_id__run_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/local/skills": {
         parameters: {
             query?: never;
@@ -2224,6 +2310,23 @@ export interface components {
          * @enum {string}
          */
         RecordStatus: "active" | "suspended" | "revoked" | "archived";
+        /** Recurrence */
+        Recurrence: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "once" | "hourly" | "daily" | "weekdays" | "weekly";
+            /** Local Time */
+            local_time?: string | null;
+            /** Once At */
+            once_at?: string | null;
+            /**
+             * Weekdays
+             * @default []
+             */
+            weekdays: number[];
+        };
         /** RepositoryCreateRequest */
         RepositoryCreateRequest: {
             /** Display Name */
@@ -2496,6 +2599,111 @@ export interface components {
              * @enum {string}
              */
             status: "completed" | "failed" | "cancelled";
+        };
+        /** ScheduleCreateRequest */
+        ScheduleCreateRequest: {
+            /**
+             * Effort
+             * @default high
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /**
+             * Mode
+             * @default build
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Output Policy
+             * @default prepare_changes
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @default codex
+             * @constant
+             */
+            provider: "codex";
+            recurrence: components["schemas"]["Recurrence"];
+            /** Repository Id */
+            repository_id: string;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Skill Version Id */
+            skill_version_id?: string | null;
+            /** Task */
+            task: string;
+            /** Timezone */
+            timezone: string;
+        };
+        /** ScheduleRecord */
+        ScheduleRecord: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /** Id */
+            id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model: string | null;
+            /** Name */
+            name: string;
+            /** Next Run At */
+            next_run_at: string | null;
+            /**
+             * Output Policy
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "codex";
+            recurrence: components["schemas"]["Recurrence"];
+            /** Repository Id */
+            repository_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Skill Version Id */
+            skill_version_id: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "paused" | "archived";
+            /** Task */
+            task: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** Timezone */
+            timezone: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
         };
         /** SecretFinding */
         SecretFinding: {
@@ -4128,6 +4336,193 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_schedules_api_local_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"][];
+                };
+            };
+        };
+    };
+    create_local_schedule_api_local_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_local_schedule_api_local_schedules__schedule_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_local_schedule_api_local_schedules__schedule_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_local_schedule_api_local_schedules__schedule_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_local_schedule_now_api_local_schedules__schedule_id__run_now_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

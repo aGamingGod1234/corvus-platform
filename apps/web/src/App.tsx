@@ -48,6 +48,7 @@ import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
 import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
 import { RunsWorkspace } from "./app/RunsWorkspace";
 import { PortableSkillsWorkspace } from "./app/PortableSkillsWorkspace";
+import { SchedulesWorkspace } from "./app/SchedulesWorkspace";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -744,14 +745,7 @@ export function App({
             storageScope={localSession.user_id}
           />
         ) : localSurface === "schedule" ? (
-          <RoutinesWorkspace
-            busy={busy}
-            onCreate={createRoutine}
-            onRun={runRoutine}
-            projectName={activeProject?.name ?? null}
-            routines={operations.routines}
-            skills={operations.skills}
-          />
+          <SchedulesWorkspace api={api} onOpenRun={() => setActiveRoute("runs")} />
         ) : localSurface === "settings" ? (
           <SettingsPanel
             api={createConversationApi(localSession.csrf_token)}
