@@ -144,6 +144,8 @@ class LocalCodexTextRequest:
     mode: Literal["chat", "build"] = "chat"
     mcp_enabled: bool = False
     max_output_bytes: int = 100_000
+    workspace: Path | None = None
+    package_artifact: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +177,7 @@ class _RunSession:
         *,
         scratch: Path,
         mode: Literal["chat", "build"],
+        package_artifact: bool,
     ) -> None:
         self.process = process
         self.events: list[AgentRunEvent] = []
@@ -184,6 +187,7 @@ class _RunSession:
         self.stream_complete = False
         self.scratch = scratch
         self.mode = mode
+        self.package_artifact = package_artifact
         self.artifact: LocalBuildArtifact | None = None
         self.provider_completed = False
 
@@ -197,12 +201,16 @@ class CodexCliAdapter(AgentRuntimePort):
         executable: Path,
         version: str,
         scratch_root: Path,
+        approved_workspace_roots: tuple[Path, ...] = (),
         clock: Callable[[], datetime],
         session_starter: SessionStarter = _start_process_session,
     ) -> None:
         self._executable = executable.resolve(strict=False)
         self._version = version
         self._scratch_root = scratch_root.resolve(strict=False)
+        self._approved_workspace_roots = tuple(
+            root.resolve(strict=False) for root in approved_workspace_roots
+        )
         self._clock = clock
         self._session_starter = session_starter
         self._bindings: dict[UUID, ProviderBinding] = {}
@@ -276,6 +284,8 @@ class CodexCliAdapter(AgentRuntimePort):
             idempotency_key=request.idempotency_key,
             deadline=request.deadline,
             max_output_bytes=request.max_output_bytes,
+            workspace=None,
+            package_artifact=True,
         )
 
     async def start_local_text(
@@ -295,6 +305,8 @@ class CodexCliAdapter(AgentRuntimePort):
             idempotency_key=request.idempotency_key,
             deadline=request.deadline,
             max_output_bytes=request.max_output_bytes,
+            workspace=request.workspace,
+            package_artifact=request.package_artifact,
         )
 
     async def _start_text(
@@ -310,6 +322,8 @@ class CodexCliAdapter(AgentRuntimePort):
         idempotency_key: str,
         deadline: datetime,
         max_output_bytes: int,
+        workspace: Path | None,
+        package_artifact: bool,
     ) -> AgentRunStartResult:
         existing = self._idempotency_handles.get(idempotency_key)
         if existing is not None:
@@ -318,8 +332,21 @@ class CodexCliAdapter(AgentRuntimePort):
             raise CodexAdapterError("codex_prompt_required")
         if model is not None and _MODEL_PATTERN.fullmatch(model) is None:
             raise CodexAdapterError("codex_model_invalid")
-        scratch = self._scratch_root / str(run_id)
-        scratch.mkdir(parents=True, exist_ok=False)
+        if workspace is None:
+            scratch = self._scratch_root / str(run_id)
+            scratch.mkdir(parents=True, exist_ok=False)
+        else:
+            try:
+                scratch = workspace.resolve(strict=True)
+            except OSError as exc:
+                raise CodexAdapterError("codex_workspace_unavailable") from exc
+            if not scratch.is_dir() or path_is_link_or_reparse(scratch):
+                raise CodexAdapterError("codex_workspace_unavailable")
+            if not any(
+                scratch.is_relative_to(root.resolve(strict=True))
+                for root in self._approved_workspace_roots
+            ):
+                raise CodexAdapterError("codex_workspace_unapproved")
         sandbox = "workspace-write" if mode == "build" else "read-only"
         arguments = [
             "exec",
@@ -369,7 +396,7 @@ class CodexCliAdapter(AgentRuntimePort):
             executable_sha256=binding.executable_identity.sha256_digest,  # type: ignore[union-attr]
             arguments=tuple(arguments),
             cwd=scratch,
-            approved_roots=(self._scratch_root,),
+            approved_roots=(scratch,),
             environment=MappingProxyType({"NO_COLOR": "1"}),
             limits=limits,
         )
@@ -383,7 +410,12 @@ class CodexCliAdapter(AgentRuntimePort):
             created_at=self._clock(),
             state=AgentRunState.RUNNING,
         )
-        run_session = _RunSession(process, scratch=scratch, mode=mode)
+        run_session = _RunSession(
+            process,
+            scratch=scratch,
+            mode=mode,
+            package_artifact=package_artifact,
+        )
         self._sessions[handle.id] = run_session
         self._idempotency_handles[idempotency_key] = handle
         return AgentRunStartResult(handle=handle, replayed=False)
@@ -618,7 +650,7 @@ class CodexCliAdapter(AgentRuntimePort):
                     session.terminal_state = AgentRunState.FAILED
                     terminal = True
                     continue
-                if session.mode == "build":
+                if session.mode == "build" and session.package_artifact:
                     try:
                         session.artifact = _package_workspace(session.scratch, handle.run_id)
                     except CodexAdapterError as error:
