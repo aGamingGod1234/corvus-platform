@@ -30,22 +30,34 @@ function storageKey(workspaceId: string): string {
   return `${DEVICE_PREFERENCES_KEY_PREFIX}.${workspaceId}`;
 }
 
-function isDevicePreferences(value: unknown): value is DevicePreferences {
-  if (typeof value !== "object" || value === null) return false;
+function normalizeDevicePreferences(value: unknown): DevicePreferences | null {
+  if (typeof value !== "object" || value === null) return null;
   const candidate = value as Record<string, unknown>;
-  return (
+  const baseIsValid = (
     candidate.version === DEVICE_PREFERENCES_VERSION &&
     (candidate.theme === "system" || candidate.theme === "light" || candidate.theme === "dark") &&
     (candidate.responseTone === "concise" ||
       candidate.responseTone === "balanced" ||
       candidate.responseTone === "detailed") &&
     typeof candidate.customRules === "string" &&
-    typeof candidate.mcpNotes === "string" &&
-    (candidate.sendKeyMode === "adaptive" ||
-      candidate.sendKeyMode === "enter" ||
-      candidate.sendKeyMode === "ctrl-enter") &&
-    (candidate.safetyGuidance === "standard" || candidate.safetyGuidance === "detailed")
+    typeof candidate.mcpNotes === "string"
   );
+  const sendKeyModeIsValid = candidate.sendKeyMode === undefined ||
+      candidate.sendKeyMode === "adaptive" ||
+      candidate.sendKeyMode === "enter" ||
+      candidate.sendKeyMode === "ctrl-enter";
+  const safetyGuidanceIsValid = candidate.safetyGuidance === undefined ||
+    candidate.safetyGuidance === "standard" || candidate.safetyGuidance === "detailed";
+  if (!baseIsValid || !sendKeyModeIsValid || !safetyGuidanceIsValid) return null;
+  return {
+    version: DEVICE_PREFERENCES_VERSION,
+    theme: candidate.theme as ThemePreference,
+    responseTone: candidate.responseTone as ResponseTone,
+    customRules: candidate.customRules as string,
+    mcpNotes: candidate.mcpNotes as string,
+    sendKeyMode: (candidate.sendKeyMode ?? DEFAULT_DEVICE_PREFERENCES.sendKeyMode) as SendKeyMode,
+    safetyGuidance: (candidate.safetyGuidance ?? DEFAULT_DEVICE_PREFERENCES.safetyGuidance) as SafetyGuidance
+  };
 }
 
 export function loadDevicePreferences(storage: Storage, workspaceId: string): DevicePreferences {
@@ -54,7 +66,8 @@ export function loadDevicePreferences(storage: Storage, workspaceId: string): De
   if (serialized === null) return { ...DEFAULT_DEVICE_PREFERENCES };
   try {
     const parsed = JSON.parse(serialized) as unknown;
-    if (isDevicePreferences(parsed)) return parsed;
+    const normalized = normalizeDevicePreferences(parsed);
+    if (normalized !== null) return normalized;
   } catch {
     // Invalid device-only data is removed below and never becomes runtime authority.
   }

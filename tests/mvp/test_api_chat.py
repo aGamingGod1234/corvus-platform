@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -65,3 +67,107 @@ async def test_api_chat_rejects_build_and_mcp_without_a_sandbox_adapter() -> Non
             mcp_enabled=True,
             idempotency_key="api-build-denied",
         )
+
+
+@pytest.mark.asyncio
+async def test_openai_api_chat_normalizes_default_effort_and_rejects_max() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        bodies.append(httpx.Response(200, request=request, content=request.content).json())
+        return httpx.Response(200, text='data: {"type":"response.completed"}\n', request=request)
+
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Reason carefully",
+        model="gpt-5.6-sol",
+        effort="normal",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-normal-effort",
+    )
+
+    _events = [event async for event in backend.events(handle)]
+
+    assert bodies[0]["reasoning"] == {"effort": "medium"}
+    with pytest.raises(ApiChatError, match="provider_effort_unavailable"):
+        await backend.start(
+            run_id=uuid4(),
+            prompt="Reason past supported bounds",
+            model="gpt-5.6-sol",
+            effort="max",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="api-max-effort",
+        )
+
+
+@pytest.mark.asyncio
+async def test_api_chat_cancel_closes_a_stalled_provider_stream() -> None:
+    class _StalledResponse:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def __aenter__(self) -> _StalledResponse:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            await self.aclose()
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self):
+            self.started.set()
+            await self.closed.wait()
+            if False:
+                yield ""
+
+        async def aclose(self) -> None:
+            self.closed.set()
+
+    class _StalledClient:
+        def __init__(self, response: _StalledResponse) -> None:
+            self.response = response
+
+        async def __aenter__(self) -> _StalledClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        def stream(self, *_args: object, **_kwargs: object) -> _StalledResponse:
+            return self.response
+
+    response = _StalledResponse()
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: _StalledClient(response),  # type: ignore[arg-type]
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Wait for a slow response",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-cancel-stream",
+    )
+    events = backend.events(handle)
+    assert (await anext(events)).type == "started"
+    next_event = asyncio.create_task(anext(events))
+    await response.started.wait()
+
+    assert await backend.cancel(handle) is True
+
+    assert (await asyncio.wait_for(next_event, timeout=0.2)).type == "cancelled"
+    assert response.closed.is_set()

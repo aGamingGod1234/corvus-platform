@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi.testclient import TestClient
 
 from corvus.mvp.api import create_app
@@ -87,6 +88,34 @@ def test_pairing_cookie_tracks_the_transport_security(tmp_path: Path) -> None:
     assert "SameSite=strict" in http_cookie
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+    ],
+)
+def test_default_vite_origins_are_trusted(tmp_path: Path, origin: str) -> None:
+    bootstrap_token = secrets.token_urlsafe(32)
+    app = create_app(
+        database=tmp_path / "default-vite-origin.sqlite3",
+        bootstrap_token=bootstrap_token,
+        session_secret=secrets.token_bytes(32),
+    )
+    client = TestClient(app)
+    csrf = _pair(client, bootstrap_token)
+
+    response = client.post(
+        "/api/projects",
+        json={"name": "Vite origin"},
+        headers={"Origin": origin, "X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 201
+
+
 def test_origins_remain_fail_closed_and_explicitly_configurable(tmp_path: Path) -> None:
     default_token = secrets.token_urlsafe(32)
     configured_token = secrets.token_urlsafe(32)
@@ -102,7 +131,7 @@ def test_origins_remain_fail_closed_and_explicitly_configurable(tmp_path: Path) 
             "/api/projects",
             json={"name": "Rejected origin"},
             headers={
-                "Origin": "http://127.0.0.1:4173",
+                "Origin": "http://127.0.0.1:9999",
                 "X-CSRF-Token": default_csrf,
             },
         ).status_code

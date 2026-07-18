@@ -333,9 +333,11 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
 
   async function stop(): Promise<void> {
     if (runId === null) return;
+    const activeRunId = runId;
     setBusy(true);
     try {
-      const result = await api.cancelRun(runId);
+      const result = await api.cancelRun(activeRunId);
+      loadSafetyReceipt(activeRunId);
       finishRun(result.state === "cancelled" ? "cancelled" : result.state);
     } catch (reason) { setError(safeMessage(reason)); }
     finally { setBusy(false); }

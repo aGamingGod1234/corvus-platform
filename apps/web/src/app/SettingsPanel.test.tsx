@@ -89,6 +89,25 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("Not connected")).toBeVisible();
   });
 
+  it("disables API credential entry without a local credential runtime", async () => {
+    render(
+      <SettingsPanel
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-hosted"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+
+    expect(screen.getByLabelText("OpenAI API key")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Connect OpenAI" })).toBeDisabled();
+    expect(screen.getByText(/open Corvus desktop to manage API credentials/i)).toBeVisible();
+  });
+
   it("uses the discovered model name instead of a vague provider default", async () => {
     const api = settingsApi();
     vi.mocked(api.getPreferences).mockResolvedValue({

@@ -323,6 +323,7 @@ describe("ConversationWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: "Stop" }));
 
     await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith("run-1"));
+    await waitFor(() => expect(api.getSafetyReceipt).toHaveBeenCalledWith("run-1"));
     expect(screen.getByText("Cancelled")).toBeVisible();
     expect(stream.close).toHaveBeenCalled();
   });

@@ -38,4 +38,23 @@ describe("device preferences", () => {
     expect(loadDevicePreferences(storage, "workspace-a")).toEqual(DEFAULT_DEVICE_PREFERENCES);
     expect(storage.getItem("corvus.device-preferences.v1.workspace-a")).toBeNull();
   });
+
+  it("migrates original v1 preferences without losing existing settings", () => {
+    const storage = new MemoryStorage();
+    storage.setItem("corvus.device-preferences.v1.workspace-a", JSON.stringify({
+      version: 1,
+      theme: "dark",
+      responseTone: "concise",
+      customRules: "Keep the original rule.",
+      mcpNotes: "Keep the original MCP note."
+    }));
+
+    expect(loadDevicePreferences(storage, "workspace-a")).toEqual({
+      ...DEFAULT_DEVICE_PREFERENCES,
+      theme: "dark",
+      responseTone: "concise",
+      customRules: "Keep the original rule.",
+      mcpNotes: "Keep the original MCP note."
+    });
+  });
 });

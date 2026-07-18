@@ -57,3 +57,17 @@ def test_ready_codex_always_has_curated_models_when_cli_config_is_empty() -> Non
 
     assert [model.id for model in codex.models] == ["gpt-5.6-sol", "gpt-5.6-terra"]
     assert codex.models[0].recommended is True
+
+
+def test_single_token_codex_model_keeps_a_visible_label() -> None:
+    catalog = build_provider_catalog(
+        codex_available=True,
+        claude_available=False,
+        codex_models=("o3",),
+        codex_effective_model="o3",
+    )
+
+    codex = next(provider for provider in catalog if provider.id == "codex")
+
+    assert codex.models[0].id == "o3"
+    assert codex.models[0].label == "o3"

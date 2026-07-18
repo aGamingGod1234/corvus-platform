@@ -131,6 +131,8 @@ def _codex_models(
 
 def _model_label(model: str) -> str:
     parts = model.split("-")
+    if len(parts) == 1:
+        return model
     if parts and parts[0].lower() == "gpt":
         parts[0] = "GPT"
-    return "-".join(parts[:-1]) + (f" {parts[-1].title()}" if len(parts) > 1 else "")
+    return "-".join(parts[:-1]) + f" {parts[-1].title()}"

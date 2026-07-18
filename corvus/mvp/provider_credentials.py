@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, TypedDict, cast
 
@@ -109,6 +110,9 @@ class ProviderCredentialService:
                 _account(owner, provider_id),
             )
         except Exception as error:
+            environment_credential = os.environ.get(_ENVIRONMENT_KEYS[provider_id], "").strip()
+            if environment_credential:
+                return environment_credential
             raise ProviderCredentialError("secure_storage_unavailable") from error
         credential = stored or os.environ.get(_ENVIRONMENT_KEYS[provider_id], "")
         if not credential.strip():
@@ -186,6 +190,45 @@ def _model_ids(provider: ProviderCredentialId, payload: Any) -> list[str]:
         if not isinstance(raw_model, dict):
             continue
         candidate = raw_model.get("name" if provider == "gemini" else "id")
-        if isinstance(candidate, str) and candidate.strip():
+        if (
+            isinstance(candidate, str)
+            and candidate.strip()
+            and _is_chat_capable_model(provider, raw_model, candidate)
+        ):
             ids.append(candidate.removeprefix("models/").strip())
     return list(dict.fromkeys(ids))[:200]
+
+
+def _is_chat_capable_model(
+    provider: ProviderCredentialId,
+    raw_model: dict[str, Any],
+    candidate: str,
+) -> bool:
+    normalized = candidate.removeprefix("models/").strip().lower()
+    if provider == "openai":
+        if any(
+            marker in normalized
+            for marker in (
+                "audio",
+                "dall-e",
+                "embedding",
+                "image",
+                "moderation",
+                "realtime",
+                "transcribe",
+                "tts",
+                "whisper",
+            )
+        ):
+            return False
+        return normalized.startswith(("gpt-", "chatgpt-", "codex-")) or bool(
+            re.fullmatch(r"o\d+(?:[-.].+)?", normalized)
+        )
+    if provider == "anthropic":
+        return normalized.startswith("claude-")
+    if provider == "xai":
+        return normalized.startswith("grok-")
+    methods = raw_model.get("supportedGenerationMethods")
+    return isinstance(methods, list) and any(
+        method in {"generateContent", "streamGenerateContent"} for method in methods
+    )

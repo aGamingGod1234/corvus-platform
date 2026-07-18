@@ -466,8 +466,12 @@ def create_app(
             {
                 "http://127.0.0.1:8080",
                 "http://localhost:8080",
+                "http://127.0.0.1:3000",
+                "http://localhost:3000",
                 "http://127.0.0.1:5173",
                 "http://localhost:5173",
+                "http://127.0.0.1:4173",
+                "http://localhost:4173",
             }
         )
     )
@@ -757,7 +761,7 @@ def create_app(
                         for index, model in enumerate(provider_models)
                     ],
                     "thinking_levels": (
-                        ["low", "medium", "high", "xhigh", "max"] if provider == "openai" else []
+                        ["low", "medium", "high", "xhigh"] if provider == "openai" else []
                     ),
                     "supports_mcp": False,
                 }

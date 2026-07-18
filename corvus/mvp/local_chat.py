@@ -133,11 +133,9 @@ class LocalChatService:
         if backend is not None and backends is not None:
             raise ValueError("local_chat_backend_ambiguous")
         configured = dict(backends or ({"codex": backend} if backend is not None else {}))
-        if not configured:
-            raise ValueError("local_chat_backend_required")
         self._backends = configured
         self._owner_backends: dict[tuple[str, str], LocalChatBackend] = {}
-        self._backend = configured.get("codex") or next(iter(configured.values()))
+        self._backend = configured.get("codex") or next(iter(configured.values()), None)
         self._cursor_secret = cursor_secret
         self._clock = clock or (lambda: datetime.now(UTC))
         self._runs: dict[UUID, _RunRecord] = {}
@@ -633,11 +631,9 @@ def build_default_local_chat_service(
     *,
     scratch_root: Path,
     cursor_secret: bytes,
-) -> LocalChatService | None:
+) -> LocalChatService:
     codex_executable = _discover_codex_executable()
     claude_executable = _discover_claude_executable()
-    if codex_executable is None and claude_executable is None:
-        return None
 
     def clock() -> datetime:
         return datetime.now(UTC)

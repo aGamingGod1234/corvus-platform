@@ -56,6 +56,7 @@ class ApiChatBackend:
         )
         self._requests: dict[UUID, _ApiRequest] = {}
         self._cancelled: set[UUID] = set()
+        self._active_responses: dict[UUID, httpx.Response] = {}
 
     def __repr__(self) -> str:
         return f"<ApiChatBackend provider={self._provider}>"
@@ -76,6 +77,10 @@ class ApiChatBackend:
             raise ApiChatError("provider_mode_unavailable")
         if model is None or not model.strip():
             raise ApiChatError("provider_model_required")
+        if self._provider == "openai":
+            effort = "medium" if effort == "normal" else effort
+            if effort not in {"low", "medium", "high", "xhigh"}:
+                raise ApiChatError("provider_effort_unavailable")
         handle = LocalChatBackendHandle(id=run_id, run_id=run_id)
         self._requests[handle.id] = _ApiRequest(
             prompt=prompt,
@@ -95,6 +100,7 @@ class ApiChatBackend:
         sequence = 1
         if sequence > after_sequence:
             yield LocalChatBackendEvent(sequence, self._clock(), "started", {"status": "started"})
+        request_failed = False
         try:
             async with self._http_client_factory() as client:
                 async with client.stream(
@@ -103,24 +109,32 @@ class ApiChatBackend:
                     headers=self._headers(),
                     json=self._body(request),
                 ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if handle.id in self._cancelled:
+                    self._active_responses[handle.id] = response
+                    try:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if handle.id in self._cancelled:
+                                break
+                            text = self._text_delta(line)
+                            if not text:
+                                continue
                             sequence += 1
                             if sequence > after_sequence:
                                 yield LocalChatBackendEvent(
-                                    sequence, self._clock(), "cancelled", {"status": "cancelled"}
+                                    sequence, self._clock(), "message", {"text": text}
                                 )
-                            return
-                        text = self._text_delta(line)
-                        if not text:
-                            continue
-                        sequence += 1
-                        if sequence > after_sequence:
-                            yield LocalChatBackendEvent(
-                                sequence, self._clock(), "message", {"text": text}
-                            )
+                    finally:
+                        self._active_responses.pop(handle.id, None)
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
+            request_failed = True
+        if handle.id in self._cancelled:
+            sequence += 1
+            if sequence > after_sequence:
+                yield LocalChatBackendEvent(
+                    sequence, self._clock(), "cancelled", {"status": "cancelled"}
+                )
+            return
+        if request_failed:
             sequence += 1
             if sequence > after_sequence:
                 yield LocalChatBackendEvent(
@@ -140,6 +154,9 @@ class ApiChatBackend:
         if handle.id not in self._requests:
             raise ApiChatError("provider_handle_unknown")
         self._cancelled.add(handle.id)
+        response = self._active_responses.get(handle.id)
+        if response is not None:
+            await response.aclose()
         return True
 
     def artifact(self, handle: LocalChatBackendHandle) -> None:

@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
+from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
 from corvus.mvp.local_chat import (
@@ -476,6 +477,53 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     assert catalog["gemini"]["status"] == "unavailable"
     assert catalog["xai"]["status"] == "unavailable"
     assert "path" not in response.text.lower()
+
+
+def test_api_chat_starts_without_any_local_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(local_chat_module, "_discover_codex_executable", lambda: None)
+    monkeypatch.setattr(local_chat_module, "_discover_claude_executable", lambda: None)
+    backend = _Backend()
+    monkeypatch.setattr(api_module, "ApiChatBackend", lambda **_kwargs: backend)
+    credentials = ProviderCredentialService(keyring=_MemoryKeyring())
+    token = "bootstrap-api-only"  # noqa: S105
+    client = TestClient(
+        create_app(
+            database=tmp_path / "api-only.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            provider_credentials=credentials,
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    csrf = client.get("/api/auth/session").json()["csrf_token"]
+    connected = client.put(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+        json={"credential": "sk-test-api-only"},
+    )
+
+    providers = client.get("/api/local-chat/providers")
+    started = client.post(
+        "/api/local-chat/runs",
+        headers={"X-CSRF-Token": csrf, "Idempotency-Key": "api-only-run"},
+        json={
+            "prompt": "Hello from an API-only machine",
+            "provider": "openai",
+            "model": "gpt-5.6-sol",
+            "effort": "medium",
+            "mode": "chat",
+            "mcp_enabled": False,
+        },
+    )
+
+    assert connected.status_code == 200
+    assert providers.status_code == 200
+    assert "openai" in {entry["id"] for entry in providers.json()}
+    assert started.status_code == 202
+    assert backend.starts == 1
 
 
 def test_provider_credentials_api_is_authenticated_csrf_protected_and_write_only(
