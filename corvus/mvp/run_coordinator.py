@@ -73,7 +73,13 @@ class RunCoordinator:
         self._owners: dict[str, str] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
-    async def start(self, tenant_id: str, request: StartRunRequest) -> RunRecord:
+    async def start(
+        self,
+        tenant_id: str,
+        request: StartRunRequest,
+        *,
+        retry_of_run_id: str | None = None,
+    ) -> RunRecord:
         preview = build_safety_preview(
             provider=request.provider,
             mode=request.mode,
@@ -90,6 +96,7 @@ class RunCoordinator:
             request,
             base_sha=repository.snapshot.head_sha,
             run_id=run_id,
+            retry_of_run_id=retry_of_run_id,
         )
         try:
             lease = self.worktrees.create(
@@ -117,6 +124,39 @@ class RunCoordinator:
             name=f"corvus-durable-run-{run_id}",
         )
         return running
+
+    async def retry(self, tenant_id: str, run_id: str) -> RunRecord:
+        original = self.runs.get(tenant_id, run_id)
+        if original.status not in {
+            RunStatus.CANCELLED,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.COMPLETED,
+        }:
+            raise RunCoordinatorConflict("run_retry_unavailable")
+        request = StartRunRequest(
+            repository_id=original.repository_id,
+            task=original.task,
+            provider=original.provider,
+            model=original.model,
+            effort=original.effort,
+            mode=original.mode,
+            safety_digest=original.safety_digest,
+            skill_version_id=original.skill_version_id,
+            output_policy=original.output_policy,
+        )
+        return await self.start(tenant_id, request, retry_of_run_id=original.id)
+
+    def discard(self, tenant_id: str, run_id: str) -> RunRecord:
+        current = self.runs.get(tenant_id, run_id)
+        if current.status in {RunStatus.PREPARING, RunStatus.RUNNING, RunStatus.PUBLISHING}:
+            raise RunCoordinatorConflict("run_discard_active")
+        if current.status == RunStatus.PUBLISHED:
+            raise RunCoordinatorConflict("run_discard_published")
+        if current.status == RunStatus.DISCARDED:
+            return current
+        self.worktrees.discard(self.worktrees.get(run_id), run_terminal=True)
+        return self.runs.transition(tenant_id, run_id, RunStatus.DISCARDED)
 
     async def cancel(self, tenant_id: str, run_id: str) -> RunRecord:
         current = self.runs.get(tenant_id, run_id)

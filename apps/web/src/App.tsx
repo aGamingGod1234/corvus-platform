@@ -46,6 +46,7 @@ import { ConversationWorkspace } from "./app/ConversationWorkspace";
 import { createConversationApi } from "./app/conversationApi";
 import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
 import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
+import { RunsWorkspace } from "./app/RunsWorkspace";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -696,6 +697,7 @@ export function App({
       api={api}
     />
   );
+  const runsSurface = <RunsWorkspace api={api} />;
   const skillsSurface = (
     <SkillsWorkspace
       busy={busy}
@@ -768,7 +770,7 @@ export function App({
             workspaceKind={localProfile.workspaceKind}
           />
         ) : localSurface === "repositories" ? repositoriesSurface
-          : localSurface === "runs" ? executionSurface
+          : localSurface === "runs" ? runsSurface
           : localSurface === "skills" ? skillsSurface
           : localSurface === "operations" ? operationsSurface
           : executionSurface}

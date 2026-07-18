@@ -57,6 +57,7 @@ from corvus.mvp.local_chat import (
     LocalChatNotFound,
     LocalChatService,
     build_default_local_chat_service,
+    discover_codex_executable,
 )
 from corvus.mvp.models import (
     ApprovalRecord,
@@ -82,6 +83,13 @@ from corvus.mvp.provider_credentials import (
     ProviderVerification,
 )
 from corvus.mvp.repository_workspace import RepositoryRecord, RepositoryWorkspaceService
+from corvus.mvp.run_coordinator import (
+    CodexWorkspaceBackend,
+    RunCoordinator,
+    RunCoordinatorConflict,
+)
+from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, StartRunRequest
+from corvus.mvp.run_store import RunStore, RunStoreConflict, RunStoreNotFound
 from corvus.mvp.safety import build_safety_preview
 from corvus.mvp.secret_scan import SecretScanner
 from corvus.mvp.store import SqliteStore
@@ -512,6 +520,7 @@ def create_app(
     repository_workspace: RepositoryWorkspaceService | None = None,
     worktree_manager: WorktreeManager | None = None,
     contribution_service: ContributionService | None = None,
+    run_coordinator: RunCoordinator | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -584,6 +593,28 @@ def create_app(
                     hashlib.sha256,
                 ).digest(),
             )
+    durable_runs = RunStore(service.store)
+    run_workflow = run_coordinator
+    if run_workflow is None and repositories is not None and worktrees is not None and git is not None:
+        codex_executable = discover_codex_executable()
+        if codex_executable is not None:
+            from corvus.infrastructure.agent_runtimes.codex import CodexCliAdapter
+
+            managed_root = database.parent / ".corvus-worktrees"
+            adapter = CodexCliAdapter(
+                executable=codex_executable,
+                version="local",
+                scratch_root=database.parent / ".corvus-durable-runs",
+                approved_workspace_roots=(managed_root,),
+                clock=lambda: datetime.now(UTC),
+            )
+            run_workflow = RunCoordinator(
+                durable_runs,
+                repositories,
+                worktrees,
+                ChangeReviewService(git),
+                CodexWorkspaceBackend(adapter),
+            )
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
 
@@ -608,6 +639,15 @@ def create_app(
         error: WorktreeOwnershipError,
     ) -> JSONResponse:
         return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_request", str(error))
+
+    @app.exception_handler(RunStoreNotFound)
+    async def run_not_found_handler(_request: Request, error: RunStoreNotFound) -> JSONResponse:
+        return _error_response(status.HTTP_404_NOT_FOUND, "not_found", str(error))
+
+    @app.exception_handler(RunStoreConflict)
+    @app.exception_handler(RunCoordinatorConflict)
+    async def run_conflict_handler(_request: Request, error: Exception) -> JSONResponse:
+        return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
@@ -676,6 +716,14 @@ def create_app(
                 detail="github_cli_unavailable",
             )
         return contributions
+
+    def durable_run_workflow() -> RunCoordinator:
+        if run_workflow is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_cli_unavailable",
+            )
+        return run_workflow
 
     def authorize_local_run(tenant_id: str, run_id: str) -> None:
         with service.store.connect() as connection:
@@ -801,6 +849,80 @@ def create_app(
             "status": lease.status,
             "created_at": lease.created_at,
         }
+
+    @app.get("/api/local/runs", response_model=list[RunRecord])
+    def local_runs(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in durable_runs.list(principal.tenant_id)]
+
+    @app.post(
+        "/api/local/runs",
+        response_model=RunRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def start_local_run(
+        body: StartRunRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().start(principal.tenant_id, body)
+        return record.model_dump(mode="json")
+
+    @app.get("/api/local/runs/{run_id}", response_model=RunRecord)
+    def local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        return durable_runs.get(principal.tenant_id, run_id).model_dump(mode="json")
+
+    @app.get("/api/local/runs/{run_id}/events", response_model=list[RunEvent])
+    def local_run_events(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        after: int = 0,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in durable_runs.events(principal.tenant_id, run_id, after=after)
+        ]
+
+    @app.get("/api/local/runs/{run_id}/evidence", response_model=list[RunEvidence])
+    def local_run_evidence(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in durable_runs.evidence(principal.tenant_id, run_id)
+        ]
+
+    @app.post("/api/local/runs/{run_id}/cancel", response_model=RunRecord)
+    async def cancel_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().cancel(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/retry",
+        response_model=RunRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def retry_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().retry(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/runs/{run_id}/discard", response_model=RunRecord)
+    def discard_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = durable_run_workflow().discard(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
 
     @app.get("/api/local/runs/{run_id}/changes", response_model=ChangeSet)
     def local_run_changes(

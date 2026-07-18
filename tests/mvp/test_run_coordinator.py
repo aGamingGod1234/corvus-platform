@@ -175,3 +175,32 @@ async def test_cancel_terminates_only_owned_backend_handle(tmp_path: Path) -> No
     assert backend.cancelled is True
     assert cancelled.status == RunStatus.CANCELLED
     assert terminal.status == RunStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_retry_creates_new_worktree_with_lineage(tmp_path: Path) -> None:
+    first_backend = FakeBackend(change_file=False)
+    coordinator, repository, runs = _coordinator(tmp_path, first_backend)
+    original = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    original = await coordinator.wait(original.id)
+
+    retried = await coordinator.retry("local", original.id)
+    retried = await coordinator.wait(retried.id)
+
+    assert retried.id != original.id
+    assert retried.retry_of_run_id == original.id
+    assert len(runs.list("local")) == 2
+
+
+@pytest.mark.asyncio
+async def test_discard_removes_terminal_managed_worktree(tmp_path: Path) -> None:
+    backend = FakeBackend(change_file=False)
+    coordinator, repository, _ = _coordinator(tmp_path, backend)
+    started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    terminal = await coordinator.wait(started.id)
+    assert backend.cwd is not None and backend.cwd.exists()
+
+    discarded = coordinator.discard("local", terminal.id)
+
+    assert discarded.status == RunStatus.DISCARDED
+    assert not backend.cwd.exists()

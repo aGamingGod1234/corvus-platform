@@ -678,6 +678,11 @@ def _discover_codex_executable() -> Path | None:
     return candidate.resolve()
 
 
+def discover_codex_executable() -> Path | None:
+    """Return the trusted local Codex executable used by desktop runtimes."""
+    return _discover_codex_executable()
+
+
 def _discover_claude_executable() -> Path | None:
     direct = shutil.which("claude.exe" if os.name == "nt" else "claude")
     if direct is None:

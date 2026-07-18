@@ -13,6 +13,10 @@ export type ConversationEntry = components["schemas"]["ConversationEntry"];
 export type Effect = components["schemas"]["EffectRecord"];
 export type MemoryEntry = components["schemas"]["MemoryEntry"];
 export type LocalRepository = components["schemas"]["RepositoryRecord"];
+export type LocalRun = components["schemas"]["RunRecord"];
+export type LocalRunEvent = components["schemas"]["RunEvent"];
+export type LocalRunEvidence = components["schemas"]["RunEvidence"];
+export type LocalSafetyPreview = components["schemas"]["SafetyPreviewResponse"];
 export type LocalWorktree = components["schemas"]["LocalWorktreeResponse"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
@@ -37,6 +41,23 @@ export interface CorvusApi {
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
   createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
+  getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
+  listLocalRuns(): Promise<LocalRun[]>;
+  startLocalRun(input: {
+    repositoryId: string;
+    task: string;
+    model?: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    mode: "chat" | "build";
+    safetyDigest: string;
+    outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
+  }): Promise<LocalRun>;
+  getLocalRun(runId: string): Promise<LocalRun>;
+  listLocalRunEvents(runId: string, after?: number): Promise<LocalRunEvent[]>;
+  listLocalRunEvidence(runId: string): Promise<LocalRunEvidence[]>;
+  cancelLocalRun(runId: string): Promise<LocalRun>;
+  retryLocalRun(runId: string): Promise<LocalRun>;
+  discardLocalRun(runId: string): Promise<LocalRun>;
   getRunChanges(runId: string): Promise<ChangeSet>;
   getContribution(runId: string): Promise<Contribution>;
   prepareContribution(
@@ -169,6 +190,64 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
         headers: mutationHeaders()
       });
       return requireData(result);
+    },
+    async getLocalSafetyPreview(mode) {
+      const result = await client.GET("/api/local-chat/safety-preview", {
+        params: { query: { provider: "codex", mode, mcp_enabled: false } }
+      });
+      return requireData(result);
+    },
+    async listLocalRuns() {
+      return requireData(await client.GET("/api/local/runs"));
+    },
+    async startLocalRun(input) {
+      const result = await client.POST("/api/local/runs", {
+        body: {
+          repository_id: input.repositoryId,
+          task: input.task,
+          provider: "codex",
+          model: input.model,
+          effort: input.effort,
+          mode: input.mode,
+          safety_digest: input.safetyDigest,
+          output_policy: input.outputPolicy
+        },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async getLocalRun(runId) {
+      return requireData(await client.GET("/api/local/runs/{run_id}", {
+        params: { path: { run_id: runId } }
+      }));
+    },
+    async listLocalRunEvents(runId, after = 0) {
+      return requireData(await client.GET("/api/local/runs/{run_id}/events", {
+        params: { path: { run_id: runId }, query: { after } }
+      }));
+    },
+    async listLocalRunEvidence(runId) {
+      return requireData(await client.GET("/api/local/runs/{run_id}/evidence", {
+        params: { path: { run_id: runId } }
+      }));
+    },
+    async cancelLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/cancel", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
+    },
+    async retryLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/retry", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
+    },
+    async discardLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/discard", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
     },
     async getRunChanges(runId) {
       const result = await client.GET("/api/local/runs/{run_id}/changes", {
