@@ -31,6 +31,10 @@ function apiWith(overrides: Partial<RepositoryApi> = {}): RepositoryApi {
     registerRepository: vi.fn().mockResolvedValue(repository),
     refreshRepository: vi.fn().mockResolvedValue(repository),
     removeRepository: vi.fn().mockResolvedValue(undefined),
+    createRepositoryRun: vi.fn(),
+    getRunChanges: vi.fn(),
+    prepareContribution: vi.fn(),
+    publishContribution: vi.fn(),
     ...overrides
   };
 }

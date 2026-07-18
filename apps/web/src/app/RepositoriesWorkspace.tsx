@@ -1,18 +1,19 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { type FormEvent, useEffect, useState } from "react";
 
-import type { LocalRepository } from "../api";
+import type { LocalRepository, LocalWorktree } from "../api";
+import { ContributionPanel, type ContributionApi } from "./ContributionPanel";
 
-export interface RepositoryApi {
+export interface RepositoryApi extends ContributionApi {
   listRepositories(): Promise<LocalRepository[]>;
   registerRepository(path: string, displayName: string): Promise<LocalRepository>;
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
+  createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
 }
 
 interface RepositoriesWorkspaceProps {
   api: RepositoryApi;
-  onNewRun?: (repository: LocalRepository) => void;
   pickDirectory?: () => Promise<string | null>;
 }
 
@@ -32,7 +33,6 @@ function readableError(reason: unknown): string {
 
 export function RepositoriesWorkspace({
   api,
-  onNewRun,
   pickDirectory = pickDesktopDirectory
 }: RepositoriesWorkspaceProps) {
   const [repositories, setRepositories] = useState<LocalRepository[]>([]);
@@ -42,6 +42,7 @@ export function RepositoriesWorkspace({
   const [path, setPath] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
+  const [activeRun, setActiveRun] = useState<LocalWorktree | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +102,18 @@ export function RepositoriesWorkspace({
       setRepositories((current) =>
         current.map((item) => item.id === refreshed.id ? refreshed : item)
       );
+    } catch (reason) {
+      setError(readableError(reason));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function startRun(repository: LocalRepository): Promise<void> {
+    setBusyId(repository.id);
+    setError("");
+    try {
+      setActiveRun(await api.createRepositoryRun(repository.id));
     } catch (reason) {
       setError(readableError(reason));
     } finally {
@@ -194,15 +207,14 @@ export function RepositoriesWorkspace({
               >
                 {busyId === repository.id ? "Refreshing…" : `Refresh ${repository.display_name}`}
               </button>
-              {onNewRun ? (
-                <button className="button button--primary" onClick={() => onNewRun(repository)} type="button">
-                  New isolated run
-                </button>
-              ) : null}
+              <button className="button button--primary" disabled={busyId !== null} onClick={() => void startRun(repository)} type="button">
+                New isolated run
+              </button>
             </footer>
           </article>
         ))}
       </div>
+      {activeRun ? <ContributionPanel api={api} runId={activeRun.run_id} /> : null}
     </section>
   );
 }

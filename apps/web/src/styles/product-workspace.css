@@ -30,6 +30,30 @@
 .repository-card dt { color: var(--muted); font-size: .66rem; }
 .repository-card dd { overflow: hidden; margin: .15rem 0 0; font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .repository-connect { grid-template-columns: 1fr; } }
+.contribution-panel { margin-top: 1.2rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+.contribution-panel > header h2 { margin: 0; font-family: inherit; font-size: 1.1rem; }
+.contribution-panel > header p:not(.eyebrow) { margin: .3rem 0 0; color: var(--muted); font-size: .78rem; }
+.contribution-files { display: grid; gap: .5rem; margin: 1rem 0; }
+.contribution-files article { border: 1px solid var(--line); border-radius: .55rem; padding: .7rem; background: var(--raised); }
+.contribution-files label { display: flex; gap: .65rem; align-items: center; cursor: pointer; }
+.contribution-files label span { display: grid; gap: .15rem; }
+.contribution-files small, .contribution-files summary { color: var(--muted); font-size: .68rem; }
+.contribution-files details { margin: .55rem 0 0 1.55rem; }
+.contribution-files summary { cursor: pointer; }
+.contribution-files pre { max-height: 15rem; overflow: auto; margin: .45rem 0 0; border-radius: .4rem; padding: .65rem; background: var(--paper); font-family: "IBM Plex Mono", monospace; font-size: .68rem; }
+.contribution-form { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; margin-bottom: .8rem; }
+.contribution-form label { display: grid; gap: .3rem; color: var(--muted); font-size: .7rem; font-weight: 680; }
+.contribution-form input, .contribution-form textarea { width: 100%; border: 1px solid var(--line); border-radius: .45rem; padding: .65rem; color: var(--ink); background: var(--raised); font: inherit; }
+.contribution-form__body { grid-column: 1 / -1; }
+.contribution-draft { display: flex !important; grid-column: 1 / -1; grid-template-columns: auto 1fr; align-items: center; }
+.contribution-confirmation { margin-top: 1rem; border: 1px solid var(--line); border-radius: .65rem; padding: 1rem; background: var(--raised); }
+.contribution-evidence { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: .8rem; }
+.contribution-evidence span { border-radius: 999px; padding: .32rem .5rem; color: var(--muted); background: color-mix(in oklch, var(--ink) 5%, transparent); font-size: .68rem; }
+.contribution-evidence span[data-status="passed"] { color: var(--success); background: color-mix(in oklch, var(--success) 10%, transparent); }
+.contribution-evidence span[data-status="blocked"] { color: var(--danger); background: color-mix(in oklch, var(--danger) 10%, transparent); }
+.contribution-confirm-check { display: flex; gap: .55rem; align-items: flex-start; margin: .8rem 0; color: var(--muted); font-size: .74rem; }
+.contribution-confirmation > a { color: var(--success); font-weight: 700; }
+@media (max-width: 760px) { .contribution-form { grid-template-columns: 1fr; } .contribution-form__body, .contribution-draft { grid-column: auto; } }
 
 .conversation-panel { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; }
 .conversation-panel__header { position: relative; display: flex; gap: 1rem; align-items: center; justify-content: space-between; min-height: 58px; padding: .65rem 1.25rem; border-bottom: 1px solid var(--line); }

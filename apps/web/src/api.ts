@@ -7,10 +7,13 @@ export type Approval = components["schemas"]["ApprovalRecord"];
 export type AutonomyDecision = components["schemas"]["AutonomyDecision"];
 export type Budget = components["schemas"]["BudgetAccount"];
 export type ChannelEvent = components["schemas"]["ChannelEventRecord"];
+export type ChangeSet = components["schemas"]["ChangeSet"];
+export type Contribution = components["schemas"]["ContributionRecord"];
 export type ConversationEntry = components["schemas"]["ConversationEntry"];
 export type Effect = components["schemas"]["EffectRecord"];
 export type MemoryEntry = components["schemas"]["MemoryEntry"];
 export type LocalRepository = components["schemas"]["RepositoryRecord"];
+export type LocalWorktree = components["schemas"]["LocalWorktreeResponse"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
 export type Project = components["schemas"]["Project"];
@@ -33,6 +36,20 @@ export interface CorvusApi {
   registerRepository(path: string, displayName: string): Promise<LocalRepository>;
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
+  createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
+  getRunChanges(runId: string): Promise<ChangeSet>;
+  getContribution(runId: string): Promise<Contribution>;
+  prepareContribution(
+    runId: string,
+    input: {
+      selectedPaths: string[];
+      message: string;
+      title: string;
+      body: string;
+      draft: boolean;
+    }
+  ): Promise<Contribution>;
+  publishContribution(runId: string, expectedDigest: string): Promise<Contribution>;
   createProject(name: string): Promise<Project>;
   listOutcomes(projectId: string): Promise<Outcome[]>;
   createOutcome(projectId: string, title: string, criterion: string): Promise<Outcome>;
@@ -145,6 +162,47 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       if (result.error) {
         throw new ApiFailure(result.response.status, readDetail(result.error));
       }
+    },
+    async createRepositoryRun(repositoryId) {
+      const result = await client.POST("/api/local/repositories/{repository_id}/worktrees", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async getRunChanges(runId) {
+      const result = await client.GET("/api/local/runs/{run_id}/changes", {
+        params: { path: { run_id: runId } }
+      });
+      return requireData(result);
+    },
+    async getContribution(runId) {
+      const result = await client.GET("/api/local/runs/{run_id}/contribution", {
+        params: { path: { run_id: runId } }
+      });
+      return requireData(result);
+    },
+    async prepareContribution(runId, input) {
+      const result = await client.POST("/api/local/runs/{run_id}/contribution/prepare", {
+        params: { path: { run_id: runId } },
+        body: {
+          selected_paths: input.selectedPaths,
+          message: input.message,
+          title: input.title,
+          body: input.body,
+          draft: input.draft
+        },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async publishContribution(runId, expectedDigest) {
+      const result = await client.POST("/api/local/runs/{run_id}/contribution/publish", {
+        params: { path: { run_id: runId } },
+        body: { expected_digest: expectedDigest },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
     },
     async createProject(name) {
       const result = await client.POST("/api/projects", {
