@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 6
+SCHEMA_VERSION: Final = 7
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -370,6 +370,21 @@ CREATE TABLE mvp_repository_snapshots (
 );
 """
 
+_MIGRATION_007 = """
+CREATE TABLE mvp_worktree_leases (
+    run_id TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    root_path TEXT NOT NULL UNIQUE,
+    base_sha TEXT NOT NULL,
+    ownership_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    discarded_at TEXT
+);
+CREATE INDEX mvp_worktree_leases_repository_idx
+    ON mvp_worktree_leases(repository_id, status, created_at);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -453,4 +468,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(6)
+            if 7 not in versions:
+                connection.executescript(_MIGRATION_007)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )
