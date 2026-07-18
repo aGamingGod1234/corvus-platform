@@ -1,5 +1,9 @@
 # Corvus
 
+<p align="center">
+  <img src="apps/web/public/brand/corvus-lockup.svg" alt="Corvus" width="420" />
+</p>
+
 Corvus is a local-first AI workspace for turning outcomes into governed, auditable work. One authoritative Python core powers the CLI, API, web client, and Windows desktop shell so approvals, budgets, credentials, audit, and kill switches behave the same everywhere.
 
 ## Hackathon pitch

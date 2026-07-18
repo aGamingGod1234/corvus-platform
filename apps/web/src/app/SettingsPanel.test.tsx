@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { MemoryStorage } from "../test/memoryStorage";
-import type { ConversationApi } from "./conversationApi";
+import { ConversationApiError, type ConversationApi } from "./conversationApi";
 import { loadDevicePreferences } from "./devicePreferences";
 import { SettingsPanel } from "./SettingsPanel";
 
@@ -58,7 +58,7 @@ describe("SettingsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Agent" }));
     await user.selectOptions(screen.getByLabelText("Response style"), "concise");
     await user.type(screen.getByLabelText("Custom rules"), "Always show the next action.");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(await screen.findByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(api.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
       expected_version: 2,
@@ -156,6 +156,40 @@ describe("SettingsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(loadDevicePreferences(storage, "workspace-keys").sendKeyMode).toBe("ctrl-enter");
+  });
+
+  it("loads the current saved preferences when another session wins a save", async () => {
+    const api = settingsApi();
+    vi.mocked(api.updatePreferences).mockRejectedValue(new ConversationApiError(
+      409,
+      "preferences_version_conflict",
+      null,
+      {
+        code: "preferences_version_conflict",
+        current: {
+          version: 4,
+          default_provider: "codex",
+          default_model: "gpt-5.6-sol",
+          default_effort: "low",
+          default_mode: "chat",
+          mcp_enabled: false,
+          response_tone: "concise",
+          custom_rules: "Current saved rule.",
+          updated_at: "2026-07-18T00:00:00Z"
+        }
+      }
+    ));
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-conflict" workspaceKind="individual" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.selectOptions(await screen.findByLabelText("Response style"), "detailed");
+    await user.click(await screen.findByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/current saved values are loaded/i);
+    expect(screen.getByLabelText("Response style")).toHaveValue("concise");
+    expect(screen.getByLabelText("Custom rules")).toHaveValue("Current saved rule.");
   });
 
   it("connects, verifies, replaces, and removes write-only provider credentials", async () => {

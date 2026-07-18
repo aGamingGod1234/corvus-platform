@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import type { AuthStatus } from "../auth/AuthProvider";
 import type { components } from "../generated/api";
+import { BrandLockup } from "../components/Brand";
 import type { LegacyPreferenceCandidate } from "./preferences";
 import { loadDevicePreferences, saveDevicePreferences, type SafetyGuidance } from "./devicePreferences";
 
@@ -143,7 +144,7 @@ export function OnboardingFlow({
         id="main-content"
       >
         <section className="onboarding-panel onboarding-panel--identity" aria-labelledby="identity-heading">
-          <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <BrandLockup className="onboarding-wordmark" />
           <p className="eyebrow">Identity first</p>
           <h1 id="identity-heading">Start with your Corvus identity</h1>
           <p className="onboarding-lede">Use the same governed workspace on your signed-in devices.</p>
@@ -232,7 +233,7 @@ export function OnboardingFlow({
       id="main-content"
     >
       <section className="onboarding-panel" aria-labelledby="onboarding-heading">
-        <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+        <BrandLockup className="onboarding-wordmark" />
         <div className="onboarding-progress" aria-live="polite">
           <span>Step {stepNumber(step)} of {TOTAL_STEPS}</span>
           <span>Server-backed setup</span>

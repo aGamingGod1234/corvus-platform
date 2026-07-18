@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import type { components } from "../generated/api";
+import { BrandLockup } from "../components/Brand";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { NavigationRail } from "../components/NavigationRail";
 import { ResponsiveNavigation } from "../components/ResponsiveNavigation";
@@ -72,7 +73,7 @@ export function AppShell({
           workspaces={workspaces}
         />
         <header className="adaptive-topbar">
-          <div><span className="mobile-wordmark">Corvus</span><strong>{profile.label}</strong></div>
+          <div><BrandLockup className="mobile-wordmark" /><strong>{profile.label}</strong></div>
           {error ? <ConnectionBanner error={error} /> : null}
         </header>
         <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>

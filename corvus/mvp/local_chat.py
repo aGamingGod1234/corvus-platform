@@ -40,7 +40,6 @@ from corvus.mvp.safety import SafetyPreview, build_safety_preview
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
-_SCREENING_OK = "passed"
 _WINDOWS_CODEX_TARGETS = {
     "amd64": ("codex-win32-x64", "x86_64-pc-windows-msvc"),
     "arm64": ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
@@ -167,6 +166,7 @@ class LocalChatService:
         mcp_enabled: bool,
         idempotency_key: str,
         safety_digest: str | None = None,
+        idempotency_prompt: str | None = None,
     ) -> dict[str, object]:
         backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
         if backend is None:
@@ -189,7 +189,7 @@ class LocalChatService:
         ):
             raise LocalChatConflict("safety_digest_mismatch")
         request_digest = _request_digest(
-            prompt,
+            prompt if idempotency_prompt is None else idempotency_prompt,
             provider,
             model,
             effort,
@@ -260,7 +260,8 @@ class LocalChatService:
             "handle_id": str(handle.id),
             "state": "running",
             "provider": provider,
-            "model": model or (
+            "model": model
+            or (
                 (_discover_codex_effective_model() or "Codex configured model")
                 if provider == "codex"
                 else "Claude Sonnet"
@@ -386,7 +387,7 @@ class LocalChatService:
                 "download_name": artifact.download_name,
                 "sha256_digest": artifact.sha256_digest,
                 "size_bytes": artifact.size_bytes,
-                "secret_screening": _SCREENING_OK,
+                "secret_screening": artifact.secret_screening,
             }
         return {
             "run_id": str(run_id),

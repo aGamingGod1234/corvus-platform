@@ -555,6 +555,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
     assert artifact is not None
     assert artifact.path.is_file()
     assert artifact.download_name.endswith(".zip")
+    assert artifact.secret_screening == "passed"  # noqa: S105
 
 
 @pytest.mark.asyncio

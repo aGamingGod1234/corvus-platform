@@ -576,6 +576,23 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
     assert "Always end with a verification result." in backend.last_prompt
     assert backend.last_prompt.endswith("User request:\nFix the failing test")
 
+    newer = {**update, "expected_version": 1, "custom_rules": "Use the newer saved rule."}
+    assert client.put("/api/local-chat/preferences", json=newer, headers=headers).status_code == 200
+    replay = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix the failing test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert replay.status_code == 202
+    assert replay.json()["run_id"] == started.json()["run_id"]
+    assert backend.starts == 1
+    changed_prompt = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix a different test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert changed_prompt.status_code == 409
+
 
 def test_local_chat_dispatches_to_selected_ready_provider(tmp_path: Path) -> None:
     codex = _Backend()
@@ -670,8 +687,20 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
     assert receipt.json()["safety"] == preview
     assert receipt.json()["original_project_modified"] is False
     assert receipt.json()["artifact"]["sha256_digest"] == "a" * 64
-    assert receipt.json()["artifact"]["secret_screening"] == "passed"  # noqa: S105
+    assert receipt.json()["artifact"]["secret_screening"] == "not_scanned"  # noqa: S105
     assert stranger.get(f"/api/local-chat/runs/{run_id}/safety-receipt").status_code == 404
+
+    openapi = owner.get("/openapi.json").json()
+    event_content = openapi["paths"]["/api/local-chat/runs/{run_id}/events"]["get"]["responses"][
+        "200"
+    ]["content"]
+    artifact_content = openapi["paths"]["/api/local-chat/runs/{run_id}/artifact"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert "text/event-stream" in event_content
+    assert "application/json" not in event_content
+    assert "application/zip" in artifact_content
+    assert "application/json" not in artifact_content
 
 
 def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:

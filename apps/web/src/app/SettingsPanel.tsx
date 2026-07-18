@@ -9,6 +9,7 @@ import type {
   RuntimePreferences,
   ThinkingLevel
 } from "./conversationApi";
+import { ConversationApiError } from "./conversationApi";
 import {
   loadDevicePreferences,
   saveDevicePreferences,
@@ -117,6 +118,8 @@ export function SettingsPanel({
     () => providers.find((provider) => provider.id === runtime.default_provider),
     [providers, runtime.default_provider]
   );
+  const selectedModels = selectedProvider?.models ?? [];
+  const selectedThinkingLevels = selectedProvider?.thinking_levels ?? ["medium"];
 
   useEffect(() => {
     const device = loadDevicePreferences(storage, workspaceId);
@@ -140,9 +143,10 @@ export function SettingsPanel({
       .then(([preferences, catalog]) => {
         if (!current) return;
         const selected = catalog.find((provider) => provider.id === preferences.default_provider);
-        const defaultModel = selected?.models.some((model) => model.id === preferences.default_model)
+        const models = selected?.models ?? [];
+        const defaultModel = models.some((model) => model.id === preferences.default_model)
           ? preferences.default_model
-          : selected?.models[0]?.id ?? null;
+          : models[0]?.id ?? null;
         setRuntime({ ...preferences, default_model: defaultModel });
         setProviders(catalog);
       })
@@ -174,13 +178,15 @@ export function SettingsPanel({
 
   function updateProvider(providerId: "codex" | "claude"): void {
     const provider = providers.find((entry) => entry.id === providerId);
-    const effort = provider?.thinking_levels.includes("medium")
+    const thinkingLevels = provider?.thinking_levels ?? [];
+    const models = provider?.models ?? [];
+    const effort = thinkingLevels.includes("medium")
       ? "medium"
-      : provider?.thinking_levels[0] ?? "medium";
+      : thinkingLevels[0] ?? "medium";
     setRuntime((current) => ({
       ...current,
       default_provider: providerId,
-      default_model: provider?.models[0]?.id ?? null,
+      default_model: models[0]?.id ?? null,
       default_effort: effort,
       default_mode: providerId === "codex" ? current.default_mode : "chat",
       mcp_enabled: providerId === "codex" ? current.mcp_enabled : false
@@ -235,7 +241,18 @@ export function SettingsPanel({
       }
       setDirty(false);
     } catch (reason) {
-      setError(safeError(reason));
+      if (
+        reason instanceof ConversationApiError
+        && reason.status === 409
+        && reason.code === "preferences_version_conflict"
+        && reason.detail?.current !== undefined
+      ) {
+        setRuntime(reason.detail.current);
+        setDirty(false);
+        setError("Settings changed in another session. The current saved values are loaded for review.");
+      } else {
+        setError(safeError(reason));
+      }
     } finally {
       setBusy(false);
     }
@@ -322,8 +339,8 @@ export function SettingsPanel({
           {category === "models" ? <>
             <div className="settings-section__heading"><h2>Models</h2><p>Defaults used when a new conversation opens.</p></div>
             <SettingsRow description="Only detected local providers can run." label="Provider"><select aria-label="Default provider" disabled={busy || providers.length === 0} onChange={(event) => updateProvider(event.target.value as "codex" | "claude")} value={runtime.default_provider}>{providers.length === 0 ? <option value={runtime.default_provider}>{title(runtime.default_provider)}</option> : providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <option disabled={entry.status !== "ready"} key={entry.id} value={entry.id}>{entry.label} · {entry.status_label}</option>)}</select></SettingsRow>
-            <SettingsRow description="Recommended models appear first in the composer." label="Model"><select aria-label="Default model" disabled={busy || (selectedProvider?.models.length ?? 0) === 0} onChange={(event) => updateRuntime("default_model", event.target.value)} value={runtime.default_model ?? ""}>{selectedProvider?.models.map((model) => <option key={model.id} value={model.id}>{model.label}{model.recommended ? " · Recommended" : ""}</option>)}</select></SettingsRow>
-            <SettingsRow description="Higher levels spend more time reasoning." label="Thinking"><select aria-label="Default thinking" disabled={busy} onChange={(event) => updateRuntime("default_effort", event.target.value as ThinkingLevel)} value={runtime.default_effort}>{(selectedProvider?.thinking_levels ?? ["medium"]).map((effort) => <option key={effort} value={effort}>{THINKING_LABELS[effort]}</option>)}</select></SettingsRow>
+            <SettingsRow description="Recommended models appear first in the composer." label="Model"><select aria-label="Default model" disabled={busy || selectedModels.length === 0} onChange={(event) => updateRuntime("default_model", event.target.value)} value={runtime.default_model ?? ""}>{selectedModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.recommended ? " · Recommended" : ""}</option>)}</select></SettingsRow>
+            <SettingsRow description="Higher levels spend more time reasoning." label="Thinking"><select aria-label="Default thinking" disabled={busy} onChange={(event) => updateRuntime("default_effort", event.target.value as ThinkingLevel)} value={runtime.default_effort}>{selectedThinkingLevels.map((effort) => <option key={effort} value={effort}>{THINKING_LABELS[effort]}</option>)}</select></SettingsRow>
             <SettingsRow description="Build runs work in an isolated project sandbox and return an artifact." label="Mode"><select aria-label="Default mode" disabled={busy} onChange={(event) => { const mode = event.target.value as "chat" | "build"; updateRuntime("default_mode", mode); if (mode === "chat") updateRuntime("mcp_enabled", false); }} value={runtime.default_mode}><option value="chat">Chat</option><option disabled={runtime.default_provider !== "codex"} value="build">Build</option></select></SettingsRow>
             <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p></div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected · or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
           </> : null}

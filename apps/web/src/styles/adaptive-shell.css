@@ -21,7 +21,7 @@
   background: var(--paper);
 }
 
-.adaptive-shell[data-scope="team"] { --scope-accent: #167c78; }
+.adaptive-shell[data-scope="team"] { --scope-accent: var(--signal); }
 
 .adaptive-rail {
   grid-row: 1 / -1;
@@ -43,14 +43,9 @@
   letter-spacing: -.015em;
 }
 
-.adaptive-wordmark span {
-  display: grid;
+.adaptive-wordmark .brand-lockup__mark {
   width: 30px;
   height: 30px;
-  place-items: center;
-  border-radius: .55rem;
-  color: white;
-  background: var(--scope-accent);
 }
 
 .workspace-switcher { display: grid; gap: 0.5rem; padding: 1rem; }
@@ -265,7 +260,9 @@
   .adaptive-topbar { grid-column: 1; grid-row: 1; padding: 0 0.9rem; }
   .adaptive-topbar { display: flex; }
   .adaptive-topbar > div:first-child strong { display: none; }
-  .mobile-wordmark { display: block; font-size: 1rem; font-weight: 720; }
+  .mobile-wordmark { display: inline-flex; }
+  .mobile-wordmark .brand-lockup__mark { width: 1.55rem; height: 1.55rem; }
+  .mobile-wordmark .brand-lockup__word { font-size: .72rem; }
   .runtime-state small { display: none; }
   .adaptive-main { grid-row: 2; padding: 1.25rem 1rem 5rem; }
   .adaptive-main h1 { font-size: clamp(2.25rem, 12vw, 3.5rem); }

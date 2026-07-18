@@ -1769,9 +1769,9 @@ export interface components {
             download_name: string;
             /**
              * Secret Screening
-             * @constant
+             * @enum {string}
              */
-            secret_screening: "passed";
+            secret_screening: "passed" | "not_scanned";
             /** Sha256 Digest */
             sha256_digest: string;
             /** Size Bytes */
@@ -2650,7 +2650,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/zip": unknown;
                 };
             };
             /** @description Validation Error */
@@ -2718,7 +2718,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "text/event-stream": unknown;
                 };
             };
             /** @description Validation Error */

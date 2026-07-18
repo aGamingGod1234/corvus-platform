@@ -82,7 +82,7 @@ _INSTANCE_PROOF_HEADER = "X-Corvus-Instance-Proof"
 _MINIMUM_INSTANCE_CHALLENGE_LENGTH = 16
 _MAXIMUM_INSTANCE_CHALLENGE_LENGTH = 512
 _WEB_CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "font-src 'self' data:; img-src 'self' data:; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
@@ -223,7 +223,7 @@ class SafetyArtifactResponse(ApiModel):
     download_name: str
     sha256_digest: str
     size_bytes: int
-    secret_screening: Literal["passed"]
+    secret_screening: Literal["passed", "not_scanned"]
 
 
 class SafetyReceiptResponse(ApiModel):
@@ -570,14 +570,14 @@ def create_app(
         return {"status": "ready"}
 
     @app.post("/api/auth/pair", response_model=PairResponse)
-    def pair(body: PairRequest, response: Response) -> dict[str, str]:
+    def pair(body: PairRequest, request: Request, response: Response) -> dict[str, str]:
         principal, token = auth.pair(body.token)
         response.set_cookie(
             _SESSION_COOKIE,
             token,
             max_age=int(_SESSION_LIFETIME.total_seconds()),
             httponly=True,
-            secure=False,
+            secure=request.url.scheme == "https",
             samesite="strict",
             path="/",
         )
@@ -701,6 +701,7 @@ def create_app(
                 mcp_enabled=body.mcp_enabled,
                 safety_digest=body.safety_digest,
                 idempotency_key=idempotency_key,
+                idempotency_prompt=body.prompt,
             )
         except ProviderCredentialError as error:
             raise HTTPException(
@@ -724,7 +725,8 @@ def create_app(
         if local_chat is None:
             return []
         local_entries = [
-            entry for entry in local_chat.provider_catalog()
+            entry
+            for entry in local_chat.provider_catalog()
             if entry["id"] not in {"gemini", "grok"}
         ]
         labels = {
@@ -737,28 +739,29 @@ def create_app(
             provider_models = credential_service.models(principal.user_id, provider)
             configured = credential_service.status(principal.user_id, provider)["configured"]
             ready = configured and bool(provider_models)
-            local_entries.append({
-                "id": provider,
-                "label": labels[provider],
-                "runtime": "api",
-                "status": "ready" if ready else "unavailable",
-                "status_label": (
-                    "Verified for API chat"
-                    if ready
-                    else "Connected; verify in Settings"
-                    if configured
-                    else "Not configured"
-                ),
-                "models": [
-                    {"id": model, "label": model, "recommended": index == 0}
-                    for index, model in enumerate(provider_models)
-                ],
-                "thinking_levels": (
-                    ["low", "medium", "high", "xhigh", "max"]
-                    if provider == "openai" else []
-                ),
-                "supports_mcp": False,
-            })
+            local_entries.append(
+                {
+                    "id": provider,
+                    "label": labels[provider],
+                    "runtime": "api",
+                    "status": "ready" if ready else "unavailable",
+                    "status_label": (
+                        "Verified for API chat"
+                        if ready
+                        else "Connected; verify in Settings"
+                        if configured
+                        else "Not configured"
+                    ),
+                    "models": [
+                        {"id": model, "label": model, "recommended": index == 0}
+                        for index, model in enumerate(provider_models)
+                    ],
+                    "thinking_levels": (
+                        ["low", "medium", "high", "xhigh", "max"] if provider == "openai" else []
+                    ),
+                    "supports_mcp": False,
+                }
+            )
         return local_entries
 
     @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
@@ -822,7 +825,11 @@ def create_app(
                 },
             ) from error
 
-    @app.get("/api/local-chat/runs/{run_id}/events")
+    @app.get(
+        "/api/local-chat/runs/{run_id}/events",
+        response_class=StreamingResponse,
+        responses={200: {"content": {"text/event-stream": {}}}},
+    )
     async def local_chat_events(
         run_id: UUID,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -871,7 +878,11 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/local-chat/runs/{run_id}/artifact")
+    @app.get(
+        "/api/local-chat/runs/{run_id}/artifact",
+        response_class=FileResponse,
+        responses={200: {"content": {"application/zip": {}}}},
+    )
     async def local_chat_artifact(
         run_id: UUID,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],

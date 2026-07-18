@@ -1845,7 +1845,10 @@
             "type": "string"
           },
           "secret_screening": {
-            "const": "passed",
+            "enum": [
+              "passed",
+              "not_scanned"
+            ],
             "title": "Secret Screening",
             "type": "string"
           },
@@ -3622,9 +3625,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "application/zip": {}
             },
             "description": "Successful Response"
           },
@@ -3742,9 +3743,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "text/event-stream": {}
             },
             "description": "Successful Response"
           },

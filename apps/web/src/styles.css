@@ -1,18 +1,19 @@
 :root {
-  color: #182330;
-  background: #f3f5f2;
+  color: #15171a;
+  background: #f2f0e9;
   font-family: "Inter Tight Variable", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --paper: #f3f5f2;
-  --raised: #ffffff;
-  --ink: #182330;
-  --muted: #68747e;
-  --signal: #2f6fed;
-  --approval: #c96c1a;
-  --success: #287a5b;
-  --danger: #a63e37;
-  --line: #d8dedb;
+  --paper: #f2f0e9;
+  --raised: #fcfbf7;
+  --ink: #15171a;
+  --muted: #686f76;
+  --brand-cyan: #66d9ee;
+  --signal: #087e95;
+  --approval: #a95f17;
+  --success: #237456;
+  --danger: #a43b36;
+  --line: #d8d5ce;
   --soft-signal: color-mix(in oklch, var(--signal) 11%, var(--raised));
   --soft-success: color-mix(in oklch, var(--success) 10%, var(--raised));
   --shadow: 0 20px 60px color-mix(in oklch, var(--ink) 10%, transparent);
@@ -32,6 +33,17 @@ select,
 textarea { font: inherit; }
 
 button { color: inherit; }
+
+.brand-mark { display: block; flex: 0 0 auto; color: var(--ink); }
+.brand-lockup { display: inline-flex; gap: .62rem; align-items: center; color: var(--ink); }
+.brand-lockup__mark { width: 2rem; height: 2rem; }
+.brand-lockup__word {
+  font-family: "Inter Tight Variable", "Segoe UI", sans-serif;
+  font-size: .88rem;
+  font-weight: 760;
+  letter-spacing: .19em;
+  line-height: 1;
+}
 
 a:focus-visible,
 button:focus-visible,
@@ -87,14 +99,9 @@ h2 { font-size: 1.15rem; }
   letter-spacing: -.015em;
 }
 
-.local-sidebar__wordmark span {
-  display: grid;
+.local-sidebar__wordmark .brand-lockup__mark {
   width: 30px;
   height: 30px;
-  place-items: center;
-  border-radius: .55rem;
-  color: white;
-  background: var(--signal);
 }
 
 .local-sidebar__identity {

@@ -15,7 +15,7 @@ class FakeRunStream implements RunEventStream {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
 
-  emit(type: string, data: object): void {
+  emit(type: string, data: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) {
       listener({ data: JSON.stringify(data) });
     }
@@ -99,6 +99,25 @@ function emptyConversationApi(stream: FakeRunStream): ConversationApi {
 }
 
 describe("ConversationWorkspace", () => {
+  it("ignores null streaming payloads without breaking the active run", async () => {
+    const stream = new FakeRunStream();
+    render(<ConversationWorkspace api={conversationApi(stream)} experience="developer"
+      storage={new MemoryStorage()} storageScope="workspace-null-event" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect safely");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Working");
+    stream.emit("message", null);
+    stream.emit("thinking", null);
+    stream.emit("status", null);
+    stream.emit("message", { payload: { text: "Still connected." } });
+    stream.emit("completed", { payload: {} });
+
+    expect(await screen.findByText("Still connected.")).toBeVisible();
+    expect(screen.queryByText(/unreadable run event/i)).not.toBeInTheDocument();
+  });
+
   it("creates a thread, runs Local Codex, and renders durable output", async () => {
     const stream = new FakeRunStream();
     const api = conversationApi(stream);

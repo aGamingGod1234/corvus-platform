@@ -2096,6 +2096,34 @@
 - Desktop: Tauri release `--no-bundle` compilation passed; the exact worktree executable launched with the current sidecar and rendered the bottom composer.
 - Browser: paired local runtime passed; safety details, Settings, model/effort labels, 1440x900 and 390x844 geometry, and zero console errors passed.
 
+## 2026-07-18 - Apply Corvus identity and close release review findings
+
+### What Was Implemented
+- Rebuilt the approved concentric-C/cyan-signal logo as standalone SVG assets and applied the graphite, warm-white, and cyan identity across desktop, web, onboarding, navigation, README, and installer icons without changing the current font stack.
+- Hardened runtime URL trust, pairing-cookie transport flags, CSP, preference-conflict recovery, SSE parsing, provider catalog normalization, OpenAPI stream/artifact media types, and raw-request idempotency.
+- Made artifact receipts report screening provenance from the packaging boundary; unproven artifacts now say `not_scanned` instead of claiming success.
+
+### Files Modified
+- `apps/web/public/brand/*`, `apps/web/src/components/Brand.*`, app shells, styles, and tests - vector identity and accessible brand usage.
+- `apps/desktop/app-icon.svg`, `apps/desktop/src-tauri/icons/*`, and Tauri/Vercel CSP configuration - branded packaging assets and CSP hardening.
+- `corvus/mvp/*`, `corvus/infrastructure/agent_runtimes/codex.py`, OpenAPI, generated types, and focused tests - review-driven correctness and security repairs.
+
+### Assumptions Made (flag these for review)
+- The supplied image is the authoritative Corvus identity; the vector is a faithful geometric reconstruction, not an extraction of embedded source vectors.
+- Same-origin and explicit HTTP(S) loopback runtimes are the only trusted alpha API targets; other cross-origin runtimes remain blocked.
+
+### Known Issues / Deferred
+- Cloud/E2B execution, Google identity continuity, production signing/notarization, and billing remain outside this milestone.
+- The user requested a time-boxed hackathon fast path, so the already-green focused regression suites and production build replaced another full-suite rerun.
+
+### Verification
+- Focused backend/security/contract coverage: 53 passed.
+- Focused UI/streaming/settings/branding coverage: 29 passed.
+- Ruff lint/format and the TypeScript/Vite production build passed; the latest branded Windows desktop build was visually checked at desktop and phone widths.
+
+### Suggested Next Steps
+- Complete code-owner review on PR #7, then publish the checksum-bound unsigned installers from the reviewed SHA.
+
 ### Suggested Next Steps
 - Push the verified commit to PR #7, resolve every actionable review thread/check, then produce checksum-bound unsigned alpha installers through the trusted multi-OS release workflow.
 - After approval, demo the path: Read-only chip → Build → policy confirmation → Stop/timeline → artifact receipt.

@@ -199,8 +199,11 @@ class ApiChatBackend:
         if not isinstance(payload, dict):
             return None
         if self._provider == "openai":
-            return cast(str | None, payload.get("delta")) \
-                if payload.get("type") == "response.output_text.delta" else None
+            return (
+                cast(str | None, payload.get("delta"))
+                if payload.get("type") == "response.output_text.delta"
+                else None
+            )
         if self._provider == "anthropic":
             delta = payload.get("delta")
             return cast(str | None, delta.get("text")) if isinstance(delta, dict) else None

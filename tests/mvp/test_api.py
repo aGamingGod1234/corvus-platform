@@ -56,6 +56,99 @@ def test_pairing_session_authorization_and_csrf(tmp_path: Path) -> None:
     assert client.get("/openapi.json").status_code == 200
 
 
+def test_pairing_cookie_tracks_the_transport_security(tmp_path: Path) -> None:
+    http_token = secrets.token_urlsafe(32)
+    https_token = secrets.token_urlsafe(32)
+    http_app = create_app(
+        database=tmp_path / "http.sqlite3",
+        bootstrap_token=http_token,
+        session_secret=secrets.token_bytes(32),
+    )
+    https_app = create_app(
+        database=tmp_path / "https.sqlite3",
+        bootstrap_token=https_token,
+        session_secret=secrets.token_bytes(32),
+    )
+
+    http_cookie = (
+        TestClient(http_app, base_url="http://127.0.0.1:8080")
+        .post("/api/auth/pair", json={"token": http_token})
+        .headers["set-cookie"]
+    )
+    https_cookie = (
+        TestClient(https_app, base_url="https://127.0.0.1:8080")
+        .post("/api/auth/pair", json={"token": https_token})
+        .headers["set-cookie"]
+    )
+
+    assert "Secure" not in http_cookie
+    assert "Secure" in https_cookie
+    assert "HttpOnly" in http_cookie
+    assert "SameSite=strict" in http_cookie
+
+
+def test_origins_remain_fail_closed_and_explicitly_configurable(tmp_path: Path) -> None:
+    default_token = secrets.token_urlsafe(32)
+    configured_token = secrets.token_urlsafe(32)
+    default_app = create_app(
+        database=tmp_path / "default-origin.sqlite3",
+        bootstrap_token=default_token,
+        session_secret=secrets.token_bytes(32),
+    )
+    default_client = TestClient(default_app)
+    default_csrf = _pair(default_client, default_token)
+    assert (
+        default_client.post(
+            "/api/projects",
+            json={"name": "Rejected origin"},
+            headers={
+                "Origin": "http://127.0.0.1:4173",
+                "X-CSRF-Token": default_csrf,
+            },
+        ).status_code
+        == 403
+    )
+
+    configured_app = create_app(
+        database=tmp_path / "configured-origin.sqlite3",
+        bootstrap_token=configured_token,
+        session_secret=secrets.token_bytes(32),
+        allowed_origins=frozenset({"http://127.0.0.1:4173"}),
+    )
+    configured_client = TestClient(configured_app)
+    configured_csrf = _pair(configured_client, configured_token)
+    assert (
+        configured_client.post(
+            "/api/projects",
+            json={"name": "Explicit origin"},
+            headers={
+                "Origin": "http://127.0.0.1:4173",
+                "X-CSRF-Token": configured_csrf,
+            },
+        ).status_code
+        == 201
+    )
+
+
+def test_static_web_csp_needs_no_inline_style_exception(tmp_path: Path) -> None:
+    static_root = tmp_path / "web"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("<main>Corvus</main>", encoding="utf-8")
+    app = create_app(
+        database=tmp_path / "static.sqlite3",
+        bootstrap_token=secrets.token_urlsafe(32),
+        session_secret=secrets.token_bytes(32),
+        static_web_dir=static_root,
+    )
+
+    response = TestClient(app).get("/")
+
+    csp = response.headers["content-security-policy"]
+    assert "style-src 'self'" in csp
+    assert "unsafe-inline" not in csp
+    assert "connect-src 'self'" in csp
+
+
 def test_readiness_can_prove_the_desktop_sidecar_instance(tmp_path: Path) -> None:
     instance_token = secrets.token_urlsafe(32)
     challenge = secrets.token_hex(16)

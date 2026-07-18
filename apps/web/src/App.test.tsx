@@ -193,7 +193,7 @@ describe("Corvus operator console", () => {
 
     const sidebar = await screen.findByRole("complementary", { name: "Local workspace" });
     expect(sidebar).toContainElement(screen.getByRole("navigation", { name: "Local runtime navigation" }));
-    expect(sidebar.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(6);
+    expect(sidebar.querySelectorAll("nav svg[aria-hidden='true']")).toHaveLength(6);
     expect(container.querySelector(".project-rail")).toBeNull();
     expect(screen.queryByLabelText("Work item details")).not.toBeInTheDocument();
     expect(screen.getByText("Developer · Individual")).toBeVisible();

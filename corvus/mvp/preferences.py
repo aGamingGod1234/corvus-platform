@@ -122,10 +122,17 @@ class LocalPreferencesService:
                     raise LocalPreferencesConflict(
                         default_local_preferences() if latest is None else self._from_row(latest)
                     )
-        saved = self.get(user_id)
-        if saved["version"] != version:
-            raise RuntimeError("preferences_write_not_visible")
-        return saved
+        return {
+            "version": version,
+            "default_provider": default_provider,
+            "default_model": default_model,
+            "default_effort": default_effort,
+            "default_mode": default_mode,
+            "mcp_enabled": mcp_enabled,
+            "response_tone": response_tone,
+            "custom_rules": custom_rules,
+            "updated_at": updated_at,
+        }
 
     @staticmethod
     def _from_row(row: Row) -> LocalPreferences:

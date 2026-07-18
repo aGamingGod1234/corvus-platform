@@ -1,3 +1,5 @@
+import { isLoopbackRuntimeHost } from "../runtime/localRuntime";
+
 export interface LocalChatRun {
   run_id: string;
   handle_id: string;
@@ -75,7 +77,7 @@ export interface SafetyReceipt {
     download_name: string;
     sha256_digest: string;
     size_bytes: number;
-    secret_screening: "passed";
+    secret_screening: "passed" | "not_scanned";
   } | null;
 }
 
@@ -161,19 +163,34 @@ export interface ConversationApi {
   removeProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialStatus>;
 }
 
-interface ApiErrorDetail { code?: string; correlation_id?: string; }
+interface ApiErrorDetail {
+  code?: string;
+  correlation_id?: string;
+  current?: RuntimePreferences;
+}
 interface ApiErrorBody { detail?: string | ApiErrorDetail; }
 
 export class ConversationApiError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly correlationId: string | null) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly correlationId: string | null,
+    readonly detail: ApiErrorDetail | null = null
+  ) {
     super(code);
     this.name = "ConversationApiError";
   }
 }
 
 export function createConversationApi(csrfToken: string, baseUrl = ""): ConversationApi {
+  const runtimeBaseUrl = trustedRuntimeBaseUrl(baseUrl);
+
+  function runtimeUrl(path: string): string {
+    return `${runtimeBaseUrl}${path}`;
+  }
+
   async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetch(runtimeUrl(path), {
       ...init,
       credentials: "include",
       headers: { Accept: "application/json", ...init.headers }
@@ -188,7 +205,12 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       const correlationId = typeof detail === "object" && detail !== null
         ? detail.correlation_id ?? null
         : null;
-      throw new ConversationApiError(response.status, code, correlationId);
+      throw new ConversationApiError(
+        response.status,
+        code,
+        correlationId,
+        typeof detail === "object" && detail !== null ? detail : null
+      );
     }
     return await response.json() as T;
   }
@@ -203,10 +225,17 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
   }
 
   return {
-    listProviders: () => requestJson("/api/local-chat/providers", {
-      method: "GET",
-      headers: { Accept: "application/json" }
-    }),
+    listProviders: async () => {
+      const providers = await requestJson<ProviderCatalogEntry[]>("/api/local-chat/providers", {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      });
+      return providers.map((provider) => ({
+        ...provider,
+        models: Array.isArray(provider.models) ? provider.models : [],
+        thinking_levels: Array.isArray(provider.thinking_levels) ? provider.thinking_levels : []
+      }));
+    },
     getPreferences: () => requestJson("/api/local-chat/preferences", {
       method: "GET",
       headers: { Accept: "application/json" }
@@ -236,16 +265,16 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       headers: mutationHeaders(idempotencyKey),
       body: JSON.stringify({ prompt, ...request })
     }),
-    cancelRun: (runId) => requestJson(`/api/local-chat/runs/${runId}/cancel`, {
+    cancelRun: (runId) => requestJson(`/api/local-chat/runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
       headers: mutationHeaders()
     }),
     openRunEvents(runId) {
-      return new BrowserRunEventStream(new EventSource(`${baseUrl}/api/local-chat/runs/${runId}/events?follow=true`, {
+      return new BrowserRunEventStream(new EventSource(runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/events?follow=true`), {
         withCredentials: true
       }));
     },
-    artifactUrl: (runId) => `${baseUrl}/api/local-chat/runs/${runId}/artifact`,
+    artifactUrl: (runId) => runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/artifact`),
     listProviderCredentials: () => requestJson("/api/provider-credentials", {
       method: "GET",
       headers: { Accept: "application/json" }
@@ -264,4 +293,22 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       headers: mutationHeaders()
     })
   };
+}
+
+function trustedRuntimeBaseUrl(baseUrl: string): string {
+  if (baseUrl === "") return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new ConversationApiError(400, "runtime_base_url_invalid", null);
+  }
+  const sameOrigin = typeof window !== "undefined" && parsed.origin === window.location.origin;
+  const cleanRoot = parsed.username === "" && parsed.password === "" && parsed.pathname === "/"
+    && parsed.search === "" && parsed.hash === "";
+  const allowedProtocol = parsed.protocol === "http:" || parsed.protocol === "https:";
+  if (!cleanRoot || !allowedProtocol || (!sameOrigin && !isLoopbackRuntimeHost(parsed.hostname))) {
+    throw new ConversationApiError(400, "runtime_base_url_untrusted", null);
+  }
+  return parsed.origin;
 }

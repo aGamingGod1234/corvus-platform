@@ -41,6 +41,7 @@ import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncPr
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 import { SyncConflictPanel } from "./components/SyncConflictPanel";
+import { BrandLockup } from "./components/Brand";
 import { ConversationWorkspace } from "./app/ConversationWorkspace";
 import { createConversationApi } from "./app/conversationApi";
 import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
@@ -946,7 +947,7 @@ function LocalRuntimeShell({
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"}>
         <aside aria-label="Local workspace" className="local-sidebar">
-          <div className="local-sidebar__wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <BrandLockup className="local-sidebar__wordmark" />
           <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
           <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
             {routes.map((route) => (

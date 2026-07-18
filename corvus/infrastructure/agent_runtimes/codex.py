@@ -152,6 +152,7 @@ class LocalBuildArtifact:
     download_name: str
     sha256_digest: str
     size_bytes: int
+    secret_screening: Literal["passed", "not_scanned"] = "not_scanned"  # noqa: S105
 
 
 class _ProcessSessionLike(Protocol):
@@ -794,6 +795,7 @@ def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
         download_name=download_name,
         sha256_digest=_sha256_file(archive),
         size_bytes=archive.stat().st_size,
+        secret_screening="passed",  # noqa: S106
     )
 
 
