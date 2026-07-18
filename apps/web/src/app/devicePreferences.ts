@@ -14,6 +14,9 @@ export interface DevicePreferences {
   mcpNotes: string;
   sendKeyMode: SendKeyMode;
   safetyGuidance: SafetyGuidance;
+  runInBackground: boolean;
+  launchAtLogin: boolean;
+  nativeNotifications: boolean;
 }
 
 export const DEFAULT_DEVICE_PREFERENCES: DevicePreferences = Object.freeze({
@@ -23,7 +26,10 @@ export const DEFAULT_DEVICE_PREFERENCES: DevicePreferences = Object.freeze({
   customRules: "",
   mcpNotes: "",
   sendKeyMode: "adaptive",
-  safetyGuidance: "standard"
+  safetyGuidance: "standard",
+  runInBackground: false,
+  launchAtLogin: false,
+  nativeNotifications: false
 });
 
 function storageKey(workspaceId: string): string {
@@ -48,7 +54,12 @@ function normalizeDevicePreferences(value: unknown): DevicePreferences | null {
       candidate.sendKeyMode === "ctrl-enter";
   const safetyGuidanceIsValid = candidate.safetyGuidance === undefined ||
     candidate.safetyGuidance === "standard" || candidate.safetyGuidance === "detailed";
-  if (!baseIsValid || !sendKeyModeIsValid || !safetyGuidanceIsValid) return null;
+  const desktopSettingsAreValid = [
+    candidate.runInBackground,
+    candidate.launchAtLogin,
+    candidate.nativeNotifications
+  ].every((value) => value === undefined || typeof value === "boolean");
+  if (!baseIsValid || !sendKeyModeIsValid || !safetyGuidanceIsValid || !desktopSettingsAreValid) return null;
   return {
     version: DEVICE_PREFERENCES_VERSION,
     theme: candidate.theme as ThemePreference,
@@ -56,7 +67,10 @@ function normalizeDevicePreferences(value: unknown): DevicePreferences | null {
     customRules: candidate.customRules as string,
     mcpNotes: candidate.mcpNotes as string,
     sendKeyMode: (candidate.sendKeyMode ?? DEFAULT_DEVICE_PREFERENCES.sendKeyMode) as SendKeyMode,
-    safetyGuidance: (candidate.safetyGuidance ?? DEFAULT_DEVICE_PREFERENCES.safetyGuidance) as SafetyGuidance
+    safetyGuidance: (candidate.safetyGuidance ?? DEFAULT_DEVICE_PREFERENCES.safetyGuidance) as SafetyGuidance,
+    runInBackground: candidate.runInBackground === true,
+    launchAtLogin: candidate.launchAtLogin === true,
+    nativeNotifications: candidate.nativeNotifications === true
   };
 }
 

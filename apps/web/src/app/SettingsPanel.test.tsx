@@ -39,6 +39,40 @@ function settingsApi(): Pick<ConversationApi, "getPreferences" | "listProviders"
 }
 
 describe("SettingsPanel", () => {
+  it("applies explicit background, login, and notification settings to desktop", async () => {
+    const storage = new MemoryStorage();
+    const applyDesktopSettings = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <SettingsPanel
+        api={settingsApi()}
+        applyDesktopSettings={applyDesktopSettings}
+        desktopAvailable
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={storage}
+        workspaceId="workspace-desktop"
+        workspaceKind="individual"
+      />
+    );
+
+    await user.click(screen.getByLabelText("Run in background"));
+    await user.click(screen.getByLabelText("Launch at login"));
+    await user.click(screen.getByLabelText("Native notifications"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(applyDesktopSettings).toHaveBeenCalledWith({
+      runInBackground: true,
+      launchAtLogin: true,
+      nativeNotifications: true
+    }));
+    expect(loadDevicePreferences(storage, "workspace-desktop")).toMatchObject({
+      runInBackground: true,
+      launchAtLogin: true,
+      nativeNotifications: true
+    });
+  });
+
   it("persists runtime guidance through the backend and appearance on this device", async () => {
     const storage = new MemoryStorage();
     const api = settingsApi();

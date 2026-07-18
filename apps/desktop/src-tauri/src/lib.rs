@@ -11,7 +11,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    Manager, WebviewUrl, WebviewWindowBuilder,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
@@ -359,7 +363,11 @@ impl Drop for SidecarProcess {
 }
 
 #[derive(Default)]
-struct DesktopState(Mutex<Option<SidecarProcess>>);
+struct DesktopState {
+    sidecar: Mutex<Option<SidecarProcess>>,
+    background_mode: AtomicBool,
+    quitting: AtomicBool,
+}
 
 pub fn build_desktop_url(base_url: &str, pairing_secret: &str) -> Result<tauri::Url, String> {
     let mut url =
@@ -380,6 +388,34 @@ fn select_repository_directory(app: tauri::AppHandle) -> Result<Option<String>, 
         .transpose()
 }
 
+#[tauri::command]
+fn set_background_mode(enabled: bool, state: tauri::State<'_, DesktopState>) {
+    state.background_mode.store(enabled, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn get_background_mode(state: tauri::State<'_, DesktopState>) -> bool {
+    state.background_mode.load(Ordering::SeqCst)
+}
+
+fn should_close_to_tray(background_mode: bool, quitting: bool) -> bool {
+    background_mode && !quitting
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrayAction {
+    Show,
+    Quit,
+}
+
+fn tray_action(id: &str) -> Option<TrayAction> {
+    match id {
+        "show" => Some(TrayAction::Show),
+        "quit" => Some(TrayAction::Quit),
+        _ => None,
+    }
+}
+
 fn repository_directory_string(selected: FilePath) -> Result<String, String> {
     match selected {
         FilePath::Path(path) => path
@@ -392,7 +428,12 @@ fn repository_directory_string(selected: FilePath) -> Result<String, String> {
 
 pub fn run() -> Result<(), String> {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -400,21 +441,34 @@ pub fn run() -> Result<(), String> {
                 let _ = window.set_focus();
             }
         }))
-        .invoke_handler(tauri::generate_handler![select_repository_directory])
+        .invoke_handler(tauri::generate_handler![
+            select_repository_directory,
+            set_background_mode,
+            get_background_mode
+        ])
         .manage(DesktopState::default())
         .setup(|app| setup_app(app).map_err(|error| std::io::Error::other(error).into()))
         .build(tauri::generate_context!())
         .map_err(|error| format!("desktop_build_failed:{error}"))?;
     app.run(|app_handle, event| {
-        let main_window_close = matches!(
-            &event,
-            tauri::RunEvent::WindowEvent {
-                label,
-                event: tauri::WindowEvent::CloseRequested { .. },
-                ..
-            } if label == "main"
-        );
-        if main_window_close {
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+            && label == "main"
+        {
+            let state = app_handle.state::<DesktopState>();
+            if should_close_to_tray(
+                state.background_mode.load(Ordering::SeqCst),
+                state.quitting.load(Ordering::SeqCst),
+            ) {
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                return;
+            }
             shutdown_managed_sidecar(app_handle);
             app_handle.exit(0);
             return;
@@ -431,7 +485,7 @@ pub fn run() -> Result<(), String> {
 
 fn shutdown_managed_sidecar(app_handle: &tauri::AppHandle) {
     let state = app_handle.state::<DesktopState>();
-    if let Ok(mut guard) = state.0.lock()
+    if let Ok(mut guard) = state.sidecar.lock()
         && let Some(mut sidecar) = guard.take()
     {
         let _ = sidecar.shutdown();
@@ -439,6 +493,7 @@ fn shutdown_managed_sidecar(app_handle: &tauri::AppHandle) {
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), String> {
+    setup_tray(app)?;
     let executable = sidecar_executable(app)?;
     let resource_dir = app
         .path()
@@ -481,10 +536,60 @@ fn setup_app(app: &mut tauri::App) -> Result<(), String> {
         .map_err(|error| format!("desktop_window_failed:{error}"))?;
     let state = app.state::<DesktopState>();
     *state
-        .0
+        .sidecar
         .lock()
         .map_err(|_| "desktop_state_poisoned".to_owned())? = Some(sidecar);
     Ok(())
+}
+
+fn setup_tray(app: &mut tauri::App) -> Result<(), String> {
+    let show = MenuItem::with_id(app, "show", "Show Corvus", true, None::<&str>)
+        .map_err(|error| format!("desktop_tray_menu_failed:{error}"))?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Corvus", true, None::<&str>)
+        .map_err(|error| format!("desktop_tray_menu_failed:{error}"))?;
+    let menu = Menu::with_items(app, &[&show, &quit])
+        .map_err(|error| format!("desktop_tray_menu_failed:{error}"))?;
+    let mut builder = TrayIconBuilder::new()
+        .tooltip("Corvus")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match tray_action(event.id.as_ref()) {
+            Some(TrayAction::Show) => show_main_window(app),
+            Some(TrayAction::Quit) => {
+                let state = app.state::<DesktopState>();
+                state.quitting.store(true, Ordering::SeqCst);
+                shutdown_managed_sidecar(app);
+                app.exit(0);
+            }
+            None => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder
+        .build(app)
+        .map_err(|error| format!("desktop_tray_failed:{error}"))?;
+    Ok(())
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 fn sidecar_executable(app: &tauri::App) -> Result<PathBuf, String> {
@@ -712,9 +817,10 @@ mod tests {
     use std::thread;
 
     use super::{
-        SidecarLaunch, SidecarLifecycle, SidecarState, build_desktop_url, capture_bounded_stderr,
-        packaged_sidecar_candidates, readiness_probe, repository_directory_string,
-        sanitize_diagnostics, select_packaged_sidecar,
+        SidecarLaunch, SidecarLifecycle, SidecarState, TrayAction, build_desktop_url,
+        capture_bounded_stderr, packaged_sidecar_candidates, readiness_probe,
+        repository_directory_string, sanitize_diagnostics, select_packaged_sidecar,
+        should_close_to_tray, tray_action,
     };
     use tauri_plugin_dialog::FilePath;
 
@@ -738,6 +844,21 @@ mod tests {
                 SidecarState::Stopped,
             ]
         );
+    }
+
+    #[test]
+    fn close_to_tray_requires_background_mode_and_a_non_quitting_app() {
+        assert!(should_close_to_tray(true, false));
+        assert!(!should_close_to_tray(false, false));
+        assert!(!should_close_to_tray(true, true));
+        assert!(!should_close_to_tray(false, true));
+    }
+
+    #[test]
+    fn tray_routes_only_explicit_show_and_quit_actions() {
+        assert_eq!(tray_action("show"), Some(TrayAction::Show));
+        assert_eq!(tray_action("quit"), Some(TrayAction::Quit));
+        assert_eq!(tray_action("unexpected"), None);
     }
 
     #[test]

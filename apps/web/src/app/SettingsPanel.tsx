@@ -17,6 +17,11 @@ import {
   type SendKeyMode,
   type ThemePreference
 } from "./devicePreferences";
+import {
+  applyDesktopDeviceSettings,
+  desktopControlsAvailable,
+  type DesktopDeviceSettings
+} from "./desktopPreferences";
 import type { ExperienceMode, WorkspaceKind } from "./preferences";
 import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
@@ -89,6 +94,8 @@ export function SettingsPanel({
   onBack,
   onExperienceChange,
   profileEditable = true,
+  applyDesktopSettings = applyDesktopDeviceSettings,
+  desktopAvailable = desktopControlsAvailable(),
   storage,
   workspaceId,
   workspaceKind
@@ -98,6 +105,8 @@ export function SettingsPanel({
   onBack?(): void;
   onExperienceChange(experience: ExperienceMode): Promise<void>;
   profileEditable?: boolean;
+  applyDesktopSettings?(settings: DesktopDeviceSettings): Promise<void>;
+  desktopAvailable?: boolean;
   storage: Storage;
   workspaceId: string;
   workspaceKind: WorkspaceKind;
@@ -106,6 +115,9 @@ export function SettingsPanel({
   const [theme, setTheme] = useState<ThemePreference>(() => loadDevicePreferences(storage, workspaceId).theme);
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>(() => loadDevicePreferences(storage, workspaceId).sendKeyMode);
   const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance>(() => loadDevicePreferences(storage, workspaceId).safetyGuidance);
+  const [runInBackground, setRunInBackground] = useState(() => loadDevicePreferences(storage, workspaceId).runInBackground);
+  const [launchAtLogin, setLaunchAtLogin] = useState(() => loadDevicePreferences(storage, workspaceId).launchAtLogin);
+  const [nativeNotifications, setNativeNotifications] = useState(() => loadDevicePreferences(storage, workspaceId).nativeNotifications);
   const [runtime, setRuntime] = useState<RuntimePreferences>(DEFAULT_RUNTIME_PREFERENCES);
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>(FALLBACK_PROVIDERS);
   const [providerDiscoveryError, setProviderDiscoveryError] = useState("");
@@ -132,6 +144,9 @@ export function SettingsPanel({
     setTheme(device.theme);
     setSendKeyMode(device.sendKeyMode);
     setSafetyGuidance(device.safetyGuidance);
+    setRunInBackground(device.runInBackground);
+    setLaunchAtLogin(device.launchAtLogin);
+    setNativeNotifications(device.nativeNotifications);
     setProfileExperience(experience);
     setStatus("");
     setError("");
@@ -230,16 +245,21 @@ export function SettingsPanel({
     setError("");
     setStatus("");
     const device = loadDevicePreferences(storage, workspaceId);
-    saveDevicePreferences(storage, workspaceId, {
+    const nextDevice = {
       ...device,
       theme,
       responseTone: runtime.response_tone,
       customRules: runtime.custom_rules,
       sendKeyMode,
-      safetyGuidance
-    });
-    document.documentElement.dataset.theme = theme;
+      safetyGuidance,
+      runInBackground,
+      launchAtLogin,
+      nativeNotifications
+    };
     try {
+      if (desktopAvailable) {
+        await applyDesktopSettings({ runInBackground, launchAtLogin, nativeNotifications });
+      }
       if (api !== undefined) {
         const saved = await api.updatePreferences({
           expected_version: runtime.version,
@@ -256,6 +276,8 @@ export function SettingsPanel({
       } else {
         setStatus("Saved on this device");
       }
+      saveDevicePreferences(storage, workspaceId, nextDevice);
+      document.documentElement.dataset.theme = theme;
       setDirty(false);
     } catch (reason) {
       if (
@@ -326,7 +348,7 @@ export function SettingsPanel({
   return (
     <section className="settings-workspace">
       <aside className="settings-sidebar">
-        {onBack ? <button className="settings-back" onClick={onBack} type="button"><span aria-hidden="true">â†</span> Back to app</button> : null}
+        {onBack ? <button className="settings-back" onClick={onBack} type="button"><span aria-hidden="true">←</span> Back to app</button> : null}
         <nav aria-label="Settings categories" className="settings-categories">
           {CATEGORIES.map((item) => (
             <button
@@ -352,6 +374,10 @@ export function SettingsPanel({
             </SettingsRow>
             <SettingsRow description="Workspace membership and authority stay attached to this workspace." label="Workspace type"><select aria-label="Workspace type" disabled value={workspaceKind}><option value="individual">Individual</option><option value="team">Team</option></select></SettingsRow>
             <div className="settings-field"><span className="settings-field__label">Send messages</span><p>Adaptive sends single-line prompts with Enter and multiline prompts with Ctrl+Enter.</p><div className="segmented-choice" role="radiogroup" aria-label="Composer send keys"><label><input checked={sendKeyMode === "adaptive"} onChange={() => { setSendKeyMode("adaptive"); setDirty(true); }} type="radio" />Adaptive</label><label><input checked={sendKeyMode === "enter"} onChange={() => { setSendKeyMode("enter"); setDirty(true); }} type="radio" />Enter sends</label><label><input checked={sendKeyMode === "ctrl-enter"} onChange={() => { setSendKeyMode("ctrl-enter"); setDirty(true); }} type="radio" />Ctrl+Enter sends</label></div></div>
+            <div className="settings-section__subheading"><h3>Desktop background</h3><p>Keep local schedules available and control native startup behavior.</p></div>
+            <SettingsRow description={desktopAvailable ? "Closing the window keeps Corvus and its local scheduler in the system tray." : "Available in the installed Corvus desktop app."} label="Run in background"><label className="switch"><input aria-label="Run in background" checked={runInBackground} disabled={!desktopAvailable} onChange={(event) => { setRunInBackground(event.target.checked); setDirty(true); }} type="checkbox" /><span /></label></SettingsRow>
+            <SettingsRow description={desktopAvailable ? "Start Corvus after you sign in to this computer." : "Available in the installed Corvus desktop app."} label="Launch at login"><label className="switch"><input aria-label="Launch at login" checked={launchAtLogin} disabled={!desktopAvailable} onChange={(event) => { setLaunchAtLogin(event.target.checked); setDirty(true); }} type="checkbox" /><span /></label></SettingsRow>
+            <SettingsRow description={desktopAvailable ? "Show redacted completion and review-required notifications." : "Available in the installed Corvus desktop app."} label="Native notifications"><label className="switch"><input aria-label="Native notifications" checked={nativeNotifications} disabled={!desktopAvailable} onChange={(event) => { setNativeNotifications(event.target.checked); setDirty(true); }} type="checkbox" /><span /></label></SettingsRow>
             <div className="settings-actions"><button className="button" disabled={!profileEditable || busy || profileExperience === experience} onClick={() => void saveProfile()} type="button">Save profile</button></div>
             {!profileEditable ? <p className="field-note">Profile changes are available after signing in on the web app.</p> : null}
           </> : null}

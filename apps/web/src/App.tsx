@@ -49,6 +49,7 @@ import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
 import { RunsWorkspace } from "./app/RunsWorkspace";
 import { PortableSkillsWorkspace } from "./app/PortableSkillsWorkspace";
 import { SchedulesWorkspace } from "./app/SchedulesWorkspace";
+import { BackgroundRunNotifier } from "./app/BackgroundRunNotifier";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -712,6 +713,8 @@ export function App({
       : localProfile.routes[0].id;
     const localSurface = localSurfaceForRoute(localRoute);
     return (
+      <>
+      <BackgroundRunNotifier listRuns={api.listLocalRuns} storage={preferenceStorage} workspaceId={localSession.user_id} />
       <LocalRuntimeShell
         activeRoute={localRoute}
         error={error}
@@ -763,6 +766,7 @@ export function App({
           : localSurface === "operations" ? operationsSurface
           : executionSurface}
       </LocalRuntimeShell>
+      </>
     );
   }
 
