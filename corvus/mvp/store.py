@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 7
+SCHEMA_VERSION: Final = 8
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -385,6 +385,35 @@ CREATE INDEX mvp_worktree_leases_repository_idx
     ON mvp_worktree_leases(repository_id, status, created_at);
 """
 
+_MIGRATION_008 = """
+CREATE TABLE mvp_contributions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE REFERENCES mvp_worktree_leases(run_id) ON DELETE RESTRICT,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    branch TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    selected_paths_json TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    confirmation_digest TEXT NOT NULL,
+    message TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    draft INTEGER NOT NULL CHECK (draft IN (0, 1)),
+    change_digest TEXT NOT NULL,
+    secret_scan_json TEXT NOT NULL,
+    commit_sha TEXT,
+    remote_ref TEXT,
+    pr_number INTEGER,
+    pr_url TEXT,
+    state TEXT NOT NULL,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX mvp_contributions_repository_idx
+    ON mvp_contributions(repository_id, updated_at, id);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -475,4 +504,11 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(7)
+            if 8 not in versions:
+                connection.executescript(_MIGRATION_008)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )

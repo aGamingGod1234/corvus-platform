@@ -20,9 +20,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from corvus.mvp.api_chat import ApiChatBackend, ApiProvider
+from corvus.mvp.change_review import ChangeReviewService, ChangeSet
+from corvus.mvp.contributions import (
+    ContributionConflict,
+    ContributionRecord,
+    ContributionService,
+)
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
 from corvus.mvp.git_process import GitProcess, GitProcessError
+from corvus.mvp.github_cli import GitHubCli
 from corvus.mvp.governance import (
     AutonomyDecision,
     GovernanceService,
@@ -76,7 +83,9 @@ from corvus.mvp.provider_credentials import (
 )
 from corvus.mvp.repository_workspace import RepositoryRecord, RepositoryWorkspaceService
 from corvus.mvp.safety import build_safety_preview
+from corvus.mvp.secret_scan import SecretScanner
 from corvus.mvp.store import SqliteStore
+from corvus.mvp.worktrees import WorktreeManager, WorktreeOwnershipError
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
@@ -113,6 +122,26 @@ class ProjectCreateRequest(ApiModel):
 class RepositoryCreateRequest(ApiModel):
     path: Path
     display_name: str = Field(min_length=1, max_length=200)
+
+
+class LocalWorktreeResponse(ApiModel):
+    run_id: str
+    repository_id: str
+    base_sha: str
+    status: Literal["creating", "active", "discarded"]
+    created_at: datetime
+
+
+class ContributionPrepareRequest(ApiModel):
+    selected_paths: tuple[str, ...] = Field(min_length=1, max_length=500)
+    message: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20_000)
+    draft: bool = True
+
+
+class ContributionPublishRequest(ApiModel):
+    expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class OutcomeCreateRequest(ApiModel):
@@ -450,14 +479,21 @@ def _prompt_with_preferences(prompt: str, preferences: LocalPreferences) -> str:
     return "\n".join(preference_lines)
 
 
-def _build_repository_workspace(store: SqliteStore) -> RepositoryWorkspaceService | None:
-    executable = shutil.which("git.exe" if os.name == "nt" else "git")
+def _build_git_process(executable_name: str) -> GitProcess | None:
+    executable = shutil.which(executable_name)
     if executable is None:
         return None
     try:
-        return RepositoryWorkspaceService(store, GitProcess(Path(executable)))
+        return GitProcess(Path(executable))
     except GitProcessError:
         return None
+
+
+def _build_repository_workspace(
+    store: SqliteStore,
+    git: GitProcess | None,
+) -> RepositoryWorkspaceService | None:
+    return None if git is None else RepositoryWorkspaceService(store, git)
 
 
 def create_app(
@@ -474,6 +510,8 @@ def create_app(
     local_chat_service: LocalChatService | None = None,
     provider_credentials: ProviderCredentialService | None = None,
     repository_workspace: RepositoryWorkspaceService | None = None,
+    worktree_manager: WorktreeManager | None = None,
+    contribution_service: ContributionService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -515,7 +553,37 @@ def create_app(
     )
     local_preferences = LocalPreferencesService(service.store)
     credential_service = provider_credentials or ProviderCredentialService()
-    repositories = repository_workspace or _build_repository_workspace(service.store)
+    git = _build_git_process("git.exe" if os.name == "nt" else "git")
+    repositories = repository_workspace or _build_repository_workspace(service.store, git)
+    worktrees = worktree_manager
+    if worktrees is None and git is not None:
+        worktrees = WorktreeManager(
+            service.store,
+            git,
+            root=database.parent / ".corvus-worktrees",
+            ownership_secret=hmac.new(
+                session_secret,
+                b"worktree-ownership",
+                hashlib.sha256,
+            ).digest(),
+        )
+    contributions = contribution_service
+    if contributions is None and git is not None and worktrees is not None:
+        gh = _build_git_process("gh.exe" if os.name == "nt" else "gh")
+        if gh is not None:
+            contributions = ContributionService(
+                service.store,
+                git,
+                worktrees,
+                ChangeReviewService(git),
+                SecretScanner(),
+                GitHubCli(gh, cwd=database.parent),
+                confirmation_secret=hmac.new(
+                    session_secret,
+                    b"contribution-confirmation",
+                    hashlib.sha256,
+                ).digest(),
+            )
     app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
     app.middleware("http")(_security_headers)
 
@@ -526,6 +594,20 @@ def create_app(
     @app.exception_handler(DomainConflict)
     async def conflict_handler(_request: Request, error: DomainConflict) -> JSONResponse:
         return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
+
+    @app.exception_handler(ContributionConflict)
+    async def contribution_conflict_handler(
+        _request: Request,
+        error: ContributionConflict,
+    ) -> JSONResponse:
+        return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
+
+    @app.exception_handler(WorktreeOwnershipError)
+    async def worktree_error_handler(
+        _request: Request,
+        error: WorktreeOwnershipError,
+    ) -> JSONResponse:
+        return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_request", str(error))
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
@@ -578,6 +660,33 @@ def create_app(
                 detail="git_unavailable",
             )
         return repositories
+
+    def worktree_service() -> WorktreeManager:
+        if worktrees is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return worktrees
+
+    def contribution_workflow() -> ContributionService:
+        if contributions is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_cli_unavailable",
+            )
+        return contributions
+
+    def authorize_local_run(tenant_id: str, run_id: str) -> None:
+        with service.store.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM mvp_worktree_leases w "
+                "JOIN mvp_repositories r ON r.id = w.repository_id "
+                "WHERE w.run_id = ? AND r.tenant_id = ?",
+                (run_id, tenant_id),
+            ).fetchone()
+        if row is None:
+            raise DomainNotFound("local_run_not_found")
 
     @app.get("/ready")
     def ready(
@@ -669,6 +778,83 @@ def create_app(
     ) -> Response:
         repository_service().remove(principal.tenant_id, repository_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post(
+        "/api/local/repositories/{repository_id}/worktrees",
+        response_model=LocalWorktreeResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_local_worktree(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        repository = repository_service().refresh(principal.tenant_id, repository_id)
+        lease = worktree_service().create(
+            repository,
+            str(uuid4()),
+            repository.snapshot.head_sha,
+        )
+        return {
+            "run_id": lease.run_id,
+            "repository_id": lease.repository_id,
+            "base_sha": lease.base_sha,
+            "status": lease.status,
+            "created_at": lease.created_at,
+        }
+
+    @app.get("/api/local/runs/{run_id}/changes", response_model=ChangeSet)
+    def local_run_changes(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        return contribution_workflow().changes(run_id).model_dump(mode="json")
+
+    @app.get(
+        "/api/local/runs/{run_id}/contribution",
+        response_model=ContributionRecord,
+    )
+    def local_run_contribution(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        return contribution_workflow().get(run_id).model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/contribution/prepare",
+        response_model=ContributionRecord,
+    )
+    def prepare_local_contribution(
+        run_id: str,
+        body: ContributionPrepareRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        record = contribution_workflow().prepare(
+            run_id,
+            selected_paths=body.selected_paths,
+            message=body.message,
+            title=body.title,
+            body=body.body,
+            draft=body.draft,
+        )
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/contribution/publish",
+        response_model=ContributionRecord,
+    )
+    def publish_local_contribution(
+        run_id: str,
+        body: ContributionPublishRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        return contribution_workflow().publish(
+            run_id,
+            expected_digest=body.expected_digest,
+        ).model_dump(mode="json")
 
     @app.get(
         "/api/provider-credentials",
