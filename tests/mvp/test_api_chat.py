@@ -109,6 +109,95 @@ async def test_openai_api_chat_normalizes_default_effort_and_rejects_max() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_api_chat_omits_reasoning_for_non_reasoning_models() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        bodies.append(httpx.Response(200, request=request, content=request.content).json())
+        return httpx.Response(200, text='data: {"type":"response.completed"}\n', request=request)
+
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Answer without a reasoning control",
+        model="gpt-4.1",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-non-reasoning-model",
+    )
+
+    _events = [event async for event in backend.events(handle)]
+
+    assert "reasoning" not in bodies[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_type", ["response.failed", "response.incomplete"])
+async def test_openai_api_chat_treats_provider_terminal_failures_as_failed(
+    terminal_type: str,
+) -> None:
+    body = f'data: {{"type":"{terminal_type}"}}\n'
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Fail truthfully",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key=f"api-{terminal_type}",
+    )
+
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "failed"]
+    assert events[-1].payload == {"reason_code": "provider_request_failed"}
+
+
+@pytest.mark.asyncio
+async def test_api_chat_cancel_before_events_does_not_open_provider_stream() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text='data: {"type":"response.completed"}\n', request=request)
+
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Do not send this prompt",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-preflight-cancel",
+    )
+
+    assert await backend.cancel(handle) is True
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "cancelled"]
+    assert requests == []
+
+
+@pytest.mark.asyncio
 async def test_api_chat_cancel_closes_a_stalled_provider_stream() -> None:
     class _StalledResponse:
         def __init__(self) -> None:

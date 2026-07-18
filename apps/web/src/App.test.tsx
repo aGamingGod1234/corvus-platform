@@ -285,6 +285,31 @@ describe("Corvus operator console", () => {
     }
   });
 
+  it("routes everyday work tabs to the execution surface", async () => {
+    preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "everyday",
+      scope: "personal",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+
+    await user.click(await screen.findByRole("link", { name: "My Work" }));
+
+    expect(screen.getByRole("heading", { name: "Define the next durable outcome." })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Governed operations." })).not.toBeInTheDocument();
+  });
+
   it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -100,9 +101,23 @@ class ApiChatBackend:
         sequence = 1
         if sequence > after_sequence:
             yield LocalChatBackendEvent(sequence, self._clock(), "started", {"status": "started"})
+        if handle.id in self._cancelled:
+            sequence += 1
+            if sequence > after_sequence:
+                yield LocalChatBackendEvent(
+                    sequence, self._clock(), "cancelled", {"status": "cancelled"}
+                )
+            return
         request_failed = False
         try:
             async with self._http_client_factory() as client:
+                if handle.id in self._cancelled:
+                    sequence += 1
+                    if sequence > after_sequence:
+                        yield LocalChatBackendEvent(
+                            sequence, self._clock(), "cancelled", {"status": "cancelled"}
+                        )
+                    return
                 async with client.stream(
                     "POST",
                     self._url(request.model),
@@ -114,6 +129,9 @@ class ApiChatBackend:
                         response.raise_for_status()
                         async for line in response.aiter_lines():
                             if handle.id in self._cancelled:
+                                break
+                            if self._provider == "openai" and _openai_terminal_failure(line):
+                                request_failed = True
                                 break
                             text = self._text_delta(line)
                             if not text:
@@ -185,12 +203,14 @@ class ApiChatBackend:
 
     def _body(self, request: _ApiRequest) -> dict[str, object]:
         if self._provider == "openai":
-            return {
+            body: dict[str, object] = {
                 "model": request.model,
                 "input": request.prompt,
                 "stream": True,
-                "reasoning": {"effort": request.effort},
             }
+            if _supports_openai_reasoning_effort(request.model):
+                body["reasoning"] = {"effort": request.effort}
+            return body
         if self._provider == "anthropic":
             return {
                 "model": request.model,
@@ -231,6 +251,26 @@ class ApiChatBackend:
             return None
         delta = choices[0].get("delta")
         return cast(str | None, delta.get("content")) if isinstance(delta, dict) else None
+
+
+def _supports_openai_reasoning_effort(model: str) -> bool:
+    normalized = model.strip().lower()
+    return normalized.startswith(("gpt-5", "gpt-oss-", "codex-")) or bool(
+        re.fullmatch(r"o\d+(?:[-.].+)?", normalized)
+    )
+
+
+def _openai_terminal_failure(line: str) -> bool:
+    if not line.startswith("data:"):
+        return False
+    raw = line.removeprefix("data:").strip()
+    if not raw or raw == "[DONE]":
+        return False
+    payload = json.loads(raw)
+    return isinstance(payload, dict) and payload.get("type") in {
+        "response.failed",
+        "response.incomplete",
+    }
 
 
 def _gemini_text(payload: dict[str, Any]) -> str | None:

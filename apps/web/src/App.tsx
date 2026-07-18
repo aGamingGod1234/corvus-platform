@@ -990,7 +990,7 @@ function LocalRuntimeShell({
   );
 }
 
-type LocalSurface = "conversations" | "repositories" | "runs" | "schedule" | "skills" | "operations" | "settings";
+type LocalSurface = "conversations" | "repositories" | "runs" | "schedule" | "skills" | "operations" | "execution" | "settings";
 
 function localSurfaceForRoute(routeId: string): LocalSurface {
   if (routeId === "threads") return "conversations";
@@ -999,7 +999,8 @@ function localSurfaceForRoute(routeId: string): LocalSurface {
   if (routeId === "schedule") return "schedule";
   if (routeId === "settings") return "settings";
   if (routeId === "skills") return "skills";
-  return "operations";
+  if (["people", "policies"].includes(routeId)) return "operations";
+  return "execution";
 }
 
 function LocalNavigationIcon({ routeId }: { routeId: string }) {
