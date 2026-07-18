@@ -295,6 +295,93 @@
         "title": "BudgetUpdateRequest",
         "type": "object"
       },
+      "ChangeSet": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ChangedFile"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files",
+          "digest",
+          "captured_at"
+        ],
+        "title": "ChangeSet",
+        "type": "object"
+      },
+      "ChangedFile": {
+        "additionalProperties": false,
+        "properties": {
+          "binary": {
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "patch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patch"
+          },
+          "patch_truncated": {
+            "title": "Patch Truncated",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "previous_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Path"
+          },
+          "status": {
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "renamed",
+              "untracked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "binary",
+          "patch",
+          "patch_truncated"
+        ],
+        "title": "ChangedFile",
+        "type": "object"
+      },
       "ChannelEventEnvelope": {
         "additionalProperties": false,
         "properties": {
@@ -448,6 +535,226 @@
           "principal_id"
         ],
         "title": "ChannelIdentityRequest",
+        "type": "object"
+      },
+      "ContributionPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "draft": {
+            "default": true,
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "message": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "selected_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Selected Paths",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selected_paths",
+          "message",
+          "title",
+          "body"
+        ],
+        "title": "ContributionPrepareRequest",
+        "type": "object"
+      },
+      "ContributionPublishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Expected Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_digest"
+        ],
+        "title": "ContributionPublishRequest",
+        "type": "object"
+      },
+      "ContributionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "base_branch": {
+            "title": "Base Branch",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "change_digest": {
+            "title": "Change Digest",
+            "type": "string"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "confirmation_digest": {
+            "title": "Confirmation Digest",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "draft": {
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "remote_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote Ref"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "secret_scan": {
+            "$ref": "#/components/schemas/SecretScanResult"
+          },
+          "selected_paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Paths",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "preparing",
+              "branch_created",
+              "committed",
+              "pushed",
+              "published"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "repository_id",
+          "branch",
+          "base_branch",
+          "selected_paths",
+          "confirmation_digest",
+          "message",
+          "title",
+          "body",
+          "draft",
+          "change_digest",
+          "secret_scan",
+          "commit_sha",
+          "remote_ref",
+          "pr_number",
+          "pr_url",
+          "state",
+          "last_error",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContributionRecord",
         "type": "object"
       },
       "ConversationEntry": {
@@ -783,6 +1090,410 @@
           "enabled"
         ],
         "title": "KillSwitchResponse",
+        "type": "object"
+      },
+      "LocalChatCancelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "cancelled",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "state",
+          "accepted",
+          "reason_code"
+        ],
+        "title": "LocalChatCancelResponse",
+        "type": "object"
+      },
+      "LocalChatStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "mcp_enabled": {
+            "default": false,
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "chat",
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prompt": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "provider": {
+            "default": "codex",
+            "enum": [
+              "codex",
+              "claude",
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "safety_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Safety Digest"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "LocalChatStartRequest",
+        "type": "object"
+      },
+      "LocalChatStartResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "handle_id": {
+            "title": "Handle Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "codex",
+              "claude",
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "safety": {
+            "$ref": "#/components/schemas/SafetyPreviewResponse"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "storage": {
+            "const": "this_device",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "handle_id",
+          "state",
+          "provider",
+          "model",
+          "mode",
+          "storage",
+          "created_at",
+          "safety"
+        ],
+        "title": "LocalChatStartResponse",
+        "type": "object"
+      },
+      "LocalPreferencesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_rules": {
+            "title": "Custom Rules",
+            "type": "string"
+          },
+          "default_effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Default Effort",
+            "type": "string"
+          },
+          "default_mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Default Mode",
+            "type": "string"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Default Provider",
+            "type": "string"
+          },
+          "mcp_enabled": {
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "response_tone": {
+            "enum": [
+              "concise",
+              "balanced",
+              "detailed"
+            ],
+            "title": "Response Tone",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "version": {
+            "minimum": 0.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_provider",
+          "default_model",
+          "default_effort",
+          "default_mode",
+          "mcp_enabled",
+          "response_tone",
+          "custom_rules",
+          "updated_at"
+        ],
+        "title": "LocalPreferencesResponse",
+        "type": "object"
+      },
+      "LocalPreferencesUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_rules": {
+            "maxLength": 20000,
+            "title": "Custom Rules",
+            "type": "string"
+          },
+          "default_effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Default Effort",
+            "type": "string"
+          },
+          "default_mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Default Mode",
+            "type": "string"
+          },
+          "default_model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "default_provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ],
+            "title": "Default Provider",
+            "type": "string"
+          },
+          "expected_version": {
+            "minimum": 0.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "mcp_enabled": {
+            "title": "Mcp Enabled",
+            "type": "boolean"
+          },
+          "response_tone": {
+            "enum": [
+              "concise",
+              "balanced",
+              "detailed"
+            ],
+            "title": "Response Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "default_provider",
+          "default_effort",
+          "default_mode",
+          "mcp_enabled",
+          "response_tone",
+          "custom_rules"
+        ],
+        "title": "LocalPreferencesUpdate",
+        "type": "object"
+      },
+      "LocalWorktreeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "base_sha": {
+            "title": "Base Sha",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "creating",
+              "active",
+              "discarded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "repository_id",
+          "base_sha",
+          "status",
+          "created_at"
+        ],
+        "title": "LocalWorktreeResponse",
         "type": "object"
       },
       "MemoryCreateRequest": {
@@ -1127,6 +1838,84 @@
         "title": "PairResponse",
         "type": "object"
       },
+      "PortableSkillVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/SkillFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "package_path": {
+            "title": "Package Path",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "active",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "description",
+          "version",
+          "digest",
+          "source",
+          "source_path",
+          "package_path",
+          "status",
+          "findings",
+          "created_at"
+        ],
+        "title": "PortableSkillVersion",
+        "type": "object"
+      },
       "Project": {
         "additionalProperties": false,
         "properties": {
@@ -1236,6 +2025,95 @@
         "title": "ProviderCreateRequest",
         "type": "object"
       },
+      "ProviderCredentialConnectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "credential": {
+            "format": "password",
+            "title": "Credential",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "title": "ProviderCredentialConnectRequest",
+        "type": "object"
+      },
+      "ProviderCredentialStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "keyring",
+              "environment",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "configured",
+          "source"
+        ],
+        "title": "ProviderCredentialStatusResponse",
+        "type": "object"
+      },
+      "ProviderCredentialVerificationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic",
+              "gemini",
+              "xai"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "configured",
+          "verified",
+          "models"
+        ],
+        "title": "ProviderCredentialVerificationResponse",
+        "type": "object"
+      },
       "RecordStatus": {
         "enum": [
           "active",
@@ -1245,6 +2123,196 @@
         ],
         "title": "RecordStatus",
         "type": "string"
+      },
+      "Recurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "once",
+              "hourly",
+              "daily",
+              "weekdays",
+              "weekly"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "local_time": {
+            "anyOf": [
+              {
+                "format": "time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Time"
+          },
+          "once_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Once At"
+          },
+          "weekdays": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 7,
+            "title": "Weekdays",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Recurrence",
+        "type": "object"
+      },
+      "RepositoryCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "path": {
+            "format": "path",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "display_name"
+        ],
+        "title": "RepositoryCreateRequest",
+        "type": "object"
+      },
+      "RepositoryRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "remote_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote Slug"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/RepositorySnapshot"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "display_name",
+          "path",
+          "remote_slug",
+          "default_branch",
+          "created_at",
+          "updated_at",
+          "snapshot"
+        ],
+        "title": "RepositoryRecord",
+        "type": "object"
+      },
+      "RepositorySnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "ahead": {
+            "title": "Ahead",
+            "type": "integer"
+          },
+          "behind": {
+            "title": "Behind",
+            "type": "integer"
+          },
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "clean": {
+            "title": "Clean",
+            "type": "boolean"
+          },
+          "head_sha": {
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "health": {
+            "title": "Health",
+            "type": "string"
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "title": "Refreshed At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch",
+          "head_sha",
+          "clean",
+          "ahead",
+          "behind",
+          "health",
+          "refreshed_at"
+        ],
+        "title": "RepositorySnapshot",
+        "type": "object"
       },
       "RetrievedMemory": {
         "additionalProperties": false,
@@ -1384,6 +2452,807 @@
         "title": "RoutineRun",
         "type": "object"
       },
+      "RunEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "sequence",
+          "event_type",
+          "payload",
+          "created_at"
+        ],
+        "title": "RunEvent",
+        "type": "object"
+      },
+      "RunEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "summary",
+          "digest",
+          "created_at"
+        ],
+        "title": "RunEvidence",
+        "type": "object"
+      },
+      "RunRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "base_sha": {
+            "title": "Base Sha",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "occurrence_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Key"
+          },
+          "output_policy": {
+            "enum": [
+              "report_only",
+              "prepare_changes",
+              "prepare_contribution"
+            ],
+            "title": "Output Policy",
+            "type": "string"
+          },
+          "provider": {
+            "const": "codex",
+            "title": "Provider",
+            "type": "string"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "retry_of_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of Run Id"
+          },
+          "safety_digest": {
+            "title": "Safety Digest",
+            "type": "string"
+          },
+          "schedule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Id"
+          },
+          "skill_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "task": {
+            "title": "Task",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "repository_id",
+          "base_sha",
+          "task",
+          "provider",
+          "model",
+          "effort",
+          "mode",
+          "safety_digest",
+          "skill_version_id",
+          "schedule_id",
+          "occurrence_key",
+          "output_policy",
+          "retry_of_run_id",
+          "status",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "RunRecord",
+        "type": "object"
+      },
+      "RunStatus": {
+        "enum": [
+          "preparing",
+          "running",
+          "review_required",
+          "contribution_ready",
+          "publishing",
+          "published",
+          "completed",
+          "cancelled",
+          "interrupted",
+          "failed",
+          "discarded"
+        ],
+        "title": "RunStatus",
+        "type": "string"
+      },
+      "SafetyArtifactResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "download_name": {
+            "title": "Download Name",
+            "type": "string"
+          },
+          "secret_screening": {
+            "enum": [
+              "passed",
+              "not_scanned"
+            ],
+            "title": "Secret Screening",
+            "type": "string"
+          },
+          "sha256_digest": {
+            "title": "Sha256 Digest",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "download_name",
+          "sha256_digest",
+          "size_bytes",
+          "secret_screening"
+        ],
+        "title": "SafetyArtifactResponse",
+        "type": "object"
+      },
+      "SafetyPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approvals": {
+            "title": "Approvals",
+            "type": "string"
+          },
+          "execution": {
+            "title": "Execution",
+            "type": "string"
+          },
+          "filesystem": {
+            "title": "Filesystem",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read_only",
+              "protected",
+              "elevated"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "mcp": {
+            "title": "Mcp",
+            "type": "string"
+          },
+          "network": {
+            "title": "Network",
+            "type": "string"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "policy_digest": {
+            "title": "Policy Digest",
+            "type": "string"
+          },
+          "requires_confirmation": {
+            "title": "Requires Confirmation",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_digest",
+          "level",
+          "label",
+          "summary",
+          "execution",
+          "filesystem",
+          "network",
+          "mcp",
+          "approvals",
+          "output",
+          "requires_confirmation"
+        ],
+        "title": "SafetyPreviewResponse",
+        "type": "object"
+      },
+      "SafetyReceiptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "activities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "approval": {
+            "title": "Approval",
+            "type": "string"
+          },
+          "artifact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SafetyArtifactResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcp_used": {
+            "title": "Mcp Used",
+            "type": "boolean"
+          },
+          "original_project_modified": {
+            "title": "Original Project Modified",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "safety": {
+            "$ref": "#/components/schemas/SafetyPreviewResponse"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "safety",
+          "activities",
+          "mcp_used",
+          "approval",
+          "original_project_modified",
+          "artifact"
+        ],
+        "title": "SafetyReceiptResponse",
+        "type": "object"
+      },
+      "ScheduleCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "default": "high",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "mode": {
+            "default": "build",
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "output_policy": {
+            "default": "prepare_changes",
+            "enum": [
+              "report_only",
+              "prepare_changes",
+              "prepare_contribution"
+            ],
+            "title": "Output Policy",
+            "type": "string"
+          },
+          "provider": {
+            "const": "codex",
+            "default": "codex",
+            "title": "Provider",
+            "type": "string"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/Recurrence"
+          },
+          "repository_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "safety_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Safety Digest",
+            "type": "string"
+          },
+          "skill_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version Id"
+          },
+          "task": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "title": "Task",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "repository_id",
+          "task",
+          "recurrence",
+          "timezone",
+          "safety_digest"
+        ],
+        "title": "ScheduleCreateRequest",
+        "type": "object"
+      },
+      "ScheduleRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effort": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "output_policy": {
+            "enum": [
+              "report_only",
+              "prepare_changes",
+              "prepare_contribution"
+            ],
+            "title": "Output Policy",
+            "type": "string"
+          },
+          "provider": {
+            "const": "codex",
+            "title": "Provider",
+            "type": "string"
+          },
+          "recurrence": {
+            "$ref": "#/components/schemas/Recurrence"
+          },
+          "repository_id": {
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "safety_digest": {
+            "title": "Safety Digest",
+            "type": "string"
+          },
+          "skill_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version Id"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "paused",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "task": {
+            "title": "Task",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "status",
+          "revision_id",
+          "version",
+          "repository_id",
+          "task",
+          "recurrence",
+          "timezone",
+          "provider",
+          "model",
+          "effort",
+          "mode",
+          "safety_digest",
+          "skill_version_id",
+          "output_policy",
+          "next_run_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ScheduleRecord",
+        "type": "object"
+      },
+      "SecretFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "warning",
+              "blocked"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line",
+          "kind",
+          "severity"
+        ],
+        "title": "SecretFinding",
+        "type": "object"
+      },
+      "SecretScanResult": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/SecretFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "scanned_paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scanned Paths",
+            "type": "array"
+          },
+          "scanner_version": {
+            "title": "Scanner Version",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "not_scanned",
+              "passed",
+              "warning",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "scanner_version",
+          "scanned_paths",
+          "findings",
+          "completed_at",
+          "digest"
+        ],
+        "title": "SecretScanResult",
+        "type": "object"
+      },
       "SessionPrincipal": {
         "additionalProperties": false,
         "properties": {
@@ -1497,6 +3366,53 @@
         "title": "SessionResponse",
         "type": "object"
       },
+      "SkillCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "package",
+            "enum": [
+              "package",
+              "legacy_command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "format": "path",
+            "title": "Path",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "codex",
+              "claude",
+              "hermes",
+              "agents",
+              "copilot",
+              "generic"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "name",
+          "path"
+        ],
+        "title": "SkillCandidate",
+        "type": "object"
+      },
       "SkillCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1518,6 +3434,127 @@
           "content"
         ],
         "title": "SkillCreateRequest",
+        "type": "object"
+      },
+      "SkillFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "review",
+              "blocked"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "location",
+          "message"
+        ],
+        "title": "SkillFinding",
+        "type": "object"
+      },
+      "SkillImportPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/SkillCandidate"
+          },
+          "compatibility": {
+            "enum": [
+              "ready",
+              "needs_review",
+              "blocked"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "duplicate": {
+            "enum": [
+              "none",
+              "exact",
+              "variant"
+            ],
+            "title": "Duplicate",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/SkillFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate",
+          "name",
+          "description",
+          "digest",
+          "compatibility",
+          "findings",
+          "files",
+          "duplicate"
+        ],
+        "title": "SkillImportPreview",
+        "type": "object"
+      },
+      "SkillImportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Expected Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "expected_digest"
+        ],
+        "title": "SkillImportRequest",
         "type": "object"
       },
       "SkillVersion": {
@@ -1563,6 +3600,117 @@
           "created_at"
         ],
         "title": "SkillVersion",
+        "type": "object"
+      },
+      "StartRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "default": "medium",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "mode": {
+            "default": "build",
+            "enum": [
+              "chat",
+              "build"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "occurrence_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Key"
+          },
+          "output_policy": {
+            "default": "prepare_changes",
+            "enum": [
+              "report_only",
+              "prepare_changes",
+              "prepare_contribution"
+            ],
+            "title": "Output Policy",
+            "type": "string"
+          },
+          "provider": {
+            "const": "codex",
+            "default": "codex",
+            "title": "Provider",
+            "type": "string"
+          },
+          "repository_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Repository Id",
+            "type": "string"
+          },
+          "safety_digest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Safety Digest",
+            "type": "string"
+          },
+          "schedule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Id"
+          },
+          "skill_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version Id"
+          },
+          "task": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository_id",
+          "task",
+          "safety_digest"
+        ],
+        "title": "StartRunRequest",
         "type": "object"
       },
       "SyncApplyResult": {
@@ -2821,6 +4969,1804 @@
         "summary": "Reject Effect"
       }
     },
+    "/api/local-chat/preferences": {
+      "get": {
+        "operationId": "get_local_preferences_api_local_chat_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Local Preferences"
+      },
+      "put": {
+        "operationId": "update_local_preferences_api_local_chat_preferences_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalPreferencesUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalPreferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Local Preferences"
+      }
+    },
+    "/api/local-chat/providers": {
+      "get": {
+        "operationId": "local_chat_providers_api_local_chat_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Local Chat Providers Api Local Chat Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Chat Providers"
+      }
+    },
+    "/api/local-chat/runs": {
+      "post": {
+        "operationId": "start_local_chat_api_local_chat_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalChatStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Local Chat"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/artifact": {
+      "get": {
+        "operationId": "local_chat_artifact_api_local_chat_runs__run_id__artifact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Artifact"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_local_chat_api_local_chat_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatCancelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Local Chat"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/events": {
+      "get": {
+        "operationId": "local_chat_events_api_local_chat_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "follow",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Follow",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Events"
+      }
+    },
+    "/api/local-chat/runs/{run_id}/safety-receipt": {
+      "get": {
+        "operationId": "local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyReceiptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Safety Receipt"
+      }
+    },
+    "/api/local-chat/safety-preview": {
+      "get": {
+        "operationId": "local_chat_safety_preview_api_local_chat_safety_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "default": "codex",
+              "enum": [
+                "codex",
+                "claude",
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "chat",
+              "enum": [
+                "chat",
+                "build"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mcp_enabled",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Mcp Enabled",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Chat Safety Preview"
+      }
+    },
+    "/api/local/repositories": {
+      "get": {
+        "operationId": "local_repositories_api_local_repositories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RepositoryRecord"
+                  },
+                  "title": "Response Local Repositories Api Local Repositories Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Repositories"
+      },
+      "post": {
+        "operationId": "register_local_repository_api_local_repositories_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepositoryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Local Repository"
+      }
+    },
+    "/api/local/repositories/{repository_id}": {
+      "delete": {
+        "operationId": "remove_local_repository_api_local_repositories__repository_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "title": "Repository Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Local Repository"
+      }
+    },
+    "/api/local/repositories/{repository_id}/refresh": {
+      "post": {
+        "operationId": "refresh_local_repository_api_local_repositories__repository_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "title": "Repository Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Local Repository"
+      }
+    },
+    "/api/local/repositories/{repository_id}/worktrees": {
+      "post": {
+        "operationId": "create_local_worktree_api_local_repositories__repository_id__worktrees_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "title": "Repository Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalWorktreeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Local Worktree"
+      }
+    },
+    "/api/local/runs": {
+      "get": {
+        "operationId": "local_runs_api_local_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunRecord"
+                  },
+                  "title": "Response Local Runs Api Local Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Runs"
+      },
+      "post": {
+        "operationId": "start_local_run_api_local_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Local Run"
+      }
+    },
+    "/api/local/runs/{run_id}": {
+      "get": {
+        "operationId": "local_run_api_local_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Run"
+      }
+    },
+    "/api/local/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_local_run_api_local_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Local Run"
+      }
+    },
+    "/api/local/runs/{run_id}/changes": {
+      "get": {
+        "operationId": "local_run_changes_api_local_runs__run_id__changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSet"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Run Changes"
+      }
+    },
+    "/api/local/runs/{run_id}/contribution": {
+      "get": {
+        "operationId": "local_run_contribution_api_local_runs__run_id__contribution_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Run Contribution"
+      }
+    },
+    "/api/local/runs/{run_id}/contribution/prepare": {
+      "post": {
+        "operationId": "prepare_local_contribution_api_local_runs__run_id__contribution_prepare_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionPrepareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prepare Local Contribution"
+      }
+    },
+    "/api/local/runs/{run_id}/contribution/publish": {
+      "post": {
+        "operationId": "publish_local_contribution_api_local_runs__run_id__contribution_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Local Contribution"
+      }
+    },
+    "/api/local/runs/{run_id}/discard": {
+      "post": {
+        "operationId": "discard_local_run_api_local_runs__run_id__discard_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Local Run"
+      }
+    },
+    "/api/local/runs/{run_id}/events": {
+      "get": {
+        "operationId": "local_run_events_api_local_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunEvent"
+                  },
+                  "title": "Response Local Run Events Api Local Runs  Run Id  Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Run Events"
+      }
+    },
+    "/api/local/runs/{run_id}/evidence": {
+      "get": {
+        "operationId": "local_run_evidence_api_local_runs__run_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunEvidence"
+                  },
+                  "title": "Response Local Run Evidence Api Local Runs  Run Id  Evidence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Local Run Evidence"
+      }
+    },
+    "/api/local/runs/{run_id}/retry": {
+      "post": {
+        "operationId": "retry_local_run_api_local_runs__run_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Local Run"
+      }
+    },
+    "/api/local/schedules": {
+      "get": {
+        "operationId": "local_schedules_api_local_schedules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScheduleRecord"
+                  },
+                  "title": "Response Local Schedules Api Local Schedules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Schedules"
+      },
+      "post": {
+        "operationId": "create_local_schedule_api_local_schedules_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Local Schedule"
+      }
+    },
+    "/api/local/schedules/{schedule_id}/archive": {
+      "post": {
+        "operationId": "archive_local_schedule_api_local_schedules__schedule_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Local Schedule"
+      }
+    },
+    "/api/local/schedules/{schedule_id}/pause": {
+      "post": {
+        "operationId": "pause_local_schedule_api_local_schedules__schedule_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Local Schedule"
+      }
+    },
+    "/api/local/schedules/{schedule_id}/resume": {
+      "post": {
+        "operationId": "resume_local_schedule_api_local_schedules__schedule_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Local Schedule"
+      }
+    },
+    "/api/local/schedules/{schedule_id}/run-now": {
+      "post": {
+        "operationId": "run_local_schedule_now_api_local_schedules__schedule_id__run_now_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Local Schedule Now"
+      }
+    },
+    "/api/local/skills": {
+      "get": {
+        "operationId": "local_skills_api_local_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PortableSkillVersion"
+                  },
+                  "title": "Response Local Skills Api Local Skills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Skills"
+      }
+    },
+    "/api/local/skills/import": {
+      "post": {
+        "operationId": "import_local_skill_api_local_skills_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortableSkillVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Local Skill"
+      }
+    },
+    "/api/local/skills/sources": {
+      "get": {
+        "operationId": "local_skill_sources_api_local_skills_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillCandidate"
+                  },
+                  "title": "Response Local Skill Sources Api Local Skills Sources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Skill Sources"
+      }
+    },
+    "/api/local/skills/sources/{candidate_id}/preview": {
+      "get": {
+        "operationId": "preview_local_skill_api_local_skills_sources__candidate_id__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Local Skill"
+      }
+    },
+    "/api/local/skills/{skill_id}/activate": {
+      "post": {
+        "operationId": "activate_local_skill_api_local_skills__skill_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_id",
+            "required": true,
+            "schema": {
+              "title": "Skill Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortableSkillVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Local Skill"
+      }
+    },
+    "/api/local/skills/{skill_id}/archive": {
+      "post": {
+        "operationId": "archive_local_skill_api_local_skills__skill_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_id",
+            "required": true,
+            "schema": {
+              "title": "Skill Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortableSkillVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Local Skill"
+      }
+    },
     "/api/offline-intents": {
       "get": {
         "operationId": "offline_intents_api_offline_intents_get",
@@ -3878,6 +7824,219 @@
           }
         },
         "summary": "Create Team"
+      }
+    },
+    "/api/provider-credentials": {
+      "get": {
+        "operationId": "provider_credential_statuses_api_provider_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                  },
+                  "title": "Response Provider Credential Statuses Api Provider Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Provider Credential Statuses"
+      }
+    },
+    "/api/provider-credentials/{provider}": {
+      "delete": {
+        "operationId": "remove_provider_credential_api_provider_credentials__provider__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Provider Credential"
+      },
+      "put": {
+        "operationId": "connect_provider_credential_api_provider_credentials__provider__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCredentialConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Provider Credential"
+      }
+    },
+    "/api/provider-credentials/{provider}/verify": {
+      "post": {
+        "operationId": "verify_provider_credential_api_provider_credentials__provider__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "enum": [
+                "openai",
+                "anthropic",
+                "gemini",
+                "xai"
+              ],
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Provider Credential"
       }
     },
     "/api/routines/{routine_id}/run": {

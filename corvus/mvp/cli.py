@@ -31,6 +31,7 @@ JsonOption = Annotated[bool, typer.Option("--json", help="Emit machine-readable 
 
 DEFAULT_SERVER_HOST = "127.0.0.1"
 DEFAULT_SERVER_PORT = 8080
+LOOPBACK_SERVER_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 DEFAULT_PAIRING_REFERENCE = "env://CORVUS_BOOTSTRAP_TOKEN"
 DEFAULT_SIGNING_REFERENCE = "env://CORVUS_SESSION_SECRET"
 DEFAULT_INSTANCE_REFERENCE = "env://CORVUS_INSTANCE_TOKEN"
@@ -359,6 +360,9 @@ def server(
     ] = None,
 ) -> None:
     """Serve the authenticated local API, SSE stream, and optional operator console."""
+    if host not in LOOPBACK_SERVER_HOSTS:
+        _fail(ValueError("local_server_loopback_required"))
+        return
     try:
         server_app = build_server_app(
             database=database,

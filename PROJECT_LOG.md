@@ -2001,3 +2001,152 @@
 
 ### Suggested Next Steps
 - Push the repair commit, resolve the addressed review threads, and let PR 6 rerun its protected GitHub and Vercel checks without merging it.
+
+## 2026-07-17 - Simplify the Corvus workspace and connect runtime settings
+
+### What Was Implemented
+- Replaced the layered/card-heavy conversation surface with one compact navigation rail, a centered new-thread state, on-demand history, safe streamed work/thinking output, and a bottom composer that exposes provider, model, thinking, Chat/Build, MCP, and submit controls.
+- Rebuilt Settings as flat categorized rows for General, Models, Agent, MCP, Appearance, and Account instead of a five-card dashboard.
+- Added owner-scoped backend persistence for runtime defaults, response style, and custom rules with CSRF protection, optimistic version checks, typed OpenAPI/TypeScript contracts, and explicit policy-preserving prompt guidance.
+- Kept Cloud, integrations, and unavailable providers truthfully labeled Preview or unavailable; no client setting can expand authority, credentials, budgets, approvals, or sandbox policy.
+- Tightened the 390x844 layout to one six-icon bottom navigation row and touch-scrollable settings categories without an exposed platform scrollbar.
+
+### Files Modified
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,conversationApi}.tsx` and related tests - simplified chat/settings presentation and connected real runtime preferences.
+- `apps/web/src/{App.tsx,styles.css}`, `apps/web/src/app/AppShell.tsx`, and workspace styles/tests - reduced persistent chrome and completed desktop/mobile behavior.
+- `corvus/mvp/{api,preferences,store}.py` and `tests/mvp/test_local_chat_api.py` - added authenticated preference storage, conflict handling, policy-safe prompt application, and coverage.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` - regenerated the typed contract.
+- `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - documented current behavior and verification.
+
+### Assumptions Made (flag these for review)
+- Hosted Cloud settings remain read-only/Preview because the authorized production Cloud runtime and shared identity milestone has not yet landed.
+- Appearance remains device-local, while local runtime defaults are scoped to the authenticated local user.
+
+### Known Issues / Deferred
+- Google OAuth continuity, E2B lifecycle, production multi-user collaboration, billing, and real Gemini/Grok/Cursor adapters remain at their existing explicit later milestone boundaries.
+- The generic legacy design-audit rubric expects restaurant photography and bilingual marketing metadata and cannot reach this Windows loopback service from its separate MCP host; current UI acceptance instead used the real paired FastAPI app in Playwright at 1440x900 and 390x844.
+
+### Verification
+- Python: 1051 passed with 6 intentional platform/database skips; Ruff and strict Mypy passed.
+- Web: 144 tests passed across 24 files; TypeScript and the Vite production build passed.
+- Live browser: one-time fragment pairing, desktop new-thread surface, flat settings, a real preference save (`PUT /api/local-chat/preferences` 200), and the corrected one-row mobile navigation passed.
+- Contract and hygiene: OpenAPI and generated TypeScript were regenerated; `git diff --check` passed apart from Windows line-ending notices.
+
+### Suggested Next Steps
+- Open the single unmerged UX PR for code-owner and automated review.
+- Keep the next Cloud/identity and collaboration milestones behind their existing explicit authorization boundaries.
+
+## 2026-07-17 - Add an intuitive, backend-proven local safety journey
+
+### What Was Implemented
+- Added deterministic server-authored safety previews for provider, Chat/Build mode, and MCP state, with a SHA-256 policy digest that Build must present before the backend starts a run.
+- Added a compact protection indicator, readable policy details, fail-closed Build confirmation, observed live safety timeline, existing emergency Stop access, and an owner-scoped safety receipt for completed, cancelled, or failed runs.
+- Added a Safety settings category that explains immutable Build confirmation, scratch isolation, network disclosure, emergency stop behavior, and receipt evidence without offering a full-access bypass.
+- Kept Cloud/E2B, OAuth, new sandbox engines, policy rewrites, and expanded host access outside this milestone.
+
+### Files Modified
+- `corvus/mvp/safety.py`, `corvus/mvp/local_chat.py`, and `corvus/mvp/api.py` - authoritative preview, digest enforcement, stored policy snapshot, and receipt endpoint.
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,conversationApi}.tsx` and tests - safety UX, confirmation, timeline, settings, and typed client methods.
+- `apps/web/src/styles/product-workspace.css` - compact responsive protection, receipt, and confirmation presentation.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` - regenerated API contracts.
+- `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - documented the verified behavior and boundaries.
+
+### Assumptions Made (flag these for review)
+- The native CLI remains the authority for network behavior; Corvus truthfully discloses that it grants no separate network permission rather than claiming all network access is blocked.
+- A returned `LocalBuildArtifact` is produced by the existing Corvus secret-screened packaging contract; the receipt records that result without reimplementing packaging.
+
+### Known Issues / Deferred
+- Runtime-native per-tool approval prompts are not fabricated in the UI; local alpha host actions remain blocked and Build confirmation is the available consent boundary.
+- Cloud/E2B execution, Google identity continuity, production collaboration, billing, and new provider adapters remain at their existing later milestone boundaries.
+
+### Verification
+- Python: 1,054 passed with 6 intentional platform/database skips, split sequentially on Windows to avoid SQLite contention; Ruff, format, strict Mypy, and Bandit passed.
+- Web: 148 tests passed across 24 files; TypeScript and the Vite production build passed.
+- Desktop: Tauri release no-bundle compilation passed and the live process path was verified against the worktree build with the current Python sidecar.
+- Browser: real local pairing passed; desktop 1440x900 and phone 390x844 geometry kept the composer in viewport; Safety settings, protected Build preview, and the confirmation sheet were verified without starting a provider run.
+
+### Suggested Next Steps
+- Let PR #7 reviewers inspect this focused follow-up commit; do not merge until review is complete.
+
+## 2026-07-18 - Complete adaptive provider, streaming, and safety UX
+
+### What Was Implemented
+- Added ready-only local provider discovery with effective Codex model detection and exact Low, Medium, High, Extra high, and Max effort labels.
+- Added write-only keyring-backed OpenAI, Anthropic, Gemini, and xAI credentials with environment fallback, authenticated verification/model discovery, and direct low-latency Chat streaming; API providers cannot enter Build or MCP paths.
+- Added adaptive Enter/Ctrl+Enter behavior, sanitized GitHub-flavored Markdown, icon-led adaptive composer controls, configurable safety guidance, onboarding safety selection, and runtime-evidence-only safety activity.
+- Removed vague default/preview choices from runnable controls and verified the current Windows build plus paired desktop/mobile web layouts.
+
+### Files Modified
+- `corvus/mvp/{api_chat,provider_credentials,provider_catalog,local_chat,safety,api}.py` - provider discovery, secret custody, streaming adapters, truthful capability gates, and authenticated API routes.
+- `apps/web/src/app/{ConversationWorkspace,SettingsPanel,OnboardingFlow,conversationApi,devicePreferences}.*` and `apps/web/src/styles/product-workspace.css` - composer, Markdown, Settings, onboarding, safety, provider, and responsive UX.
+- `tests/mvp/test_{api_chat,provider_credentials,provider_catalog,local_chat_api,safety}.py` and web tests - security, ownership, streaming, keyboard, Markdown, and UI regressions.
+- `openapi/corvus-mvp.json`, `apps/web/src/generated/api.ts`, `README.md`, `HACKATHON_STATUS.md`, and `PROJECT_LOG.md` - regenerated contracts and current verified scope.
+
+### Assumptions Made (flag these for review)
+- Authenticated provider model-list endpoints are the authority for API model names; native Codex uses its effective local config and otherwise exposes the reviewed recommended model.
+- API-key providers remain Chat-only until a provider-specific sandbox adapter can preserve the Build safety contract.
+
+### Known Issues / Deferred
+- Cursor, real E2B Cloud lifecycle, API-provider Build, production signing/notarization, and billing remain outside this milestone.
+- The bundled Computer-use connector was unavailable after the resumed session; the exact worktree desktop executable was launched and visually captured, while the same paired compiled UI was exercised through Playwright at desktop and mobile sizes.
+
+### Verification
+- Python: 1,062 passed and 6 expected skips across all 1,068 collected tests; Ruff and strict mypy passed.
+- Web: 153 tests passed; TypeScript and Vite production build passed.
+- Desktop: Tauri release `--no-bundle` compilation passed; the exact worktree executable launched with the current sidecar and rendered the bottom composer.
+- Browser: paired local runtime passed; safety details, Settings, model/effort labels, 1440x900 and 390x844 geometry, and zero console errors passed.
+
+## 2026-07-18 - Apply Corvus identity and close release review findings
+
+### What Was Implemented
+- Rebuilt the approved concentric-C/cyan-signal logo as standalone SVG assets and applied the graphite, warm-white, and cyan identity across desktop, web, onboarding, navigation, README, and installer icons without changing the current font stack.
+- Hardened runtime URL trust, pairing-cookie transport flags, CSP, preference-conflict recovery, SSE parsing, provider catalog normalization, OpenAPI stream/artifact media types, and raw-request idempotency.
+- Made artifact receipts report screening provenance from the packaging boundary; unproven artifacts now say `not_scanned` instead of claiming success.
+
+### Files Modified
+- `apps/web/public/brand/*`, `apps/web/src/components/Brand.*`, app shells, styles, and tests - vector identity and accessible brand usage.
+- `apps/desktop/app-icon.svg`, `apps/desktop/src-tauri/icons/*`, and Tauri/Vercel CSP configuration - branded packaging assets and CSP hardening.
+- `corvus/mvp/*`, `corvus/infrastructure/agent_runtimes/codex.py`, OpenAPI, generated types, and focused tests - review-driven correctness and security repairs.
+
+### Assumptions Made (flag these for review)
+- The supplied image is the authoritative Corvus identity; the vector is a faithful geometric reconstruction, not an extraction of embedded source vectors.
+- Same-origin and explicit HTTP(S) loopback runtimes are the only trusted alpha API targets; other cross-origin runtimes remain blocked.
+
+### Known Issues / Deferred
+- Cloud/E2B execution, Google identity continuity, production signing/notarization, and billing remain outside this milestone.
+- The user requested a time-boxed hackathon fast path, so the already-green focused regression suites and production build replaced another full-suite rerun.
+
+### Verification
+- Focused backend/security/contract coverage: 53 passed.
+- Focused UI/streaming/settings/branding coverage: 29 passed.
+- Ruff lint/format and the TypeScript/Vite production build passed; the latest branded Windows desktop build was visually checked at desktop and phone widths.
+
+### Suggested Next Steps
+- Complete code-owner review on PR #7, then publish the checksum-bound unsigned installers from the reviewed SHA.
+
+### Suggested Next Steps
+- Push the verified commit to PR #7, resolve every actionable review thread/check, then produce checksum-bound unsigned alpha installers through the trusted multi-OS release workflow.
+- After approval, demo the path: Read-only chip → Build → policy confirmation → Stop/timeline → artifact receipt.
+
+## 2026-07-18 - Package the unsigned cross-platform alpha candidate
+
+### What Was Implemented
+- Completed the trusted desktop-release workflow for Windows NSIS, macOS x64 DMG, and Linux x64 AppImage/deb installers from application commit `da9515c`.
+- Prepared the successful workflow artifacts for an explicitly unsigned GitHub prerelease candidate.
+
+### Files Modified
+- `PROJECT_LOG.md` - recorded installer provenance, release status, and the reviewed application SHA.
+
+### Assumptions Made (flag these for review)
+- The release is an unsigned hackathon alpha candidate and must not be presented as signed, notarized, or production-approved.
+
+### Known Issues / Deferred
+- Code signing and Apple notarization remain deferred.
+- PR #7 code-owner approval and protected-main merge remain separate from this candidate release.
+
+### Verification
+- GitHub Actions run `29622969381` completed successfully for all three native packaging jobs.
+- Installer files are published with a generated `SHA256SUMS.txt` so downloads can be verified independently.
+
+### Suggested Next Steps
+- Complete PR #7 code-owner approval before promoting this candidate as the mainline alpha release.

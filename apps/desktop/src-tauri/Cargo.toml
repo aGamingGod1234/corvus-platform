@@ -20,4 +20,8 @@ tauri-build = { version = "=2.6.3", features = [] }
 hmac = "=0.12.1"
 rand = "=0.9.2"
 sha2 = "=0.10.9"
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.11.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-dialog = "=2.7.1"
+tauri-plugin-notification = "=2.3.3"
+tauri-plugin-single-instance = "=2.4.3"

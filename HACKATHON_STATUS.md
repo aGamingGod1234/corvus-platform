@@ -2,6 +2,19 @@
 
 This is a hackathon MVP implementation record, not formal M2-M11 certification.
 
+## OpenAI Build Week developer-tools MVP
+
+The current PR #7 branch extends the preserved M2-M11 foundation into a focused local developer workflow:
+
+- Real repository registration, refresh, GitHub pull-request/check visibility, and safe clone/open actions.
+- Durable Codex runs in managed Git worktrees with pinned inputs, append-only events, diff/evidence review, cancellation, retry, recovery, and discard.
+- A contribution state machine for selected-file staging, secret-scan gating, branch/commit preview, explicit confirmation, non-force push, and draft/ready pull-request creation. Merge is intentionally absent.
+- Quarantined, digest-bound skill discovery and import from Codex, Claude Code, Hermes, Copilot, generic Agent Skills, and repository-local locations. Imported tool declarations are unapproved requests, never transferred permissions.
+- Timezone-aware one-time/hourly/daily/weekday/weekly schedules with immutable revisions, transactional occurrence claims, missed-run grace, dependency revalidation, and code-changing output capped at review.
+- Desktop tray/background operation, launch-at-login controls, redacted native notifications, hidden Windows sidecar processes, and single-instance foreground activation.
+
+The exact Devpost journey and visual acceptance checklist are documented in [docs/demo/BUILD_WEEK_DEMO.md](docs/demo/BUILD_WEEK_DEMO.md). Integrated verification, fresh installers, the Vercel preview, and final PR review remain release gates; this section does not claim those pending gates have passed.
+
 ## Baseline and branch
 
 - Verified baseline: `repair/m1-certification` at `8c18f53`.
@@ -34,6 +47,7 @@ This is a hackathon MVP implementation record, not formal M2-M11 certification.
 - Capability discovery is fail-closed and typed. Deterministic contract adapters remain intact; installed native Codex and Claude CLIs are now discovered and connected for paired same-device runs. Gemini and xAI/Grok remain Preview, while Cursor remains unavailable.
 - The composer exposes verified providers, recommended models, thinking effort, Chat/Build mode, and explicit MCP opt-in. Messages plus provider-supplied safe reasoning summaries and generic work status stream over owner-scoped SSE.
 - Chat is read-only. Codex Build runs in a fresh workspace-write sandbox, always disables user plugins/apps/hooks, can use configured MCP servers only after explicit opt-in, and hands back a bounded, secret-screened ZIP with a SHA-256 manifest. Real Windows acceptance produced and verified the requested project artifact.
+- The backend now authors the safety preview shown in the composer, requires its current digest before Build starts, and issues an owner-scoped terminal receipt. The UI does not claim network blocking: it states that network follows the selected CLI sandbox policy and that Corvus grants no separate permission.
 - Durable provider binding, autonomy, credential, budget, kill-switch, and post-effect audit-reconciliation repositories remain an explicit later milestone. M2A does not claim those production integrations.
 
 ## Install and run
@@ -148,13 +162,13 @@ pnpm --dir apps/web build
 
 ## Verification actually run
 
-- Python: `1050 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff, Ruff format, strict mypy, Bandit, and pip-audit passed.
+- Python: `1062 passed, 6 skipped` across the serial Windows unit, contract, security, MVP, CLI, and integration groups; the skips are the explicitly opt-in destructive PostgreSQL cases and POSIX-only process-group case. Ruff and strict mypy passed across the repository.
 - API/OpenAPI: focused API suite passed; OpenAPI and generated TypeScript hashes were stable across two consecutive generations.
-- Web: `143 passed` across 24 files; Vite production build passed (62 modules, 302.93 kB JS / 89.69 kB gzip).
+- Web: `153 passed` across 24 files; the Vite production build passed (319 modules, 485.34 kB JS / 145.21 kB gzip).
 - M10 packaging: wheel `corvus-0.2.0a1-py3-none-any.whl` built; provenance bound that wheel and a 23-file static manifest; single-origin `/ready`, `/`, and pairing smoke passed and the listener stopped cleanly.
 - M11 desktop: Python subprocess two-launch start/HMAC-ready/web/re-pair/persistence/shutdown passed; 7 Rust lifecycle, fixed-launch, fresh-challenge decoy rejection, diagnostic-redaction, and fragment tests passed; Cargo fmt, Clippy with warnings denied, and `cargo check` passed. Windows Computer Use launched the exact worktree release binary, verified the simplified one-sidebar UI, detected Local Codex, streamed a live prompt through the sidecar, and rendered the exact `CORVUS_UI_OK` completion without HTTP 500. The unsigned NSIS `Corvus_0.2.0-alpha.1_x64-setup.exe` remains a non-production artifact.
 - Release alpha: local Windows PyInstaller sidecar build passed and `--help` ran; Tauri NSIS release build passed; silent installer wrote `corvus-desktop.exe`, `corvus-mvp`, and `corvus-mvp.exe` into `%LOCALAPPDATA%\Corvus`; launching the installed app started both `corvus-desktop.exe` and the packaged `corvus-mvp.exe`. Vercel deployment `dpl_4kqEKRLSybjAHik6EUSAezPrRyYH` is Ready and aliased at `https://corvus-platform-tau.vercel.app`; project root was restored to `apps/web` for GitHub `main` deployments.
-- Browser: real FastAPI + Vite pairing, project/workflow execution, SSE, approval, budget settlement, team/provider setup, shadow autonomy, untrusted memory retrieval, skill activation, routine run, desktop layout, and 390x844 mobile layout passed. A fresh authenticated tab logged zero console errors or warnings.
+- Browser: real FastAPI + Vite pairing, safety-details disclosure, ready-only provider/model/effort controls, Settings, desktop layout, and 390x844 mobile composer geometry passed. The final authenticated run logged zero console errors or warnings and no horizontal overflow.
 - Design blueprint: the packet, source evidence, and fixed-viewport captures were completed and reviewed during implementation, then removed from the tracked submission by the explicitly approved `.antigravity/` repository-hygiene cleanup. The resulting UI, responsive behavior, and regression tests remain in the product source; no fake restaurant artifact was added to satisfy the incompatible legacy auditor.
 
 ## Final 20-point acceptance evidence

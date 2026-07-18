@@ -15,7 +15,7 @@ class FakeRunStream implements RunEventStream {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
 
-  emit(type: string, data: object): void {
+  emit(type: string, data: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) {
       listener({ data: JSON.stringify(data) });
     }
@@ -31,10 +31,34 @@ class FakeRunStream implements RunEventStream {
 }
 
 function conversationApi(stream: FakeRunStream): ConversationApi {
+  const preview = (mode: "chat" | "build", mcpEnabled: boolean) => ({
+    policy_digest: (mcpEnabled ? "c" : mode === "build" ? "b" : "a").repeat(64),
+    level: mcpEnabled ? "elevated" as const : mode === "build" ? "protected" as const : "read_only" as const,
+    label: mcpEnabled ? "External tools on" : mode === "build" ? "Protected build" : "Read-only",
+    summary: mode === "build" ? "Work happens in a fresh writable sandbox." : "The agent can inspect context without writing files.",
+    execution: "Codex CLI runs ephemerally.",
+    filesystem: mode === "build" ? "The original project is not modified." : "The sandbox is read-only.",
+    network: "Corvus grants no separate network permission.",
+    mcp: mcpEnabled ? "Configured MCP tools may act on external systems." : "Configured MCP servers are not loaded.",
+    approvals: "No blanket host approval is granted.",
+    output: mode === "build" ? "A screened ZIP can be downloaded." : "No artifact is exported.",
+    requires_confirmation: mode === "build"
+  });
   return {
+    getPreferences: vi.fn().mockResolvedValue({
+      version: 0,
+      default_provider: "codex",
+      default_model: null,
+      default_effort: "medium",
+      default_mode: "chat",
+      mcp_enabled: false,
+      response_tone: "balanced",
+      custom_rules: "",
+      updated_at: null
+    }),
+    updatePreferences: vi.fn(),
     listProviders: vi.fn().mockResolvedValue([
       { id: "codex", label: "Codex", status: "ready", runtime: "local", models: [
-        { id: "default", label: "Codex default", recommended: true },
         { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true },
         { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", recommended: false },
         { id: "gpt-5.5", label: "GPT-5.5", recommended: false }
@@ -46,7 +70,14 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
       { id: "gemini", label: "Gemini", status: "preview", runtime: "local", models: [], status_label: "Preview", thinking_levels: [], supports_mcp: false },
       { id: "grok", label: "Grok", status: "preview", runtime: "api", models: [], status_label: "Preview", thinking_levels: [], supports_mcp: false }
     ]),
-    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "Codex default", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z" }),
+    getSafetyPreview: vi.fn((_provider, mode, mcpEnabled) => Promise.resolve(preview(mode, mcpEnabled))),
+    getSafetyReceipt: vi.fn().mockResolvedValue({
+      run_id: "run-1", status: "completed", safety: preview("build", true),
+      activities: ["Files changed only inside the scratch workspace"], mcp_used: true,
+      approval: "No blanket host approval was granted.", original_project_modified: false,
+      artifact: { download_name: "corvus-project.zip", sha256_digest: "d".repeat(64), size_bytes: 42, secret_screening: "passed" }
+    }),
+    startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "gpt-5.6-sol", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
     cancelRun: vi.fn().mockResolvedValue({ run_id: "run-1", state: "cancelled", accepted: true, reason_code: null }),
     openRunEvents: vi.fn().mockReturnValue(stream),
     artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`)
@@ -68,6 +99,25 @@ function emptyConversationApi(stream: FakeRunStream): ConversationApi {
 }
 
 describe("ConversationWorkspace", () => {
+  it("ignores null streaming payloads without breaking the active run", async () => {
+    const stream = new FakeRunStream();
+    render(<ConversationWorkspace api={conversationApi(stream)} experience="developer"
+      storage={new MemoryStorage()} storageScope="workspace-null-event" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect safely");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Working");
+    stream.emit("message", null);
+    stream.emit("thinking", null);
+    stream.emit("status", null);
+    stream.emit("message", { payload: { text: "Still connected." } });
+    stream.emit("completed", { payload: {} });
+
+    expect(await screen.findByText("Still connected.")).toBeVisible();
+    expect(screen.queryByText(/unreadable run event/i)).not.toBeInTheDocument();
+  });
+
   it("creates a thread, runs Local Codex, and renders durable output", async () => {
     const stream = new FakeRunStream();
     const api = conversationApi(stream);
@@ -82,7 +132,8 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(api.startRun).toHaveBeenCalledWith("Draft release notes", {
-      provider: "codex", model: null, effort: "medium", mode: "chat", mcp_enabled: false
+      provider: "codex", model: "gpt-5.6-sol", effort: "medium", mode: "chat", mcp_enabled: false,
+      safety_digest: "a".repeat(64)
     }, expect.any(String));
     expect(screen.getByLabelText("Run status: working")).toBeVisible();
     expect(await screen.findByText("Working")).toBeVisible();
@@ -105,17 +156,19 @@ describe("ConversationWorkspace", () => {
     const user = userEvent.setup();
 
     expect(screen.queryByRole("complementary", { name: "thread list" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Claude (Detected)" })).toBeEnabled();
-    expect(screen.queryByRole("option", { name: "Maximum" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Claude" })).toBeEnabled();
+    expect(screen.queryByRole("option", { name: /Gemini|Grok|Unavailable|Preview/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Codex default/i })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent provider" }), "claude");
     expect(screen.getByRole("option", { name: "Claude Sonnet (recommended)" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent model" }), "opus");
-    expect(screen.getByRole("option", { name: "Maximum" })).toHaveValue("max");
+    expect(screen.getByRole("option", { name: "Max" })).toHaveValue("max");
     await user.selectOptions(screen.getByRole("combobox", { name: "Thinking level" }), "max");
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Review this change");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(api.startRun).toHaveBeenCalledWith("Review this change", {
-      provider: "claude", model: "opus", effort: "max", mode: "chat", mcp_enabled: false
+      provider: "claude", model: "opus", effort: "max", mode: "chat", mcp_enabled: false,
+      safety_digest: "a".repeat(64)
     }, expect.any(String));
     stream.emit("completed", { type: "completed", payload: {} });
     expect(await screen.findByText("Completed")).toBeVisible();
@@ -139,18 +192,95 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("checkbox", { name: "Allow configured MCP servers" }));
     expect(screen.getByText(/may access external systems/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Build project" }));
+    expect(api.startRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Confirm protected build" })).toBeVisible();
+    expect(screen.getByText(/original project is not modified/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     expect(api.startRun).toHaveBeenCalledWith("Build a landing page", {
-      provider: "codex", model: null, effort: "medium", mode: "build", mcp_enabled: true
+      provider: "codex", model: "gpt-5.6-sol", effort: "medium", mode: "build", mcp_enabled: true,
+      safety_digest: "c".repeat(64)
     }, expect.any(String));
     stream.emit("thinking", { type: "thinking", payload: { text: "Checking the project structure" } });
     expect(await screen.findByText("Checking the project structure")).toBeVisible();
     stream.emit("status", { type: "status", payload: { activity: "files" } });
-    expect(await screen.findByText("Updating files")).toBeVisible();
+    expect((await screen.findAllByText("Updating files"))[0]).toBeVisible();
     stream.emit("artifact", { type: "artifact", payload: { download_name: "corvus-project.zip" } });
     stream.emit("completed", { type: "completed", payload: {} });
     expect(await screen.findByRole("link", { name: "Download finished project" })).toHaveAttribute(
       "href", "/api/local-chat/runs/run-1/artifact"
     );
+    expect(await screen.findByRole("region", { name: "Safety receipt" })).toHaveTextContent(/screening passed/i);
+  });
+
+  it("shows the server-authored protection summary in the composer", async () => {
+    const api = conversationApi(new FakeRunStream());
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("button", { name: "View safety details" })).toHaveTextContent("Read-only");
+    expect(screen.getByRole("button", { name: "View safety details" })).toHaveAttribute(
+      "title",
+      "Click to see details"
+    );
+    await user.click(screen.getByRole("button", { name: "View safety details" }));
+    expect(screen.getByRole("region", { name: "Safety details" })).toHaveTextContent(/no separate network permission/i);
+  });
+
+  it("sends a single line with Enter and a multiline draft with Control+Enter", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="everyday" />);
+    const user = userEvent.setup();
+    const composer = screen.getByRole("textbox", { name: "Message Corvus" });
+
+    await user.type(composer, "Send this{enter}");
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+    stream.emit("completed", { type: "completed", payload: {} });
+    await screen.findByText("Completed");
+
+    await user.type(composer, "First line{shift>}{enter}{/shift}Second line{enter}");
+    expect(api.startRun).toHaveBeenCalledTimes(1);
+    expect(composer).toHaveValue("First line\nSecond line\n");
+    await user.type(composer, "{control>}{enter}{/control}");
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(2));
+    expect(api.startRun).toHaveBeenLastCalledWith(
+      "First line\nSecond line",
+      expect.any(Object),
+      expect.any(String)
+    );
+  });
+
+  it("renders streamed and durable messages as sanitized GitHub-flavored Markdown", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Use **safe** markdown");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("message", {
+      type: "message",
+      payload: { text: "**Done**\n\n- checked\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
+    });
+
+    expect(await screen.findByText("Done")).toHaveStyle({ fontWeight: "bold" });
+    expect(screen.getByText("checked").closest("ul")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
+    expect(document.querySelector("script")).toBeNull();
+  });
+
+  it("loads the safety receipt when a run is cancelled", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("cancelled", { type: "cancelled", payload: {} });
+
+    await waitFor(() => expect(api.getSafetyReceipt).toHaveBeenCalledWith("run-1"));
+    expect(await screen.findByRole("region", { name: "Safety receipt" })).toBeVisible();
   });
 
   it("fails closed when provider discovery is unavailable and allows retry", async () => {
@@ -193,8 +323,31 @@ describe("ConversationWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: "Stop" }));
 
     await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith("run-1"));
+    await waitFor(() => expect(api.getSafetyReceipt).toHaveBeenCalledWith("run-1"));
     expect(screen.getByText("Cancelled")).toBeVisible();
     expect(stream.close).toHaveBeenCalled();
+  });
+
+  it("keeps streaming when the backend declines cancellation", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    vi.mocked(api.cancelRun).mockResolvedValue({
+      run_id: "run-1",
+      state: "running",
+      accepted: false,
+      reason_code: "provider_declined"
+    });
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith("run-1"));
+    expect(screen.getByText("Working")).toBeVisible();
+    expect(stream.close).not.toHaveBeenCalled();
+    expect(api.getSafetyReceipt).not.toHaveBeenCalled();
   });
 
   it("leaves working state when the run event stream closes permanently", async () => {

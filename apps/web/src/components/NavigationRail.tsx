@@ -2,6 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 
 import type { WorkspaceProfile } from "../app/workspaceProfiles";
 import type { components } from "../generated/api";
+import { BrandLockup } from "./Brand";
 import { WorkspaceIdentityBlock } from "./WorkspaceSwitcher";
 
 type Workspace = components["schemas"]["Workspace"];
@@ -69,7 +70,7 @@ export function NavigationRail({
 
   return (
     <aside aria-label="Workspace navigation rail" className="adaptive-rail">
-      <div className="adaptive-wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+      <BrandLockup className="adaptive-wordmark" />
       <WorkspaceIdentityBlock
         accountEmail={accountEmail}
         experience={profile.experience}

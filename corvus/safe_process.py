@@ -224,6 +224,12 @@ async def _confirm_posix_leader_reaped(
 
 
 async def _terminate_windows_process_tree(process: asyncio.subprocess.Process) -> bool:
+    before = _windows_process_snapshot()
+    observed = (
+        {process.pid, *_windows_descendant_pids(process.pid, before)}
+        if before is not None
+        else None
+    )
     try:
         taskkill = (windows_system_directory() / "taskkill.exe").resolve(strict=True)
     except (OSError, TrustedProcessError):
@@ -245,10 +251,90 @@ async def _terminate_windows_process_tree(process: asyncio.subprocess.Process) -
         return_code = await killer.wait()
     except (OSError, RuntimeError):
         return False
-    if return_code != 0:
+    if return_code == 0:
+        await process.wait()
+        return True
+    if process.returncode is None or observed is None:
         return False
-    await process.wait()
-    return True
+    after = _windows_process_snapshot()
+    if after is None:
+        return False
+    current_pids = set(after)
+    newly_observed = _windows_descendant_pids(process.pid, after)
+    return observed.isdisjoint(current_pids) and not newly_observed
+
+
+def _windows_descendant_pids(root_pid: int, processes: Mapping[int, int]) -> set[int]:
+    descendants: set[int] = set()
+    frontier = {root_pid}
+    while frontier:
+        next_frontier = {
+            pid
+            for pid, parent_pid in processes.items()
+            if parent_pid in frontier and pid not in descendants and pid != root_pid
+        }
+        descendants.update(next_frontier)
+        frontier = next_frontier
+    return descendants
+
+
+def _windows_process_snapshot() -> dict[int, int] | None:
+    if os.name != "nt":
+        return None
+    try:
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            return None
+        kernel32 = win_dll("kernel32", use_last_error=True)
+
+        class ProcessEntry32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        create_snapshot = kernel32.CreateToolhelp32Snapshot
+        create_snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+        create_snapshot.restype = wintypes.HANDLE
+        process_first = kernel32.Process32FirstW
+        process_first.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessEntry32W))
+        process_first.restype = wintypes.BOOL
+        process_next = kernel32.Process32NextW
+        process_next.argtypes = (wintypes.HANDLE, ctypes.POINTER(ProcessEntry32W))
+        process_next.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+
+        snapshot = create_snapshot(0x00000002, 0)
+        invalid_handle = ctypes.c_void_p(-1).value
+        if not snapshot or snapshot == invalid_handle:
+            return None
+        try:
+            entry = ProcessEntry32W()
+            entry.dwSize = ctypes.sizeof(entry)
+            if not process_first(snapshot, ctypes.byref(entry)):
+                return None
+            processes: dict[int, int] = {}
+            while True:
+                processes[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                if not process_next(snapshot, ctypes.byref(entry)):
+                    break
+            return processes
+        finally:
+            close_handle(snapshot)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
 
 
 async def _direct_process_cleanup(process: asyncio.subprocess.Process) -> None:

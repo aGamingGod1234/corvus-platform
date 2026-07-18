@@ -1,0 +1,196 @@
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+
+import type { ChangeSet, Contribution } from "../api";
+
+export interface ContributionApi {
+  getRunChanges(runId: string): Promise<ChangeSet>;
+  getContribution(runId: string): Promise<Contribution>;
+  prepareContribution(
+    runId: string,
+    input: {
+      selectedPaths: string[];
+      message: string;
+      title: string;
+      body: string;
+      draft: boolean;
+    }
+  ): Promise<Contribution>;
+  publishContribution(runId: string, expectedDigest: string): Promise<Contribution>;
+}
+
+function errorText(reason: unknown): string {
+  return reason instanceof Error ? reason.message : "contribution_request_failed";
+}
+
+export function ContributionPanel({ api, runId }: { api: ContributionApi; runId: string }) {
+  const [changes, setChanges] = useState<ChangeSet | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [message, setMessage] = useState("");
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [draft, setDraft] = useState(true);
+  const [prepared, setPrepared] = useState<Contribution | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setChanges(null);
+    setPrepared(null);
+    setConfirmed(false);
+    setError("");
+    Promise.all([
+      api.getRunChanges(runId),
+      api.getContribution(runId).catch((reason: unknown) => {
+        if (errorText(reason).includes("contribution_not_found")) return null;
+        throw reason;
+      })
+    ])
+      .then(([loaded, existing]) => {
+        if (!active) return;
+        setChanges(loaded);
+        setSelected(new Set(loaded.files.map((file) => file.path)));
+        setPrepared(existing);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(errorText(reason));
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, runId]);
+
+  const selectedPaths = useMemo(
+    () => changes?.files.map((file) => file.path).filter((path) => selected.has(path)) ?? [],
+    [changes, selected]
+  );
+
+  function toggle(path: string): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  async function prepare(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (selectedPaths.length === 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.prepareContribution(runId, {
+        selectedPaths,
+        message: message.trim(),
+        title: title.trim(),
+        body: body.trim(),
+        draft
+      });
+      setPrepared(result);
+      setConfirmed(false);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function publish(): Promise<void> {
+    if (prepared === null || !confirmed) return;
+    setBusy(true);
+    setError("");
+    try {
+      setPrepared(await api.publishContribution(runId, prepared.confirmation_digest));
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="contribution-title" className="contribution-panel">
+      <header>
+        <div>
+          <p className="eyebrow">Isolated run {runId.slice(0, 8)}</p>
+          <h2 id="contribution-title">Review contribution</h2>
+          <p>Only checked files are committed. Publishing never force-pushes or merges.</p>
+        </div>
+      </header>
+      {error ? <p className="inline-error" role="alert">{error}</p> : null}
+      {changes === null && !error ? <p className="quiet-copy">Loading worktree changes…</p> : null}
+      {changes?.files.length === 0 ? (
+        <div className="resource-empty">
+          <strong>No changes yet</strong>
+          <span>Run a build task in this worktree, then refresh the review.</span>
+        </div>
+      ) : null}
+
+      {changes && changes.files.length > 0 && prepared === null ? (
+        <form onSubmit={(event) => void prepare(event)}>
+          <div aria-label="Changed files" className="contribution-files">
+            {changes.files.map((file) => (
+              <article key={file.path}>
+                <label>
+                  <input
+                    aria-label={`Include ${file.path}`}
+                    checked={selected.has(file.path)}
+                    onChange={() => toggle(file.path)}
+                    type="checkbox"
+                  />
+                  <span><strong>{file.path}</strong><small>{file.status}{file.binary ? " · binary" : ""}</small></span>
+                </label>
+                {file.patch ? <details><summary>View patch</summary><pre>{file.patch}</pre></details> : null}
+                {file.patch_truncated ? <small>Patch preview truncated</small> : null}
+              </article>
+            ))}
+          </div>
+          <div className="contribution-form">
+            <label>Commit message<input onChange={(event) => setMessage(event.target.value)} value={message} /></label>
+            <label>Pull request title<input onChange={(event) => setTitle(event.target.value)} value={title} /></label>
+            <label className="contribution-form__body">Pull request body<textarea onChange={(event) => setBody(event.target.value)} rows={4} value={body} /></label>
+            <label className="contribution-draft"><input checked={draft} onChange={(event) => setDraft(event.target.checked)} type="checkbox" />Create as draft</label>
+          </div>
+          <button
+            className="button button--primary"
+            disabled={busy || selectedPaths.length === 0 || !message.trim() || !title.trim() || !body.trim()}
+            type="submit"
+          >
+            {busy ? "Preparing…" : "Prepare contribution"}
+          </button>
+        </form>
+      ) : null}
+
+      {prepared ? (
+        <div className="contribution-confirmation">
+          <div className="contribution-evidence">
+            <span data-status={prepared.secret_scan.status}>Secret scan {prepared.secret_scan.status}</span>
+            <span>Branch {prepared.branch}</span>
+            <span>Commit {prepared.commit_sha?.slice(0, 8) ?? "pending"}</span>
+            <span>{prepared.selected_paths.length} selected files</span>
+          </div>
+          {prepared.state === "published" && prepared.pr_url && prepared.pr_number ? (
+            <a href={prepared.pr_url} rel="noreferrer" target="_blank">Open pull request #{prepared.pr_number}</a>
+          ) : (
+            <>
+              <label className="contribution-confirm-check">
+                <input checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
+                I reviewed the selected files, secret scan, branch, and commit.
+              </label>
+              <button
+                className="button button--primary"
+                disabled={!confirmed || busy}
+                onClick={() => void publish()}
+                type="button"
+              >
+                {busy ? "Publishing…" : `Publish ${prepared.draft ? "draft " : ""}pull request`}
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}

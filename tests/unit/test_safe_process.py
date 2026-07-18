@@ -117,3 +117,50 @@ async def test_posix_group_confirmation_escalates_after_leader_exit(
     assert confirmed
     assert sent_signals == [int(signal.SIGTERM), signal_kill]
     assert not group_present
+
+
+@pytest.mark.asyncio
+async def test_windows_taskkill_parent_race_confirms_observed_tree_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    taskkill = tmp_path / "taskkill.exe"
+    taskkill.write_bytes(b"trusted-test-binary")
+    snapshots = iter(({42_424: 1, 42_425: 42_424}, {}))
+
+    class _ExitedLeader:
+        pid = 42_424
+        returncode = 1
+
+        async def wait(self) -> int:
+            return 1
+
+    class _RacingTaskkill:
+        returncode = 255
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def fake_subprocess(*args: object, **kwargs: object) -> _RacingTaskkill:
+        del args, kwargs
+        return _RacingTaskkill()
+
+    monkeypatch.setattr(safe_process_module, "windows_system_directory", lambda: tmp_path)
+    monkeypatch.setattr(
+        safe_process_module,
+        "build_clean_process_environment",
+        lambda executable, explicit: {},
+    )
+    monkeypatch.setattr(
+        safe_process_module,
+        "_windows_process_snapshot",
+        lambda: next(snapshots),
+        raising=False,
+    )
+    monkeypatch.setattr(safe_process_module.asyncio, "create_subprocess_exec", fake_subprocess)
+
+    confirmed = await safe_process_module._terminate_windows_process_tree(
+        cast(asyncio.subprocess.Process, _ExitedLeader())
+    )
+
+    assert confirmed

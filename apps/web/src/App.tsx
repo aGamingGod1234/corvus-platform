@@ -41,9 +41,15 @@ import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncPr
 import { LocalRuntimeLauncher } from "./runtime/LocalRuntimeLauncher";
 import { isLoopbackRuntimeHost } from "./runtime/localRuntime";
 import { SyncConflictPanel } from "./components/SyncConflictPanel";
+import { BrandLockup } from "./components/Brand";
 import { ConversationWorkspace } from "./app/ConversationWorkspace";
 import { createConversationApi } from "./app/conversationApi";
 import { RoutinesWorkspace } from "./app/RoutinesWorkspace";
+import { RepositoriesWorkspace } from "./app/RepositoriesWorkspace";
+import { RunsWorkspace } from "./app/RunsWorkspace";
+import { PortableSkillsWorkspace } from "./app/PortableSkillsWorkspace";
+import { SchedulesWorkspace } from "./app/SchedulesWorkspace";
+import { BackgroundRunNotifier } from "./app/BackgroundRunNotifier";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
@@ -689,6 +695,13 @@ export function App({
       retrievedMemories={retrievedMemories}
     />
   );
+  const repositoriesSurface = (
+    <RepositoriesWorkspace
+      api={api}
+    />
+  );
+  const runsSurface = <RunsWorkspace api={api} />;
+  const skillsSurface = <PortableSkillsWorkspace api={api} />;
 
   if (localRuntime) {
     if (phase === "checking") return <LoadingScreen />;
@@ -700,6 +713,8 @@ export function App({
       : localProfile.routes[0].id;
     const localSurface = localSurfaceForRoute(localRoute);
     return (
+      <>
+      <BackgroundRunNotifier listRuns={api.listLocalRuns} storage={preferenceStorage} workspaceId={localSession.user_id} />
       <LocalRuntimeShell
         activeRoute={localRoute}
         error={error}
@@ -733,25 +748,25 @@ export function App({
             storageScope={localSession.user_id}
           />
         ) : localSurface === "schedule" ? (
-          <RoutinesWorkspace
-            busy={busy}
-            onCreate={createRoutine}
-            onRun={runRoutine}
-            projectName={activeProject?.name ?? null}
-            routines={operations.routines}
-            skills={operations.skills}
-          />
+          <SchedulesWorkspace api={api} onOpenRun={() => setActiveRoute("runs")} />
         ) : localSurface === "settings" ? (
           <SettingsPanel
+            api={createConversationApi(localSession.csrf_token)}
             experience={localProfile.experience}
+            onBack={() => setActiveRoute(localProfile.routes[0].id)}
             onExperienceChange={async () => undefined}
             profileEditable={false}
             storage={preferenceStorage}
             workspaceId={localSession.user_id}
             workspaceKind={localProfile.workspaceKind}
           />
-        ) : localSurface === "operations" ? operationsSurface : executionSurface}
+        ) : localSurface === "repositories" ? repositoriesSurface
+          : localSurface === "runs" ? runsSurface
+          : localSurface === "skills" ? skillsSurface
+          : localSurface === "operations" ? operationsSurface
+          : executionSurface}
       </LocalRuntimeShell>
+      </>
     );
   }
 
@@ -880,6 +895,7 @@ export function App({
         ) : (activeRoute || profile.routes[0].id) === "settings" ? (
           <SettingsPanel
             experience={profile.experience}
+            onBack={() => setActiveRoute(profile.routes[0].id)}
             onExperienceChange={async (nextExperience) => {
               if (nextExperience === profile.experience) return;
               const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
@@ -943,9 +959,9 @@ function LocalRuntimeShell({
   return (
     <>
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"}>
-        <aside aria-label="Local workspace" className="local-sidebar">
-          <div className="local-sidebar__wordmark"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"} data-route={activeRoute}>
+        {activeRoute !== "settings" ? <aside aria-label="Local workspace" className="local-sidebar">
+          <BrandLockup className="local-sidebar__wordmark" />
           <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
           <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
             {routes.map((route) => (
@@ -963,7 +979,7 @@ function LocalRuntimeShell({
             ))}
           </nav>
           <div className="local-sidebar__connection"><span aria-hidden="true" />On this computer</div>
-        </aside>
+        </aside> : null}
         <main aria-label={routeLabel} className="local-main" id="main-content" ref={mainRef} tabIndex={-1}>
           {error && <p className="local-main__error" role="alert">{error}</p>}
           {children}
@@ -974,13 +990,16 @@ function LocalRuntimeShell({
   );
 }
 
-type LocalSurface = "conversations" | "execution" | "schedule" | "operations" | "settings";
+type LocalSurface = "conversations" | "repositories" | "runs" | "schedule" | "skills" | "operations" | "execution" | "settings";
 
 function localSurfaceForRoute(routeId: string): LocalSurface {
   if (routeId === "threads") return "conversations";
+  if (routeId === "repositories") return "repositories";
+  if (routeId === "runs") return "runs";
   if (routeId === "schedule") return "schedule";
   if (routeId === "settings") return "settings";
-  if (routeId === "skills" || routeId === "people" || routeId === "policies") return "operations";
+  if (routeId === "skills") return "skills";
+  if (["people", "policies"].includes(routeId)) return "operations";
   return "execution";
 }
 
@@ -1097,6 +1116,50 @@ function PairingScreen({
         {error && <p className="inline-error" role="alert">{error}</p>}
       </section>
     </div>
+  );
+}
+
+function SkillsWorkspace({
+  busy,
+  onCreate,
+  project,
+  skills
+}: {
+  busy: boolean;
+  onCreate(name: string, content: string): Promise<void>;
+  project: Project | null;
+  skills: readonly SkillVersion[];
+}) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (name.trim() === "" || content.trim() === "") return;
+    await onCreate(name.trim(), content.trim());
+    setName("");
+    setContent("");
+    setCreating(false);
+  }
+
+  return (
+    <section className="resource-workspace" aria-labelledby="skills-title">
+      <header className="resource-heading">
+        <div><p className="eyebrow">{project?.name ?? "No active repository"}</p><h1 id="skills-title">Skills</h1><p>Turn stable instructions into versioned capabilities that schedules can reuse.</p></div>
+        <button className="button button--primary" disabled={project === null} onClick={() => setCreating(true)} type="button">New skill</button>
+      </header>
+      {project === null ? <div className="resource-empty"><strong>Choose a repository first</strong><span>Skills remain scoped to an authorized project.</span></div> : null}
+      {creating ? <form className="skill-editor" onSubmit={(event) => void submit(event)}>
+        <div><label htmlFor="mvp-skill-name">Skill name</label><input autoFocus id="mvp-skill-name" onChange={(event) => setName(event.target.value)} placeholder="Release checklist" value={name} /></div>
+        <div><label htmlFor="mvp-skill-content">Instructions</label><textarea id="mvp-skill-content" onChange={(event) => setContent(event.target.value)} placeholder="Verify tests, summarize changes, and list remaining risks." rows={6} value={content} /></div>
+        <div className="row-actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || name.trim() === "" || content.trim() === ""} type="submit">Create and activate</button></div>
+      </form> : null}
+      {project !== null ? <div className="resource-table" role="table" aria-label="Skills">
+        <div className="resource-table__header" role="row"><span role="columnheader">Skill</span><span role="columnheader">Version</span><span role="columnheader">Status</span></div>
+        {skills.length === 0 ? <div className="resource-empty"><strong>No skills yet</strong><span>Create a small reusable instruction set for the demo.</span></div> : skills.map((skill) => <div className="resource-row resource-row--static" key={skill.id} role="row"><span role="cell"><strong>{skill.name}</strong><small>{skill.id}</small></span><span role="cell">v{skill.version}</span><span role="cell" className="resource-status"><i aria-hidden="true" />{skill.status}</span></div>)}
+      </div> : null}
+    </section>
   );
 }
 

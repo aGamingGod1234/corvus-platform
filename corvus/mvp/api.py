@@ -3,22 +3,34 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
+import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from corvus.mvp.api_chat import ApiChatBackend, ApiProvider
+from corvus.mvp.change_review import ChangeReviewService, ChangeSet
+from corvus.mvp.contributions import (
+    ContributionConflict,
+    ContributionRecord,
+    ContributionService,
+)
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
+from corvus.mvp.git_process import GitProcess, GitProcessError
+from corvus.mvp.github_cli import GitHubCli
 from corvus.mvp.governance import (
     AutonomyDecision,
     GovernanceService,
@@ -46,6 +58,7 @@ from corvus.mvp.local_chat import (
     LocalChatNotFound,
     LocalChatService,
     build_default_local_chat_service,
+    discover_codex_executable,
 )
 from corvus.mvp.models import (
     ApprovalRecord,
@@ -59,6 +72,43 @@ from corvus.mvp.models import (
     WorkItem,
     WorkItemDefinition,
 )
+from corvus.mvp.preferences import (
+    LocalPreferences,
+    LocalPreferencesConflict,
+    LocalPreferencesService,
+)
+from corvus.mvp.provider_credentials import (
+    ProviderCredentialError,
+    ProviderCredentialService,
+    ProviderCredentialStatus,
+    ProviderVerification,
+)
+from corvus.mvp.repository_workspace import RepositoryRecord, RepositoryWorkspaceService
+from corvus.mvp.run_coordinator import (
+    CodexWorkspaceBackend,
+    RunCoordinator,
+    RunCoordinatorConflict,
+)
+from corvus.mvp.run_models import RunEvent, RunEvidence, RunRecord, RunStatus, StartRunRequest
+from corvus.mvp.run_store import RunStore, RunStoreConflict, RunStoreNotFound
+from corvus.mvp.safety import build_safety_preview
+from corvus.mvp.scheduler import LocalScheduler
+from corvus.mvp.schedules import (
+    ScheduleCreateRequest,
+    ScheduleError,
+    ScheduleRecord,
+    ScheduleStore,
+)
+from corvus.mvp.secret_scan import SecretScanner
+from corvus.mvp.skill_imports import (
+    PortableSkillVersion,
+    SkillCandidate,
+    SkillImportError,
+    SkillImportPreview,
+    SkillImportService,
+)
+from corvus.mvp.store import SqliteStore
+from corvus.mvp.worktrees import WorktreeManager, WorktreeOwnershipError
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 
@@ -69,7 +119,7 @@ _INSTANCE_PROOF_HEADER = "X-Corvus-Instance-Proof"
 _MINIMUM_INSTANCE_CHALLENGE_LENGTH = 16
 _MAXIMUM_INSTANCE_CHALLENGE_LENGTH = 512
 _WEB_CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "font-src 'self' data:; img-src 'self' data:; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
@@ -90,6 +140,36 @@ class PairResponse(ApiModel):
 
 class ProjectCreateRequest(ApiModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+class RepositoryCreateRequest(ApiModel):
+    path: Path
+    display_name: str = Field(min_length=1, max_length=200)
+
+
+class LocalWorktreeResponse(ApiModel):
+    run_id: str
+    repository_id: str
+    base_sha: str
+    status: Literal["creating", "active", "discarded"]
+    created_at: datetime
+
+
+class ContributionPrepareRequest(ApiModel):
+    selected_paths: tuple[str, ...] = Field(min_length=1, max_length=500)
+    message: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20_000)
+    draft: bool = True
+
+
+class ContributionPublishRequest(ApiModel):
+    expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SkillImportRequest(ApiModel):
+    candidate_id: str = Field(min_length=64, max_length=64)
+    expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class OutcomeCreateRequest(ApiModel):
@@ -167,7 +247,7 @@ class MutationStatus(ApiModel):
 
 class LocalChatStartRequest(ApiModel):
     prompt: str = Field(min_length=1, max_length=1_000_000)
-    provider: Literal["codex", "claude"] = "codex"
+    provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"] = "codex"
     model: str | None = Field(
         default=None,
         min_length=1,
@@ -177,17 +257,51 @@ class LocalChatStartRequest(ApiModel):
     effort: Literal["normal", "low", "medium", "high", "xhigh", "max"] = "normal"
     mode: Literal["chat", "build"] = "chat"
     mcp_enabled: bool = False
+    safety_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class SafetyPreviewResponse(ApiModel):
+    policy_digest: str
+    level: Literal["read_only", "protected", "elevated"]
+    label: str
+    summary: str
+    execution: str
+    filesystem: str
+    network: str
+    mcp: str
+    approvals: str
+    output: str
+    requires_confirmation: bool
 
 
 class LocalChatStartResponse(ApiModel):
     run_id: str
     handle_id: str
     state: Literal["running", "completed", "failed"]
-    provider: Literal["codex", "claude"]
+    provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"]
     model: str
     mode: Literal["chat", "build"]
     storage: Literal["this_device"]
     created_at: str
+    safety: SafetyPreviewResponse
+
+
+class SafetyArtifactResponse(ApiModel):
+    download_name: str
+    sha256_digest: str
+    size_bytes: int
+    secret_screening: Literal["passed", "not_scanned"]
+
+
+class SafetyReceiptResponse(ApiModel):
+    run_id: str
+    status: Literal["completed", "failed", "cancelled"]
+    safety: SafetyPreviewResponse
+    activities: list[str]
+    mcp_used: bool
+    approval: str
+    original_project_modified: bool
+    artifact: SafetyArtifactResponse | None
 
 
 class LocalChatCancelResponse(ApiModel):
@@ -195,6 +309,51 @@ class LocalChatCancelResponse(ApiModel):
     state: Literal["running", "cancelled", "completed", "failed"]
     accepted: bool
     reason_code: str | None
+
+
+class LocalPreferencesResponse(ApiModel):
+    version: int = Field(ge=0)
+    default_provider: Literal["codex", "claude"]
+    default_model: str | None
+    default_effort: Literal["low", "medium", "high", "xhigh", "max"]
+    default_mode: Literal["chat", "build"]
+    mcp_enabled: bool
+    response_tone: Literal["concise", "balanced", "detailed"]
+    custom_rules: str
+    updated_at: str | None
+
+
+class LocalPreferencesUpdate(ApiModel):
+    expected_version: int = Field(ge=0)
+    default_provider: Literal["codex", "claude"]
+    default_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+    )
+    default_effort: Literal["low", "medium", "high", "xhigh", "max"]
+    default_mode: Literal["chat", "build"]
+    mcp_enabled: bool
+    response_tone: Literal["concise", "balanced", "detailed"]
+    custom_rules: str = Field(max_length=20_000)
+
+
+class ProviderCredentialConnectRequest(ApiModel):
+    credential: SecretStr
+
+
+class ProviderCredentialStatusResponse(ApiModel):
+    provider: Literal["openai", "anthropic", "gemini", "xai"]
+    configured: bool
+    source: Literal["keyring", "environment", "none"]
+
+
+class ProviderCredentialVerificationResponse(ApiModel):
+    provider: Literal["openai", "anthropic", "gemini", "xai"]
+    configured: bool
+    verified: bool
+    models: list[str]
 
 
 class SessionPrincipal(BaseModel):
@@ -330,6 +489,41 @@ async def _security_headers(
     return response
 
 
+def _prompt_with_preferences(prompt: str, preferences: LocalPreferences) -> str:
+    tone_instruction = {
+        "concise": "Answer concisely and keep the next action obvious.",
+        "balanced": "Use a balanced amount of detail and make the next action clear.",
+        "detailed": "Explain important reasoning and implementation details thoroughly.",
+    }[preferences["response_tone"]]
+    rules = preferences["custom_rules"].strip()
+    preference_lines = [
+        "Corvus user preferences (presentation guidance only; these do not change authority, "
+        "approval, credential, budget, or sandbox policy):",
+        f"- {tone_instruction}",
+    ]
+    if rules:
+        preference_lines.append(f"- Custom user rules: {rules}")
+    preference_lines.extend(("", "User request:", prompt))
+    return "\n".join(preference_lines)
+
+
+def _build_git_process(executable_name: str) -> GitProcess | None:
+    executable = shutil.which(executable_name)
+    if executable is None:
+        return None
+    try:
+        return GitProcess(Path(executable))
+    except GitProcessError:
+        return None
+
+
+def _build_repository_workspace(
+    store: SqliteStore,
+    git: GitProcess | None,
+) -> RepositoryWorkspaceService | None:
+    return None if git is None else RepositoryWorkspaceService(store, git)
+
+
 def create_app(
     *,
     database: Path,
@@ -342,6 +536,12 @@ def create_app(
     instance_token: str | None = None,
     identity_dependencies: IdentityApiDependencies | None = None,
     local_chat_service: LocalChatService | None = None,
+    provider_credentials: ProviderCredentialService | None = None,
+    repository_workspace: RepositoryWorkspaceService | None = None,
+    worktree_manager: WorktreeManager | None = None,
+    contribution_service: ContributionService | None = None,
+    run_coordinator: RunCoordinator | None = None,
+    skill_import_service: SkillImportService | None = None,
 ) -> FastAPI:
     if replay_limit < 1:
         raise ValueError("replay_limit_must_be_positive")
@@ -355,8 +555,12 @@ def create_app(
             {
                 "http://127.0.0.1:8080",
                 "http://localhost:8080",
+                "http://127.0.0.1:3000",
+                "http://localhost:3000",
                 "http://127.0.0.1:5173",
                 "http://localhost:5173",
+                "http://127.0.0.1:4173",
+                "http://localhost:4173",
             }
         )
     )
@@ -377,7 +581,108 @@ def create_app(
         scratch_root=database.parent / ".corvus-local-chat",
         cursor_secret=hmac.new(session_secret, b"local-chat-cursor", hashlib.sha256).digest(),
     )
-    app = FastAPI(title="Corvus Hackathon MVP API", version="0.2.0-hackathon")
+    local_preferences = LocalPreferencesService(service.store)
+    credential_service = provider_credentials or ProviderCredentialService()
+    git = _build_git_process("git.exe" if os.name == "nt" else "git")
+    change_review = ChangeReviewService(git) if git is not None else None
+    repositories = repository_workspace or _build_repository_workspace(service.store, git)
+    worktrees = worktree_manager
+    if worktrees is None and git is not None:
+        worktrees = WorktreeManager(
+            service.store,
+            git,
+            root=database.parent / ".corvus-worktrees",
+            ownership_secret=hmac.new(
+                session_secret,
+                b"worktree-ownership",
+                hashlib.sha256,
+            ).digest(),
+        )
+    contributions = contribution_service
+    skill_imports = skill_import_service or SkillImportService(
+        service.store, library_root=database.parent / ".corvus-skills"
+    )
+    if contributions is None and git is not None and worktrees is not None:
+        assert change_review is not None
+        gh = _build_git_process("gh.exe" if os.name == "nt" else "gh")
+        if gh is not None:
+            contributions = ContributionService(
+                service.store,
+                git,
+                worktrees,
+                change_review,
+                SecretScanner(),
+                GitHubCli(gh, cwd=database.parent),
+                confirmation_secret=hmac.new(
+                    session_secret,
+                    b"contribution-confirmation",
+                    hashlib.sha256,
+                ).digest(),
+            )
+    durable_runs = RunStore(service.store)
+    schedules = ScheduleStore(service.store)
+    run_workflow = run_coordinator
+    if (
+        run_workflow is None
+        and repositories is not None
+        and worktrees is not None
+        and git is not None
+    ):
+        assert change_review is not None
+        codex_executable = discover_codex_executable()
+        if codex_executable is not None:
+            from corvus.infrastructure.agent_runtimes.codex import CodexCliAdapter
+
+            managed_root = database.parent / ".corvus-worktrees"
+            adapter = CodexCliAdapter(
+                executable=codex_executable,
+                version="local",
+                scratch_root=database.parent / ".corvus-durable-runs",
+                approved_workspace_roots=(managed_root,),
+                clock=lambda: datetime.now(UTC),
+            )
+            run_workflow = RunCoordinator(
+                durable_runs,
+                repositories,
+                worktrees,
+                change_review,
+                CodexWorkspaceBackend(adapter),
+                skill_provider=skill_imports,
+            )
+    scheduler = LocalScheduler(schedules, run_workflow) if run_workflow is not None else None
+    scheduler_task: asyncio.Task[None] | None = None
+
+    async def scheduler_loop() -> None:
+        while True:
+            await asyncio.sleep(15)
+            if scheduler is not None:
+                try:
+                    await scheduler.tick()
+                except Exception as error:
+                    # Surface diagnostic state while keeping the local API available.
+                    app.state.scheduler_error = str(error)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        nonlocal scheduler_task
+        if run_workflow is not None:
+            run_workflow.recover_interrupted()
+            scheduler_task = asyncio.create_task(scheduler_loop(), name="corvus-local-scheduler")
+        try:
+            yield
+        finally:
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except asyncio.CancelledError:
+                    pass
+
+    app = FastAPI(
+        title="Corvus Hackathon MVP API",
+        version="0.2.0-hackathon",
+        lifespan=lifespan,
+    )
     app.middleware("http")(_security_headers)
 
     @app.exception_handler(DomainNotFound)
@@ -386,6 +691,49 @@ def create_app(
 
     @app.exception_handler(DomainConflict)
     async def conflict_handler(_request: Request, error: DomainConflict) -> JSONResponse:
+        return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
+
+    @app.exception_handler(ContributionConflict)
+    async def contribution_conflict_handler(
+        _request: Request,
+        error: ContributionConflict,
+    ) -> JSONResponse:
+        return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
+
+    @app.exception_handler(WorktreeOwnershipError)
+    async def worktree_error_handler(
+        _request: Request,
+        error: WorktreeOwnershipError,
+    ) -> JSONResponse:
+        return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_request", str(error))
+
+    @app.exception_handler(RunStoreNotFound)
+    async def run_not_found_handler(_request: Request, error: RunStoreNotFound) -> JSONResponse:
+        return _error_response(status.HTTP_404_NOT_FOUND, "not_found", str(error))
+
+    @app.exception_handler(SkillImportError)
+    async def skill_import_error_handler(
+        _request: Request, error: SkillImportError
+    ) -> JSONResponse:
+        code = str(error)
+        response_status = (
+            status.HTTP_404_NOT_FOUND
+            if code in {"skill_candidate_not_found", "skill_not_found"}
+            else status.HTTP_409_CONFLICT
+        )
+        return _error_response(response_status, "skill_import_error", code)
+
+    @app.exception_handler(ScheduleError)
+    async def schedule_error_handler(_request: Request, error: ScheduleError) -> JSONResponse:
+        code = str(error)
+        response_status = (
+            status.HTTP_404_NOT_FOUND if code == "schedule_not_found" else status.HTTP_409_CONFLICT
+        )
+        return _error_response(response_status, "schedule_error", code)
+
+    @app.exception_handler(RunStoreConflict)
+    @app.exception_handler(RunCoordinatorConflict)
+    async def run_conflict_handler(_request: Request, error: Exception) -> JSONResponse:
         return _error_response(status.HTTP_409_CONFLICT, "conflict", str(error))
 
     @app.exception_handler(RequestValidationError)
@@ -432,6 +780,76 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    def repository_service() -> RepositoryWorkspaceService:
+        if repositories is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return repositories
+
+    def worktree_service() -> WorktreeManager:
+        if worktrees is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return worktrees
+
+    def contribution_workflow() -> ContributionService:
+        if contributions is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_cli_unavailable",
+            )
+        return contributions
+
+    def change_review_service() -> ChangeReviewService:
+        if change_review is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="git_unavailable",
+            )
+        return change_review
+
+    def optional_durable_run(tenant_id: str, run_id: str) -> RunRecord | None:
+        try:
+            return durable_runs.get(tenant_id, run_id)
+        except RunStoreNotFound:
+            return None
+
+    def durable_run_workflow() -> RunCoordinator:
+        if run_workflow is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_cli_unavailable",
+            )
+        return run_workflow
+
+    def local_scheduler() -> LocalScheduler:
+        if scheduler is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_cli_unavailable",
+            )
+        return scheduler
+
+    def authorize_local_run(tenant_id: str, run_id: str) -> None:
+        with service.store.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM mvp_worktree_leases w "
+                "JOIN mvp_repositories r ON r.id = w.repository_id "
+                "WHERE w.run_id = ? AND r.tenant_id = ?",
+                (run_id, tenant_id),
+            ).fetchone()
+        if row is None:
+            raise DomainNotFound("local_run_not_found")
+
+    def local_repository_roots(tenant_id: str) -> tuple[Path, ...]:
+        if repositories is None:
+            return ()
+        return tuple(Path(item.path) for item in repositories.list(tenant_id))
+
     @app.get("/ready")
     def ready(
         response: Response,
@@ -457,14 +875,14 @@ def create_app(
         return {"status": "ready"}
 
     @app.post("/api/auth/pair", response_model=PairResponse)
-    def pair(body: PairRequest, response: Response) -> dict[str, str]:
+    def pair(body: PairRequest, request: Request, response: Response) -> dict[str, str]:
         principal, token = auth.pair(body.token)
         response.set_cookie(
             _SESSION_COOKIE,
             token,
             max_age=int(_SESSION_LIFETIME.total_seconds()),
             httponly=True,
-            secure=False,
+            secure=request.url.scheme == "https",
             samesite="strict",
             path="/",
         )
@@ -475,6 +893,410 @@ def create_app(
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> dict[str, Any]:
         return principal.model_dump(mode="json")
+
+    @app.get("/api/local/repositories", response_model=list[RepositoryRecord])
+    def local_repositories(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json") for item in repository_service().list(principal.tenant_id)
+        ]
+
+    @app.get("/api/local/skills", response_model=list[PortableSkillVersion])
+    def local_skills(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in skill_imports.list(principal.tenant_id)]
+
+    @app.get("/api/local/skills/sources", response_model=list[SkillCandidate])
+    def local_skill_sources(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        candidates = skill_imports.discover(local_repository_roots(principal.tenant_id))
+        return [item.model_dump(mode="json") for item in candidates]
+
+    @app.get(
+        "/api/local/skills/sources/{candidate_id}/preview",
+        response_model=SkillImportPreview,
+    )
+    def preview_local_skill(
+        candidate_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        preview = skill_imports.preview(
+            principal.tenant_id,
+            candidate_id,
+            local_repository_roots(principal.tenant_id),
+        )
+        return preview.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/skills/import",
+        response_model=PortableSkillVersion,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_local_skill(
+        body: SkillImportRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = skill_imports.import_draft(
+            principal.tenant_id,
+            body.candidate_id,
+            body.expected_digest,
+            local_repository_roots(principal.tenant_id),
+        )
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/skills/{skill_id}/activate", response_model=PortableSkillVersion)
+    def activate_local_skill(
+        skill_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return skill_imports.activate(principal.tenant_id, skill_id).model_dump(mode="json")
+
+    @app.post("/api/local/skills/{skill_id}/archive", response_model=PortableSkillVersion)
+    def archive_local_skill(
+        skill_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return skill_imports.archive(principal.tenant_id, skill_id).model_dump(mode="json")
+
+    @app.get("/api/local/schedules", response_model=list[ScheduleRecord])
+    def local_schedules(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in schedules.list(principal.tenant_id)]
+
+    @app.post(
+        "/api/local/schedules",
+        response_model=ScheduleRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_local_schedule(
+        body: ScheduleCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.create(principal.tenant_id, body).model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/run-now", response_model=RunRecord)
+    async def run_local_schedule_now(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await local_scheduler().run_now(principal.tenant_id, schedule_id)
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/schedules/{schedule_id}/pause", response_model=ScheduleRecord)
+    def pause_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "paused").model_dump(
+            mode="json"
+        )
+
+    @app.post("/api/local/schedules/{schedule_id}/resume", response_model=ScheduleRecord)
+    def resume_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "active").model_dump(
+            mode="json"
+        )
+
+    @app.post("/api/local/schedules/{schedule_id}/archive", response_model=ScheduleRecord)
+    def archive_local_schedule(
+        schedule_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        return schedules.set_status(principal.tenant_id, schedule_id, "archived").model_dump(
+            mode="json"
+        )
+
+    @app.post(
+        "/api/local/repositories",
+        response_model=RepositoryRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def register_local_repository(
+        body: RepositoryCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = repository_service().register_local(
+            principal.tenant_id,
+            body.path,
+            body.display_name,
+        )
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/repositories/{repository_id}/refresh",
+        response_model=RepositoryRecord,
+    )
+    def refresh_local_repository(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = repository_service().refresh(principal.tenant_id, repository_id)
+        return record.model_dump(mode="json")
+
+    @app.delete(
+        "/api/local/repositories/{repository_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def remove_local_repository(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> Response:
+        repository_service().remove(principal.tenant_id, repository_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post(
+        "/api/local/repositories/{repository_id}/worktrees",
+        response_model=LocalWorktreeResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_local_worktree(
+        repository_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        repository = repository_service().refresh(principal.tenant_id, repository_id)
+        lease = worktree_service().create(
+            repository,
+            str(uuid4()),
+            repository.snapshot.head_sha,
+        )
+        return {
+            "run_id": lease.run_id,
+            "repository_id": lease.repository_id,
+            "base_sha": lease.base_sha,
+            "status": lease.status,
+            "created_at": lease.created_at,
+        }
+
+    @app.get("/api/local/runs", response_model=list[RunRecord])
+    def local_runs(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [item.model_dump(mode="json") for item in durable_runs.list(principal.tenant_id)]
+
+    @app.post(
+        "/api/local/runs",
+        response_model=RunRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def start_local_run(
+        body: StartRunRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().start(principal.tenant_id, body)
+        return record.model_dump(mode="json")
+
+    @app.get("/api/local/runs/{run_id}", response_model=RunRecord)
+    def local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        return durable_runs.get(principal.tenant_id, run_id).model_dump(mode="json")
+
+    @app.get("/api/local/runs/{run_id}/events", response_model=list[RunEvent])
+    def local_run_events(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        after: int = 0,
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in durable_runs.events(principal.tenant_id, run_id, after=after)
+        ]
+
+    @app.get("/api/local/runs/{run_id}/evidence", response_model=list[RunEvidence])
+    def local_run_evidence(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in durable_runs.evidence(principal.tenant_id, run_id)
+        ]
+
+    @app.post("/api/local/runs/{run_id}/cancel", response_model=RunRecord)
+    async def cancel_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().cancel(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/retry",
+        response_model=RunRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def retry_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = await durable_run_workflow().retry(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
+
+    @app.post("/api/local/runs/{run_id}/discard", response_model=RunRecord)
+    def discard_local_run(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        record = durable_run_workflow().discard(principal.tenant_id, run_id)
+        return record.model_dump(mode="json")
+
+    @app.get("/api/local/runs/{run_id}/changes", response_model=ChangeSet)
+    def local_run_changes(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        lease = worktree_service().get(run_id)
+        return change_review_service().snapshot(lease.root).model_dump(mode="json")
+
+    @app.get(
+        "/api/local/runs/{run_id}/contribution",
+        response_model=ContributionRecord,
+    )
+    def local_run_contribution(
+        run_id: str,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        return contribution_workflow().get(run_id).model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/contribution/prepare",
+        response_model=ContributionRecord,
+    )
+    def prepare_local_contribution(
+        run_id: str,
+        body: ContributionPrepareRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        record = contribution_workflow().prepare(
+            run_id,
+            selected_paths=body.selected_paths,
+            message=body.message,
+            title=body.title,
+            body=body.body,
+            draft=body.draft,
+        )
+        run = optional_durable_run(principal.tenant_id, run_id)
+        if run is not None and run.status == RunStatus.REVIEW_REQUIRED:
+            durable_runs.transition(
+                principal.tenant_id,
+                run_id,
+                RunStatus.CONTRIBUTION_READY,
+            )
+        return record.model_dump(mode="json")
+
+    @app.post(
+        "/api/local/runs/{run_id}/contribution/publish",
+        response_model=ContributionRecord,
+    )
+    def publish_local_contribution(
+        run_id: str,
+        body: ContributionPublishRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> dict[str, Any]:
+        authorize_local_run(principal.tenant_id, run_id)
+        run = optional_durable_run(principal.tenant_id, run_id)
+        publishable_run = run is not None and run.status in {
+            RunStatus.CONTRIBUTION_READY,
+            RunStatus.PUBLISHING,
+        }
+        if run is not None and run.status == RunStatus.CONTRIBUTION_READY:
+            durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHING)
+        try:
+            record = contribution_workflow().publish(
+                run_id,
+                expected_digest=body.expected_digest,
+            )
+        except Exception:
+            if publishable_run:
+                current = durable_runs.get(principal.tenant_id, run_id)
+                if current.status == RunStatus.PUBLISHING:
+                    durable_runs.transition(
+                        principal.tenant_id,
+                        run_id,
+                        RunStatus.CONTRIBUTION_READY,
+                    )
+            raise
+        if publishable_run:
+            current = durable_runs.get(principal.tenant_id, run_id)
+            if current.status == RunStatus.PUBLISHING:
+                durable_runs.transition(principal.tenant_id, run_id, RunStatus.PUBLISHED)
+        return record.model_dump(mode="json")
+
+    @app.get(
+        "/api/provider-credentials",
+        response_model=list[ProviderCredentialStatusResponse],
+    )
+    def provider_credential_statuses(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> list[ProviderCredentialStatus]:
+        return [
+            credential_service.status(principal.user_id, provider)
+            for provider in ("openai", "anthropic", "gemini", "xai")
+        ]
+
+    @app.put(
+        "/api/provider-credentials/{provider}",
+        response_model=ProviderCredentialStatusResponse,
+    )
+    def connect_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        body: ProviderCredentialConnectRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderCredentialStatus:
+        try:
+            return credential_service.connect(
+                principal.user_id,
+                provider,
+                body.credential.get_secret_value(),
+            )
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+
+    @app.post(
+        "/api/provider-credentials/{provider}/verify",
+        response_model=ProviderCredentialVerificationResponse,
+    )
+    async def verify_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderVerification:
+        try:
+            return await credential_service.verify(principal.user_id, provider)
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+
+    @app.delete(
+        "/api/provider-credentials/{provider}",
+        response_model=ProviderCredentialStatusResponse,
+    )
+    def remove_provider_credential(
+        provider: Literal["openai", "anthropic", "gemini", "xai"],
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> ProviderCredentialStatus:
+        try:
+            return credential_service.remove(principal.user_id, provider)
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
 
     @app.post(
         "/api/local-chat/runs",
@@ -499,16 +1321,37 @@ def create_app(
                 detail="codex_unavailable",
             )
         try:
+            preferences = local_preferences.get(principal.user_id)
+            owner = f"{principal.tenant_id}:{principal.user_id}"
+            if body.provider in {"openai", "anthropic", "gemini", "xai"}:
+                api_provider = cast(ApiProvider, body.provider)
+                credential = credential_service.require(principal.user_id, api_provider)
+                local_chat.register_owner_backend(
+                    owner,
+                    api_provider,
+                    ApiChatBackend(
+                        provider=api_provider,
+                        credential=credential,
+                        clock=lambda: datetime.now(UTC),
+                    ),
+                )
             return await local_chat.start(
-                owner=f"{principal.tenant_id}:{principal.user_id}",
-                prompt=body.prompt,
+                owner=owner,
+                prompt=_prompt_with_preferences(body.prompt, preferences),
                 provider=body.provider,
                 model=body.model,
                 effort=body.effort,
                 mode=body.mode,
                 mcp_enabled=body.mcp_enabled,
+                safety_digest=body.safety_digest,
                 idempotency_key=idempotency_key,
+                idempotency_prompt=body.prompt,
             )
+        except ProviderCredentialError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
         except LocalChatConflict as error:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=error.reason_code
@@ -521,13 +1364,116 @@ def create_app(
 
     @app.get("/api/local-chat/providers")
     def local_chat_providers(
-        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
     ) -> list[dict[str, object]]:
         if local_chat is None:
             return []
-        return list(local_chat.provider_catalog())
+        local_entries = [
+            entry
+            for entry in local_chat.provider_catalog()
+            if entry["id"] not in {"gemini", "grok"}
+        ]
+        labels = {
+            "openai": "OpenAI API",
+            "anthropic": "Anthropic API",
+            "gemini": "Gemini API",
+            "xai": "Grok by xAI",
+        }
+        for provider in ("openai", "anthropic", "gemini", "xai"):
+            provider_models = credential_service.models(principal.user_id, provider)
+            configured = credential_service.status(principal.user_id, provider)["configured"]
+            ready = configured and bool(provider_models)
+            local_entries.append(
+                {
+                    "id": provider,
+                    "label": labels[provider],
+                    "runtime": "api",
+                    "status": "ready" if ready else "unavailable",
+                    "status_label": (
+                        "Verified for API chat"
+                        if ready
+                        else "Connected; verify in Settings"
+                        if configured
+                        else "Not configured"
+                    ),
+                    "models": [
+                        {"id": model, "label": model, "recommended": index == 0}
+                        for index, model in enumerate(provider_models)
+                    ],
+                    "thinking_levels": (
+                        ["low", "medium", "high", "xhigh"] if provider == "openai" else []
+                    ),
+                    "supports_mcp": False,
+                }
+            )
+        return local_entries
 
-    @app.get("/api/local-chat/runs/{run_id}/events")
+    @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
+    def local_chat_safety_preview(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+        provider: Literal["codex", "claude", "openai", "anthropic", "gemini", "xai"] = "codex",
+        mode: Literal["chat", "build"] = "chat",
+        mcp_enabled: bool = False,
+    ) -> dict[str, object]:
+        try:
+            return build_safety_preview(
+                provider=provider,
+                mode=mode,
+                mcp_enabled=mcp_enabled,
+            ).as_dict()
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+
+    @app.get("/api/local-chat/preferences", response_model=LocalPreferencesResponse)
+    def get_local_preferences(
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> LocalPreferences:
+        return local_preferences.get(principal.user_id)
+
+    @app.put("/api/local-chat/preferences", response_model=LocalPreferencesResponse)
+    def update_local_preferences(
+        body: LocalPreferencesUpdate,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> LocalPreferences:
+        if body.default_provider == "claude" and (body.default_mode != "chat" or body.mcp_enabled):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="provider_mode_unavailable",
+            )
+        if body.default_provider == "codex" and body.default_effort == "max":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="provider_effort_unavailable",
+            )
+        try:
+            return local_preferences.update(
+                user_id=principal.user_id,
+                expected_version=body.expected_version,
+                default_provider=body.default_provider,
+                default_model=body.default_model,
+                default_effort=body.default_effort,
+                default_mode=body.default_mode,
+                mcp_enabled=body.mcp_enabled,
+                response_tone=body.response_tone,
+                custom_rules=body.custom_rules.strip(),
+            )
+        except LocalPreferencesConflict as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "preferences_version_conflict",
+                    "current": error.current,
+                },
+            ) from error
+
+    @app.get(
+        "/api/local-chat/runs/{run_id}/events",
+        response_class=StreamingResponse,
+        responses={200: {"content": {"text/event-stream": {}}}},
+    )
     async def local_chat_events(
         run_id: UUID,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -576,7 +1522,11 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/local-chat/runs/{run_id}/artifact")
+    @app.get(
+        "/api/local-chat/runs/{run_id}/artifact",
+        response_class=FileResponse,
+        responses={200: {"content": {"application/zip": {}}}},
+    )
     async def local_chat_artifact(
         run_id: UUID,
         principal: Annotated[SessionPrincipal, Depends(authenticated)],
@@ -601,6 +1551,35 @@ def create_app(
             media_type="application/zip",
             filename=artifact.download_name,
         )
+
+    @app.get(
+        "/api/local-chat/runs/{run_id}/safety-receipt",
+        response_model=SafetyReceiptResponse,
+    )
+    def local_chat_safety_receipt(
+        run_id: UUID,
+        principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> dict[str, object]:
+        if local_chat is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_unavailable",
+            )
+        try:
+            return local_chat.safety_receipt(
+                owner=f"{principal.tenant_id}:{principal.user_id}",
+                run_id=run_id,
+            )
+        except LocalChatNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error.reason_code,
+            ) from error
+        except LocalChatConflict as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error.reason_code,
+            ) from error
 
     @app.post(
         "/api/local-chat/runs/{run_id}/cancel",

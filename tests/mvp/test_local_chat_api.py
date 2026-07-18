@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
+from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
 from corvus.mvp.local_chat import (
@@ -19,6 +20,7 @@ from corvus.mvp.local_chat import (
     LocalChatBackendHandle,
     LocalChatService,
 )
+from corvus.mvp.provider_credentials import ProviderCredentialService
 
 NOW = datetime(2026, 7, 17, 5, 0, tzinfo=UTC)
 
@@ -28,6 +30,7 @@ class _Backend:
         self.starts = 0
         self.cancelled: set[UUID] = set()
         self.last_effort: str | None = None
+        self.last_prompt: str | None = None
 
     async def start(
         self,
@@ -40,7 +43,8 @@ class _Backend:
         mcp_enabled: bool,
         idempotency_key: str,
     ) -> LocalChatBackendHandle:
-        del prompt, model, mode, mcp_enabled, idempotency_key
+        self.last_prompt = prompt
+        del model, mode, mcp_enabled, idempotency_key
         self.starts += 1
         self.last_effort = effort
         return LocalChatBackendHandle(id=uuid4(), run_id=run_id)
@@ -67,6 +71,20 @@ class _Backend:
     def artifact(self, handle: LocalChatBackendHandle) -> LocalBuildArtifact | None:
         del handle
         return None
+
+
+class _MemoryKeyring:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.values.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.values[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.values.pop((service, username), None)
 
 
 class _GatedBackend(_Backend):
@@ -223,6 +241,40 @@ async def test_local_chat_service_streams_first_event_before_terminal(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_local_chat_owner_backend_enables_configured_api_provider_without_cross_owner_access(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    service = LocalChatService(backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW)
+    api_backend = _Backend()
+    service.register_owner_backend("local:owner-1", "openai", api_backend)
+
+    started = await service.start(
+        owner="local:owner-1",
+        prompt="Hello",
+        provider="openai",
+        model="gpt-5.6-sol",
+        effort="high",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="owner-api-run",
+    )
+
+    assert started["provider"] == "openai"
+    with pytest.raises(Exception, match="provider_unavailable"):
+        await service.start(
+            owner="local:owner-2",
+            prompt="Hello",
+            provider="openai",
+            model="gpt-5.6-sol",
+            effort="high",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="other-owner-api-run",
+        )
+
+
+@pytest.mark.asyncio
 async def test_local_chat_non_following_poll_returns_after_buffered_events(tmp_path: Path) -> None:
     backend = _GatedBackend()
     service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
@@ -360,11 +412,56 @@ def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
 
     assert first.status_code == replay.status_code == 202
     assert first.json() == replay.json()
-    assert first.json()["model"] == "Codex default"
+    assert first.json()["model"] != "Codex default"
+    assert first.json()["model"]
     assert first.json()["storage"] == "this_device"
     assert backend.starts == 1
     assert conflict.status_code == 409
     assert conflict.json()["detail"] == "idempotency_conflict"
+
+
+def test_local_build_requires_current_safety_digest(tmp_path: Path) -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    client, headers = _client(tmp_path, "safety-digest", service)
+    preview = client.get(
+        "/api/local-chat/safety-preview",
+        params={"provider": "codex", "mode": "build", "mcp_enabled": False},
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["level"] == "protected"
+    assert preview.json()["requires_confirmation"] is True
+
+    body = {
+        "prompt": "Build a safe project",
+        "provider": "codex",
+        "mode": "build",
+        "mcp_enabled": False,
+    }
+    missing = client.post(
+        "/api/local-chat/runs",
+        json=body,
+        headers={**headers, "Idempotency-Key": "missing-safety"},
+    )
+    stale = client.post(
+        "/api/local-chat/runs",
+        json={**body, "safety_digest": "0" * 64},
+        headers={**headers, "Idempotency-Key": "stale-safety"},
+    )
+    started = client.post(
+        "/api/local-chat/runs",
+        json={**body, "safety_digest": preview.json()["policy_digest"]},
+        headers={**headers, "Idempotency-Key": "verified-safety"},
+    )
+
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == "safety_digest_mismatch"
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "safety_digest_mismatch"
+    assert started.status_code == 202
+    assert started.json()["safety"] == preview.json()
+    assert backend.starts == 1
 
 
 def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -> None:
@@ -377,9 +474,172 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     catalog = {entry["id"]: entry for entry in response.json()}
     assert catalog["codex"]["status"] == "ready"
     assert catalog["claude"]["status"] == "unavailable"
-    assert catalog["gemini"]["status"] == "preview"
-    assert catalog["grok"]["status"] == "preview"
+    assert catalog["gemini"]["status"] == "unavailable"
+    assert catalog["xai"]["status"] == "unavailable"
     assert "path" not in response.text.lower()
+
+
+def test_api_chat_starts_without_any_local_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(local_chat_module, "_discover_codex_executable", lambda: None)
+    monkeypatch.setattr(local_chat_module, "_discover_claude_executable", lambda: None)
+    backend = _Backend()
+    monkeypatch.setattr(api_module, "ApiChatBackend", lambda **_kwargs: backend)
+    credentials = ProviderCredentialService(keyring=_MemoryKeyring())
+    token = "bootstrap-api-only"  # noqa: S105
+    client = TestClient(
+        create_app(
+            database=tmp_path / "api-only.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            provider_credentials=credentials,
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    csrf = client.get("/api/auth/session").json()["csrf_token"]
+    connected = client.put(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+        json={"credential": "sk-test-api-only"},
+    )
+
+    providers = client.get("/api/local-chat/providers")
+    started = client.post(
+        "/api/local-chat/runs",
+        headers={"X-CSRF-Token": csrf, "Idempotency-Key": "api-only-run"},
+        json={
+            "prompt": "Hello from an API-only machine",
+            "provider": "openai",
+            "model": "gpt-5.6-sol",
+            "effort": "medium",
+            "mode": "chat",
+            "mcp_enabled": False,
+        },
+    )
+
+    assert connected.status_code == 200
+    assert providers.status_code == 200
+    assert "openai" in {entry["id"] for entry in providers.json()}
+    assert started.status_code == 202
+    assert backend.starts == 1
+
+
+def test_provider_credentials_api_is_authenticated_csrf_protected_and_write_only(
+    tmp_path: Path,
+) -> None:
+    backend = _Backend()
+    local_chat = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    token = "bootstrap-provider-credentials"  # noqa: S105
+    client = TestClient(
+        create_app(
+            database=tmp_path / "credentials.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            local_chat_service=local_chat,
+            provider_credentials=ProviderCredentialService(keyring=_MemoryKeyring()),
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    csrf = client.get("/api/auth/session").json()["csrf_token"]
+
+    denied = client.put(
+        "/api/provider-credentials/openai",
+        json={"credential": "sk-test-never-return-this"},
+    )
+    assert denied.status_code == 403
+
+    connected = client.put(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+        json={"credential": "sk-test-never-return-this"},
+    )
+    assert connected.status_code == 200
+    assert connected.json() == {
+        "provider": "openai",
+        "configured": True,
+        "source": "keyring",
+    }
+    assert "sk-test-never-return-this" not in connected.text
+    assert client.get("/api/provider-credentials").json()[0]["provider"] == "openai"
+
+    removed = client.delete(
+        "/api/provider-credentials/openai",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["configured"] is False
+
+
+def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
+    tmp_path: Path,
+) -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    client, headers = _client(tmp_path, "preferences", service)
+
+    defaults = client.get("/api/local-chat/preferences")
+    assert defaults.status_code == 200
+    assert defaults.json() == {
+        "version": 0,
+        "default_provider": "codex",
+        "default_model": None,
+        "default_effort": "medium",
+        "default_mode": "chat",
+        "mcp_enabled": False,
+        "response_tone": "balanced",
+        "custom_rules": "",
+        "updated_at": None,
+    }
+    update = {
+        "expected_version": 0,
+        "default_provider": "codex",
+        "default_model": "gpt-5.6-sol",
+        "default_effort": "high",
+        "default_mode": "build",
+        "mcp_enabled": True,
+        "response_tone": "concise",
+        "custom_rules": "Always end with a verification result.",
+    }
+    assert client.put("/api/local-chat/preferences", json=update).status_code == 403
+    saved = client.put("/api/local-chat/preferences", json=update, headers=headers)
+    assert saved.status_code == 200
+    assert saved.json()["version"] == 1
+    assert saved.json()["custom_rules"] == "Always end with a verification result."
+
+    stale = client.put("/api/local-chat/preferences", json=update, headers=headers)
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "preferences_version_conflict"
+    assert stale.json()["detail"]["current"]["version"] == 1
+
+    started = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix the failing test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert started.status_code == 202
+    assert backend.last_prompt is not None
+    assert "presentation guidance only" in backend.last_prompt
+    assert "Always end with a verification result." in backend.last_prompt
+    assert backend.last_prompt.endswith("User request:\nFix the failing test")
+
+    newer = {**update, "expected_version": 1, "custom_rules": "Use the newer saved rule."}
+    assert client.put("/api/local-chat/preferences", json=newer, headers=headers).status_code == 200
+    replay = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix the failing test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert replay.status_code == 202
+    assert replay.json()["run_id"] == started.json()["run_id"]
+    assert backend.starts == 1
+    changed_prompt = client.post(
+        "/api/local-chat/runs",
+        json={"prompt": "Fix a different test", "effort": "high"},
+        headers={**headers, "Idempotency-Key": "preferences-run"},
+    )
+    assert changed_prompt.status_code == 409
 
 
 def test_local_chat_dispatches_to_selected_ready_provider(tmp_path: Path) -> None:
@@ -442,6 +702,10 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
     )
     owner, headers = _client(tmp_path, "builder", service)
     stranger, _stranger_headers = _client(tmp_path, "not-builder", service)
+    preview = owner.get(
+        "/api/local-chat/safety-preview",
+        params={"provider": "codex", "mode": "build", "mcp_enabled": False},
+    ).json()
     started = owner.post(
         "/api/local-chat/runs",
         json={
@@ -450,6 +714,7 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
             "effort": "high",
             "mode": "build",
             "mcp_enabled": False,
+            "safety_digest": preview["policy_digest"],
         },
         headers={**headers, "Idempotency-Key": "build-once"},
     )
@@ -463,6 +728,27 @@ def test_local_build_download_is_owner_scoped(tmp_path: Path) -> None:
     assert download.content == b"PK-safe-build"
     assert download.headers["content-disposition"].endswith('filename="corvus-build.zip"')
     assert stranger.get(f"/api/local-chat/runs/{run_id}/artifact").status_code == 404
+
+    receipt = owner.get(f"/api/local-chat/runs/{run_id}/safety-receipt")
+    assert receipt.status_code == 200
+    assert receipt.json()["run_id"] == run_id
+    assert receipt.json()["safety"] == preview
+    assert receipt.json()["original_project_modified"] is False
+    assert receipt.json()["artifact"]["sha256_digest"] == "a" * 64
+    assert receipt.json()["artifact"]["secret_screening"] == "not_scanned"  # noqa: S105
+    assert stranger.get(f"/api/local-chat/runs/{run_id}/safety-receipt").status_code == 404
+
+    openapi = owner.get("/openapi.json").json()
+    event_content = openapi["paths"]["/api/local-chat/runs/{run_id}/events"]["get"]["responses"][
+        "200"
+    ]["content"]
+    artifact_content = openapi["paths"]["/api/local-chat/runs/{run_id}/artifact"]["get"][
+        "responses"
+    ]["200"]["content"]
+    assert "text/event-stream" in event_content
+    assert "application/json" not in event_content
+    assert "application/zip" in artifact_content
+    assert "application/json" not in artifact_content
 
 
 def test_local_chat_owner_scopes_sse_cursor_and_cancel(tmp_path: Path) -> None:
@@ -570,6 +856,45 @@ def test_default_local_chat_prefers_npm_native_codex_binary(
         "which",
         lambda name: candidates.get(name),
     )
+
+    service = local_chat_module.build_default_local_chat_service(
+        scratch_root=tmp_path / "runs",
+        cursor_secret=b"c" * 32,
+    )
+
+    assert service is not None
+    backend = service._backend
+    assert isinstance(backend, local_chat_module.CodexLocalChatBackend)
+    assert backend._adapter._executable == native.resolve()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Codex launcher layout")
+def test_default_local_chat_finds_user_npm_codex_without_terminal_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appdata = tmp_path / "AppData" / "Roaming"
+    npm_root = appdata / "npm"
+    wrapper = npm_root / "codex.cmd"
+    native = (
+        npm_root
+        / "node_modules"
+        / "@openai"
+        / "codex"
+        / "node_modules"
+        / "@openai"
+        / "codex-win32-x64"
+        / "vendor"
+        / "x86_64-pc-windows-msvc"
+        / "bin"
+        / "codex.exe"
+    )
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_bytes(b"wrapper")
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_bytes(b"codex")
+    monkeypatch.setenv("APPDATA", os.fspath(appdata))
+    monkeypatch.setattr(local_chat_module.shutil, "which", lambda _name: None)
 
     service = local_chat_module.build_default_local_chat_service(
         scratch_root=tmp_path / "runs",

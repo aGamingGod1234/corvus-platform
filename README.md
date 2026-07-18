@@ -1,20 +1,24 @@
 # Corvus
 
+<p align="center">
+  <img src="apps/web/public/brand/corvus-lockup.svg" alt="Corvus" width="420" />
+</p>
+
 Corvus is a local-first AI workspace for turning outcomes into governed, auditable work. One authoritative Python core powers the CLI, API, web client, and Windows desktop shell so approvals, budgets, credentials, audit, and kill switches behave the same everywhere.
 
 ## Hackathon pitch
 
 Most AI agent products force everyone into the same developer-shaped interface and hide where work actually runs. Corvus gives everyday users, developers, individuals, and teams a familiar workspace while preserving one governed execution core underneath.
 
-The reliable end-to-end demo path is deliberately short:
+The Build Week demo path is deliberately short:
 
-1. Open the desktop app and choose a work style, workspace scope, and **On this computer**.
-2. Start a thread, select a detected local Codex or Claude provider, model, and thinking level, then watch safe reasoning summaries and the answer stream live.
-3. Switch Codex from **Chat** to **Build** to execute a coding task in a fresh scratch sandbox.
-4. Download the completed project as a bounded ZIP with a SHA-256 manifest.
-5. Open Settings to show theme, response style, custom rules, MCP consent, and integration controls.
+1. Launch Corvus without a terminal and verify the locally authenticated Codex model catalog.
+2. Register a real GitHub-backed repository and import a reviewed skill from Codex, Claude Code, Hermes, or an Agent Skills folder.
+3. Run Codex in a Corvus-owned Git worktree pinned to the repository's exact base SHA.
+4. Review the real diff, tests, safety receipt, and completed secret scan.
+5. Explicitly publish a `corvus/*` branch and draft pull request, then schedule the same workflow to prepare future changes for review.
 
-Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The demo never implies those paths are complete.
+Corvus never merges, force-pushes, transfers imported permissions, or lets a schedule publish code. Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The exact sub-three-minute script is in [docs/demo/BUILD_WEEK_DEMO.md](docs/demo/BUILD_WEEK_DEMO.md).
 
 ## A workspace that fits the user
 
@@ -40,11 +44,20 @@ Local and future Cloud runtimes share contracts; clients never grant themselves 
 - One-time approvals, deterministic effect idempotency, budget reservation and settlement, kill switches, and restart recovery.
 - Connected CLI, FastAPI, generated TypeScript client, React web app, and Tauri Windows shell over the same application services.
 - Local/demo collaboration, governed memory, versioned skills and routines, signed offline intents, and signed channel ingress.
+- Real local repository registration and GitHub status through fixed-argument Git and `gh` adapters that never store a GitHub token.
+- Durable Codex runs in managed Git worktrees, with reviewable diffs, bounded evidence, real secret scanning, cancellation, retry, recovery, and explicit discard.
+- Confirmed branch, commit, push, and draft/ready pull-request publication without merge, force-push, or repository-administration authority.
+- Reviewed cross-agent skill import from Codex, Claude Code, Hermes, Copilot, and portable Agent Skills locations, with immutable versions and quarantine scanning.
+- Timezone-aware local schedules that create ordinary supervised runs and stop code-changing output before push or pull-request creation.
+- Optional tray/background operation, launch at login, and redacted native run notifications in the installed desktop app.
 - Adaptive Everyday/Developer and Personal/Team workspace profiles with responsive desktop and mobile navigation.
 - A security-focused agent-runtime foundation with immutable requests, provider-binding digests, verified authority receipts, bounded autonomy proofs, fail-closed capability discovery, redacted hash-chained events, replay resistance, and explicit audit-pending results.
 - A chat-first local agent workspace with on-demand history, provider/model/thinking controls, safe streamed reasoning summaries and work status, explicit MCP opt-in, and downloadable project artifacts.
+- Server-authored safety previews bind every Build confirmation to the exact runtime policy digest; completed builds return an owner-scoped safety receipt with observed activity, artifact hash, and screening result.
+- Owner-scoped runtime preferences for provider, model, thinking, Chat/Build mode, MCP consent, response style, and custom rules, persisted by the authenticated local backend with optimistic version checks.
+- Secure bring-your-own-key Chat adapters for OpenAI, Anthropic, Gemini, and xAI, with write-only keyring storage, environment fallback, authenticated verification/model discovery, and no secret returned to the client.
 
-Local Codex and Claude run through native CLIs detected on the device; the provider verifies its own sign-in when a run starts. Chat is read-only. Codex Build mode uses a fresh workspace-write sandbox, always disables user plugins/apps/hooks, enables MCP only after explicit consent, streams only safe summaries/status, and returns a bounded ZIP with a SHA-256 manifest. Gemini and xAI/Grok are labeled Preview and Cursor is labeled unavailable until real adapters exist. Credentials remain references resolved only at the effect boundary and are never stored in prompts, events, synchronized state, artifacts, or audit output.
+Local Codex and Claude run through native CLIs detected on the device; the provider verifies its own sign-in when a run starts. Chat is read-only. Codex Build mode uses a fresh workspace-write sandbox, always disables user plugins/apps/hooks, enables MCP only after explicit consent, streams only safe summaries/status, and returns a bounded ZIP with a SHA-256 manifest. Network behavior follows the selected CLI sandbox policy; Corvus grants no separate network permission. API-key providers are deliberately Chat-only: prompts go directly to the selected provider over HTTPS, with no project filesystem, MCP, or sandbox claim. Keys live only in the operating-system keyring or provider environment variable and are never returned, logged, synchronized, placed in prompts, or included in artifacts/audit output. Cursor remains unavailable until a real adapter exists.
 
 ## Codex Usage
 
@@ -129,7 +142,7 @@ python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc8
 
 ## Status and scope
 
-This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, and the local Codex/Claude agent fast track. It is not formal certification. Real E2B lifecycle management, API-key providers, Gemini/Cursor/xAI adapters, durable provider/autonomy/credential/budget/kill repositories, and production signing remain explicit later milestones.
+This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, native Codex/Claude execution, and secure API Chat adapters. It is not formal certification. Real E2B lifecycle management, Cursor and API-provider Build adapters, durable provider/autonomy/budget/kill repositories, and production signing remain explicit later milestones.
 
 See [HACKATHON_STATUS.md](HACKATHON_STATUS.md) for verified commands and limitations, [ROADMAP.md](ROADMAP.md) for the readable delivery outline, and [PLAN.md](PLAN.md) for the authoritative security specification.
 

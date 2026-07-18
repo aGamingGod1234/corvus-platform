@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import type { AuthStatus } from "../auth/AuthProvider";
 import type { components } from "../generated/api";
+import { BrandLockup } from "../components/Brand";
 import type { LegacyPreferenceCandidate } from "./preferences";
+import { loadDevicePreferences, saveDevicePreferences, type SafetyGuidance } from "./devicePreferences";
 
 type ExperienceKind = components["schemas"]["ExperienceKind"];
 type OnboardingResponse = components["schemas"]["OnboardingResponse"];
@@ -11,7 +13,7 @@ type WorkspaceCreate = components["schemas"]["WorkspaceCreate"];
 type WorkspaceKind = components["schemas"]["WorkspaceKind"];
 
 type AuthEntryStatus = Extract<AuthStatus, "unauthenticated" | "authenticated">;
-type OnboardingStep = "experience" | "workspace" | "runtime" | "create";
+type OnboardingStep = "experience" | "workspace" | "safety" | "runtime" | "create";
 
 export interface OnboardingFlowProps {
   accountVersion: number;
@@ -26,6 +28,7 @@ export interface OnboardingFlowProps {
   onWorkspaceConfirmed(workspace: Workspace): void | Promise<void>;
   onDismissMigration?(): void;
   preselection?: LegacyPreferenceCandidate | null;
+  storage?: Storage;
 }
 
 interface Choice<T extends string> {
@@ -60,7 +63,20 @@ const WORKSPACE_CHOICES: readonly Choice<WorkspaceKind>[] = [
   }
 ];
 
-const TOTAL_STEPS = 4;
+const SAFETY_CHOICES: readonly Choice<SafetyGuidance>[] = [
+  {
+    value: "standard",
+    title: "Standard guidance",
+    description: "Show the active protection and important blocked or confirmed actions."
+  },
+  {
+    value: "detailed",
+    title: "Detailed guidance",
+    description: "Show more runtime evidence, policy detail, and artifact screening context."
+  }
+];
+
+const TOTAL_STEPS = 5;
 
 function messageFor(reason: unknown): string {
   if (!(reason instanceof Error)) return "Workspace setup could not be completed. Try again.";
@@ -68,7 +84,7 @@ function messageFor(reason: unknown): string {
 }
 
 function stepNumber(step: OnboardingStep): number {
-  return { experience: 1, workspace: 2, runtime: 3, create: 4 }[step];
+  return { experience: 1, workspace: 2, safety: 3, runtime: 4, create: 5 }[step];
 }
 
 export function OnboardingFlow({
@@ -80,7 +96,8 @@ export function OnboardingFlow({
   onGoogleStart,
   onWorkspaceConfirmed,
   onDismissMigration,
-  preselection = null
+  preselection = null,
+  storage = window.localStorage
 }: OnboardingFlowProps) {
   const groupName = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -98,6 +115,7 @@ export function OnboardingFlow({
   const [runtime, setRuntime] = useState<"local" | null>(
     preselection?.runtimePreselection === "local" ? "local" : null
   );
+  const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +144,7 @@ export function OnboardingFlow({
         id="main-content"
       >
         <section className="onboarding-panel onboarding-panel--identity" aria-labelledby="identity-heading">
-          <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+          <BrandLockup className="onboarding-wordmark" />
           <p className="eyebrow">Identity first</p>
           <h1 id="identity-heading">Start with your Corvus identity</h1>
           <p className="onboarding-lede">Use the same governed workspace on your signed-in devices.</p>
@@ -149,9 +167,11 @@ export function OnboardingFlow({
       ? "How do you want Corvus to work with you?"
       : step === "workspace"
         ? "Who is this workspace for?"
-        : step === "runtime"
-          ? "Where should Corvus run?"
-          : "Name your workspace";
+        : step === "safety"
+          ? "How much safety guidance do you want?"
+          : step === "runtime"
+            ? "Where should Corvus run?"
+            : "Name your workspace";
 
   async function continueExperience() {
     if (experience === null) return;
@@ -178,6 +198,11 @@ export function OnboardingFlow({
         { name: workspaceName.trim(), workspace_kind: workspaceKind },
         idempotencyKeyRef.current
       );
+      const device = loadDevicePreferences(storage, workspace.id);
+      saveDevicePreferences(storage, workspace.id, {
+        ...device,
+        safetyGuidance: safetyGuidance ?? "standard"
+      });
       await onWorkspaceConfirmed(workspace);
     } catch (reason) {
       setError(messageFor(reason));
@@ -190,14 +215,15 @@ export function OnboardingFlow({
     setError(null);
     setStep((current) => {
       if (current === "create") return "runtime";
-      if (current === "runtime") return "workspace";
+      if (current === "runtime") return "safety";
+      if (current === "safety") return "workspace";
       if (current === "workspace" && experienceKind === null) return "experience";
       return current;
     });
   }
 
   const canGoBack =
-    step === "create" || step === "runtime" || (step === "workspace" && experienceKind === null);
+    step === "create" || step === "runtime" || step === "safety" || (step === "workspace" && experienceKind === null);
 
   return (
     <main
@@ -207,7 +233,7 @@ export function OnboardingFlow({
       id="main-content"
     >
       <section className="onboarding-panel" aria-labelledby="onboarding-heading">
-        <div className="onboarding-wordmark" aria-label="Corvus"><span aria-hidden="true">C</span><strong>Corvus</strong></div>
+        <BrandLockup className="onboarding-wordmark" />
         <div className="onboarding-progress" aria-live="polite">
           <span>Step {stepNumber(step)} of {TOTAL_STEPS}</span>
           <span>Server-backed setup</span>
@@ -239,6 +265,20 @@ export function OnboardingFlow({
                 setWorkspaceKind(value);
               }}
               selected={workspaceKind}
+            />
+          </>
+        )}
+
+        {step === "safety" && (
+          <>
+            <p className="onboarding-lede">This changes how Corvus explains its protection, never the protection itself.</p>
+            <ChoiceGroup<SafetyGuidance>
+              choices={SAFETY_CHOICES}
+              dataChoice="safety-guidance"
+              groupName={`${groupName}-safety`}
+              heading={heading}
+              onChoose={setSafetyGuidance}
+              selected={safetyGuidance}
             />
           </>
         )}
@@ -316,11 +356,13 @@ export function OnboardingFlow({
                 busy ||
                 (step === "experience" && experience === null) ||
                 (step === "workspace" && workspaceKind === null) ||
+                (step === "safety" && safetyGuidance === null) ||
                 (step === "runtime" && runtime === null)
               }
               onClick={() => {
                 if (step === "experience") void continueExperience();
-                else if (step === "workspace") setStep("runtime");
+                else if (step === "workspace") setStep("safety");
+                else if (step === "safety") setStep("runtime");
                 else setStep("create");
               }}
               type="button"

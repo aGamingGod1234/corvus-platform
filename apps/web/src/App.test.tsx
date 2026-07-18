@@ -85,6 +85,54 @@ function fakeApi(projects: Project[] = []): CorvusApi {
     session: vi.fn().mockRejectedValue(new Error("authentication_required")),
     pair: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue(projects),
+    listRepositories: vi.fn().mockResolvedValue(projects.map((project) => ({
+      id: project.id,
+      tenant_id: project.tenant_id,
+      display_name: project.name,
+      path: `C:\\work\\${project.id}`,
+      remote_slug: null,
+      default_branch: "main",
+      created_at: project.created_at,
+      updated_at: project.created_at,
+      snapshot: {
+        branch: "main",
+        head_sha: "a".repeat(40),
+        clean: true,
+        ahead: 0,
+        behind: 0,
+        health: "healthy",
+        refreshed_at: project.created_at
+      }
+    }))),
+    registerRepository: vi.fn(),
+    refreshRepository: vi.fn(),
+    removeRepository: vi.fn(),
+    createRepositoryRun: vi.fn(),
+    getLocalSafetyPreview: vi.fn(),
+    listLocalRuns: vi.fn().mockResolvedValue([]),
+    startLocalRun: vi.fn(),
+    getLocalRun: vi.fn(),
+    listLocalRunEvents: vi.fn().mockResolvedValue([]),
+    listLocalRunEvidence: vi.fn().mockResolvedValue([]),
+    cancelLocalRun: vi.fn(),
+    retryLocalRun: vi.fn(),
+    discardLocalRun: vi.fn(),
+    listPortableSkills: vi.fn().mockResolvedValue([]),
+    listSkillImportSources: vi.fn().mockResolvedValue([]),
+    previewSkillImport: vi.fn(),
+    importPortableSkill: vi.fn(),
+    activatePortableSkill: vi.fn(),
+    archivePortableSkill: vi.fn(),
+    listLocalSchedules: vi.fn().mockResolvedValue([]),
+    createLocalSchedule: vi.fn(),
+    runLocalScheduleNow: vi.fn(),
+    pauseLocalSchedule: vi.fn(),
+    resumeLocalSchedule: vi.fn(),
+    archiveLocalSchedule: vi.fn(),
+    getRunChanges: vi.fn(),
+    getContribution: vi.fn(),
+    prepareContribution: vi.fn(),
+    publishContribution: vi.fn(),
     createProject: vi.fn().mockResolvedValue(PROJECT),
     listOutcomes: vi.fn().mockResolvedValue([]),
     createOutcome: vi.fn(),
@@ -176,8 +224,9 @@ describe("Corvus operator console", () => {
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
     expect(api.session).toHaveBeenCalledTimes(2);
     expect(screen.getByText("paired-operator")).toBeVisible();
-    expect(screen.getByText("Define the next durable outcome.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Launch control/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Launch control" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
   });
 
   it("uses one local left navigation and omits permanent secondary rails", async () => {
@@ -193,7 +242,7 @@ describe("Corvus operator console", () => {
 
     const sidebar = await screen.findByRole("complementary", { name: "Local workspace" });
     expect(sidebar).toContainElement(screen.getByRole("navigation", { name: "Local runtime navigation" }));
-    expect(sidebar.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(6);
+    expect(sidebar.querySelectorAll("nav svg[aria-hidden='true']")).toHaveLength(6);
     expect(container.querySelector(".project-rail")).toBeNull();
     expect(screen.queryByLabelText("Work item details")).not.toBeInTheDocument();
     expect(screen.getByText("Developer · Individual")).toBeVisible();
@@ -236,6 +285,31 @@ describe("Corvus operator console", () => {
     }
   });
 
+  it("routes everyday work tabs to the execution surface", async () => {
+    preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
+      version: 1,
+      experience: "everyday",
+      scope: "personal",
+      runtime: "local",
+      onboardingComplete: true
+    }));
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+
+    await user.click(await screen.findByRole("link", { name: "My Work" }));
+
+    expect(screen.getByRole("heading", { name: "Define the next durable outcome." })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Governed operations." })).not.toBeInTheDocument();
+  });
+
   it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn()
@@ -252,7 +326,7 @@ describe("Corvus operator console", () => {
     renderApp(api, preferenceStorage);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
-    expect(await screen.findByRole("heading", { name: "What should Corvus do?" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "What do you want to build?" })).toBeVisible();
     expect(screen.queryByDisplayValue("desktop-ephemeral-token")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("");
   });
@@ -274,7 +348,7 @@ describe("Corvus operator console", () => {
     expect(api.createProject).not.toHaveBeenCalled();
   });
 
-  it("creates an approval-bearing workflow with a reserved demo budget", async () => {
+  it("replaces the app sidebar in Settings and returns to the main workspace", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -282,42 +356,20 @@ describe("Corvus operator console", () => {
       user_id: "operator-1",
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
-    });
-    api.setBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 10,
-      reserved_units: 0,
-      settled_units: 0
-    });
-    api.createOutcome = vi.fn().mockResolvedValue(OUTCOME);
-    api.createWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 10,
-      reserved_units: 0,
-      settled_units: 0
     });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Repositories" }));
 
-    await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
-    await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
-    await user.type(screen.getByLabelText("Workflow name"), "Governed flow");
-    await user.click(screen.getByRole("button", { name: "Create workflow" }));
+    await user.click(await screen.findByRole("link", { name: "Settings" }));
 
-    expect(api.setBudget).toHaveBeenCalledWith(PROJECT.id, 10);
-    expect(api.createWorkflow).toHaveBeenCalledWith(
-      OUTCOME.id,
-      "Governed flow",
-      expect.arrayContaining([
-        expect.objectContaining({ key: "deliver", requires_approval: true, cost_units: 2 })
-      ])
-    );
+    expect(screen.queryByRole("complementary", { name: "Local workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Settings categories" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Back to app/i }));
+    expect(await screen.findByRole("complementary", { name: "Local workspace" })).toBeVisible();
+    expect(screen.getByRole("main", { name: "Threads" })).toBeVisible();
   });
 
-  it("coalesces an SSE event burst without reopening the stream", async () => {
+  it("starts a supervised repository run from the Runs workspace", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -326,52 +378,87 @@ describe("Corvus operator console", () => {
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
     });
-    api.listOutcomes = vi.fn().mockResolvedValue([OUTCOME]);
-    api.listWorkflows = vi.fn().mockResolvedValue([WORKFLOW]);
-    api.getWorkflow = vi.fn().mockResolvedValue(WORKFLOW);
-    api.getBudget = vi.fn().mockResolvedValue({
-      project_id: PROJECT.id,
-      limit_units: 0,
-      reserved_units: 0,
-      settled_units: 0
+    api.getLocalSafetyPreview = vi.fn().mockResolvedValue({ policy_digest: "b".repeat(64) });
+    const run = {
+      id: "run-1",
+      tenant_id: "local",
+      repository_id: PROJECT.id,
+      base_sha: "a".repeat(40),
+      task: "Add the demo feature",
+      provider: "codex",
+      model: null,
+      effort: "high",
+      mode: "build",
+      safety_digest: "b".repeat(64),
+      skill_version_id: null,
+      schedule_id: null,
+      occurrence_key: null,
+      output_policy: "prepare_contribution",
+      retry_of_run_id: null,
+      status: "running",
+      created_at: "2026-07-18T00:00:00Z",
+      updated_at: "2026-07-18T00:00:00Z",
+      started_at: "2026-07-18T00:00:00Z",
+      finished_at: null
+    };
+    api.startLocalRun = vi.fn().mockResolvedValue(run);
+    api.getLocalRun = vi.fn().mockResolvedValue(run);
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+    await user.click(await screen.findByRole("link", { name: "Runs" }));
+
+    await user.click(await screen.findByRole("button", { name: "New run" }));
+    await user.type(screen.getByLabelText("Task"), "Add the demo feature");
+    await user.click(screen.getByRole("button", { name: "Start supervised run" }));
+
+    await waitFor(() => expect(api.startLocalRun).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryId: PROJECT.id,
+      task: "Add the demo feature",
+      safetyDigest: "b".repeat(64)
+    })));
+  });
+
+  it("creates a timezone-aware schedule from the Schedule workspace", async () => {
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
     });
-
-    const streams: FakeEventSource[] = [];
-    class FakeEventSource {
-      readonly listeners = new Map<string, EventListener[]>();
-      onerror: (() => void) | null = null;
-
-      constructor(readonly url: string) {
-        streams.push(this);
-      }
-
-      addEventListener(type: string, listener: EventListener) {
-        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-      }
-
-      close() {}
-
-      emit(type: string) {
-        this.listeners.get(type)?.forEach((listener) => listener(new Event(type)));
-      }
-    }
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    api.getLocalSafetyPreview = vi.fn().mockResolvedValue({ policy_digest: "c".repeat(64) });
+    api.createLocalSchedule = vi.fn().mockResolvedValue({
+      id: "schedule-1",
+      name: "Weekday review",
+      task: "Review changes",
+      status: "active",
+      version: 1,
+      recurrence: { kind: "weekdays", local_time: "09:00:00", weekdays: [] },
+      next_run_at: "2026-07-20T09:00:00Z",
+      mode: "chat",
+      timezone: "UTC"
+    });
 
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Repositories" }));
-    await screen.findByText("Browser delivery");
-    await waitFor(() => expect(streams).toHaveLength(1));
-    streams[0].emit("work_item.running");
-    streams[0].emit("work_item.succeeded");
-    streams[0].emit("workflow.succeeded");
+    await user.click(await screen.findByRole("link", { name: "Schedule" }));
+    await user.click(await screen.findByRole("button", { name: "New schedule" }));
+    await user.type(screen.getByLabelText("Name"), "Weekday review");
+    await user.type(screen.getByLabelText("Task"), "Review changes");
+    await user.selectOptions(screen.getByLabelText("Cadence"), "weekdays");
+    await user.clear(screen.getByLabelText("Timezone"));
+    await user.type(screen.getByLabelText("Timezone"), "UTC");
+    await user.click(screen.getByRole("button", { name: "Create schedule" }));
 
-    await waitFor(() => expect(api.getWorkflow).toHaveBeenCalledTimes(2));
-    expect(streams).toHaveLength(1);
-    vi.unstubAllGlobals();
+    await waitFor(() => expect(api.createLocalSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryId: PROJECT.id,
+      timezone: "UTC",
+      recurrence: expect.objectContaining({ kind: "weekdays" })
+    })));
   });
 
-  it("operates collaboration and governed memory through connected controls", async () => {
+  it("reviews and imports a digest-pinned cross-agent skill", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -379,22 +466,49 @@ describe("Corvus operator console", () => {
       user_id: "operator-1",
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
+    });
+    const candidate = {
+      id: "a".repeat(64),
+      source: "claude",
+      name: "release-checklist",
+      path: "C:\\Users\\me\\.claude\\skills\\release-checklist",
+      kind: "package"
+    };
+    const preview = {
+      candidate,
+      name: "release-checklist",
+      description: "Verify tests and summarize risks.",
+      digest: "d".repeat(64),
+      compatibility: "ready",
+      findings: [],
+      files: ["SKILL.md"],
+      duplicate: "none"
+    };
+    api.listSkillImportSources = vi.fn().mockResolvedValue([candidate]);
+    api.previewSkillImport = vi.fn().mockResolvedValue(preview);
+    api.importPortableSkill = vi.fn().mockResolvedValue({
+      id: "skill-1",
+      tenant_id: "local",
+      name: preview.name,
+      description: preview.description,
+      version: 1,
+      digest: preview.digest,
+      source: "claude",
+      source_path: candidate.path,
+      package_path: "skills/skill-1",
+      status: "draft",
+      findings: [],
+      created_at: "2026-07-18T00:00:00Z"
     });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("link", { name: "Skills" }));
-    await user.type(screen.getByLabelText("Team name"), "Operators");
-    await user.click(screen.getByRole("button", { name: "Create team" }));
-    expect(api.createTeam).toHaveBeenCalledWith(PROJECT.id, "Operators");
-    expect(await screen.findByText("Operators")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: /release-checklist/i }));
+    expect(await screen.findByRole("dialog", { name: "release-checklist" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Import as draft" }));
 
-    await user.type(screen.getByLabelText("Memory content"), "Remember the durable boundary.");
-    await user.click(screen.getByRole("button", { name: "Store memory" }));
-    expect(api.storeMemory).toHaveBeenCalledWith(
-      PROJECT.id,
-      "Remember the durable boundary."
-    );
-    expect(await screen.findByText("Remember the durable boundary.")).toBeVisible();
+    await waitFor(() => expect(api.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest));
+    expect(await screen.findByText("Verify tests and summarize risks.")).toBeVisible();
   });
 });

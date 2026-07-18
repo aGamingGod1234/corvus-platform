@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import type { components } from "../generated/api";
+import { BrandLockup } from "../components/Brand";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { NavigationRail } from "../components/NavigationRail";
 import { ResponsiveNavigation } from "../components/ResponsiveNavigation";
@@ -57,8 +58,9 @@ export function AppShell({
         data-experience={profile.experience}
         data-inspector={inspectorOpen ? "open" : "closed"}
         data-scope={profile.workspaceKind}
+        data-route={activeRoute}
       >
-        <NavigationRail
+        {activeRoute !== "settings" ? <NavigationRail
           accountEmail={accountEmail}
           activeRoute={activeRoute}
           legacyPreferencePending={legacyPreferencePending}
@@ -70,14 +72,17 @@ export function AppShell({
           selectedWorkspace={selectedWorkspace}
           selectionRequired={selectionRequired}
           workspaces={workspaces}
-        />
+        /> : null}
         <header className="adaptive-topbar">
-          <div><span className="mobile-wordmark">Corvus</span><strong>{profile.label}</strong></div>
-          <ConnectionBanner error={error} />
+          <div><BrandLockup className="mobile-wordmark" /><strong>{profile.label}</strong></div>
+          {error ? <ConnectionBanner error={error} /> : null}
         </header>
-        <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>{children}</main>
+        <main className="adaptive-main" id="main-content" ref={mainRef} tabIndex={-1}>
+          {error ? <div className="adaptive-main__error"><ConnectionBanner error={error} /></div> : null}
+          {children}
+        </main>
         {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
-        <ResponsiveNavigation
+        {activeRoute !== "settings" ? <ResponsiveNavigation
           accountEmail={accountEmail}
           activeRoute={activeRoute}
           legacyPreferencePending={legacyPreferencePending}
@@ -88,7 +93,7 @@ export function AppShell({
           selectedWorkspace={selectedWorkspace}
           selectionRequired={selectionRequired}
           workspaces={workspaces}
-        />
+        /> : null}
       </div>
     </>
   );

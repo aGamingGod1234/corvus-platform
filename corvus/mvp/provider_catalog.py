@@ -6,6 +6,7 @@ from typing import Literal
 ProviderCatalogStatus = Literal["ready", "preview", "unavailable"]
 ProviderCatalogTransport = Literal["local", "api"]
 ThinkingLevel = Literal["low", "medium", "high", "xhigh", "max"]
+_CURATED_CODEX_MODELS = ("gpt-5.6-sol", "gpt-5.6-terra")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,9 @@ class ProviderCatalogEntry:
 def build_provider_catalog(
     codex_available: bool,
     claude_available: bool,
+    *,
+    codex_models: tuple[str, ...] = (),
+    codex_effective_model: str | None = None,
 ) -> tuple[ProviderCatalogEntry, ...]:
     """Return the UI-safe provider catalog without local identity details."""
 
@@ -58,17 +62,8 @@ def build_provider_catalog(
             name="OpenAI Codex",
             transport="local",
             status="ready" if codex_available else "unavailable",
-            status_label=(
-                "Detected; sign-in is checked when a run starts"
-                if codex_available
-                else "Not installed"
-            ),
-            models=(
-                ProviderModel("default", "Codex default", recommended=True),
-                ProviderModel("gpt-5.6-sol", "GPT-5.6 Sol"),
-                ProviderModel("gpt-5.6-terra", "GPT-5.6 Terra"),
-                ProviderModel("gpt-5.5", "GPT-5.5"),
-            ),
+            status_label="Ready on this device" if codex_available else "Not installed",
+            models=_codex_models(codex_models, codex_effective_model),
             thinking_levels=("low", "medium", "high", "xhigh"),
             supports_mcp=True,
         ),
@@ -77,15 +72,10 @@ def build_provider_catalog(
             name="Claude Code",
             transport="local",
             status="ready" if claude_available else "unavailable",
-            status_label=(
-                "Detected; sign-in is checked when a run starts"
-                if claude_available
-                else "Not installed"
-            ),
+            status_label="Ready on this device" if claude_available else "Not installed",
             models=(
-                ProviderModel("sonnet", "Claude Sonnet 5", recommended=True),
-                ProviderModel("opus", "Claude Opus 5"),
-                ProviderModel("fable", "Claude Fable"),
+                ProviderModel("sonnet", "Claude Sonnet", recommended=True),
+                ProviderModel("opus", "Claude Opus"),
             ),
             thinking_levels=("low", "medium", "high", "xhigh", "max"),
             supports_mcp=False,
@@ -121,3 +111,28 @@ def build_provider_catalog(
             supports_mcp=False,
         ),
     )
+
+
+def _codex_models(
+    discovered: tuple[str, ...],
+    effective: str | None,
+) -> tuple[ProviderModel, ...]:
+    ordered: list[str] = []
+    if effective:
+        ordered.append(effective)
+    ordered.extend(discovered)
+    ordered.extend(_CURATED_CODEX_MODELS)
+    unique = tuple(dict.fromkeys(model.strip() for model in ordered if model.strip()))
+    return tuple(
+        ProviderModel(model, _model_label(model), recommended=index == 0)
+        for index, model in enumerate(unique)
+    )
+
+
+def _model_label(model: str) -> str:
+    parts = model.split("-")
+    if len(parts) == 1:
+        return model
+    if parts and parts[0].lower() == "gpt":
+        parts[0] = "GPT"
+    return "-".join(parts[:-1]) + f" {parts[-1].title()}"

@@ -124,6 +124,588 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local-chat/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Local Preferences */
+        get: operations["get_local_preferences_api_local_chat_preferences_get"];
+        /** Update Local Preferences */
+        put: operations["update_local_preferences_api_local_chat_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Providers */
+        get: operations["local_chat_providers_api_local_chat_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Local Chat */
+        post: operations["start_local_chat_api_local_chat_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/artifact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Artifact */
+        get: operations["local_chat_artifact_api_local_chat_runs__run_id__artifact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Local Chat */
+        post: operations["cancel_local_chat_api_local_chat_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Events */
+        get: operations["local_chat_events_api_local_chat_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/runs/{run_id}/safety-receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Safety Receipt */
+        get: operations["local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/safety-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Chat Safety Preview */
+        get: operations["local_chat_safety_preview_api_local_chat_safety_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Repositories */
+        get: operations["local_repositories_api_local_repositories_get"];
+        put?: never;
+        /** Register Local Repository */
+        post: operations["register_local_repository_api_local_repositories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories/{repository_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Local Repository */
+        delete: operations["remove_local_repository_api_local_repositories__repository_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories/{repository_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Local Repository */
+        post: operations["refresh_local_repository_api_local_repositories__repository_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/repositories/{repository_id}/worktrees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Local Worktree */
+        post: operations["create_local_worktree_api_local_repositories__repository_id__worktrees_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Runs */
+        get: operations["local_runs_api_local_runs_get"];
+        put?: never;
+        /** Start Local Run */
+        post: operations["start_local_run_api_local_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Run */
+        get: operations["local_run_api_local_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Local Run */
+        post: operations["cancel_local_run_api_local_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Run Changes */
+        get: operations["local_run_changes_api_local_runs__run_id__changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/contribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Run Contribution */
+        get: operations["local_run_contribution_api_local_runs__run_id__contribution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/contribution/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Local Contribution */
+        post: operations["prepare_local_contribution_api_local_runs__run_id__contribution_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/contribution/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Local Contribution */
+        post: operations["publish_local_contribution_api_local_runs__run_id__contribution_publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard Local Run */
+        post: operations["discard_local_run_api_local_runs__run_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Run Events */
+        get: operations["local_run_events_api_local_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Run Evidence */
+        get: operations["local_run_evidence_api_local_runs__run_id__evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/runs/{run_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Local Run */
+        post: operations["retry_local_run_api_local_runs__run_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Schedules */
+        get: operations["local_schedules_api_local_schedules_get"];
+        put?: never;
+        /** Create Local Schedule */
+        post: operations["create_local_schedule_api_local_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Local Schedule */
+        post: operations["archive_local_schedule_api_local_schedules__schedule_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Local Schedule */
+        post: operations["pause_local_schedule_api_local_schedules__schedule_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Local Schedule */
+        post: operations["resume_local_schedule_api_local_schedules__schedule_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/schedules/{schedule_id}/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Local Schedule Now */
+        post: operations["run_local_schedule_now_api_local_schedules__schedule_id__run_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Skills */
+        get: operations["local_skills_api_local_skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Local Skill */
+        post: operations["import_local_skill_api_local_skills_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Local Skill Sources */
+        get: operations["local_skill_sources_api_local_skills_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/sources/{candidate_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Local Skill */
+        get: operations["preview_local_skill_api_local_skills_sources__candidate_id__preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/{skill_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Local Skill */
+        post: operations["activate_local_skill_api_local_skills__skill_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/skills/{skill_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Local Skill */
+        post: operations["archive_local_skill_api_local_skills__skill_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -331,6 +913,58 @@ export interface paths {
         put?: never;
         /** Create Team */
         post: operations["create_team_api_projects__project_id__teams_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/provider-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider Credential Statuses */
+        get: operations["provider_credential_statuses_api_provider_credentials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/provider-credentials/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Connect Provider Credential */
+        put: operations["connect_provider_credential_api_provider_credentials__provider__put"];
+        post?: never;
+        /** Remove Provider Credential */
+        delete: operations["remove_provider_credential_api_provider_credentials__provider__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/provider-credentials/{provider}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Provider Credential */
+        post: operations["verify_provider_credential_api_provider_credentials__provider__verify_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -960,6 +1594,36 @@ export interface components {
             /** Limit Units */
             limit_units: number;
         };
+        /** ChangeSet */
+        ChangeSet: {
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /** Digest */
+            digest: string;
+            /** Files */
+            files: components["schemas"]["ChangedFile"][];
+        };
+        /** ChangedFile */
+        ChangedFile: {
+            /** Binary */
+            binary: boolean;
+            /** Patch */
+            patch: string | null;
+            /** Patch Truncated */
+            patch_truncated: boolean;
+            /** Path */
+            path: string;
+            /** Previous Path */
+            previous_path?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "added" | "modified" | "deleted" | "renamed" | "untracked";
+        };
         /** ChannelEventEnvelope */
         ChannelEventEnvelope: {
             /** Action */
@@ -1020,6 +1684,80 @@ export interface components {
             principal_id: string;
             /** Provider */
             provider: string;
+        };
+        /** ContributionPrepareRequest */
+        ContributionPrepareRequest: {
+            /** Body */
+            body: string;
+            /**
+             * Draft
+             * @default true
+             */
+            draft: boolean;
+            /** Message */
+            message: string;
+            /** Selected Paths */
+            selected_paths: string[];
+            /** Title */
+            title: string;
+        };
+        /** ContributionPublishRequest */
+        ContributionPublishRequest: {
+            /** Expected Digest */
+            expected_digest: string;
+        };
+        /** ContributionRecord */
+        ContributionRecord: {
+            /** Base Branch */
+            base_branch: string;
+            /** Body */
+            body: string;
+            /** Branch */
+            branch: string;
+            /** Change Digest */
+            change_digest: string;
+            /** Commit Sha */
+            commit_sha: string | null;
+            /** Confirmation Digest */
+            confirmation_digest: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Draft */
+            draft: boolean;
+            /** Id */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Message */
+            message: string;
+            /** Pr Number */
+            pr_number: number | null;
+            /** Pr Url */
+            pr_url: string | null;
+            /** Remote Ref */
+            remote_ref: string | null;
+            /** Repository Id */
+            repository_id: string;
+            /** Run Id */
+            run_id: string;
+            secret_scan: components["schemas"]["SecretScanResult"];
+            /** Selected Paths */
+            selected_paths: string[];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "preparing" | "branch_created" | "committed" | "pushed" | "published";
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** ConversationEntry */
         ConversationEntry: {
@@ -1162,6 +1900,167 @@ export interface components {
             /** Scope Kind */
             scope_kind: string;
         };
+        /** LocalChatCancelResponse */
+        LocalChatCancelResponse: {
+            /** Accepted */
+            accepted: boolean;
+            /** Reason Code */
+            reason_code: string | null;
+            /** Run Id */
+            run_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "cancelled" | "completed" | "failed";
+        };
+        /** LocalChatStartRequest */
+        LocalChatStartRequest: {
+            /**
+             * Effort
+             * @default normal
+             * @enum {string}
+             */
+            effort: "normal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Mcp Enabled
+             * @default false
+             */
+            mcp_enabled: boolean;
+            /**
+             * Mode
+             * @default chat
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model?: string | null;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Provider
+             * @default codex
+             * @enum {string}
+             */
+            provider: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
+            /** Safety Digest */
+            safety_digest?: string | null;
+        };
+        /** LocalChatStartResponse */
+        LocalChatStartResponse: {
+            /** Created At */
+            created_at: string;
+            /** Handle Id */
+            handle_id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
+            /** Run Id */
+            run_id: string;
+            safety: components["schemas"]["SafetyPreviewResponse"];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "completed" | "failed";
+            /**
+             * Storage
+             * @constant
+             */
+            storage: "this_device";
+        };
+        /** LocalPreferencesResponse */
+        LocalPreferencesResponse: {
+            /** Custom Rules */
+            custom_rules: string;
+            /**
+             * Default Effort
+             * @enum {string}
+             */
+            default_effort: "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Default Mode
+             * @enum {string}
+             */
+            default_mode: "chat" | "build";
+            /** Default Model */
+            default_model: string | null;
+            /**
+             * Default Provider
+             * @enum {string}
+             */
+            default_provider: "codex" | "claude";
+            /** Mcp Enabled */
+            mcp_enabled: boolean;
+            /**
+             * Response Tone
+             * @enum {string}
+             */
+            response_tone: "concise" | "balanced" | "detailed";
+            /** Updated At */
+            updated_at: string | null;
+            /** Version */
+            version: number;
+        };
+        /** LocalPreferencesUpdate */
+        LocalPreferencesUpdate: {
+            /** Custom Rules */
+            custom_rules: string;
+            /**
+             * Default Effort
+             * @enum {string}
+             */
+            default_effort: "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * Default Mode
+             * @enum {string}
+             */
+            default_mode: "chat" | "build";
+            /** Default Model */
+            default_model?: string | null;
+            /**
+             * Default Provider
+             * @enum {string}
+             */
+            default_provider: "codex" | "claude";
+            /** Expected Version */
+            expected_version: number;
+            /** Mcp Enabled */
+            mcp_enabled: boolean;
+            /**
+             * Response Tone
+             * @enum {string}
+             */
+            response_tone: "concise" | "balanced" | "detailed";
+        };
+        /** LocalWorktreeResponse */
+        LocalWorktreeResponse: {
+            /** Base Sha */
+            base_sha: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Repository Id */
+            repository_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "creating" | "active" | "discarded";
+        };
         /** MemoryCreateRequest */
         MemoryCreateRequest: {
             /** Content */
@@ -1292,6 +2191,39 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** PortableSkillVersion */
+        PortableSkillVersion: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /** Findings */
+            findings: components["schemas"]["SkillFinding"][];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Package Path */
+            package_path: string;
+            /** Source */
+            source: string;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "active" | "archived";
+            /** Tenant Id */
+            tenant_id: string;
+            /** Version */
+            version: number;
+        };
         /** Project */
         Project: {
             /**
@@ -1336,11 +2268,121 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** ProviderCredentialConnectRequest */
+        ProviderCredentialConnectRequest: {
+            /**
+             * Credential
+             * Format: password
+             */
+            credential: string;
+        };
+        /** ProviderCredentialStatusResponse */
+        ProviderCredentialStatusResponse: {
+            /** Configured */
+            configured: boolean;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "gemini" | "xai";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "keyring" | "environment" | "none";
+        };
+        /** ProviderCredentialVerificationResponse */
+        ProviderCredentialVerificationResponse: {
+            /** Configured */
+            configured: boolean;
+            /** Models */
+            models: string[];
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "gemini" | "xai";
+            /** Verified */
+            verified: boolean;
+        };
         /**
          * RecordStatus
          * @enum {string}
          */
         RecordStatus: "active" | "suspended" | "revoked" | "archived";
+        /** Recurrence */
+        Recurrence: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "once" | "hourly" | "daily" | "weekdays" | "weekly";
+            /** Local Time */
+            local_time?: string | null;
+            /** Once At */
+            once_at?: string | null;
+            /**
+             * Weekdays
+             * @default []
+             */
+            weekdays: number[];
+        };
+        /** RepositoryCreateRequest */
+        RepositoryCreateRequest: {
+            /** Display Name */
+            display_name: string;
+            /**
+             * Path
+             * Format: path
+             */
+            path: string;
+        };
+        /** RepositoryRecord */
+        RepositoryRecord: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Default Branch */
+            default_branch: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
+            /** Remote Slug */
+            remote_slug: string | null;
+            snapshot: components["schemas"]["RepositorySnapshot"];
+            /** Tenant Id */
+            tenant_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** RepositorySnapshot */
+        RepositorySnapshot: {
+            /** Ahead */
+            ahead: number;
+            /** Behind */
+            behind: number;
+            /** Branch */
+            branch: string;
+            /** Clean */
+            clean: boolean;
+            /** Head Sha */
+            head_sha: string;
+            /** Health */
+            health: string;
+            /**
+             * Refreshed At
+             * Format: date-time
+             */
+            refreshed_at: string;
+        };
         /** RetrievedMemory */
         RetrievedMemory: {
             /** Context */
@@ -1395,6 +2437,306 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** RunEvent */
+        RunEvent: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Event Type */
+            event_type: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+        };
+        /** RunEvidence */
+        RunEvidence: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Digest */
+            digest: string;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Run Id */
+            run_id: string;
+            /** Summary */
+            summary: string;
+        };
+        /** RunRecord */
+        RunRecord: {
+            /** Base Sha */
+            base_sha: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /** Finished At */
+            finished_at: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model: string | null;
+            /** Occurrence Key */
+            occurrence_key: string | null;
+            /**
+             * Output Policy
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "codex";
+            /** Repository Id */
+            repository_id: string;
+            /** Retry Of Run Id */
+            retry_of_run_id: string | null;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Schedule Id */
+            schedule_id: string | null;
+            /** Skill Version Id */
+            skill_version_id: string | null;
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["RunStatus"];
+            /** Task */
+            task: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * RunStatus
+         * @enum {string}
+         */
+        RunStatus: "preparing" | "running" | "review_required" | "contribution_ready" | "publishing" | "published" | "completed" | "cancelled" | "interrupted" | "failed" | "discarded";
+        /** SafetyArtifactResponse */
+        SafetyArtifactResponse: {
+            /** Download Name */
+            download_name: string;
+            /**
+             * Secret Screening
+             * @enum {string}
+             */
+            secret_screening: "passed" | "not_scanned";
+            /** Sha256 Digest */
+            sha256_digest: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** SafetyPreviewResponse */
+        SafetyPreviewResponse: {
+            /** Approvals */
+            approvals: string;
+            /** Execution */
+            execution: string;
+            /** Filesystem */
+            filesystem: string;
+            /** Label */
+            label: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "read_only" | "protected" | "elevated";
+            /** Mcp */
+            mcp: string;
+            /** Network */
+            network: string;
+            /** Output */
+            output: string;
+            /** Policy Digest */
+            policy_digest: string;
+            /** Requires Confirmation */
+            requires_confirmation: boolean;
+            /** Summary */
+            summary: string;
+        };
+        /** SafetyReceiptResponse */
+        SafetyReceiptResponse: {
+            /** Activities */
+            activities: string[];
+            /** Approval */
+            approval: string;
+            artifact: components["schemas"]["SafetyArtifactResponse"] | null;
+            /** Mcp Used */
+            mcp_used: boolean;
+            /** Original Project Modified */
+            original_project_modified: boolean;
+            /** Run Id */
+            run_id: string;
+            safety: components["schemas"]["SafetyPreviewResponse"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed" | "cancelled";
+        };
+        /** ScheduleCreateRequest */
+        ScheduleCreateRequest: {
+            /**
+             * Effort
+             * @default high
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /**
+             * Mode
+             * @default build
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Output Policy
+             * @default prepare_changes
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @default codex
+             * @constant
+             */
+            provider: "codex";
+            recurrence: components["schemas"]["Recurrence"];
+            /** Repository Id */
+            repository_id: string;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Skill Version Id */
+            skill_version_id?: string | null;
+            /** Task */
+            task: string;
+            /** Timezone */
+            timezone: string;
+        };
+        /** ScheduleRecord */
+        ScheduleRecord: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /** Id */
+            id: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model: string | null;
+            /** Name */
+            name: string;
+            /** Next Run At */
+            next_run_at: string | null;
+            /**
+             * Output Policy
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "codex";
+            recurrence: components["schemas"]["Recurrence"];
+            /** Repository Id */
+            repository_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Skill Version Id */
+            skill_version_id: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "paused" | "archived";
+            /** Task */
+            task: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** Timezone */
+            timezone: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** SecretFinding */
+        SecretFinding: {
+            /** Kind */
+            kind: string;
+            /** Line */
+            line: number | null;
+            /** Path */
+            path: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "warning" | "blocked";
+        };
+        /** SecretScanResult */
+        SecretScanResult: {
+            /** Completed At */
+            completed_at: string | null;
+            /** Digest */
+            digest: string | null;
+            /** Findings */
+            findings: components["schemas"]["SecretFinding"][];
+            /** Scanned Paths */
+            scanned_paths: string[];
+            /** Scanner Version */
+            scanner_version: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "not_scanned" | "passed" | "warning" | "blocked";
+        };
         /** SessionPrincipal */
         SessionPrincipal: {
             /** Csrf Token */
@@ -1440,12 +2782,80 @@ export interface components {
             /** Session Version */
             session_version: number;
         };
+        /** SkillCandidate */
+        SkillCandidate: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default package
+             * @enum {string}
+             */
+            kind: "package" | "legacy_command";
+            /** Name */
+            name: string;
+            /**
+             * Path
+             * Format: path
+             */
+            path: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "codex" | "claude" | "hermes" | "agents" | "copilot" | "generic";
+        };
         /** SkillCreateRequest */
         SkillCreateRequest: {
             /** Content */
             content: string;
             /** Name */
             name: string;
+        };
+        /** SkillFinding */
+        SkillFinding: {
+            /** Code */
+            code: string;
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "review" | "blocked";
+        };
+        /** SkillImportPreview */
+        SkillImportPreview: {
+            candidate: components["schemas"]["SkillCandidate"];
+            /**
+             * Compatibility
+             * @enum {string}
+             */
+            compatibility: "ready" | "needs_review" | "blocked";
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Duplicate
+             * @enum {string}
+             */
+            duplicate: "none" | "exact" | "variant";
+            /** Files */
+            files: string[];
+            /** Findings */
+            findings: components["schemas"]["SkillFinding"][];
+            /** Name */
+            name: string;
+        };
+        /** SkillImportRequest */
+        SkillImportRequest: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Expected Digest */
+            expected_digest: string;
         };
         /** SkillVersion */
         SkillVersion: {
@@ -1466,6 +2876,47 @@ export interface components {
             status: string;
             /** Version */
             version: number;
+        };
+        /** StartRunRequest */
+        StartRunRequest: {
+            /**
+             * Effort
+             * @default medium
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high" | "xhigh";
+            /**
+             * Mode
+             * @default build
+             * @enum {string}
+             */
+            mode: "chat" | "build";
+            /** Model */
+            model?: string | null;
+            /** Occurrence Key */
+            occurrence_key?: string | null;
+            /**
+             * Output Policy
+             * @default prepare_changes
+             * @enum {string}
+             */
+            output_policy: "report_only" | "prepare_changes" | "prepare_contribution";
+            /**
+             * Provider
+             * @default codex
+             * @constant
+             */
+            provider: "codex";
+            /** Repository Id */
+            repository_id: string;
+            /** Safety Digest */
+            safety_digest: string;
+            /** Schedule Id */
+            schedule_id?: string | null;
+            /** Skill Version Id */
+            skill_version_id?: string | null;
+            /** Task */
+            task: string;
         };
         /** SyncApplyResult */
         SyncApplyResult: {
@@ -2077,6 +3528,1178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_local_preferences_api_local_chat_preferences_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalPreferencesResponse"];
+                };
+            };
+        };
+    };
+    update_local_preferences_api_local_chat_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalPreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalPreferencesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_providers_api_local_chat_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    start_local_chat_api_local_chat_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalChatStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalChatStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_artifact_api_local_chat_runs__run_id__artifact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_local_chat_api_local_chat_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalChatCancelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_events_api_local_chat_runs__run_id__events_get: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+            };
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_safety_receipt_api_local_chat_runs__run_id__safety_receipt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SafetyReceiptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_chat_safety_preview_api_local_chat_safety_preview_get: {
+        parameters: {
+            query?: {
+                provider?: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
+                mode?: "chat" | "build";
+                mcp_enabled?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SafetyPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_repositories_api_local_repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"][];
+                };
+            };
+        };
+    };
+    register_local_repository_api_local_repositories_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositoryCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_local_repository_api_local_repositories__repository_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_local_repository_api_local_repositories__repository_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_local_worktree_api_local_repositories__repository_id__worktrees_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalWorktreeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_runs_api_local_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"][];
+                };
+            };
+        };
+    };
+    start_local_run_api_local_runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_run_api_local_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_local_run_api_local_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_run_changes_api_local_runs__run_id__changes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeSet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_run_contribution_api_local_runs__run_id__contribution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_local_contribution_api_local_runs__run_id__contribution_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_local_contribution_api_local_runs__run_id__contribution_publish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionPublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_local_run_api_local_runs__run_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_run_events_api_local_runs__run_id__events_get: {
+        parameters: {
+            query?: {
+                after?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEvent"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_run_evidence_api_local_runs__run_id__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEvidence"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_local_run_api_local_runs__run_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_schedules_api_local_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"][];
+                };
+            };
+        };
+    };
+    create_local_schedule_api_local_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_local_schedule_api_local_schedules__schedule_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_local_schedule_api_local_schedules__schedule_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_local_schedule_api_local_schedules__schedule_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_local_schedule_now_api_local_schedules__schedule_id__run_now_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_skills_api_local_skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"][];
+                };
+            };
+        };
+    };
+    import_local_skill_api_local_skills_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    local_skill_sources_api_local_skills_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillCandidate"][];
+                };
+            };
+        };
+    };
+    preview_local_skill_api_local_skills_sources__candidate_id__preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillImportPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_local_skill_api_local_skills__skill_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_local_skill_api_local_skills__skill_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableSkillVersion"];
                 };
             };
             /** @description Validation Error */
@@ -2766,6 +5389,129 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Team"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    provider_credential_statuses_api_provider_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"][];
+                };
+            };
+        };
+    };
+    connect_provider_credential_api_provider_credentials__provider__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCredentialConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_provider_credential_api_provider_credentials__provider__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_provider_credential_api_provider_credentials__provider__verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                provider: "openai" | "anthropic" | "gemini" | "xai";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCredentialVerificationResponse"];
                 };
             };
             /** @description Validation Error */

@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import tomllib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,8 +35,8 @@ from corvus.infrastructure.agent_runtimes.codex import (
     LocalCodexTextRequest,
 )
 from corvus.mvp.provider_catalog import build_provider_catalog
+from corvus.mvp.safety import SafetyPreview, build_safety_preview
 
-_CODEX_DEFAULT_LABEL = "Codex default"
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
@@ -110,6 +111,7 @@ class _RunRecord:
     idempotency_key: str
     response: dict[str, object]
     events: list[LocalChatBackendEvent]
+    safety: SafetyPreview
     state: str = "running"
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     pump_task: asyncio.Task[None] | None = None
@@ -131,15 +133,24 @@ class LocalChatService:
         if backend is not None and backends is not None:
             raise ValueError("local_chat_backend_ambiguous")
         configured = dict(backends or ({"codex": backend} if backend is not None else {}))
-        if not configured:
-            raise ValueError("local_chat_backend_required")
         self._backends = configured
-        self._backend = configured.get("codex") or next(iter(configured.values()))
+        self._owner_backends: dict[tuple[str, str], LocalChatBackend] = {}
+        self._backend = configured.get("codex") or next(iter(configured.values()), None)
         self._cursor_secret = cursor_secret
         self._clock = clock or (lambda: datetime.now(UTC))
         self._runs: dict[UUID, _RunRecord] = {}
         self._idempotency: dict[tuple[str, str], UUID] = {}
         self._start_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def register_owner_backend(
+        self,
+        owner: str,
+        provider: str,
+        backend: LocalChatBackend,
+    ) -> None:
+        if not owner.strip() or not provider.strip():
+            raise ValueError("owner_backend_scope_invalid")
+        self._owner_backends[(owner, provider)] = backend
 
     async def start(
         self,
@@ -152,21 +163,37 @@ class LocalChatService:
         mode: str,
         mcp_enabled: bool,
         idempotency_key: str,
+        safety_digest: str | None = None,
+        idempotency_prompt: str | None = None,
     ) -> dict[str, object]:
-        backend = self._backends.get(provider)
+        backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
         if backend is None:
             raise LocalChatError("provider_unavailable")
         if provider == "codex" and effort == "max":
             raise LocalChatError("provider_effort_unavailable")
         if provider != "codex" and (mode != "chat" or mcp_enabled):
             raise LocalChatError("provider_mode_unavailable")
+        try:
+            safety = build_safety_preview(
+                provider=provider,
+                mode=mode,
+                mcp_enabled=mcp_enabled,
+            )
+        except ValueError as error:
+            raise LocalChatError(str(error)) from error
+        if safety.requires_confirmation and not hmac.compare_digest(
+            safety.policy_digest,
+            safety_digest or "",
+        ):
+            raise LocalChatConflict("safety_digest_mismatch")
         request_digest = _request_digest(
-            prompt,
+            prompt if idempotency_prompt is None else idempotency_prompt,
             provider,
             model,
             effort,
             mode,
             mcp_enabled,
+            safety_digest,
         )
         idempotency_scope = (owner, idempotency_key)
         start_lock = self._start_locks.setdefault(idempotency_scope, asyncio.Lock())
@@ -179,6 +206,8 @@ class LocalChatService:
                 effort=effort,
                 mode=mode,
                 mcp_enabled=mcp_enabled,
+                safety_digest=safety_digest,
+                safety=safety,
                 idempotency_key=idempotency_key,
                 idempotency_scope=idempotency_scope,
                 request_digest=request_digest,
@@ -195,6 +224,8 @@ class LocalChatService:
         effort: str,
         mode: str,
         mcp_enabled: bool,
+        safety_digest: str | None,
+        safety: SafetyPreview,
         idempotency_key: str,
         idempotency_scope: tuple[str, str],
         request_digest: str,
@@ -219,15 +250,24 @@ class LocalChatService:
             )
         except (CodexAdapterError, ClaudeAdapterError) as error:
             raise LocalChatError(error.reason_code) from error
+        except RuntimeError as error:
+            reason_code = getattr(error, "reason_code", None) or str(error)
+            raise LocalChatError(reason_code or "provider_start_failed") from error
         response: dict[str, object] = {
             "run_id": str(run_id),
             "handle_id": str(handle.id),
             "state": "running",
             "provider": provider,
-            "model": model or (_CODEX_DEFAULT_LABEL if provider == "codex" else "Claude Sonnet 5"),
+            "model": model
+            or (
+                (_discover_codex_effective_model() or "Codex configured model")
+                if provider == "codex"
+                else "Claude Sonnet"
+            ),
             "mode": mode,
             "storage": "this_device",
             "created_at": self._clock().isoformat(),
+            "safety": safety.as_dict(),
         }
         record = _RunRecord(
             owner=owner,
@@ -237,6 +277,7 @@ class LocalChatService:
             idempotency_key=idempotency_key,
             response=response,
             events=[],
+            safety=safety,
         )
         self._runs[run_id] = record
         self._idempotency[idempotency_scope] = run_id
@@ -321,6 +362,44 @@ class LocalChatService:
             raise LocalChatNotFound("local_chat_artifact_not_found")
         return artifact
 
+    def safety_receipt(self, *, owner: str, run_id: UUID) -> dict[str, object]:
+        record = self._owned_run(owner, run_id)
+        if record.state == "running":
+            raise LocalChatConflict("safety_receipt_not_ready")
+        activity_labels = {
+            "command": "Commands ran inside the selected sandbox",
+            "files": "Files changed only inside the scratch workspace",
+            "mcp": "A configured MCP tool was used",
+            "search": "Project context was inspected",
+        }
+        activity_keys = {
+            event.payload.get("activity")
+            for event in record.events
+            if event.type == "status" and isinstance(event.payload.get("activity"), str)
+        }
+        activities = [label for key, label in activity_labels.items() if key in activity_keys]
+        artifact_payload: dict[str, object] | None = None
+        artifact = record.backend.artifact(record.handle)
+        if artifact is not None:
+            artifact_payload = {
+                "download_name": artifact.download_name,
+                "sha256_digest": artifact.sha256_digest,
+                "size_bytes": artifact.size_bytes,
+                "secret_screening": artifact.secret_screening,
+            }
+        return {
+            "run_id": str(run_id),
+            "status": record.state,
+            "safety": record.safety.as_dict(),
+            "activities": activities,
+            "mcp_used": "mcp" in activity_keys,
+            "approval": (
+                "No blanket host approval was granted; the run remained inside its selected policy."
+            ),
+            "original_project_modified": False,
+            "artifact": artifact_payload,
+        }
+
     async def cancel(self, *, owner: str, run_id: UUID) -> dict[str, object]:
         record = self._owned_run(owner, run_id)
         if record.state in {"completed", "failed", "cancelled"}:
@@ -346,6 +425,7 @@ class LocalChatService:
         entries = build_provider_catalog(
             codex_available="codex" in self._backends,
             claude_available="claude" in self._backends,
+            codex_effective_model=_discover_codex_effective_model(),
         )
         return tuple(
             {
@@ -551,11 +631,9 @@ def build_default_local_chat_service(
     *,
     scratch_root: Path,
     cursor_secret: bytes,
-) -> LocalChatService | None:
+) -> LocalChatService:
     codex_executable = _discover_codex_executable()
     claude_executable = _discover_claude_executable()
-    if codex_executable is None and claude_executable is None:
-        return None
 
     def clock() -> datetime:
         return datetime.now(UTC)
@@ -600,6 +678,11 @@ def _discover_codex_executable() -> Path | None:
     return candidate.resolve()
 
 
+def discover_codex_executable() -> Path | None:
+    """Return the trusted local Codex executable used by desktop runtimes."""
+    return _discover_codex_executable()
+
+
 def _discover_claude_executable() -> Path | None:
     direct = shutil.which("claude.exe" if os.name == "nt" else "claude")
     if direct is None:
@@ -610,24 +693,50 @@ def _discover_claude_executable() -> Path | None:
     return candidate.resolve()
 
 
+def _discover_codex_effective_model() -> str | None:
+    config_path = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
+    try:
+        with config_path.open("rb") as config_file:
+            config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    model = config.get("model")
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip()
+    return normalized if 0 < len(normalized) <= 100 else None
+
+
 def _windows_npm_codex_executable() -> Path | None:
     target = _WINDOWS_CODEX_TARGETS.get(platform.machine().lower())
-    wrapper = shutil.which("codex.cmd")
-    if target is None or wrapper is None:
+    if target is None:
         return None
     package_name, target_triple = target
-    package_root = Path(wrapper).resolve().parent / "node_modules" / "@openai" / "codex"
-    candidates = (
-        package_root
-        / "node_modules"
-        / "@openai"
-        / package_name
-        / "vendor"
-        / target_triple
-        / "bin"
-        / "codex.exe",
-        package_root / "vendor" / target_triple / "bin" / "codex.exe",
-    )
+    wrapper_candidates: list[Path] = []
+    discovered_wrapper = shutil.which("codex.cmd")
+    if discovered_wrapper is not None:
+        wrapper_candidates.append(Path(discovered_wrapper))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        wrapper_candidates.append(Path(appdata) / "npm" / "codex.cmd")
+    candidates: list[Path] = []
+    for wrapper in dict.fromkeys(wrapper_candidates):
+        if not wrapper.is_file():
+            continue
+        package_root = wrapper.resolve().parent / "node_modules" / "@openai" / "codex"
+        candidates.extend(
+            (
+                package_root
+                / "node_modules"
+                / "@openai"
+                / package_name
+                / "vendor"
+                / target_triple
+                / "bin"
+                / "codex.exe",
+                package_root / "vendor" / target_triple / "bin" / "codex.exe",
+            )
+        )
     return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
 
 
@@ -638,6 +747,7 @@ def _request_digest(
     effort: str,
     mode: str,
     mcp_enabled: bool,
+    safety_digest: str | None,
 ) -> str:
     payload = json.dumps(
         {
@@ -647,6 +757,7 @@ def _request_digest(
             "effort": effort,
             "mode": mode,
             "mcp_enabled": mcp_enabled,
+            "safety_digest": safety_digest,
         },
         sort_keys=True,
         separators=(",", ":"),

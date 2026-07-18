@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 4
+SCHEMA_VERSION: Final = 11
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -330,6 +330,197 @@ CREATE TABLE mvp_local_users (
 );
 """
 
+_MIGRATION_005 = """
+CREATE TABLE mvp_local_preferences (
+    user_id TEXT PRIMARY KEY REFERENCES mvp_local_users(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version > 0),
+    default_provider TEXT NOT NULL CHECK (default_provider IN ('codex', 'claude')),
+    default_model TEXT,
+    default_effort TEXT NOT NULL CHECK (default_effort IN ('low', 'medium', 'high', 'xhigh', 'max')),
+    default_mode TEXT NOT NULL CHECK (default_mode IN ('chat', 'build')),
+    mcp_enabled INTEGER NOT NULL CHECK (mcp_enabled IN (0, 1)),
+    response_tone TEXT NOT NULL CHECK (response_tone IN ('concise', 'balanced', 'detailed')),
+    custom_rules TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+_MIGRATION_006 = """
+CREATE TABLE mvp_repositories (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    canonical_path TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    remote_slug TEXT,
+    default_branch TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX mvp_repositories_tenant_idx
+    ON mvp_repositories(tenant_id, updated_at, id);
+CREATE TABLE mvp_repository_snapshots (
+    repository_id TEXT PRIMARY KEY REFERENCES mvp_repositories(id) ON DELETE CASCADE,
+    branch TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    clean INTEGER NOT NULL CHECK (clean IN (0, 1)),
+    ahead INTEGER NOT NULL CHECK (ahead >= 0),
+    behind INTEGER NOT NULL CHECK (behind >= 0),
+    health TEXT NOT NULL,
+    refreshed_at TEXT NOT NULL
+);
+"""
+
+_MIGRATION_007 = """
+CREATE TABLE mvp_worktree_leases (
+    run_id TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    root_path TEXT NOT NULL UNIQUE,
+    base_sha TEXT NOT NULL,
+    ownership_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    discarded_at TEXT
+);
+CREATE INDEX mvp_worktree_leases_repository_idx
+    ON mvp_worktree_leases(repository_id, status, created_at);
+"""
+
+_MIGRATION_008 = """
+CREATE TABLE mvp_contributions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE REFERENCES mvp_worktree_leases(run_id) ON DELETE RESTRICT,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    branch TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    selected_paths_json TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    confirmation_digest TEXT NOT NULL,
+    message TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    draft INTEGER NOT NULL CHECK (draft IN (0, 1)),
+    change_digest TEXT NOT NULL,
+    secret_scan_json TEXT NOT NULL,
+    commit_sha TEXT,
+    remote_ref TEXT,
+    pr_number INTEGER,
+    pr_url TEXT,
+    state TEXT NOT NULL,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX mvp_contributions_repository_idx
+    ON mvp_contributions(repository_id, updated_at, id);
+"""
+
+_MIGRATION_009 = """
+CREATE TABLE mvp_runs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    base_sha TEXT NOT NULL,
+    task TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    effort TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    safety_digest TEXT NOT NULL,
+    skill_version_id TEXT,
+    schedule_id TEXT,
+    occurrence_key TEXT,
+    output_policy TEXT NOT NULL,
+    retry_of_run_id TEXT REFERENCES mvp_runs(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE(schedule_id, occurrence_key)
+);
+CREATE INDEX mvp_runs_tenant_idx ON mvp_runs(tenant_id, updated_at DESC, id);
+CREATE INDEX mvp_runs_repository_idx ON mvp_runs(repository_id, updated_at DESC, id);
+CREATE TABLE mvp_run_events (
+    run_id TEXT NOT NULL REFERENCES mvp_runs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(run_id, sequence)
+);
+CREATE TABLE mvp_run_evidence (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES mvp_runs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX mvp_run_evidence_run_idx ON mvp_run_evidence(run_id, created_at, id);
+"""
+
+_MIGRATION_010 = """
+CREATE TABLE mvp_portable_skill_versions (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    digest TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    package_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    findings_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(tenant_id, name, version),
+    UNIQUE(tenant_id, digest)
+);
+CREATE INDEX mvp_portable_skills_tenant_idx
+    ON mvp_portable_skill_versions(tenant_id, name, version DESC);
+"""
+
+_MIGRATION_011 = """
+CREATE TABLE mvp_schedules (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    current_revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE mvp_schedule_revisions (
+    id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL REFERENCES mvp_schedules(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    repository_id TEXT NOT NULL REFERENCES mvp_repositories(id) ON DELETE RESTRICT,
+    task TEXT NOT NULL,
+    recurrence_json TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    effort TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    safety_digest TEXT NOT NULL,
+    skill_version_id TEXT,
+    output_policy TEXT NOT NULL,
+    next_run_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(schedule_id, version)
+);
+CREATE TABLE mvp_schedule_occurrences (
+    schedule_revision_id TEXT NOT NULL REFERENCES mvp_schedule_revisions(id) ON DELETE CASCADE,
+    scheduled_for TEXT NOT NULL,
+    run_id TEXT REFERENCES mvp_runs(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    PRIMARY KEY(schedule_revision_id, scheduled_for)
+);
+CREATE INDEX mvp_schedules_tenant_idx ON mvp_schedules(tenant_id, updated_at DESC, id);
+CREATE INDEX mvp_schedule_due_idx ON mvp_schedule_revisions(next_run_at, schedule_id);
+"""
+
 
 class StoreError(RuntimeError):
     pass
@@ -399,4 +590,53 @@ class SqliteStore:
                 connection.execute(
                     "INSERT INTO mvp_schema_migrations(version, applied_at) "
                     "VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(4)
+            if 5 not in versions:
+                connection.executescript(_MIGRATION_005)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(5)
+            if 6 not in versions:
+                connection.executescript(_MIGRATION_006)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(6)
+            if 7 not in versions:
+                connection.executescript(_MIGRATION_007)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(7)
+            if 8 not in versions:
+                connection.executescript(_MIGRATION_008)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(8)
+            if 9 not in versions:
+                connection.executescript(_MIGRATION_009)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(9)
+            if 10 not in versions:
+                connection.executescript(_MIGRATION_010)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (10, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                )
+                versions.append(10)
+            if 11 not in versions:
+                connection.executescript(_MIGRATION_011)
+                connection.execute(
+                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                    "VALUES (11, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
                 )

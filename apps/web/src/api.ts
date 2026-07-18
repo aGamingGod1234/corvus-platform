@@ -7,9 +7,21 @@ export type Approval = components["schemas"]["ApprovalRecord"];
 export type AutonomyDecision = components["schemas"]["AutonomyDecision"];
 export type Budget = components["schemas"]["BudgetAccount"];
 export type ChannelEvent = components["schemas"]["ChannelEventRecord"];
+export type ChangeSet = components["schemas"]["ChangeSet"];
+export type Contribution = components["schemas"]["ContributionRecord"];
 export type ConversationEntry = components["schemas"]["ConversationEntry"];
 export type Effect = components["schemas"]["EffectRecord"];
 export type MemoryEntry = components["schemas"]["MemoryEntry"];
+export type LocalRepository = components["schemas"]["RepositoryRecord"];
+export type LocalRun = components["schemas"]["RunRecord"];
+export type LocalRunEvent = components["schemas"]["RunEvent"];
+export type LocalRunEvidence = components["schemas"]["RunEvidence"];
+export type LocalSafetyPreview = components["schemas"]["SafetyPreviewResponse"];
+export type PortableSkill = components["schemas"]["PortableSkillVersion"];
+export type SkillImportCandidate = components["schemas"]["SkillCandidate"];
+export type SkillImportPreview = components["schemas"]["SkillImportPreview"];
+export type LocalSchedule = components["schemas"]["ScheduleRecord"];
+export type LocalWorktree = components["schemas"]["LocalWorktreeResponse"];
 export type OfflineIntent = components["schemas"]["OfflineIntentRecord"];
 export type Outcome = components["schemas"]["OutcomeContract"];
 export type Project = components["schemas"]["Project"];
@@ -28,6 +40,64 @@ export interface CorvusApi {
   session(): Promise<Session>;
   pair(value: string): Promise<void>;
   listProjects(): Promise<Project[]>;
+  listRepositories(): Promise<LocalRepository[]>;
+  registerRepository(path: string, displayName: string): Promise<LocalRepository>;
+  refreshRepository(repositoryId: string): Promise<LocalRepository>;
+  removeRepository(repositoryId: string): Promise<void>;
+  createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
+  getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
+  listLocalRuns(): Promise<LocalRun[]>;
+  startLocalRun(input: {
+    repositoryId: string;
+    task: string;
+    model?: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    mode: "chat" | "build";
+    safetyDigest: string;
+    outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
+  }): Promise<LocalRun>;
+  getLocalRun(runId: string): Promise<LocalRun>;
+  listLocalRunEvents(runId: string, after?: number): Promise<LocalRunEvent[]>;
+  listLocalRunEvidence(runId: string): Promise<LocalRunEvidence[]>;
+  cancelLocalRun(runId: string): Promise<LocalRun>;
+  retryLocalRun(runId: string): Promise<LocalRun>;
+  discardLocalRun(runId: string): Promise<LocalRun>;
+  listPortableSkills(): Promise<PortableSkill[]>;
+  listSkillImportSources(): Promise<SkillImportCandidate[]>;
+  previewSkillImport(candidateId: string): Promise<SkillImportPreview>;
+  importPortableSkill(candidateId: string, expectedDigest: string): Promise<PortableSkill>;
+  activatePortableSkill(skillId: string): Promise<PortableSkill>;
+  archivePortableSkill(skillId: string): Promise<PortableSkill>;
+  listLocalSchedules(): Promise<LocalSchedule[]>;
+  createLocalSchedule(input: {
+    name: string;
+    repositoryId: string;
+    task: string;
+    recurrence: { kind: "once" | "hourly" | "daily" | "weekdays" | "weekly"; local_time?: string; weekdays: number[]; once_at?: string };
+    timezone: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    mode: "chat" | "build";
+    safetyDigest: string;
+    skillVersionId?: string;
+    outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
+  }): Promise<LocalSchedule>;
+  runLocalScheduleNow(scheduleId: string): Promise<LocalRun>;
+  pauseLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
+  resumeLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
+  archiveLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
+  getRunChanges(runId: string): Promise<ChangeSet>;
+  getContribution(runId: string): Promise<Contribution>;
+  prepareContribution(
+    runId: string,
+    input: {
+      selectedPaths: string[];
+      message: string;
+      title: string;
+      body: string;
+      draft: boolean;
+    }
+  ): Promise<Contribution>;
+  publishContribution(runId: string, expectedDigest: string): Promise<Contribution>;
   createProject(name: string): Promise<Project>;
   listOutcomes(projectId: string): Promise<Outcome[]>;
   createOutcome(projectId: string, title: string, criterion: string): Promise<Outcome>;
@@ -112,6 +182,200 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     },
     async listProjects() {
       const result = await client.GET("/api/projects");
+      return requireData(result);
+    },
+    async listRepositories() {
+      const result = await client.GET("/api/local/repositories");
+      return requireData(result);
+    },
+    async registerRepository(path, displayName) {
+      const result = await client.POST("/api/local/repositories", {
+        body: { path, display_name: displayName },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async refreshRepository(repositoryId) {
+      const result = await client.POST("/api/local/repositories/{repository_id}/refresh", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async removeRepository(repositoryId) {
+      const result = await client.DELETE("/api/local/repositories/{repository_id}", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      if (result.error) {
+        throw new ApiFailure(result.response.status, readDetail(result.error));
+      }
+    },
+    async createRepositoryRun(repositoryId) {
+      const result = await client.POST("/api/local/repositories/{repository_id}/worktrees", {
+        params: { path: { repository_id: repositoryId } },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async getLocalSafetyPreview(mode) {
+      const result = await client.GET("/api/local-chat/safety-preview", {
+        params: { query: { provider: "codex", mode, mcp_enabled: false } }
+      });
+      return requireData(result);
+    },
+    async listLocalRuns() {
+      return requireData(await client.GET("/api/local/runs"));
+    },
+    async startLocalRun(input) {
+      const result = await client.POST("/api/local/runs", {
+        body: {
+          repository_id: input.repositoryId,
+          task: input.task,
+          provider: "codex",
+          model: input.model,
+          effort: input.effort,
+          mode: input.mode,
+          safety_digest: input.safetyDigest,
+          output_policy: input.outputPolicy
+        },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async getLocalRun(runId) {
+      return requireData(await client.GET("/api/local/runs/{run_id}", {
+        params: { path: { run_id: runId } }
+      }));
+    },
+    async listLocalRunEvents(runId, after = 0) {
+      return requireData(await client.GET("/api/local/runs/{run_id}/events", {
+        params: { path: { run_id: runId }, query: { after } }
+      }));
+    },
+    async listLocalRunEvidence(runId) {
+      return requireData(await client.GET("/api/local/runs/{run_id}/evidence", {
+        params: { path: { run_id: runId } }
+      }));
+    },
+    async cancelLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/cancel", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
+    },
+    async retryLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/retry", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
+    },
+    async discardLocalRun(runId) {
+      return requireData(await client.POST("/api/local/runs/{run_id}/discard", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      }));
+    },
+    async listPortableSkills() {
+      return requireData(await client.GET("/api/local/skills"));
+    },
+    async listSkillImportSources() {
+      return requireData(await client.GET("/api/local/skills/sources"));
+    },
+    async previewSkillImport(candidateId) {
+      return requireData(await client.GET("/api/local/skills/sources/{candidate_id}/preview", {
+        params: { path: { candidate_id: candidateId } }
+      }));
+    },
+    async importPortableSkill(candidateId, expectedDigest) {
+      return requireData(await client.POST("/api/local/skills/import", {
+        body: { candidate_id: candidateId, expected_digest: expectedDigest },
+        headers: mutationHeaders()
+      }));
+    },
+    async activatePortableSkill(skillId) {
+      return requireData(await client.POST("/api/local/skills/{skill_id}/activate", {
+        params: { path: { skill_id: skillId } }, headers: mutationHeaders()
+      }));
+    },
+    async archivePortableSkill(skillId) {
+      return requireData(await client.POST("/api/local/skills/{skill_id}/archive", {
+        params: { path: { skill_id: skillId } }, headers: mutationHeaders()
+      }));
+    },
+    async listLocalSchedules() {
+      return requireData(await client.GET("/api/local/schedules"));
+    },
+    async createLocalSchedule(input) {
+      return requireData(await client.POST("/api/local/schedules", {
+        body: {
+          name: input.name,
+          repository_id: input.repositoryId,
+          task: input.task,
+          recurrence: input.recurrence,
+          timezone: input.timezone,
+          provider: "codex",
+          effort: input.effort,
+          mode: input.mode,
+          safety_digest: input.safetyDigest,
+          skill_version_id: input.skillVersionId,
+          output_policy: input.outputPolicy
+        },
+        headers: mutationHeaders()
+      }));
+    },
+    async runLocalScheduleNow(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/run-now", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async pauseLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/pause", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async resumeLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/resume", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async archiveLocalSchedule(scheduleId) {
+      return requireData(await client.POST("/api/local/schedules/{schedule_id}/archive", {
+        params: { path: { schedule_id: scheduleId } }, headers: mutationHeaders()
+      }));
+    },
+    async getRunChanges(runId) {
+      const result = await client.GET("/api/local/runs/{run_id}/changes", {
+        params: { path: { run_id: runId } }
+      });
+      return requireData(result);
+    },
+    async getContribution(runId) {
+      const result = await client.GET("/api/local/runs/{run_id}/contribution", {
+        params: { path: { run_id: runId } }
+      });
+      return requireData(result);
+    },
+    async prepareContribution(runId, input) {
+      const result = await client.POST("/api/local/runs/{run_id}/contribution/prepare", {
+        params: { path: { run_id: runId } },
+        body: {
+          selected_paths: input.selectedPaths,
+          message: input.message,
+          title: input.title,
+          body: input.body,
+          draft: input.draft
+        },
+        headers: mutationHeaders()
+      });
+      return requireData(result);
+    },
+    async publishContribution(runId, expectedDigest) {
+      const result = await client.POST("/api/local/runs/{run_id}/contribution/publish", {
+        params: { path: { run_id: runId } },
+        body: { expected_digest: expectedDigest },
+        headers: mutationHeaders()
+      });
       return requireData(result);
     },
     async createProject(name) {
@@ -362,6 +626,13 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
 function readDetail(error: unknown): unknown {
   if (typeof error === "object" && error !== null && "detail" in error) {
     return error.detail;
+  }
+  if (typeof error === "object" && error !== null && "error" in error) {
+    const envelope = error.error;
+    if (typeof envelope === "object" && envelope !== null) {
+      if ("message" in envelope && typeof envelope.message === "string") return envelope.message;
+      if ("code" in envelope && typeof envelope.code === "string") return envelope.code;
+    }
   }
   return error;
 }

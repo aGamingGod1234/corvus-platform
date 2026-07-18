@@ -1,17 +1,20 @@
+import { isLoopbackRuntimeHost } from "../runtime/localRuntime";
+
 export interface LocalChatRun {
   run_id: string;
   handle_id: string;
   state: "running" | "completed" | "failed";
-  provider: "codex" | "claude";
+  provider: RunnableProviderId;
   model: string;
   mode: "chat" | "build";
   storage: "this_device";
   created_at: string;
+  safety: SafetyPreview;
 }
 
 export interface LocalChatCancel {
   run_id: string;
-  state: "cancelled" | "completed" | "failed";
+  state: "running" | "cancelled" | "completed" | "failed";
   accepted: boolean;
   reason_code: string | null;
 }
@@ -42,9 +45,41 @@ class BrowserRunEventStream implements RunEventStream {
   }
 }
 
-export type ProviderId = "codex" | "claude" | "gemini" | "cursor" | "grok";
+export type ProviderId = "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai" | "cursor" | "grok";
+export type RunnableProviderId = "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
 export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type RunMode = "chat" | "build";
+export type SafetyLevel = "read_only" | "protected" | "elevated";
+
+export interface SafetyPreview {
+  policy_digest: string;
+  level: SafetyLevel;
+  label: string;
+  summary: string;
+  execution: string;
+  filesystem: string;
+  network: string;
+  mcp: string;
+  approvals: string;
+  output: string;
+  requires_confirmation: boolean;
+}
+
+export interface SafetyReceipt {
+  run_id: string;
+  status: "completed" | "failed" | "cancelled";
+  safety: SafetyPreview;
+  activities: string[];
+  mcp_used: boolean;
+  approval: string;
+  original_project_modified: boolean;
+  artifact: {
+    download_name: string;
+    sha256_digest: string;
+    size_bytes: number;
+    secret_screening: "passed" | "not_scanned";
+  } | null;
+}
 
 export interface ProviderModel {
   id: string;
@@ -64,15 +99,56 @@ export interface ProviderCatalogEntry {
 }
 
 export interface LocalChatRequest {
-  provider: "codex" | "claude";
+  provider: RunnableProviderId;
   model: string | null;
   effort: ThinkingLevel;
   mode: RunMode;
   mcp_enabled: boolean;
+  safety_digest?: string | null;
+}
+
+export type ResponseTone = "concise" | "balanced" | "detailed";
+export type ProviderCredentialId = "openai" | "anthropic" | "gemini" | "xai";
+
+export interface ProviderCredentialStatus {
+  provider: ProviderCredentialId;
+  configured: boolean;
+  source: "keyring" | "environment" | "none";
+}
+
+export interface ProviderCredentialVerification {
+  provider: ProviderCredentialId;
+  configured: boolean;
+  verified: boolean;
+  models: string[];
+}
+
+export interface RuntimePreferences {
+  version: number;
+  default_provider: "codex" | "claude";
+  default_model: string | null;
+  default_effort: ThinkingLevel;
+  default_mode: RunMode;
+  mcp_enabled: boolean;
+  response_tone: ResponseTone;
+  custom_rules: string;
+  updated_at: string | null;
+}
+
+export interface RuntimePreferencesUpdate extends Omit<RuntimePreferences, "version" | "updated_at"> {
+  expected_version: number;
 }
 
 export interface ConversationApi {
   listProviders(): Promise<ProviderCatalogEntry[]>;
+  getPreferences(): Promise<RuntimePreferences>;
+  updatePreferences(preferences: RuntimePreferencesUpdate): Promise<RuntimePreferences>;
+  getSafetyPreview(
+    provider: RunnableProviderId,
+    mode: RunMode,
+    mcpEnabled: boolean
+  ): Promise<SafetyPreview>;
+  getSafetyReceipt(runId: string): Promise<SafetyReceipt>;
   startRun(
     prompt: string,
     request: LocalChatRequest,
@@ -81,21 +157,40 @@ export interface ConversationApi {
   cancelRun(runId: string): Promise<LocalChatCancel>;
   openRunEvents(runId: string): RunEventStream;
   artifactUrl(runId: string): string;
+  listProviderCredentials?(): Promise<ProviderCredentialStatus[]>;
+  connectProviderCredential?(provider: ProviderCredentialId, credential: string): Promise<ProviderCredentialStatus>;
+  verifyProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialVerification>;
+  removeProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialStatus>;
 }
 
-interface ApiErrorDetail { code?: string; correlation_id?: string; }
+interface ApiErrorDetail {
+  code?: string;
+  correlation_id?: string;
+  current?: RuntimePreferences;
+}
 interface ApiErrorBody { detail?: string | ApiErrorDetail; }
 
 export class ConversationApiError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly correlationId: string | null) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly correlationId: string | null,
+    readonly detail: ApiErrorDetail | null = null
+  ) {
     super(code);
     this.name = "ConversationApiError";
   }
 }
 
 export function createConversationApi(csrfToken: string, baseUrl = ""): ConversationApi {
+  const runtimeBaseUrl = trustedRuntimeBaseUrl(baseUrl);
+
+  function runtimeUrl(path: string): string {
+    return `${runtimeBaseUrl}${path}`;
+  }
+
   async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetch(runtimeUrl(path), {
       ...init,
       credentials: "include",
       headers: { Accept: "application/json", ...init.headers }
@@ -110,7 +205,12 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       const correlationId = typeof detail === "object" && detail !== null
         ? detail.correlation_id ?? null
         : null;
-      throw new ConversationApiError(response.status, code, correlationId);
+      throw new ConversationApiError(
+        response.status,
+        code,
+        correlationId,
+        typeof detail === "object" && detail !== null ? detail : null
+      );
     }
     return await response.json() as T;
   }
@@ -125,24 +225,90 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
   }
 
   return {
-    listProviders: () => requestJson("/api/local-chat/providers", {
+    listProviders: async () => {
+      const providers = await requestJson<ProviderCatalogEntry[]>("/api/local-chat/providers", {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      });
+      return providers.map((provider) => ({
+        ...provider,
+        models: Array.isArray(provider.models) ? provider.models : [],
+        thinking_levels: Array.isArray(provider.thinking_levels) ? provider.thinking_levels : []
+      }));
+    },
+    getPreferences: () => requestJson("/api/local-chat/preferences", {
       method: "GET",
       headers: { Accept: "application/json" }
     }),
+    updatePreferences: (preferences) => requestJson("/api/local-chat/preferences", {
+      method: "PUT",
+      headers: mutationHeaders(),
+      body: JSON.stringify(preferences)
+    }),
+    getSafetyPreview: (provider, mode, mcpEnabled) => {
+      const query = new URLSearchParams({
+        provider,
+        mode,
+        mcp_enabled: String(mcpEnabled)
+      });
+      return requestJson(`/api/local-chat/safety-preview?${query.toString()}`, {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      });
+    },
+    getSafetyReceipt: (runId) => requestJson(
+      `/api/local-chat/runs/${encodeURIComponent(runId)}/safety-receipt`,
+      { method: "GET", headers: { Accept: "application/json" } }
+    ),
     startRun: (prompt, request, idempotencyKey) => requestJson("/api/local-chat/runs", {
       method: "POST",
       headers: mutationHeaders(idempotencyKey),
       body: JSON.stringify({ prompt, ...request })
     }),
-    cancelRun: (runId) => requestJson(`/api/local-chat/runs/${runId}/cancel`, {
+    cancelRun: (runId) => requestJson(`/api/local-chat/runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
       headers: mutationHeaders()
     }),
     openRunEvents(runId) {
-      return new BrowserRunEventStream(new EventSource(`${baseUrl}/api/local-chat/runs/${runId}/events?follow=true`, {
+      return new BrowserRunEventStream(new EventSource(runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/events?follow=true`), {
         withCredentials: true
       }));
     },
-    artifactUrl: (runId) => `${baseUrl}/api/local-chat/runs/${runId}/artifact`
+    artifactUrl: (runId) => runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/artifact`),
+    listProviderCredentials: () => requestJson("/api/provider-credentials", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
+    connectProviderCredential: (provider, credential) => requestJson(`/api/provider-credentials/${provider}`, {
+      method: "PUT",
+      headers: mutationHeaders(),
+      body: JSON.stringify({ credential })
+    }),
+    verifyProviderCredential: (provider) => requestJson(`/api/provider-credentials/${provider}/verify`, {
+      method: "POST",
+      headers: mutationHeaders()
+    }),
+    removeProviderCredential: (provider) => requestJson(`/api/provider-credentials/${provider}`, {
+      method: "DELETE",
+      headers: mutationHeaders()
+    })
   };
+}
+
+function trustedRuntimeBaseUrl(baseUrl: string): string {
+  if (baseUrl === "") return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new ConversationApiError(400, "runtime_base_url_invalid", null);
+  }
+  const sameOrigin = typeof window !== "undefined" && parsed.origin === window.location.origin;
+  const cleanRoot = parsed.username === "" && parsed.password === "" && parsed.pathname === "/"
+    && parsed.search === "" && parsed.hash === "";
+  const allowedProtocol = parsed.protocol === "http:" || parsed.protocol === "https:";
+  if (!cleanRoot || !allowedProtocol || (!sameOrigin && !isLoopbackRuntimeHost(parsed.hostname))) {
+    throw new ConversationApiError(400, "runtime_base_url_untrusted", null);
+  }
+  return parsed.origin;
 }

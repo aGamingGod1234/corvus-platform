@@ -242,6 +242,79 @@ async def test_codex_adapter_discovers_pinned_text_only_binding(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_codex_adapter_uses_only_an_explicit_approved_managed_workspace(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    workspace = managed_root / "run-1"
+    workspace.mkdir(parents=True)
+    starter = _Starter(_Session(()))
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=starter,
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Change the repository.",
+            idempotency_key="managed-run",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            workspace=workspace,
+            package_artifact=False,
+        ),
+    )
+
+    assert starter.invocation is not None
+    assert starter.invocation.cwd == workspace.resolve()
+    assert starter.invocation.approved_roots == (workspace.resolve(),)
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_refuses_explicit_workspace_outside_approved_roots(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    managed_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=_Starter(_Session(())),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    with pytest.raises(CodexAdapterError, match="codex_workspace_unapproved"):
+        await adapter.start_local_text(
+            binding.binding,
+            LocalCodexTextRequest(
+                run_id=uuid4(),
+                prompt="Escape.",
+                idempotency_key="outside-run",
+                deadline=datetime(2026, 7, 18, tzinfo=UTC),
+                mode="build",
+                workspace=outside,
+                package_artifact=False,
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_codex_idempotency_replay_returns_the_original_bound_handle(tmp_path: Path) -> None:
     adapter, _starter = _adapter(tmp_path, ())
     candidate = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
@@ -555,6 +628,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
     assert artifact is not None
     assert artifact.path.is_file()
     assert artifact.download_name.endswith(".zip")
+    assert artifact.secret_screening == "passed"  # noqa: S105
 
 
 @pytest.mark.asyncio
