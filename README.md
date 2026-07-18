@@ -10,15 +10,15 @@ Corvus is a local-first AI workspace for turning outcomes into governed, auditab
 
 Most AI agent products force everyone into the same developer-shaped interface and hide where work actually runs. Corvus gives everyday users, developers, individuals, and teams a familiar workspace while preserving one governed execution core underneath.
 
-The reliable end-to-end demo path is deliberately short:
+The Build Week demo path is deliberately short:
 
-1. Open the desktop app and choose a work style, workspace scope, and **On this computer**.
-2. Start a thread, select a detected local Codex or Claude provider, model, and thinking level, then watch safe reasoning summaries and the answer stream live.
-3. Switch Codex from **Chat** to **Build** to execute a coding task in a fresh scratch sandbox.
-4. Download the completed project as a bounded ZIP with a SHA-256 manifest.
-5. Open Settings to show theme, response style, custom rules, MCP consent, and integration controls.
+1. Launch Corvus without a terminal and verify the locally authenticated Codex model catalog.
+2. Register a real GitHub-backed repository and import a reviewed skill from Codex, Claude Code, Hermes, or an Agent Skills folder.
+3. Run Codex in a Corvus-owned Git worktree pinned to the repository's exact base SHA.
+4. Review the real diff, tests, safety receipt, and completed secret scan.
+5. Explicitly publish a `corvus/*` branch and draft pull request, then schedule the same workflow to prepare future changes for review.
 
-Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The demo never implies those paths are complete.
+Corvus never merges, force-pushes, transfers imported permissions, or lets a schedule publish code. Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The exact sub-three-minute script is in [docs/demo/BUILD_WEEK_DEMO.md](docs/demo/BUILD_WEEK_DEMO.md).
 
 ## A workspace that fits the user
 
@@ -44,6 +44,12 @@ Local and future Cloud runtimes share contracts; clients never grant themselves 
 - One-time approvals, deterministic effect idempotency, budget reservation and settlement, kill switches, and restart recovery.
 - Connected CLI, FastAPI, generated TypeScript client, React web app, and Tauri Windows shell over the same application services.
 - Local/demo collaboration, governed memory, versioned skills and routines, signed offline intents, and signed channel ingress.
+- Real local repository registration and GitHub status through fixed-argument Git and `gh` adapters that never store a GitHub token.
+- Durable Codex runs in managed Git worktrees, with reviewable diffs, bounded evidence, real secret scanning, cancellation, retry, recovery, and explicit discard.
+- Confirmed branch, commit, push, and draft/ready pull-request publication without merge, force-push, or repository-administration authority.
+- Reviewed cross-agent skill import from Codex, Claude Code, Hermes, Copilot, and portable Agent Skills locations, with immutable versions and quarantine scanning.
+- Timezone-aware local schedules that create ordinary supervised runs and stop code-changing output before push or pull-request creation.
+- Optional tray/background operation, launch at login, and redacted native run notifications in the installed desktop app.
 - Adaptive Everyday/Developer and Personal/Team workspace profiles with responsive desktop and mobile navigation.
 - A security-focused agent-runtime foundation with immutable requests, provider-binding digests, verified authority receipts, bounded autonomy proofs, fail-closed capability discovery, redacted hash-chained events, replay resistance, and explicit audit-pending results.
 - A chat-first local agent workspace with on-demand history, provider/model/thinking controls, safe streamed reasoning summaries and work status, explicit MCP opt-in, and downloadable project artifacts.

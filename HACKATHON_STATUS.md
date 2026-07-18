@@ -2,6 +2,19 @@
 
 This is a hackathon MVP implementation record, not formal M2-M11 certification.
 
+## OpenAI Build Week developer-tools MVP
+
+The current PR #7 branch extends the preserved M2-M11 foundation into a focused local developer workflow:
+
+- Real repository registration, refresh, GitHub pull-request/check visibility, and safe clone/open actions.
+- Durable Codex runs in managed Git worktrees with pinned inputs, append-only events, diff/evidence review, cancellation, retry, recovery, and discard.
+- A contribution state machine for selected-file staging, secret-scan gating, branch/commit preview, explicit confirmation, non-force push, and draft/ready pull-request creation. Merge is intentionally absent.
+- Quarantined, digest-bound skill discovery and import from Codex, Claude Code, Hermes, Copilot, generic Agent Skills, and repository-local locations. Imported tool declarations are unapproved requests, never transferred permissions.
+- Timezone-aware one-time/hourly/daily/weekday/weekly schedules with immutable revisions, transactional occurrence claims, missed-run grace, dependency revalidation, and code-changing output capped at review.
+- Desktop tray/background operation, launch-at-login controls, redacted native notifications, hidden Windows sidecar processes, and single-instance foreground activation.
+
+The exact Devpost journey and visual acceptance checklist are documented in [docs/demo/BUILD_WEEK_DEMO.md](docs/demo/BUILD_WEEK_DEMO.md). Integrated verification, fresh installers, the Vercel preview, and final PR review remain release gates; this section does not claim those pending gates have passed.
+
 ## Baseline and branch
 
 - Verified baseline: `repair/m1-certification` at `8c18f53`.

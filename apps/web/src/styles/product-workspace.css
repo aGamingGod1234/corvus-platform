@@ -121,7 +121,14 @@
 .skill-review__facts span[data-status="ready"] { color: var(--success); }
 .skill-review__facts span[data-status="needs_review"] { color: var(--approval); }
 .skill-review__facts span[data-status="blocked"] { color: var(--danger); }
-.skill-review > code { display: block; overflow: hidden; color: var(--muted); font-size: .6rem; text-overflow: ellipsis; white-space: nowrap; }
+.skill-review__digest { display: grid; gap: .2rem; }
+.skill-review__digest span { color: var(--muted); font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.skill-review__digest code { display: block; overflow: hidden; color: var(--muted); font-size: .6rem; text-overflow: ellipsis; white-space: nowrap; }
+.skill-review__files h3 { margin: 1rem 0 .25rem; font-size: .78rem; }
+.skill-review__files p, .skill-review__authority { margin: 0 0 .55rem; color: var(--muted); font-size: .68rem; }
+.skill-review__files ul { display: grid; gap: .3rem; max-height: 9rem; margin: 0; padding: .55rem .7rem; overflow-y: auto; border: 1px solid var(--line); border-radius: .55rem; background: var(--paper); list-style: none; overscroll-behavior: contain; }
+.skill-review__files code { color: var(--ink); font-size: .64rem; overflow-wrap: anywhere; }
+.skill-review__authority { margin-top: .8rem; padding: .6rem .7rem; border-left: 2px solid var(--signal); background: color-mix(in oklch, var(--signal) 7%, var(--paper)); }
 .skill-findings h3 { margin: 1rem 0 .5rem; font-size: .78rem; }
 .skill-findings article { display: grid; gap: .18rem; margin-bottom: .35rem; border-left: 2px solid var(--approval); padding: .55rem .65rem; background: var(--paper); }
 .skill-findings article[data-severity="blocked"] { border-left-color: var(--danger); }
