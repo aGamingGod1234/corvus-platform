@@ -2127,3 +2127,26 @@
 ### Suggested Next Steps
 - Push the verified commit to PR #7, resolve every actionable review thread/check, then produce checksum-bound unsigned alpha installers through the trusted multi-OS release workflow.
 - After approval, demo the path: Read-only chip → Build → policy confirmation → Stop/timeline → artifact receipt.
+
+## 2026-07-18 - Package the unsigned cross-platform alpha candidate
+
+### What Was Implemented
+- Completed the trusted desktop-release workflow for Windows NSIS, macOS x64 DMG, and Linux x64 AppImage/deb installers from application commit `da9515c`.
+- Prepared the successful workflow artifacts for an explicitly unsigned GitHub prerelease candidate.
+
+### Files Modified
+- `PROJECT_LOG.md` - recorded installer provenance, release status, and the reviewed application SHA.
+
+### Assumptions Made (flag these for review)
+- The release is an unsigned hackathon alpha candidate and must not be presented as signed, notarized, or production-approved.
+
+### Known Issues / Deferred
+- Code signing and Apple notarization remain deferred.
+- PR #7 code-owner approval and protected-main merge remain separate from this candidate release.
+
+### Verification
+- GitHub Actions run `29622969381` completed successfully for all three native packaging jobs.
+- Installer files are published with a generated `SHA256SUMS.txt` so downloads can be verified independently.
+
+### Suggested Next Steps
+- Complete PR #7 code-owner approval before promoting this candidate as the mainline alpha release.
