@@ -18,36 +18,11 @@ import type {
 } from "./conversationApi";
 import { loadDeviceThreads, saveDeviceThreads, type DeviceThread } from "./conversationStorage";
 import { loadDevicePreferences } from "./devicePreferences";
+import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
 type Experience = "developer" | "everyday";
 type RunStatus = "idle" | "working" | "completed" | "cancelled" | "failed";
 const TITLE_MAX = 72;
-const FALLBACK_PROVIDERS: ProviderCatalogEntry[] = [
-  {
-    id: "codex",
-    label: "Codex",
-    status: "unavailable",
-    runtime: "local",
-    status_label: "Not detected on this device",
-    thinking_levels: ["low", "medium", "high", "xhigh", "max"],
-    supports_mcp: true,
-    models: []
-  },
-  {
-    id: "claude",
-    label: "Claude",
-    status: "unavailable",
-    runtime: "local",
-    status_label: "Not detected on this device",
-    thinking_levels: ["low", "medium", "high", "xhigh", "max"],
-    supports_mcp: false,
-    models: [
-      { id: "sonnet", label: "Claude Sonnet", recommended: true },
-      { id: "opus", label: "Claude Opus", recommended: false }
-    ]
-  },
-];
-
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
   low: "Low",
   medium: "Medium",
@@ -115,7 +90,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
   const [providerError, setProviderError] = useState("");
   const [providerRefresh, setProviderRefresh] = useState(0);
   const [providerId, setProviderId] = useState<RunnableProviderId>("codex");
-  const [modelId, setModelId] = useState("");
+  const [modelId, setModelId] = useState(FALLBACK_PROVIDERS[0].models[0]?.id ?? "");
   const [thinking, setThinking] = useState<ThinkingLevel>("medium");
   const [mode, setMode] = useState<RunMode>("chat");
   const [mcpEnabled, setMcpEnabled] = useState(false);
@@ -125,6 +100,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
   const [safetyPreview, setSafetyPreview] = useState<SafetyPreview | null>(null);
   const [safetyLoading, setSafetyLoading] = useState(true);
   const [safetyError, setSafetyError] = useState("");
+  const [safetyRefresh, setSafetyRefresh] = useState(0);
   const [safetyDetailsOpen, setSafetyDetailsOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<{ prompt: string; safety: SafetyPreview } | null>(null);
   const [receipt, setReceipt] = useState<SafetyReceipt | null>(null);
@@ -151,7 +127,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
       if (current) setSafetyLoading(false);
     });
     return () => { current = false; };
-  }, [api, providerId, mode, mcpEnabled]);
+  }, [api, providerId, mode, mcpEnabled, safetyRefresh]);
   useEffect(() => {
     let current = true;
     void Promise.all([api.listProviders(), api.getPreferences()]).then(([catalog, preferences]) => {
@@ -390,7 +366,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
           {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
         </div>
         {providerError ? <p className="conversation-error" role="alert">{providerError} <button aria-label="Retry providers" className="text-button" onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
-        {safetyError ? <p className="conversation-error" role="alert">{safetyError}</p> : null}
+        {safetyError ? <p className="conversation-error" role="alert">{safetyError} <button aria-label="Retry safety policy" className="text-button" onClick={() => setSafetyRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
         {error ? <p className="conversation-error" role="alert">{error}</p> : null}
         <form className="composer" onSubmit={(event) => void send(event)}>
           <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />

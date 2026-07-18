@@ -18,6 +18,7 @@ import {
   type ThemePreference
 } from "./devicePreferences";
 import type { ExperienceMode, WorkspaceKind } from "./preferences";
+import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
 type SettingsCategory = "general" | "models" | "agent" | "mcp" | "safety" | "appearance" | "account";
 type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences" | "listProviderCredentials" | "connectProviderCredential" | "verifyProviderCredential" | "removeProviderCredential">;
@@ -85,6 +86,7 @@ function SettingsRow({ children, description, label }: {
 export function SettingsPanel({
   api,
   experience,
+  onBack,
   onExperienceChange,
   profileEditable = true,
   storage,
@@ -93,6 +95,7 @@ export function SettingsPanel({
 }: {
   api?: SettingsApi;
   experience: ExperienceMode;
+  onBack?(): void;
   onExperienceChange(experience: ExperienceMode): Promise<void>;
   profileEditable?: boolean;
   storage: Storage;
@@ -104,7 +107,9 @@ export function SettingsPanel({
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>(() => loadDevicePreferences(storage, workspaceId).sendKeyMode);
   const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance>(() => loadDevicePreferences(storage, workspaceId).safetyGuidance);
   const [runtime, setRuntime] = useState<RuntimePreferences>(DEFAULT_RUNTIME_PREFERENCES);
-  const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
+  const [providers, setProviders] = useState<ProviderCatalogEntry[]>(FALLBACK_PROVIDERS);
+  const [providerDiscoveryError, setProviderDiscoveryError] = useState("");
+  const [providerRefresh, setProviderRefresh] = useState(0);
   const [credentials, setCredentials] = useState<ProviderCredentialStatus[]>([]);
   const [credentialDrafts, setCredentialDrafts] = useState<Partial<Record<ProviderCredentialId, string>>>({});
   const [verifiedModels, setVerifiedModels] = useState<Partial<Record<ProviderCredentialId, string[]>>>({});
@@ -119,7 +124,7 @@ export function SettingsPanel({
     [providers, runtime.default_provider]
   );
   const selectedModels = selectedProvider?.models ?? [];
-  const selectedThinkingLevels = selectedProvider?.thinking_levels ?? ["medium"];
+  const selectedThinkingLevels = selectedProvider?.thinking_levels ?? FALLBACK_PROVIDERS[0].thinking_levels;
 
   useEffect(() => {
     const device = loadDevicePreferences(storage, workspaceId);
@@ -129,6 +134,7 @@ export function SettingsPanel({
     setProfileExperience(experience);
     setStatus("");
     setError("");
+    setProviderDiscoveryError("");
     if (api === undefined) {
       setRuntime({
         ...DEFAULT_RUNTIME_PREFERENCES,
@@ -139,19 +145,29 @@ export function SettingsPanel({
     }
     let current = true;
     setBusy(true);
-    void Promise.all([api.getPreferences(), api.listProviders()])
-      .then(([preferences, catalog]) => {
+    void Promise.allSettled([api.getPreferences(), api.listProviders()])
+      .then(([preferencesResult, catalogResult]) => {
         if (!current) return;
-        const selected = catalog.find((provider) => provider.id === preferences.default_provider);
+        const preferences = preferencesResult.status === "fulfilled"
+          ? preferencesResult.value
+          : { ...DEFAULT_RUNTIME_PREFERENCES, response_tone: device.responseTone, custom_rules: device.customRules };
+        const catalog = catalogResult.status === "fulfilled" ? catalogResult.value : [];
+        const availableCatalog = catalog.length > 0 ? catalog : FALLBACK_PROVIDERS;
+        if (catalogResult.status === "rejected") {
+          setProviderDiscoveryError(`${safeError(catalogResult.reason)}. Retry local provider discovery.`);
+        } else if (catalog.length === 0) {
+          setProviderDiscoveryError("No local providers were verified. Check the Codex CLI installation, then retry discovery.");
+        }
+        if (preferencesResult.status === "rejected") {
+          setError("Saved runtime preferences could not be loaded. Local defaults are shown.");
+        }
+        const selected = availableCatalog.find((provider) => provider.id === preferences.default_provider);
         const models = selected?.models ?? [];
         const defaultModel = models.some((model) => model.id === preferences.default_model)
           ? preferences.default_model
           : models[0]?.id ?? null;
         setRuntime({ ...preferences, default_model: defaultModel });
-        setProviders(catalog);
-      })
-      .catch((reason) => {
-        if (current) setError(safeError(reason));
+        setProviders(availableCatalog);
       })
       .finally(() => {
         if (current) setBusy(false);
@@ -164,7 +180,7 @@ export function SettingsPanel({
       });
     }
     return () => { current = false; };
-  }, [api, experience, storage, workspaceId]);
+  }, [api, experience, providerRefresh, storage, workspaceId]);
 
   function updateRuntime<Key extends keyof RuntimePreferences>(
     key: Key,
@@ -308,11 +324,8 @@ export function SettingsPanel({
 
   return (
     <section className="settings-workspace">
-      <header className="settings-heading">
-        <h1>Settings</h1>
-        <p>Control how Corvus looks, responds, and starts agent runs.</p>
-      </header>
-      <div className="settings-layout">
+      <aside className="settings-sidebar">
+        {onBack ? <button className="settings-back" onClick={onBack} type="button"><span aria-hidden="true">â†</span> Back to app</button> : null}
         <nav aria-label="Settings categories" className="settings-categories">
           {CATEGORIES.map((item) => (
             <button
@@ -323,6 +336,12 @@ export function SettingsPanel({
             >{item.label}</button>
           ))}
         </nav>
+      </aside>
+      <div className="settings-content">
+        <header className="settings-heading">
+          <h1>Settings</h1>
+          <p>Control how Corvus looks, responds, and starts agent runs.</p>
+        </header>
         <div className="settings-section" data-category={category}>
           {category === "general" ? <>
             <div className="settings-section__heading"><h2>General</h2><p>Your workspace profile and language.</p></div>
@@ -338,6 +357,7 @@ export function SettingsPanel({
 
           {category === "models" ? <>
             <div className="settings-section__heading"><h2>Models</h2><p>Defaults used when a new conversation opens.</p></div>
+            {providerDiscoveryError ? <div className="provider-discovery" role="alert"><span>{providerDiscoveryError}</span><button className="button" disabled={busy} onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry discovery</button></div> : null}
             <SettingsRow description="Only detected local providers can run." label="Provider"><select aria-label="Default provider" disabled={busy || providers.length === 0} onChange={(event) => updateProvider(event.target.value as "codex" | "claude")} value={runtime.default_provider}>{providers.length === 0 ? <option value={runtime.default_provider}>{title(runtime.default_provider)}</option> : providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <option disabled={entry.status !== "ready"} key={entry.id} value={entry.id}>{entry.label} · {entry.status_label}</option>)}</select></SettingsRow>
             <SettingsRow description="Recommended models appear first in the composer." label="Model"><select aria-label="Default model" disabled={busy || selectedModels.length === 0} onChange={(event) => updateRuntime("default_model", event.target.value)} value={runtime.default_model ?? ""}>{selectedModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.recommended ? " · Recommended" : ""}</option>)}</select></SettingsRow>
             <SettingsRow description="Higher levels spend more time reasoning." label="Thinking"><select aria-label="Default thinking" disabled={busy} onChange={(event) => updateRuntime("default_effort", event.target.value as ThinkingLevel)} value={runtime.default_effort}>{selectedThinkingLevels.map((effort) => <option key={effort} value={effort}>{THINKING_LABELS[effort]}</option>)}</select></SettingsRow>

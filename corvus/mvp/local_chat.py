@@ -708,22 +708,34 @@ def _discover_codex_effective_model() -> str | None:
 
 def _windows_npm_codex_executable() -> Path | None:
     target = _WINDOWS_CODEX_TARGETS.get(platform.machine().lower())
-    wrapper = shutil.which("codex.cmd")
-    if target is None or wrapper is None:
+    if target is None:
         return None
     package_name, target_triple = target
-    package_root = Path(wrapper).resolve().parent / "node_modules" / "@openai" / "codex"
-    candidates = (
-        package_root
-        / "node_modules"
-        / "@openai"
-        / package_name
-        / "vendor"
-        / target_triple
-        / "bin"
-        / "codex.exe",
-        package_root / "vendor" / target_triple / "bin" / "codex.exe",
-    )
+    wrapper_candidates: list[Path] = []
+    discovered_wrapper = shutil.which("codex.cmd")
+    if discovered_wrapper is not None:
+        wrapper_candidates.append(Path(discovered_wrapper))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        wrapper_candidates.append(Path(appdata) / "npm" / "codex.cmd")
+    candidates: list[Path] = []
+    for wrapper in dict.fromkeys(wrapper_candidates):
+        if not wrapper.is_file():
+            continue
+        package_root = wrapper.resolve().parent / "node_modules" / "@openai" / "codex"
+        candidates.extend(
+            (
+                package_root
+                / "node_modules"
+                / "@openai"
+                / package_name
+                / "vendor"
+                / target_triple
+                / "bin"
+                / "codex.exe",
+                package_root / "vendor" / target_triple / "bin" / "codex.exe",
+            )
+        )
     return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
 
 

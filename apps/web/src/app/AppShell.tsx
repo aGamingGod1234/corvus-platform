@@ -58,8 +58,9 @@ export function AppShell({
         data-experience={profile.experience}
         data-inspector={inspectorOpen ? "open" : "closed"}
         data-scope={profile.workspaceKind}
+        data-route={activeRoute}
       >
-        <NavigationRail
+        {activeRoute !== "settings" ? <NavigationRail
           accountEmail={accountEmail}
           activeRoute={activeRoute}
           legacyPreferencePending={legacyPreferencePending}
@@ -71,7 +72,7 @@ export function AppShell({
           selectedWorkspace={selectedWorkspace}
           selectionRequired={selectionRequired}
           workspaces={workspaces}
-        />
+        /> : null}
         <header className="adaptive-topbar">
           <div><BrandLockup className="mobile-wordmark" /><strong>{profile.label}</strong></div>
           {error ? <ConnectionBanner error={error} /> : null}
@@ -81,7 +82,7 @@ export function AppShell({
           {children}
         </main>
         {inspectorOpen ? <div className="adaptive-inspector-overlay">{inspector}</div> : null}
-        <ResponsiveNavigation
+        {activeRoute !== "settings" ? <ResponsiveNavigation
           accountEmail={accountEmail}
           activeRoute={activeRoute}
           legacyPreferencePending={legacyPreferencePending}
@@ -92,7 +93,7 @@ export function AppShell({
           selectedWorkspace={selectedWorkspace}
           selectionRequired={selectionRequired}
           workspaces={workspaces}
-        />
+        /> : null}
       </div>
     </>
   );

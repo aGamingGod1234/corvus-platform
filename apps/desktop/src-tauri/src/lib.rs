@@ -371,6 +371,13 @@ pub fn build_desktop_url(base_url: &str, pairing_secret: &str) -> Result<tauri::
 
 pub fn run() -> Result<(), String> {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(DesktopState::default())
         .setup(|app| setup_app(app).map_err(|error| std::io::Error::other(error).into()))
         .build(tauri::generate_context!())

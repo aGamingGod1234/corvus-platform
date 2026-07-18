@@ -176,8 +176,9 @@ describe("Corvus operator console", () => {
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
     expect(api.session).toHaveBeenCalledTimes(2);
     expect(screen.getByText("paired-operator")).toBeVisible();
-    expect(screen.getByText("Define the next durable outcome.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Launch control/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
+    expect(screen.getByRole("row", { name: /Launch control/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
   });
 
   it("uses one local left navigation and omits permanent secondary rails", async () => {
@@ -274,6 +275,27 @@ describe("Corvus operator console", () => {
     expect(api.createProject).not.toHaveBeenCalled();
   });
 
+  it("replaces the app sidebar in Settings and returns to the main workspace", async () => {
+    const api = fakeApi([PROJECT]);
+    api.session = vi.fn().mockResolvedValue({
+      csrf_token: "csrf",
+      username: "operator",
+      user_id: "operator-1",
+      tenant_id: "local",
+      expires_at: "2026-07-15T00:00:00Z"
+    });
+    const user = userEvent.setup();
+    renderApp(api, preferenceStorage);
+
+    await user.click(await screen.findByRole("link", { name: "Settings" }));
+
+    expect(screen.queryByRole("complementary", { name: "Local workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Settings categories" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Back to app/i }));
+    expect(await screen.findByRole("complementary", { name: "Local workspace" })).toBeVisible();
+    expect(screen.getByRole("main", { name: "Threads" })).toBeVisible();
+  });
+
   it("creates an approval-bearing workflow with a reserved demo budget", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
@@ -300,7 +322,7 @@ describe("Corvus operator console", () => {
     });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Repositories" }));
+    await user.click(await screen.findByRole("link", { name: "Runs" }));
 
     await user.type(await screen.findByLabelText("Outcome"), "Browser delivery");
     await user.type(screen.getByLabelText("Acceptance criterion"), "Approval is explicit");
@@ -359,7 +381,7 @@ describe("Corvus operator console", () => {
 
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
-    await user.click(await screen.findByRole("link", { name: "Repositories" }));
+    await user.click(await screen.findByRole("link", { name: "Runs" }));
     await screen.findByText("Browser delivery");
     await waitFor(() => expect(streams).toHaveLength(1));
     streams[0].emit("work_item.running");
@@ -371,7 +393,7 @@ describe("Corvus operator console", () => {
     vi.unstubAllGlobals();
   });
 
-  it("operates collaboration and governed memory through connected controls", async () => {
+  it("creates and activates a reusable skill from the focused Skills page", async () => {
     const api = fakeApi([PROJECT]);
     api.session = vi.fn().mockResolvedValue({
       csrf_token: "csrf",
@@ -380,21 +402,28 @@ describe("Corvus operator console", () => {
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
     });
+    const draft = {
+      id: "skill-1",
+      project_id: PROJECT.id,
+      name: "Release checklist",
+      version: 1,
+      content: "Verify tests and summarize risks.",
+      status: "draft",
+      created_at: "2026-07-18T00:00:00Z"
+    };
+    api.createSkill = vi.fn().mockResolvedValue(draft);
+    api.activateSkill = vi.fn().mockResolvedValue({ ...draft, status: "active" });
     const user = userEvent.setup();
     renderApp(api, preferenceStorage);
 
     await user.click(await screen.findByRole("link", { name: "Skills" }));
-    await user.type(screen.getByLabelText("Team name"), "Operators");
-    await user.click(screen.getByRole("button", { name: "Create team" }));
-    expect(api.createTeam).toHaveBeenCalledWith(PROJECT.id, "Operators");
-    expect(await screen.findByText("Operators")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "New skill" }));
+    await user.type(screen.getByLabelText("Skill name"), "Release checklist");
+    await user.type(screen.getByLabelText("Instructions"), "Verify tests and summarize risks.");
+    await user.click(screen.getByRole("button", { name: "Create and activate" }));
 
-    await user.type(screen.getByLabelText("Memory content"), "Remember the durable boundary.");
-    await user.click(screen.getByRole("button", { name: "Store memory" }));
-    expect(api.storeMemory).toHaveBeenCalledWith(
-      PROJECT.id,
-      "Remember the durable boundary."
-    );
-    expect(await screen.findByText("Remember the durable boundary.")).toBeVisible();
+    expect(api.createSkill).toHaveBeenCalledWith(PROJECT.id, "Release checklist", "Verify tests and summarize risks.");
+    expect(api.activateSkill).toHaveBeenCalledWith("skill-1");
+    expect(await screen.findByRole("row", { name: /Release checklist/ })).toBeVisible();
   });
 });

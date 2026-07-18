@@ -16,8 +16,9 @@
   --scope-accent: var(--signal);
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
-  grid-template-rows: minmax(0, 100vh);
-  min-height: 100vh;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
   background: var(--paper);
 }
 
@@ -30,7 +31,8 @@
   flex-direction: column;
   overflow-y: auto;
   border-right: 1px solid var(--line);
-  background: var(--paper);
+  overscroll-behavior: contain;
+  background: var(--raised);
 }
 
 .adaptive-wordmark {
@@ -184,7 +186,10 @@
 .runtime-state small { max-width: 28rem; color: var(--danger); font-family: "Inter Tight Variable", sans-serif; }
 .runtime-state--warning > span { background: var(--approval); box-shadow: 0 0 0 4px color-mix(in oklch, var(--approval) 12%, transparent); }
 
-.adaptive-main { grid-column: 2; grid-row: 1; overflow-y: auto; padding: clamp(1.25rem, 3vw, 2.5rem); }
+.adaptive-main { grid-column: 2; grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: clamp(1.25rem, 3vw, 2.5rem); background: var(--paper); }
+.adaptive-shell[data-route="settings"] { grid-template-columns: 1fr; }
+.adaptive-shell[data-route="settings"] .adaptive-topbar { display: none; }
+.adaptive-shell[data-route="settings"] .adaptive-main { grid-column: 1; overflow: hidden; padding: 0; }
 .adaptive-main__error { position: sticky; z-index: 12; top: 0; margin: 0 0 1rem; padding: .65rem 1rem; border: 1px solid color-mix(in oklch, var(--danger) 30%, var(--line)); border-radius: .5rem; background: color-mix(in oklch, var(--danger) 7%, var(--raised)); }
 .adaptive-inspector-overlay {
   position: fixed;

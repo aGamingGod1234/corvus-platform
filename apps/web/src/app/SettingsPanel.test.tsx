@@ -113,6 +113,29 @@ describe("SettingsPanel", () => {
     expect(screen.queryByRole("option", { name: /provider default/i })).not.toBeInTheDocument();
   });
 
+  it("keeps curated Codex controls visible and retries failed discovery", async () => {
+    const api = settingsApi();
+    vi.mocked(api.listProviders).mockRejectedValue(new Error("catalog unavailable"));
+    render(
+      <SettingsPanel
+        api={api}
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-discovery"
+        workspaceKind="individual"
+      />
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(await screen.findByRole("option", { name: /GPT-5\.6 Sol.*Recommended/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Low" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Extra high" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry discovery" }));
+    await waitFor(() => expect(api.listProviders).toHaveBeenCalledTimes(2));
+  });
+
   it("explains the enforced local safety boundaries without offering a bypass", async () => {
     const storage = new MemoryStorage();
     render(

@@ -31,7 +31,7 @@ def test_provider_catalog_is_truthful_and_contains_recommended_models() -> None:
     assert by_id["codex"].models[0].recommended is True
     assert any(model.recommended for model in by_id["claude"].models)
     assert by_id["claude"].thinking_levels[-1] == "max"
-    assert by_id["codex"].thinking_levels == ("low", "medium", "high", "xhigh", "max")
+    assert by_id["codex"].thinking_levels == ("low", "medium", "high", "xhigh")
     assert by_id["codex"].status_label == "Ready on this device"
     assert by_id["claude"].status_label == "Ready on this device"
 
@@ -48,3 +48,12 @@ def test_provider_catalog_never_serializes_executable_paths_or_secrets() -> None
     assert "token" not in rendered
     assert "secret" not in rendered
     assert "executable" not in rendered
+
+
+def test_ready_codex_always_has_curated_models_when_cli_config_is_empty() -> None:
+    catalog = build_provider_catalog(codex_available=True, claude_available=False)
+
+    codex = next(provider for provider in catalog if provider.id == "codex")
+
+    assert [model.id for model in codex.models] == ["gpt-5.6-sol", "gpt-5.6-terra"]
+    assert codex.models[0].recommended is True

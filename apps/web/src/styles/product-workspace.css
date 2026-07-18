@@ -9,7 +9,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--raised);
+  background: var(--paper);
 }
 
 .conversation-panel { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; }
@@ -118,11 +118,16 @@
 .safety-confirmation__actions { display: flex; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
 .primary-action { border: 0; border-radius: .45rem; padding: .58rem .78rem; color: white; background: var(--signal); cursor: pointer; font-weight: 680; }
 
-.settings-workspace { width: min(100%, 68rem); margin: 0 auto; padding: clamp(1.2rem, 3vw, 2.5rem); }
+.settings-workspace { display: grid; grid-template-columns: 232px minmax(0, 1fr); width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--paper); }
+.settings-sidebar { min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--line); padding: .75rem .45rem; background: var(--raised); }
+.settings-back { display: flex; gap: .55rem; align-items: center; width: 100%; min-height: 42px; margin-bottom: .75rem; border: 0; border-bottom: 1px solid var(--line); padding: .45rem .65rem .8rem; color: var(--ink); background: transparent; cursor: pointer; text-align: left; font-size: .8rem; font-weight: 680; }
+.settings-back:hover { color: var(--signal); }
+.settings-content { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: clamp(1.5rem, 4vw, 3.5rem); }
+.settings-content > .settings-heading,
+.settings-content > .settings-section { width: min(100%, 64rem); margin-inline: auto; }
 .settings-heading { margin-bottom: 1.6rem; }
 .settings-heading h1 { margin: 0 0 .3rem; font-family: inherit; font-size: clamp(1.7rem, 3vw, 2.25rem); font-weight: 690; letter-spacing: -.035em; }
 .settings-heading p { margin: 0; color: var(--muted); }
-.settings-layout { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3.5rem); }
 .settings-categories { display: grid; align-content: start; gap: .15rem; }
 .settings-categories button { border: 0; border-radius: .42rem; padding: .55rem .65rem; color: var(--muted); background: transparent; cursor: pointer; text-align: left; font-size: .82rem; font-weight: 610; }
 .settings-categories button:hover { color: var(--ink); }
@@ -157,6 +162,7 @@
 .provider-connection__actions button { border: 1px solid var(--line); border-radius: .4rem; padding: .38rem .5rem; color: var(--muted); background: transparent; cursor: pointer; font-size: .68rem; }
 .provider-connection__actions button:hover:not(:disabled) { color: var(--ink); border-color: color-mix(in oklch, var(--signal) 45%, var(--line)); }
 .provider-connection__actions button:disabled { cursor: not-allowed; opacity: .45; }
+.provider-discovery { display: flex; gap: 1rem; align-items: center; justify-content: space-between; margin-top: 1rem; border: 1px solid color-mix(in oklch, var(--approval) 35%, var(--line)); border-radius: .5rem; padding: .7rem .8rem; color: var(--approval); background: color-mix(in oklch, var(--approval) 7%, transparent); font-size: .76rem; }
 .save-status, .settings-error, .field-note { margin: .75rem 0 0; font-size: .76rem; }
 .save-status { color: var(--success); }
 .settings-error { color: var(--danger); }
@@ -220,8 +226,10 @@ html[data-theme="light"] { color-scheme: light; }
   .composer { width: calc(100% - 1rem); margin-bottom: .5rem; }
   .composer-control--provider { max-width: 5.8rem; }
   .composer-control--model { max-width: 8rem; }
-  .settings-workspace { padding: 1rem; }
-  .settings-layout { grid-template-columns: 1fr; gap: 1rem; }
+  .settings-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-sidebar { overflow: hidden; border-right: 0; border-bottom: 1px solid var(--line); padding: .5rem; }
+  .settings-back { width: auto; margin-bottom: .35rem; border-bottom: 0; padding: .4rem .5rem; }
+  .settings-content { padding: 1rem; }
   .settings-categories { display: flex; overflow-x: auto; padding-bottom: .25rem; scrollbar-width: none; }
   .settings-categories::-webkit-scrollbar { display: none; }
   .settings-categories button { flex: 0 0 auto; }

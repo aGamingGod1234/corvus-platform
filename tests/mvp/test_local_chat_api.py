@@ -818,3 +818,42 @@ def test_default_local_chat_prefers_npm_native_codex_binary(
     backend = service._backend
     assert isinstance(backend, local_chat_module.CodexLocalChatBackend)
     assert backend._adapter._executable == native.resolve()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Codex launcher layout")
+def test_default_local_chat_finds_user_npm_codex_without_terminal_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appdata = tmp_path / "AppData" / "Roaming"
+    npm_root = appdata / "npm"
+    wrapper = npm_root / "codex.cmd"
+    native = (
+        npm_root
+        / "node_modules"
+        / "@openai"
+        / "codex"
+        / "node_modules"
+        / "@openai"
+        / "codex-win32-x64"
+        / "vendor"
+        / "x86_64-pc-windows-msvc"
+        / "bin"
+        / "codex.exe"
+    )
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_bytes(b"wrapper")
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_bytes(b"codex")
+    monkeypatch.setenv("APPDATA", os.fspath(appdata))
+    monkeypatch.setattr(local_chat_module.shutil, "which", lambda _name: None)
+
+    service = local_chat_module.build_default_local_chat_service(
+        scratch_root=tmp_path / "runs",
+        cursor_secret=b"c" * 32,
+    )
+
+    assert service is not None
+    backend = service._backend
+    assert isinstance(backend, local_chat_module.CodexLocalChatBackend)
+    assert backend._adapter._executable == native.resolve()

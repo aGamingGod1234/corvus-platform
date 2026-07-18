@@ -690,6 +690,23 @@ export function App({
       retrievedMemories={retrievedMemories}
     />
   );
+  const repositoriesSurface = (
+    <RepositoriesWorkspace
+      activeProject={activeProject}
+      busy={busy}
+      onCreate={createProject}
+      onSelect={setActiveProject}
+      projects={projects}
+    />
+  );
+  const skillsSurface = (
+    <SkillsWorkspace
+      busy={busy}
+      onCreate={createSkill}
+      project={activeProject}
+      skills={operations.skills}
+    />
+  );
 
   if (localRuntime) {
     if (phase === "checking") return <LoadingScreen />;
@@ -746,13 +763,18 @@ export function App({
           <SettingsPanel
             api={createConversationApi(localSession.csrf_token)}
             experience={localProfile.experience}
+            onBack={() => setActiveRoute(localProfile.routes[0].id)}
             onExperienceChange={async () => undefined}
             profileEditable={false}
             storage={preferenceStorage}
             workspaceId={localSession.user_id}
             workspaceKind={localProfile.workspaceKind}
           />
-        ) : localSurface === "operations" ? operationsSurface : executionSurface}
+        ) : localSurface === "repositories" ? repositoriesSurface
+          : localSurface === "runs" ? executionSurface
+          : localSurface === "skills" ? skillsSurface
+          : localSurface === "operations" ? operationsSurface
+          : executionSurface}
       </LocalRuntimeShell>
     );
   }
@@ -882,6 +904,7 @@ export function App({
         ) : (activeRoute || profile.routes[0].id) === "settings" ? (
           <SettingsPanel
             experience={profile.experience}
+            onBack={() => setActiveRoute(profile.routes[0].id)}
             onExperienceChange={async (nextExperience) => {
               if (nextExperience === profile.experience) return;
               const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
@@ -945,8 +968,8 @@ function LocalRuntimeShell({
   return (
     <>
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"}>
-        <aside aria-label="Local workspace" className="local-sidebar">
+      <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"} data-route={activeRoute}>
+        {activeRoute !== "settings" ? <aside aria-label="Local workspace" className="local-sidebar">
           <BrandLockup className="local-sidebar__wordmark" />
           <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
           <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
@@ -965,7 +988,7 @@ function LocalRuntimeShell({
             ))}
           </nav>
           <div className="local-sidebar__connection"><span aria-hidden="true" />On this computer</div>
-        </aside>
+        </aside> : null}
         <main aria-label={routeLabel} className="local-main" id="main-content" ref={mainRef} tabIndex={-1}>
           {error && <p className="local-main__error" role="alert">{error}</p>}
           {children}
@@ -976,14 +999,16 @@ function LocalRuntimeShell({
   );
 }
 
-type LocalSurface = "conversations" | "execution" | "schedule" | "operations" | "settings";
+type LocalSurface = "conversations" | "repositories" | "runs" | "schedule" | "skills" | "operations" | "settings";
 
 function localSurfaceForRoute(routeId: string): LocalSurface {
   if (routeId === "threads") return "conversations";
+  if (routeId === "repositories") return "repositories";
+  if (routeId === "runs") return "runs";
   if (routeId === "schedule") return "schedule";
   if (routeId === "settings") return "settings";
-  if (routeId === "skills" || routeId === "people" || routeId === "policies") return "operations";
-  return "execution";
+  if (routeId === "skills") return "skills";
+  return "operations";
 }
 
 function LocalNavigationIcon({ routeId }: { routeId: string }) {
@@ -1099,6 +1124,97 @@ function PairingScreen({
         {error && <p className="inline-error" role="alert">{error}</p>}
       </section>
     </div>
+  );
+}
+
+function RepositoriesWorkspace({
+  activeProject,
+  busy,
+  onCreate,
+  onSelect,
+  projects
+}: {
+  activeProject: Project | null;
+  busy: boolean;
+  onCreate(name: string): Promise<void>;
+  onSelect(project: Project): void;
+  projects: readonly Project[];
+}) {
+  const [creating, setCreating] = useState(projects.length === 0);
+  const [name, setName] = useState("");
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    const nextName = name.trim();
+    if (nextName === "") return;
+    await onCreate(nextName);
+    setName("");
+    setCreating(false);
+  }
+
+  return (
+    <section className="resource-workspace" aria-labelledby="repositories-title">
+      <header className="resource-heading">
+        <div><p className="eyebrow">Local workspace</p><h1 id="repositories-title">Repositories</h1><p>Choose the project boundary Corvus uses for runs, schedules, and skills.</p></div>
+        <button className="button button--primary" onClick={() => setCreating(true)} type="button">New repository</button>
+      </header>
+      {creating ? <form className="resource-create" onSubmit={(event) => void submit(event)}>
+        <div><label htmlFor="repository-name">Repository name</label><input autoFocus id="repository-name" onChange={(event) => setName(event.target.value)} placeholder="Corvus launch demo" value={name} /></div>
+        <div className="row-actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || name.trim() === ""} type="submit">Create repository</button></div>
+      </form> : null}
+      <div className="resource-table" role="table" aria-label="Repositories">
+        <div className="resource-table__header" role="row"><span role="columnheader">Repository</span><span role="columnheader">Runtime</span><span role="columnheader">Status</span></div>
+        {projects.length === 0 ? <div className="resource-empty"><strong>No repositories yet</strong><span>Create one to unlock governed runs and reusable skills.</span></div> : projects.map((project) => (
+          <button aria-pressed={project.id === activeProject?.id} className="resource-row" key={project.id} onClick={() => onSelect(project)} role="row" type="button">
+            <span role="cell"><strong>{project.name}</strong><small>{project.id}</small></span><span role="cell">This computer</span><span role="cell" className="resource-status"><i aria-hidden="true" />{project.id === activeProject?.id ? "Active" : "Ready"}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SkillsWorkspace({
+  busy,
+  onCreate,
+  project,
+  skills
+}: {
+  busy: boolean;
+  onCreate(name: string, content: string): Promise<void>;
+  project: Project | null;
+  skills: readonly SkillVersion[];
+}) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (name.trim() === "" || content.trim() === "") return;
+    await onCreate(name.trim(), content.trim());
+    setName("");
+    setContent("");
+    setCreating(false);
+  }
+
+  return (
+    <section className="resource-workspace" aria-labelledby="skills-title">
+      <header className="resource-heading">
+        <div><p className="eyebrow">{project?.name ?? "No active repository"}</p><h1 id="skills-title">Skills</h1><p>Turn stable instructions into versioned capabilities that schedules can reuse.</p></div>
+        <button className="button button--primary" disabled={project === null} onClick={() => setCreating(true)} type="button">New skill</button>
+      </header>
+      {project === null ? <div className="resource-empty"><strong>Choose a repository first</strong><span>Skills remain scoped to an authorized project.</span></div> : null}
+      {creating ? <form className="skill-editor" onSubmit={(event) => void submit(event)}>
+        <div><label htmlFor="mvp-skill-name">Skill name</label><input autoFocus id="mvp-skill-name" onChange={(event) => setName(event.target.value)} placeholder="Release checklist" value={name} /></div>
+        <div><label htmlFor="mvp-skill-content">Instructions</label><textarea id="mvp-skill-content" onChange={(event) => setContent(event.target.value)} placeholder="Verify tests, summarize changes, and list remaining risks." rows={6} value={content} /></div>
+        <div className="row-actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || name.trim() === "" || content.trim() === ""} type="submit">Create and activate</button></div>
+      </form> : null}
+      {project !== null ? <div className="resource-table" role="table" aria-label="Skills">
+        <div className="resource-table__header" role="row"><span role="columnheader">Skill</span><span role="columnheader">Version</span><span role="columnheader">Status</span></div>
+        {skills.length === 0 ? <div className="resource-empty"><strong>No skills yet</strong><span>Create a small reusable instruction set for the demo.</span></div> : skills.map((skill) => <div className="resource-row resource-row--static" key={skill.id} role="row"><span role="cell"><strong>{skill.name}</strong><small>{skill.id}</small></span><span role="cell">v{skill.version}</span><span role="cell" className="resource-status"><i aria-hidden="true" />{skill.status}</span></div>)}
+      </div> : null}
+    </section>
   );
 }
 

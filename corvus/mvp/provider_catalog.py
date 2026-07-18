@@ -6,6 +6,7 @@ from typing import Literal
 ProviderCatalogStatus = Literal["ready", "preview", "unavailable"]
 ProviderCatalogTransport = Literal["local", "api"]
 ThinkingLevel = Literal["low", "medium", "high", "xhigh", "max"]
+_CURATED_CODEX_MODELS = ("gpt-5.6-sol", "gpt-5.6-terra")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +64,7 @@ def build_provider_catalog(
             status="ready" if codex_available else "unavailable",
             status_label="Ready on this device" if codex_available else "Not installed",
             models=_codex_models(codex_models, codex_effective_model),
-            thinking_levels=("low", "medium", "high", "xhigh", "max"),
+            thinking_levels=("low", "medium", "high", "xhigh"),
             supports_mcp=True,
         ),
         ProviderCatalogEntry(
@@ -120,6 +121,7 @@ def _codex_models(
     if effective:
         ordered.append(effective)
     ordered.extend(discovered)
+    ordered.extend(_CURATED_CODEX_MODELS)
     unique = tuple(dict.fromkeys(model.strip() for model in ordered if model.strip()))
     return tuple(
         ProviderModel(model, _model_label(model), recommended=index == 0)
