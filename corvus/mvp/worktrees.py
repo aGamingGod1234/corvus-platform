@@ -79,6 +79,7 @@ class WorktreeManager:
             repository.id,
             target,
             base_sha,
+            "creating",
         )
         try:
             with self.store.transaction() as connection:
@@ -118,15 +119,27 @@ class WorktreeManager:
                 or actual_sha.stdout.decode("ascii", errors="strict").strip() != base_sha
             ):
                 raise WorktreeOwnershipError("worktree_checkout_mismatch")
+            git_metadata_digest = self._git_metadata_digest(canonical_target)
         except (OSError, UnicodeDecodeError, WorktreeOwnershipError):
             self._cleanup_failed_worktree(canonical_repository, target)
             self._delete_creating_lease(normalized_run_id)
             raise
         with self.store.transaction() as connection:
             connection.execute(
-                "UPDATE mvp_worktree_leases SET root_path = ?, status = 'active' "
+                "UPDATE mvp_worktree_leases SET root_path = ?, ownership_digest = ?, "
+                "status = 'active' "
                 "WHERE run_id = ? AND status = 'creating'",
-                (os.fspath(canonical_target), normalized_run_id),
+                (
+                    os.fspath(canonical_target),
+                    self._ownership_digest(
+                        normalized_run_id,
+                        repository.id,
+                        canonical_target,
+                        base_sha,
+                        git_metadata_digest,
+                    ),
+                    normalized_run_id,
+                ),
             )
         return self.get(normalized_run_id)
 
@@ -208,6 +221,7 @@ class WorktreeManager:
             lease.repository_id,
             expected,
             lease.base_sha,
+            self._git_metadata_digest(lease.root),
         )
         if lease.root != expected or not hmac.compare_digest(
             lease.ownership_digest, expected_digest
@@ -259,9 +273,35 @@ class WorktreeManager:
         repository_id: str,
         root: Path,
         base_sha: str,
+        git_metadata_digest: str,
     ) -> str:
-        payload = "\0".join((run_id, repository_id, os.fspath(root), base_sha)).encode("utf-8")
+        payload = "\0".join(
+            (run_id, repository_id, os.fspath(root), base_sha, git_metadata_digest)
+        ).encode("utf-8")
         return hmac.new(self._ownership_secret, payload, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _git_metadata_digest(root: Path) -> str:
+        metadata = root / ".git"
+        if path_is_link_or_reparse(metadata) or not metadata.is_file():
+            raise WorktreeOwnershipError("worktree_git_metadata_invalid")
+        try:
+            raw = metadata.read_bytes()
+            text = raw.decode("utf-8", errors="strict").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise WorktreeOwnershipError("worktree_git_metadata_invalid") from exc
+        if len(raw) > 4096 or not text.startswith("gitdir: ") or "\n" in text or "\r" in text:
+            raise WorktreeOwnershipError("worktree_git_metadata_invalid")
+        git_directory = Path(text.removeprefix("gitdir: "))
+        if not git_directory.is_absolute():
+            git_directory = metadata.parent / git_directory
+        try:
+            canonical_git_directory = git_directory.resolve(strict=True)
+        except OSError as exc:
+            raise WorktreeOwnershipError("worktree_git_metadata_invalid") from exc
+        if not canonical_git_directory.is_dir() or path_is_link_or_reparse(canonical_git_directory):
+            raise WorktreeOwnershipError("worktree_git_metadata_invalid")
+        return hashlib.sha256(raw).hexdigest()
 
     @staticmethod
     def _run_id(value: str) -> str:

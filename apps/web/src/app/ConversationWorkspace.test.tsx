@@ -328,6 +328,28 @@ describe("ConversationWorkspace", () => {
     expect(stream.close).toHaveBeenCalled();
   });
 
+  it("keeps streaming when the backend declines cancellation", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    vi.mocked(api.cancelRun).mockResolvedValue({
+      run_id: "run-1",
+      state: "running",
+      accepted: false,
+      reason_code: "provider_declined"
+    });
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="developer" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith("run-1"));
+    expect(screen.getByText("Working")).toBeVisible();
+    expect(stream.close).not.toHaveBeenCalled();
+    expect(api.getSafetyReceipt).not.toHaveBeenCalled();
+  });
+
   it("leaves working state when the run event stream closes permanently", async () => {
     const stream = new FakeRunStream();
     const api = conversationApi(stream);

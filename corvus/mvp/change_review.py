@@ -86,6 +86,7 @@ class ChangeReviewService:
                     else None
                 ),
                 "patch_truncated": item.patch_truncated,
+                "content_identity": self._content_identity(root, item.status, item.path),
             }
             for item in files
         ]
@@ -112,9 +113,12 @@ class ChangeReviewService:
             return True, None, False
         if status == "untracked":
             try:
-                content = path.read_text(encoding="utf-8", errors="strict").splitlines(
-                    keepends=True
-                )
+                with path.open("rb") as stream:
+                    raw = stream.read(self._max_patch_bytes + 1)
+                input_truncated = len(raw) > self._max_patch_bytes
+                bounded = raw[: self._max_patch_bytes]
+                text = bounded.decode("utf-8", errors="ignore" if input_truncated else "strict")
+                content = text.splitlines(keepends=True)
             except (OSError, UnicodeDecodeError) as exc:
                 raise ChangeReviewError("change_review_file_unreadable") from exc
             patch_text = "".join(
@@ -125,7 +129,8 @@ class ChangeReviewService:
                     tofile=f"b/{relative}",
                 )
             )
-            return False, *self._bounded_patch(patch_text.encode("utf-8"))
+            patch, patch_truncated = self._bounded_patch(patch_text.encode("utf-8"))
+            return False, patch, input_truncated or patch_truncated
         result = self.git.run(
             root,
             ("diff", "--no-ext-diff", "--binary", "--unified=3", "HEAD", "--", relative),
@@ -136,6 +141,34 @@ class ChangeReviewService:
             return True, None, False
         patch, truncated = self._bounded_patch(result.stdout)
         return False, patch, truncated
+
+    def _content_identity(
+        self,
+        root: Path,
+        status: Literal["added", "modified", "deleted", "renamed", "untracked"],
+        relative: str,
+    ) -> str:
+        if status == "deleted":
+            result = self.git.run(root, ("rev-parse", "--verify", f"HEAD:{relative}"))
+            if result.returncode != 0:
+                raise ChangeReviewError("change_review_deleted_blob_invalid")
+            value = result.stdout.decode("ascii", errors="strict").strip()
+            if len(value) not in {40, 64} or any(
+                character not in "0123456789abcdef" for character in value
+            ):
+                raise ChangeReviewError("change_review_deleted_blob_invalid")
+            return f"git:{value}"
+        target = root.joinpath(*PurePosixPath(relative).parts)
+        if not target.is_file() or path_is_link_or_reparse(target):
+            raise ChangeReviewError("change_review_file_unreadable")
+        digest = hashlib.sha256()
+        try:
+            with target.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise ChangeReviewError("change_review_file_unreadable") from exc
+        return f"sha256:{digest.hexdigest()}"
 
     def _bounded_patch(self, value: bytes) -> tuple[str, bool]:
         truncated = len(value) > self._max_patch_bytes

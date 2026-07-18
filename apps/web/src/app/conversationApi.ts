@@ -14,7 +14,7 @@ export interface LocalChatRun {
 
 export interface LocalChatCancel {
   run_id: string;
-  state: "cancelled" | "completed" | "failed";
+  state: "running" | "cancelled" | "completed" | "failed";
   accepted: boolean;
   reason_code: string | null;
 }

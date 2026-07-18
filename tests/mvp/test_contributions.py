@@ -49,7 +49,11 @@ def _run(git: GitProcess, cwd: Path, *args: str) -> str:
     return result.stdout.decode().strip()
 
 
-def _environment(tmp_path: Path) -> tuple[ContributionService, object, GitProcess, FakeGitHub]:
+def _environment(
+    tmp_path: Path,
+    *,
+    readme: str = "initial\n",
+) -> tuple[ContributionService, object, GitProcess, FakeGitHub]:
     git = _git()
     remote = tmp_path / "remote.git"
     remote.mkdir()
@@ -59,7 +63,7 @@ def _environment(tmp_path: Path) -> tuple[ContributionService, object, GitProces
     _run(git, source, "init", "--initial-branch=main")
     _run(git, source, "config", "user.email", "corvus@example.test")
     _run(git, source, "config", "user.name", "Corvus Tests")
-    (source / "README.md").write_text("initial\n", encoding="utf-8")
+    (source / "README.md").write_text(readme, encoding="utf-8")
     _run(git, source, "add", "--", "README.md")
     _run(git, source, "commit", "-m", "initial")
     _run(git, source, "remote", "add", "origin", str(remote))
@@ -174,6 +178,24 @@ def test_prepare_commits_a_selected_deletion(tmp_path: Path) -> None:
     assert _run(git, lease.root, "show", "--format=", "--name-status", "HEAD") == "D\tREADME.md"  # type: ignore[attr-defined]
 
 
+def test_prepare_scans_the_deleted_blob_for_secrets(tmp_path: Path) -> None:
+    service, lease, _, _ = _environment(
+        tmp_path,
+        readme="TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456\n",
+    )
+    lease.root.joinpath("README.md").unlink()  # type: ignore[attr-defined]
+
+    with pytest.raises(ContributionConflict, match="secret_scan_blocked"):
+        service.prepare(
+            lease.run_id,  # type: ignore[attr-defined]
+            selected_paths=("README.md",),
+            message="Remove secret",
+            title="Remove secret",
+            body="Reviewed deletion.",
+            draft=True,
+        )
+
+
 def test_prepare_stages_both_sides_of_a_selected_rename(tmp_path: Path) -> None:
     service, lease, git, _ = _environment(tmp_path)
     lease.root.joinpath("README.md").rename(lease.root / "GUIDE.md")  # type: ignore[attr-defined]
@@ -226,7 +248,7 @@ def test_resume_revalidates_prepared_content_before_commit(
         )
 
 
-def test_resume_recovers_an_exact_commit_after_state_update_interruption(tmp_path: Path) -> None:
+def test_resume_rejects_a_commit_without_revalidated_content(tmp_path: Path) -> None:
     service, lease, _, _ = _environment(tmp_path)
     lease.root.joinpath("feature.txt").write_text("feature\n", encoding="utf-8")  # type: ignore[attr-defined]
     prepared = service.prepare(
@@ -244,7 +266,22 @@ def test_resume_recovers_an_exact_commit_after_state_update_interruption(tmp_pat
             (lease.run_id,),  # type: ignore[attr-defined]
         )
 
-    recovered = service.prepare(
+    with pytest.raises(ContributionConflict, match="paths_not_changed"):
+        service.prepare(
+            lease.run_id,  # type: ignore[attr-defined]
+            selected_paths=("feature.txt",),
+            message="Add feature",
+            title="Add feature",
+            body="Reviewed feature.",
+            draft=True,
+        )
+    assert prepared.commit_sha is not None
+
+
+def test_publish_rejects_a_branch_advanced_after_review(tmp_path: Path) -> None:
+    service, lease, git, _ = _environment(tmp_path)
+    lease.root.joinpath("feature.txt").write_text("reviewed\n", encoding="utf-8")  # type: ignore[attr-defined]
+    prepared = service.prepare(
         lease.run_id,  # type: ignore[attr-defined]
         selected_paths=("feature.txt",),
         message="Add feature",
@@ -252,9 +289,15 @@ def test_resume_recovers_an_exact_commit_after_state_update_interruption(tmp_pat
         body="Reviewed feature.",
         draft=True,
     )
+    lease.root.joinpath("feature.txt").write_text("changed later\n", encoding="utf-8")  # type: ignore[attr-defined]
+    _run(git, lease.root, "add", "--", "feature.txt")  # type: ignore[attr-defined]
+    _run(git, lease.root, "commit", "--amend", "--no-edit", "--no-verify")  # type: ignore[attr-defined]
 
-    assert recovered.state == "committed"
-    assert recovered.commit_sha == prepared.commit_sha
+    with pytest.raises(ContributionConflict, match="commit_changed"):
+        service.publish(
+            lease.run_id,  # type: ignore[attr-defined]
+            expected_digest=prepared.confirmation_digest,
+        )
 
 
 def test_publish_non_force_pushes_and_creates_draft_pr_once(tmp_path: Path) -> None:

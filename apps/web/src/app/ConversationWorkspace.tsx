@@ -337,8 +337,12 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     setBusy(true);
     try {
       const result = await api.cancelRun(activeRunId);
+      if (result.state === "running") {
+        setRunNote("Cancellation was not accepted; the run is still working.");
+        return;
+      }
       loadSafetyReceipt(activeRunId);
-      finishRun(result.state === "cancelled" ? "cancelled" : result.state);
+      finishRun(result.state);
     } catch (reason) { setError(safeMessage(reason)); }
     finally { setBusy(false); }
   }

@@ -62,9 +62,11 @@ class SecretScanner:
         paths: tuple[str, ...],
         *,
         deleted_paths: tuple[str, ...] = (),
+        deleted_contents: dict[str, bytes] | None = None,
     ) -> SecretScanResult:
         root = self._root(worktree)
         deleted = {self._path_shape(path) for path in deleted_paths}
+        deleted_blobs = deleted_contents or {}
         normalized_paths: list[str] = []
         findings: list[SecretFinding] = []
         content_digests: dict[str, str] = {}
@@ -84,8 +86,12 @@ class SecretScanner:
                     raise SecretScanError("secret_scan_path_invalid") from exc
                 if not canonical_parent.is_relative_to(root):
                     raise SecretScanError("secret_scan_path_invalid")
+                content = deleted_blobs.get(relative)
+                if content is None:
+                    raise SecretScanError("secret_scan_deleted_content_required")
                 normalized_paths.append(relative)
-                content_digests[relative] = "deleted"
+                content_digests[relative] = hashlib.sha256(content).hexdigest()
+                findings.extend(self._scan_content(relative, content))
                 continue
             try:
                 canonical = target.resolve(strict=True)
@@ -94,42 +100,9 @@ class SecretScanner:
             if not canonical.is_relative_to(root) or not canonical.is_file():
                 raise SecretScanError("secret_scan_path_invalid")
             normalized_paths.append(relative)
-            size = canonical.stat().st_size
-            if size > _MAX_FILE_BYTES:
-                findings.append(
-                    SecretFinding(
-                        path=relative,
-                        line=None,
-                        kind="large_file_not_scanned",
-                        severity="warning",
-                    )
-                )
-                continue
             content = canonical.read_bytes()
             content_digests[relative] = hashlib.sha256(content).hexdigest()
-            if b"\0" in content:
-                findings.append(
-                    SecretFinding(
-                        path=relative,
-                        line=None,
-                        kind="binary_not_scanned",
-                        severity="warning",
-                    )
-                )
-                continue
-            try:
-                text = content.decode("utf-8", errors="strict")
-            except UnicodeDecodeError:
-                findings.append(
-                    SecretFinding(
-                        path=relative,
-                        line=None,
-                        kind="non_utf8_not_scanned",
-                        severity="warning",
-                    )
-                )
-                continue
-            findings.extend(self._scan_text(relative, text))
+            findings.extend(self._scan_content(relative, content))
         status: Literal["passed", "warning", "blocked"]
         if any(finding.severity == "blocked" for finding in findings):
             status = "blocked"
@@ -156,6 +129,39 @@ class SecretScanner:
             completed_at=completed_at,
             digest=digest,
         )
+
+    @staticmethod
+    def _scan_content(path: str, content: bytes) -> list[SecretFinding]:
+        if len(content) > _MAX_FILE_BYTES:
+            return [
+                SecretFinding(
+                    path=path,
+                    line=None,
+                    kind="large_file_not_scanned",
+                    severity="warning",
+                )
+            ]
+        if b"\0" in content:
+            return [
+                SecretFinding(
+                    path=path,
+                    line=None,
+                    kind="binary_not_scanned",
+                    severity="warning",
+                )
+            ]
+        try:
+            text = content.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return [
+                SecretFinding(
+                    path=path,
+                    line=None,
+                    kind="non_utf8_not_scanned",
+                    severity="warning",
+                )
+            ]
+        return SecretScanner._scan_text(path, text)
 
     @staticmethod
     def _scan_text(path: str, text: str) -> list[SecretFinding]:

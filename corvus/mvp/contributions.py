@@ -210,12 +210,6 @@ class ContributionService:
             self._set_state(record.run_id, "branch_created")
             record = self._required_for_run(record.run_id)
         if record.state == "branch_created":
-            recovered_paths = self._existing_stage_paths(root, record)
-            if recovered_paths is not None:
-                recovered_sha = self._existing_commit(root, record, recovered_paths)
-                if recovered_sha is not None:
-                    self._set_state(record.run_id, "committed", commit_sha=recovered_sha)
-                    return self._required_for_run(record.run_id)
             selected_changes = self._revalidate_prepare(root, record)
             commit_sha = self._commit_selected(root, record, selected_changes)
             self._set_state(record.run_id, "committed", commit_sha=commit_sha)
@@ -239,9 +233,20 @@ class ContributionService:
             raise ContributionConflict("contribution_github_remote_required")
         remote_slug = str(repository["remote_slug"])
         if record.state == "committed":
+            if record.commit_sha is None:
+                raise ContributionConflict("contribution_commit_missing")
+            branch_head = self.git.run(
+                lease.root,
+                ("rev-parse", "--verify", f"refs/heads/{record.branch}"),
+            )
+            if (
+                branch_head.returncode != 0
+                or branch_head.stdout.decode("ascii", errors="strict").strip() != record.commit_sha
+            ):
+                raise ContributionConflict("contribution_commit_changed")
             pushed = self.git.run(
                 lease.root,
-                ("push", "--set-upstream", "origin", record.branch),
+                ("push", "origin", f"{record.commit_sha}:refs/heads/{record.branch}"),
                 timeout=180,
             )
             if pushed.returncode != 0:
@@ -304,6 +309,9 @@ class ContributionService:
             or current.stdout.decode("utf-8", errors="strict").strip() != branch
         ):
             raise ContributionConflict("contribution_branch_failed")
+        head = self.git.run(root, ("rev-parse", "--verify", "HEAD"))
+        if head.returncode != 0 or head.stdout.decode("ascii", errors="strict").strip() != base_sha:
+            raise ContributionConflict("contribution_branch_base_changed")
 
     def _commit_selected(
         self,
@@ -332,7 +340,11 @@ class ContributionService:
         }
         if staged_paths != set(stage_paths):
             raise ContributionConflict("contribution_stage_selection_mismatch")
-        committed = self.git.run(root, ("commit", "-m", record.message), timeout=120)
+        committed = self.git.run(
+            root,
+            ("commit", "--no-verify", "-m", record.message),
+            timeout=120,
+        )
         if committed.returncode != 0:
             raise ContributionConflict("contribution_commit_failed")
         head = self.git.run(root, ("rev-parse", "--verify", "HEAD"))
@@ -381,33 +393,6 @@ class ContributionService:
             return None
         return head_sha
 
-    def _existing_stage_paths(
-        self,
-        root: Path,
-        record: ContributionRecord,
-    ) -> tuple[str, ...] | None:
-        result = self.git.run(
-            root,
-            ("diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "HEAD"),
-        )
-        if result.returncode != 0:
-            return None
-        current_paths: list[str] = []
-        stage_paths: list[str] = []
-        for line in result.stdout.decode("utf-8", errors="strict").splitlines():
-            fields = line.split("\t")
-            if len(fields) == 2 and fields[0][:1] in {"A", "M", "D", "T"}:
-                current_paths.append(fields[1])
-                stage_paths.append(fields[1])
-            elif len(fields) == 3 and fields[0][:1] == "R":
-                current_paths.append(fields[2])
-                stage_paths.extend((fields[2], fields[1]))
-            else:
-                return None
-        if set(current_paths) != set(record.selected_paths):
-            return None
-        return tuple(dict.fromkeys(stage_paths))
-
     def _selected_changes(self, root: Path, selected_paths: tuple[str, ...]) -> ChangeSet:
         changes = self.review.snapshot(root, selected_paths=selected_paths)
         if {item.path for item in changes.files} != set(selected_paths):
@@ -417,7 +402,18 @@ class ContributionService:
     def _scan_selected(self, root: Path, changes: ChangeSet) -> SecretScanResult:
         paths = tuple(item.path for item in changes.files)
         deleted = tuple(item.path for item in changes.files if item.status == "deleted")
-        return self.scanner.scan(root, paths, deleted_paths=deleted)
+        deleted_contents: dict[str, bytes] = {}
+        for path in deleted:
+            result = self.git.run(root, ("show", f"HEAD:{path}"))
+            if result.returncode != 0:
+                raise ContributionConflict("contribution_deleted_content_unavailable")
+            deleted_contents[path] = result.stdout
+        return self.scanner.scan(
+            root,
+            paths,
+            deleted_paths=deleted,
+            deleted_contents=deleted_contents,
+        )
 
     def _revalidate_prepare(self, root: Path, record: ContributionRecord) -> ChangeSet:
         changes = self._selected_changes(root, record.selected_paths)

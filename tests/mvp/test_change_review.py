@@ -86,6 +86,24 @@ def test_patch_is_bounded_and_reports_truncation(tmp_path: Path) -> None:
     assert len((change_set.files[0].patch or "").encode()) <= 64
 
 
+def test_digest_binds_full_binary_content_and_untracked_reads_are_bounded(tmp_path: Path) -> None:
+    root, git = _repository(tmp_path)
+    binary = root / "large.bin"
+    binary.write_bytes(b"\0" + b"a" * 4096)
+    first = ChangeReviewService(git, max_patch_bytes=64).snapshot(root)
+    binary.write_bytes(b"\0" + b"a" * 4095 + b"b")
+    second = ChangeReviewService(git, max_patch_bytes=64).snapshot(root)
+    assert first.digest != second.digest
+
+    generated = root / "generated.txt"
+    generated.write_text("line\n" * 10000, encoding="utf-8")
+    reviewed = ChangeReviewService(git, max_patch_bytes=64).snapshot(
+        root, selected_paths=("generated.txt",)
+    )
+    assert reviewed.files[0].patch_truncated is True
+    assert len((reviewed.files[0].patch or "").encode()) <= 64
+
+
 def test_snapshot_rejects_untracked_symlink_before_reading_target(tmp_path: Path) -> None:
     root, git = _repository(tmp_path)
     outside = tmp_path / "outside-secret.txt"

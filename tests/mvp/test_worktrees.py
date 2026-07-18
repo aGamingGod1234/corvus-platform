@@ -108,9 +108,31 @@ def test_discard_rejects_tampered_database_path(tmp_path: Path) -> None:
             (str(outside), run_id),
         )
 
-    with pytest.raises(WorktreeOwnershipError, match="ownership_invalid"):
+    with pytest.raises(WorktreeOwnershipError, match="(ownership|git_metadata)_invalid"):
         manager.get(run_id)
     assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_get_rejects_tampered_worktree_git_metadata(tmp_path: Path) -> None:
+    git, store, repository, _, base_sha = _workspace(tmp_path)
+    manager = WorktreeManager(
+        store,
+        git,
+        root=tmp_path / "managed-worktrees",
+        ownership_secret=b"worktree-test-secret",
+    )
+    lease = manager.create(repository, str(uuid4()), base_sha)  # type: ignore[arg-type]
+    fake_gitdir = tmp_path / "fake-gitdir"
+    fake_gitdir.mkdir()
+    metadata = lease.root / ".git"
+    metadata.chmod(0o600)
+    try:
+        metadata.write_text(f"gitdir: {fake_gitdir}\n", encoding="utf-8")
+    except PermissionError:
+        pytest.skip("Git metadata is host-protected")
+
+    with pytest.raises(WorktreeOwnershipError, match="ownership_invalid"):
+        manager.get(lease.run_id)
 
 
 def test_create_rejects_untrusted_sha_and_linked_root(tmp_path: Path) -> None:
