@@ -36,10 +36,34 @@ from corvus.infrastructure.agent_runtimes.codex import (
 )
 from corvus.mvp.provider_catalog import build_provider_catalog
 from corvus.mvp.safety import SafetyPreview, build_safety_preview
+from corvus.safe_process import path_is_link_or_reparse
 
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
+_PROJECT_COPY_MAX_FILES = 20_000
+_PROJECT_COPY_MAX_ENTRIES = 30_000
+_PROJECT_COPY_MAX_BYTES = 512 * 1024 * 1024
+_PROJECT_COPY_CHUNK_BYTES = 1024 * 1024
+_PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".next",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".svn",
+        ".turbo",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+        "venv",
+    }
+)
 _WINDOWS_CODEX_TARGETS = {
     "amd64": ("codex-win32-x64", "x86_64-pc-windows-msvc"),
     "arm64": ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
@@ -68,6 +92,7 @@ class LocalChatCursorError(LocalChatError):
 class LocalChatBackendHandle:
     id: UUID
     run_id: UUID
+    working_directory: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +190,7 @@ class LocalChatService:
         idempotency_key: str,
         safety_digest: str | None = None,
         idempotency_prompt: str | None = None,
+        source_directory: Path | None = None,
     ) -> dict[str, object]:
         backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
         if backend is None:
@@ -194,6 +220,7 @@ class LocalChatService:
             mode,
             mcp_enabled,
             safety_digest,
+            os.fspath(source_directory) if source_directory is not None else None,
         )
         idempotency_scope = (owner, idempotency_key)
         start_lock = self._start_locks.setdefault(idempotency_scope, asyncio.Lock())
@@ -212,6 +239,7 @@ class LocalChatService:
                 idempotency_scope=idempotency_scope,
                 request_digest=request_digest,
                 backend=backend,
+                source_directory=source_directory,
             )
 
     async def _start_once(
@@ -230,6 +258,7 @@ class LocalChatService:
         idempotency_scope: tuple[str, str],
         request_digest: str,
         backend: LocalChatBackend,
+        source_directory: Path | None,
     ) -> dict[str, object]:
         replay_id = self._idempotency.get(idempotency_scope)
         if replay_id is not None:
@@ -239,15 +268,30 @@ class LocalChatService:
             return dict(replay.response)
         run_id = uuid4()
         try:
-            handle = await backend.start(
-                run_id=run_id,
-                prompt=prompt,
-                model=model,
-                effort=effort,
-                mode=mode,
-                mcp_enabled=mcp_enabled,
-                idempotency_key=f"{owner}:{idempotency_key}",
-            )
+            if source_directory is None:
+                handle = await backend.start(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    mode=mode,
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=f"{owner}:{idempotency_key}",
+                )
+            else:
+                start_in_workspace = getattr(backend, "start_in_workspace", None)
+                if start_in_workspace is None:
+                    raise LocalChatError("provider_workspace_unavailable")
+                handle = await start_in_workspace(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    mode=mode,
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=f"{owner}:{idempotency_key}",
+                    source_directory=source_directory,
+                )
         except (CodexAdapterError, ClaudeAdapterError) as error:
             raise LocalChatError(error.reason_code) from error
         except RuntimeError as error:
@@ -267,6 +311,7 @@ class LocalChatService:
             "mode": mode,
             "storage": "this_device",
             "created_at": self._clock().isoformat(),
+            "working_directory": handle.working_directory,
             "safety": safety.as_dict(),
         }
         record = _RunRecord(
@@ -476,9 +521,12 @@ class LocalChatService:
 
 
 class CodexLocalChatBackend:
-    def __init__(self, adapter: CodexCliAdapter, clock: Callable[[], datetime]) -> None:
+    def __init__(
+        self, adapter: CodexCliAdapter, clock: Callable[[], datetime], scratch_root: Path
+    ) -> None:
         self._adapter = adapter
         self._clock = clock
+        self._scratch_root = scratch_root.resolve(strict=False)
         self._binding: ProviderBinding | None = None
         self._handles: dict[UUID, AgentRunHandle] = {}
 
@@ -503,7 +551,57 @@ class CodexLocalChatBackend:
         mcp_enabled: bool,
         idempotency_key: str,
     ) -> LocalChatBackendHandle:
+        return await self._start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+            source_directory=None,
+        )
+
+    async def start_in_workspace(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path,
+    ) -> LocalChatBackendHandle:
+        return await self._start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+            source_directory=source_directory,
+        )
+
+    async def _start(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path | None,
+    ) -> LocalChatBackendHandle:
         binding = await self._provider_binding()
+        workspace = None
+        if source_directory is not None:
+            workspace = self._scratch_root / str(run_id)
+            _copy_project(source_directory, workspace)
         result = await self._adapter.start_local_text(
             binding,
             LocalCodexTextRequest(
@@ -516,10 +614,15 @@ class CodexLocalChatBackend:
                 idempotency_key=idempotency_key,
                 deadline=self._clock() + _RUN_DEADLINE,
                 max_output_bytes=_MAX_OUTPUT_BYTES,
+                workspace=workspace,
             ),
         )
         self._handles[result.handle.id] = result.handle
-        return LocalChatBackendHandle(id=result.handle.id, run_id=run_id)
+        return LocalChatBackendHandle(
+            id=result.handle.id,
+            run_id=run_id,
+            working_directory=str((self._scratch_root / str(run_id)).resolve(strict=False)),
+        )
 
     async def events(
         self,
@@ -553,9 +656,12 @@ class CodexLocalChatBackend:
 
 
 class ClaudeLocalChatBackend:
-    def __init__(self, adapter: ClaudeCliAdapter, clock: Callable[[], datetime]) -> None:
+    def __init__(
+        self, adapter: ClaudeCliAdapter, clock: Callable[[], datetime], scratch_root: Path
+    ) -> None:
         self._adapter = adapter
         self._clock = clock
+        self._scratch_root = scratch_root.resolve(strict=False)
         self._binding: ProviderBinding | None = None
         self._handles: dict[UUID, AgentRunHandle] = {}
 
@@ -580,9 +686,59 @@ class ClaudeLocalChatBackend:
         mcp_enabled: bool,
         idempotency_key: str,
     ) -> LocalChatBackendHandle:
+        return await self._start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+            source_directory=None,
+        )
+
+    async def start_in_workspace(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path,
+    ) -> LocalChatBackendHandle:
+        return await self._start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+            source_directory=source_directory,
+        )
+
+    async def _start(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path | None,
+    ) -> LocalChatBackendHandle:
         if mode != "chat" or mcp_enabled:
             raise ClaudeAdapterError("claude_mode_unavailable")
         binding = await self._provider_binding()
+        workspace = None
+        if source_directory is not None:
+            workspace = self._scratch_root / str(run_id)
+            _copy_project(source_directory, workspace)
         result = await self._adapter.start_local_text(
             binding,
             LocalClaudeTextRequest(
@@ -593,10 +749,15 @@ class ClaudeLocalChatBackend:
                 idempotency_key=idempotency_key,
                 deadline=self._clock() + _RUN_DEADLINE,
                 max_output_bytes=_MAX_OUTPUT_BYTES,
+                workspace=workspace,
             ),
         )
         self._handles[result.handle.id] = result.handle
-        return LocalChatBackendHandle(id=result.handle.id, run_id=run_id)
+        return LocalChatBackendHandle(
+            id=result.handle.id,
+            run_id=run_id,
+            working_directory=str((self._scratch_root / str(run_id)).resolve(strict=False)),
+        )
 
     async def events(
         self,
@@ -644,9 +805,10 @@ def build_default_local_chat_service(
             executable=codex_executable,
             version="local",
             scratch_root=scratch_root / "codex",
+            approved_workspace_roots=(scratch_root / "codex",),
             clock=clock,
         )
-        backends["codex"] = CodexLocalChatBackend(codex_adapter, clock)
+        backends["codex"] = CodexLocalChatBackend(codex_adapter, clock, scratch_root / "codex")
     if claude_executable is not None:
         claude_adapter = ClaudeCliAdapter(
             executable=claude_executable,
@@ -654,7 +816,7 @@ def build_default_local_chat_service(
             scratch_root=scratch_root / "claude",
             clock=clock,
         )
-        backends["claude"] = ClaudeLocalChatBackend(claude_adapter, clock)
+        backends["claude"] = ClaudeLocalChatBackend(claude_adapter, clock, scratch_root / "claude")
     return LocalChatService(
         backends=backends,
         cursor_secret=cursor_secret,
@@ -748,6 +910,7 @@ def _request_digest(
     mode: str,
     mcp_enabled: bool,
     safety_digest: str | None,
+    source_directory: str | None,
 ) -> str:
     payload = json.dumps(
         {
@@ -758,11 +921,82 @@ def _request_digest(
             "mode": mode,
             "mcp_enabled": mcp_enabled,
             "safety_digest": safety_digest,
+            "source_directory": source_directory,
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _copy_project(source_directory: Path, destination: Path) -> None:
+    try:
+        source = source_directory.resolve(strict=True)
+    except OSError as error:
+        raise LocalChatError("local_chat_project_unavailable") from error
+    if not source.is_dir() or path_is_link_or_reparse(source):
+        raise LocalChatError("local_chat_project_unavailable")
+    files_to_copy: list[tuple[Path, Path, int]] = []
+    directories_to_create: list[Path] = []
+    total_bytes = 0
+    try:
+        for root, directories, files in os.walk(source, topdown=True):
+            root_path = Path(root)
+            if path_is_link_or_reparse(root_path):
+                raise LocalChatError("local_chat_project_links_forbidden")
+            relative_root = root_path.relative_to(source)
+            directories_to_create.append(relative_root)
+            if len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES:
+                raise LocalChatError("local_chat_project_too_large")
+            retained_directories: list[str] = []
+            for name in directories:
+                child = root_path / name
+                if path_is_link_or_reparse(child):
+                    raise LocalChatError("local_chat_project_links_forbidden")
+                if name not in _PROJECT_COPY_IGNORED_DIRECTORIES:
+                    retained_directories.append(name)
+            directories[:] = retained_directories
+            for name in files:
+                source_file = root_path / name
+                if path_is_link_or_reparse(source_file):
+                    raise LocalChatError("local_chat_project_links_forbidden")
+                try:
+                    size = source_file.stat().st_size
+                except OSError as error:
+                    raise LocalChatError("local_chat_project_copy_failed") from error
+                if not source_file.is_file():
+                    raise LocalChatError("local_chat_project_unavailable")
+                total_bytes += size
+                files_to_copy.append((source_file, relative_root / name, size))
+                if (
+                    len(files_to_copy) > _PROJECT_COPY_MAX_FILES
+                    or len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES
+                    or total_bytes > _PROJECT_COPY_MAX_BYTES
+                ):
+                    raise LocalChatError("local_chat_project_too_large")
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.mkdir()
+        for relative_directory in directories_to_create:
+            (destination / relative_directory).mkdir(parents=True, exist_ok=True)
+        copied_bytes = 0
+        for source_file, relative_file, expected_size in files_to_copy:
+            if path_is_link_or_reparse(source_file) or source_file.stat().st_size != expected_size:
+                raise LocalChatError("local_chat_project_changed_during_copy")
+            target_file = destination / relative_file
+            with source_file.open("rb") as source_stream, target_file.open("xb") as target_stream:
+                while chunk := source_stream.read(_PROJECT_COPY_CHUNK_BYTES):
+                    copied_bytes += len(chunk)
+                    if copied_bytes > _PROJECT_COPY_MAX_BYTES:
+                        raise LocalChatError("local_chat_project_too_large")
+                    target_stream.write(chunk)
+            shutil.copystat(source_file, target_file, follow_symlinks=False)
+    except LocalChatError:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+    except OSError as error:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise LocalChatError("local_chat_project_copy_failed") from error
 
 
 def _event_name(event_type: AgentRunEventType) -> str:

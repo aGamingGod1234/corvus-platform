@@ -124,6 +124,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local-chat/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Servers */
+        get: operations["list_mcp_servers_api_local_chat_mcp_get"];
+        put?: never;
+        /** Add Mcp Server */
+        post: operations["add_mcp_server_api_local_chat_mcp_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/mcp/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Mcp Server */
+        delete: operations["remove_mcp_server_api_local_chat_mcp__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local-chat/mcp/{name}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login Mcp Server */
+        post: operations["login_mcp_server_api_local_chat_mcp__name__login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/local-chat/preferences": {
         parameters: {
             query?: never;
@@ -255,6 +307,75 @@ export interface paths {
         get: operations["local_chat_safety_preview_api_local_chat_safety_preview_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/github/authenticate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Github Authenticate */
+        post: operations["github_authenticate_api_local_github_authenticate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/github/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Github Repositories */
+        get: operations["github_repositories_api_local_github_repositories_get"];
+        put?: never;
+        /** Connect Github Repository */
+        post: operations["connect_github_repository_api_local_github_repositories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/github/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Github Auth Status */
+        get: operations["github_auth_status_api_local_github_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/local/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Empty Project */
+        post: operations["create_empty_project_api_local_projects_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1874,6 +1995,11 @@ export interface components {
             /** Workflow Id */
             workflow_id: string;
         };
+        /** EmptyProjectCreateRequest */
+        EmptyProjectCreateRequest: {
+            /** Name */
+            name: string;
+        };
         /** EnvelopeActorRequest */
         EnvelopeActorRequest: {
             /** Actor Id */
@@ -1886,6 +2012,31 @@ export interface components {
          * @enum {string}
          */
         ExperienceKind: "everyday" | "developer";
+        /** GitHubAuthResponse */
+        GitHubAuthResponse: {
+            /** Authenticated */
+            authenticated: boolean;
+            /** Hostname */
+            hostname: string;
+        };
+        /** GitHubRepositoryConnectRequest */
+        GitHubRepositoryConnectRequest: {
+            /** Slug */
+            slug: string;
+        };
+        /** GitHubRepositoryResponse */
+        GitHubRepositoryResponse: {
+            /** Default Branch */
+            default_branch: string | null;
+            /** Name */
+            name: string;
+            /** Private */
+            private: boolean;
+            /** Slug */
+            slug: string;
+            /** Url */
+            url: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1943,6 +2094,8 @@ export interface components {
              * @enum {string}
              */
             provider: "codex" | "claude" | "openai" | "anthropic" | "gemini" | "xai";
+            /** Repository Id */
+            repository_id?: string | null;
             /** Safety Digest */
             safety_digest?: string | null;
         };
@@ -1977,6 +2130,8 @@ export interface components {
              * @constant
              */
             storage: "this_device";
+            /** Working Directory */
+            working_directory: string;
         };
         /** LocalPreferencesResponse */
         LocalPreferencesResponse: {
@@ -2060,6 +2215,26 @@ export interface components {
              * @enum {string}
              */
             status: "creating" | "active" | "discarded";
+        };
+        /** McpRemoteCreateRequest */
+        McpRemoteCreateRequest: {
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+        };
+        /** McpServerResponse */
+        McpServerResponse: {
+            /** Auth Status */
+            auth_status: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Endpoint */
+            endpoint: string;
+            /** Name */
+            name: string;
+            /** Transport */
+            transport: string;
         };
         /** MemoryCreateRequest */
         MemoryCreateRequest: {
@@ -3541,6 +3716,123 @@ export interface operations {
             };
         };
     };
+    list_mcp_servers_api_local_chat_mcp_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"][];
+                };
+            };
+        };
+    };
+    add_mcp_server_api_local_chat_mcp_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpRemoteCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_mcp_server_api_local_chat_mcp__name__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    login_mcp_server_api_local_chat_mcp__name__login_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_local_preferences_api_local_chat_preferences_get: {
         parameters: {
             query?: never;
@@ -3804,6 +4096,147 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SafetyPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_authenticate_api_local_github_authenticate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAuthResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_repositories_api_local_github_repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRepositoryResponse"][];
+                };
+            };
+        };
+    };
+    connect_github_repository_api_local_github_repositories_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubRepositoryConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_auth_status_api_local_github_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAuthResponse"];
+                };
+            };
+        };
+    };
+    create_empty_project_api_local_projects_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyProjectCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRecord"];
                 };
             };
             /** @description Validation Error */

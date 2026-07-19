@@ -1024,6 +1024,22 @@
         "title": "EffectRecord",
         "type": "object"
       },
+      "EmptyProjectCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "EmptyProjectCreateRequest",
+        "type": "object"
+      },
       "EnvelopeActorRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1054,6 +1070,83 @@
         ],
         "title": "ExperienceKind",
         "type": "string"
+      },
+      "GitHubAuthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "hostname": {
+            "title": "Hostname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname",
+          "authenticated"
+        ],
+        "title": "GitHubAuthResponse",
+        "type": "object"
+      },
+      "GitHubRepositoryConnectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "maxLength": 201,
+            "minLength": 3,
+            "pattern": "^[^/\\s]+/[^/\\s]+$",
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "title": "GitHubRepositoryConnectRequest",
+        "type": "object"
+      },
+      "GitHubRepositoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "private": {
+            "title": "Private",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug",
+          "url",
+          "default_branch",
+          "private"
+        ],
+        "title": "GitHubRepositoryResponse",
+        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1197,6 +1290,19 @@
             "title": "Provider",
             "type": "string"
           },
+          "repository_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository Id"
+          },
           "safety_digest": {
             "anyOf": [
               {
@@ -1271,6 +1377,10 @@
             "const": "this_device",
             "title": "Storage",
             "type": "string"
+          },
+          "working_directory": {
+            "title": "Working Directory",
+            "type": "string"
           }
         },
         "required": [
@@ -1282,6 +1392,7 @@
           "mode",
           "storage",
           "created_at",
+          "working_directory",
           "safety"
         ],
         "title": "LocalChatStartResponse",
@@ -1494,6 +1605,64 @@
           "created_at"
         ],
         "title": "LocalWorktreeResponse",
+        "type": "object"
+      },
+      "McpRemoteCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 9,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "title": "McpRemoteCreateRequest",
+        "type": "object"
+      },
+      "McpServerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_status": {
+            "title": "Auth Status",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "enabled",
+          "transport",
+          "endpoint",
+          "auth_status"
+        ],
+        "title": "McpServerResponse",
         "type": "object"
       },
       "MemoryCreateRequest": {
@@ -4969,6 +5138,178 @@
         "summary": "Reject Effect"
       }
     },
+    "/api/local-chat/mcp": {
+      "get": {
+        "operationId": "list_mcp_servers_api_local_chat_mcp_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/McpServerResponse"
+                  },
+                  "title": "Response List Mcp Servers Api Local Chat Mcp Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Mcp Servers"
+      },
+      "post": {
+        "operationId": "add_mcp_server_api_local_chat_mcp_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpRemoteCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Mcp Server"
+      }
+    },
+    "/api/local-chat/mcp/{name}": {
+      "delete": {
+        "operationId": "remove_mcp_server_api_local_chat_mcp__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Mcp Server"
+      }
+    },
+    "/api/local-chat/mcp/{name}/login": {
+      "post": {
+        "operationId": "login_mcp_server_api_local_chat_mcp__name__login_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login Mcp Server"
+      }
+    },
     "/api/local-chat/preferences": {
       "get": {
         "operationId": "get_local_preferences_api_local_chat_preferences_get",
@@ -5402,6 +5743,202 @@
           }
         },
         "summary": "Local Chat Safety Preview"
+      }
+    },
+    "/api/local/github/authenticate": {
+      "post": {
+        "operationId": "github_authenticate_api_local_github_authenticate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Authenticate"
+      }
+    },
+    "/api/local/github/repositories": {
+      "get": {
+        "operationId": "github_repositories_api_local_github_repositories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GitHubRepositoryResponse"
+                  },
+                  "title": "Response Github Repositories Api Local Github Repositories Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Github Repositories"
+      },
+      "post": {
+        "operationId": "connect_github_repository_api_local_github_repositories_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubRepositoryConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Github Repository"
+      }
+    },
+    "/api/local/github/status": {
+      "get": {
+        "operationId": "github_auth_status_api_local_github_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Github Auth Status"
+      }
+    },
+    "/api/local/projects": {
+      "post": {
+        "operationId": "create_empty_project_api_local_projects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyProjectCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Empty Project"
       }
     },
     "/api/local/repositories": {

@@ -157,7 +157,7 @@ describe("adaptive Corvus bootstrap", () => {
     expect(loopback.session).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("link", { name: "Settings" }));
-    expect(screen.getByRole("heading", { name: "Settings" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "General" })).toBeVisible();
   });
 
   it("cleans up a matching legacy candidate once server-backed identity is ready", async () => {

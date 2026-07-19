@@ -68,3 +68,16 @@ export function completeLegacyPreferenceMigration(
 export function dismissLegacyPreferenceMigration(storage: Storage): void {
   storage.removeItem(WORKSPACE_PREFERENCE_KEY);
 }
+
+export function saveLocalWorkspacePreference(
+  storage: Storage,
+  preference: Pick<LegacyPreferenceCandidate, "experience" | "workspaceKind">
+): void {
+  storage.setItem(WORKSPACE_PREFERENCE_KEY, JSON.stringify({
+    version: LEGACY_WORKSPACE_PREFERENCE_VERSION,
+    onboardingComplete: true,
+    experience: preference.experience,
+    scope: preference.workspaceKind === "team" ? "team" : "personal",
+    runtime: "local"
+  }));
+}

@@ -1,4 +1,4 @@
-import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createCorvusApi,
@@ -32,9 +32,10 @@ import {
   completeLegacyPreferenceMigration,
   dismissLegacyPreferenceMigration,
   loadLegacyWorkspacePreference,
+  saveLocalWorkspacePreference,
   type LegacyPreferenceCandidate
 } from "./app/preferences";
-import { getWorkspaceProfile, type WorkspaceProfile } from "./app/workspaceProfiles";
+import { getWorkspaceDefaultRoute, getWorkspaceProfile, type WorkspaceProfile } from "./app/workspaceProfiles";
 import { useOptionalAuth } from "./auth/AuthProvider";
 import { AuthApiError } from "./auth/authApi";
 import { useOptionalWorkspaceSync, type WorkspaceSyncState } from "./sync/SyncProvider";
@@ -51,6 +52,7 @@ import { PortableSkillsWorkspace } from "./app/PortableSkillsWorkspace";
 import { SchedulesWorkspace } from "./app/SchedulesWorkspace";
 import { BackgroundRunNotifier } from "./app/BackgroundRunNotifier";
 import { SettingsPanel } from "./app/SettingsPanel";
+import { LocalFirstRunFlow } from "./app/LocalFirstRunFlow";
 import { loadDevicePreferences } from "./app/devicePreferences";
 
 const browserApi = createCorvusApi();
@@ -63,6 +65,7 @@ const EVENT_TYPES = [
   "effect.approved"
 ] as const;
 const DEFAULT_DEMO_BUDGET_UNITS = 10;
+const LOCAL_FIRST_RUN_KEY = "corvus.local-first-run.v1";
 const DEFAULT_WORK_ITEMS: WorkItemDefinition[] = [
   {
     key: "prepare",
@@ -152,6 +155,12 @@ export function App({
   const localRuntime =
     authorityMode === "local" ||
     (authorityMode === "auto" && isLoopbackRuntimeHost(locationHostname));
+  const [localProfileRevision, setLocalProfileRevision] = useState(0);
+  const [localFirstRunComplete, setLocalFirstRunComplete] = useState(
+    () => preferenceStorage.getItem(LOCAL_FIRST_RUN_KEY) === "complete"
+      || loadLegacyWorkspacePreference(preferenceStorage).candidate !== null
+  );
+  void localProfileRevision;
   const localPreference = localRuntime
     ? loadLegacyWorkspacePreference(preferenceStorage).candidate
     : null;
@@ -170,6 +179,7 @@ export function App({
       ? null
       : getWorkspaceProfile(experience, selectedWorkspace.workspace_kind);
   const [activeRoute, setActiveRoute] = useState("");
+  const [newThreadSignal, setNewThreadSignal] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -184,6 +194,10 @@ export function App({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [localSession, setLocalSession] = useState<Session | null>(null);
+  const conversationApi = useMemo(
+    () => createConversationApi(localSession?.csrf_token ?? ""),
+    [localSession?.csrf_token]
+  );
   const hostedLocalHandoff =
     selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
 
@@ -708,9 +722,20 @@ export function App({
     if (phase === "pairing" || localSession === null) {
       return <PairingScreen busy={busy} error={error} onPair={pair} />;
     }
+    if (!localFirstRunComplete) {
+      return <LocalFirstRunFlow onComplete={(nextExperience, nextWorkspaceKind) => {
+        saveLocalWorkspacePreference(preferenceStorage, {
+          experience: nextExperience,
+          workspaceKind: nextWorkspaceKind
+        });
+        preferenceStorage.setItem(LOCAL_FIRST_RUN_KEY, "complete");
+        setLocalProfileRevision((revision) => revision + 1);
+        setLocalFirstRunComplete(true);
+      }} />;
+    }
     const localRoute = localProfile.routes.some((route) => route.id === activeRoute)
       ? activeRoute
-      : localProfile.routes[0].id;
+      : getWorkspaceDefaultRoute(localProfile);
     const localSurface = localSurfaceForRoute(localRoute);
     return (
       <>
@@ -736,14 +761,21 @@ export function App({
           setActiveRoute(routeId);
           setSelectedItem(null);
         }}
+        onNewThread={() => {
+          setActiveRoute("threads");
+          setSelectedItem(null);
+          setNewThreadSignal((signal) => signal + 1);
+        }}
         profile={localProfile}
         session={localSession}
       >
         {localSurface === "conversations" ? (
           <ConversationWorkspace
             key={localSession.user_id}
-            api={createConversationApi(localSession.csrf_token)}
+            api={conversationApi}
             experience={localProfile.experience}
+            newThreadSignal={newThreadSignal}
+            onOpenProjects={() => setActiveRoute("repositories")}
             storage={preferenceStorage}
             storageScope={localSession.user_id}
           />
@@ -751,11 +783,16 @@ export function App({
           <SchedulesWorkspace api={api} onOpenRun={() => setActiveRoute("runs")} />
         ) : localSurface === "settings" ? (
           <SettingsPanel
-            api={createConversationApi(localSession.csrf_token)}
+            api={conversationApi}
             experience={localProfile.experience}
-            onBack={() => setActiveRoute(localProfile.routes[0].id)}
-            onExperienceChange={async () => undefined}
-            profileEditable={false}
+            onBack={() => setActiveRoute(getWorkspaceDefaultRoute(localProfile))}
+            onExperienceChange={async (nextExperience) => {
+              saveLocalWorkspacePreference(preferenceStorage, {
+                experience: nextExperience,
+                workspaceKind: localProfile.workspaceKind
+              });
+              setLocalProfileRevision((revision) => revision + 1);
+            }}
             storage={preferenceStorage}
             workspaceId={localSession.user_id}
             workspaceKind={localProfile.workspaceKind}
@@ -844,7 +881,7 @@ export function App({
   return (
     <AppShell
       accountEmail={auth.session.email}
-      activeRoute={activeRoute || profile.routes[0].id}
+      activeRoute={activeRoute || getWorkspaceDefaultRoute(profile)}
       error={error || workspaceSync.error?.message || ""}
       inspector={(
         <Inspector
@@ -892,10 +929,10 @@ export function App({
             onReload={workspaceSync.reloadConflict}
             onRetry={workspaceSync.retryConflict}
           />
-        ) : (activeRoute || profile.routes[0].id) === "settings" ? (
+        ) : (activeRoute || getWorkspaceDefaultRoute(profile)) === "settings" ? (
           <SettingsPanel
             experience={profile.experience}
-            onBack={() => setActiveRoute(profile.routes[0].id)}
+            onBack={() => setActiveRoute(getWorkspaceDefaultRoute(profile))}
             onExperienceChange={async (nextExperience) => {
               if (nextExperience === profile.experience) return;
               const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
@@ -917,7 +954,7 @@ export function App({
           <PairingScreen busy={busy} error={error} onPair={pair} />
         ) : (
           <WorkspaceRouter
-            activeRoute={activeRoute || profile.routes[0].id}
+            activeRoute={activeRoute || getWorkspaceDefaultRoute(profile)}
             executionSurface={executionSurface}
             operationsSurface={operationsSurface}
             profile={profile}
@@ -936,6 +973,7 @@ function LocalRuntimeShell({
   inspector,
   inspectorOpen,
   onNavigate,
+  onNewThread,
   profile,
   session
 }: {
@@ -945,6 +983,7 @@ function LocalRuntimeShell({
   inspector: ReactNode;
   inspectorOpen: boolean;
   onNavigate(routeId: string): void;
+  onNewThread(): void;
   profile: WorkspaceProfile;
   session: Session;
 }) {
@@ -965,10 +1004,10 @@ function LocalRuntimeShell({
           <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
           <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">
             {routes.map((route) => (
+              <div className={route.id === "threads" ? "local-sidebar__thread-row" : undefined} key={route.id}>
               <a
                 aria-current={activeRoute === route.id ? "page" : undefined}
                 href={`#${route.id}`}
-                key={route.id}
                 onClick={(event) => {
                   event.preventDefault();
                   onNavigate(route.id);
@@ -976,6 +1015,8 @@ function LocalRuntimeShell({
               >
                 <LocalNavigationIcon routeId={route.id} />{route.label}
               </a>
+              {route.id === "threads" ? <button aria-label="New thread" className="local-sidebar__new-thread" onClick={onNewThread} type="button">+</button> : null}
+              </div>
             ))}
           </nav>
           <div className="local-sidebar__connection"><span aria-hidden="true" />On this computer</div>

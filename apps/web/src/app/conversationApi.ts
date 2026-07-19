@@ -9,6 +9,7 @@ export interface LocalChatRun {
   mode: "chat" | "build";
   storage: "this_device";
   created_at: string;
+  working_directory: string;
   safety: SafetyPreview;
 }
 
@@ -105,6 +106,13 @@ export interface LocalChatRequest {
   mode: RunMode;
   mcp_enabled: boolean;
   safety_digest?: string | null;
+  repository_id?: string | null;
+}
+
+export interface ConversationRepository {
+  id: string;
+  display_name: string;
+  path: string;
 }
 
 export type ResponseTone = "concise" | "balanced" | "detailed";
@@ -121,6 +129,14 @@ export interface ProviderCredentialVerification {
   configured: boolean;
   verified: boolean;
   models: string[];
+}
+
+export interface McpServerConfiguration {
+  name: string;
+  enabled: boolean;
+  transport: string;
+  endpoint: string;
+  auth_status: string;
 }
 
 export interface RuntimePreferences {
@@ -141,6 +157,7 @@ export interface RuntimePreferencesUpdate extends Omit<RuntimePreferences, "vers
 
 export interface ConversationApi {
   listProviders(): Promise<ProviderCatalogEntry[]>;
+  listRepositories?(): Promise<ConversationRepository[]>;
   getPreferences(): Promise<RuntimePreferences>;
   updatePreferences(preferences: RuntimePreferencesUpdate): Promise<RuntimePreferences>;
   getSafetyPreview(
@@ -161,6 +178,10 @@ export interface ConversationApi {
   connectProviderCredential?(provider: ProviderCredentialId, credential: string): Promise<ProviderCredentialStatus>;
   verifyProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialVerification>;
   removeProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialStatus>;
+  listMcpServers?(): Promise<McpServerConfiguration[]>;
+  addMcpServer?(name: string, url: string): Promise<McpServerConfiguration>;
+  removeMcpServer?(name: string): Promise<void>;
+  loginMcpServer?(name: string): Promise<void>;
 }
 
 interface ApiErrorDetail {
@@ -215,6 +236,15 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
     return await response.json() as T;
   }
 
+  async function requestEmpty(path: string, init: RequestInit): Promise<void> {
+    const response = await fetch(runtimeUrl(path), {
+      ...init,
+      credentials: "include",
+      headers: { Accept: "application/json", ...init.headers }
+    });
+    if (!response.ok) throw new ConversationApiError(response.status, `request_failed_${response.status}`, null);
+  }
+
   function mutationHeaders(idempotencyKey?: string): Record<string, string> {
     if (csrfToken === "") throw new ConversationApiError(401, "paired_session_required", null);
     return {
@@ -236,6 +266,10 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
         thinking_levels: Array.isArray(provider.thinking_levels) ? provider.thinking_levels : []
       }));
     },
+    listRepositories: () => requestJson("/api/local/repositories", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
     getPreferences: () => requestJson("/api/local-chat/preferences", {
       method: "GET",
       headers: { Accept: "application/json" }
@@ -290,6 +324,23 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
     }),
     removeProviderCredential: (provider) => requestJson(`/api/provider-credentials/${provider}`, {
       method: "DELETE",
+      headers: mutationHeaders()
+    }),
+    listMcpServers: () => requestJson("/api/local-chat/mcp", {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
+    addMcpServer: (name, url) => requestJson("/api/local-chat/mcp", {
+      method: "POST",
+      headers: mutationHeaders(),
+      body: JSON.stringify({ name, url })
+    }),
+    removeMcpServer: (name) => requestEmpty(`/api/local-chat/mcp/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: mutationHeaders()
+    }),
+    loginMcpServer: (name) => requestEmpty(`/api/local-chat/mcp/${encodeURIComponent(name)}/login`, {
+      method: "POST",
       headers: mutationHeaders()
     })
   };

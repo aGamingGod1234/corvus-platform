@@ -15,6 +15,7 @@ from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
 from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
+from corvus.mvp.git_process import ProcessResult
 from corvus.mvp.local_chat import (
     LocalChatBackendEvent,
     LocalChatBackendHandle,
@@ -71,6 +72,114 @@ class _Backend:
     def artifact(self, handle: LocalChatBackendHandle) -> LocalBuildArtifact | None:
         del handle
         return None
+
+
+class _ProjectBackend(_Backend):
+    source_directory: Path | None = None
+
+    async def start_in_workspace(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path,
+    ) -> LocalChatBackendHandle:
+        self.source_directory = source_directory
+        return await self.start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+        )
+
+
+@pytest.mark.asyncio
+async def test_project_directory_is_bound_to_a_project_aware_backend(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    backend = _ProjectBackend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+
+    await service.start(
+        owner="local:user",
+        prompt="Inspect this project",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="project-run",
+        source_directory=project,
+    )
+
+    assert backend.source_directory == project
+
+
+def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("original", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-1"
+
+    local_chat_module._copy_project(source, destination)
+    (destination / "README.md").write_text("changed", encoding="utf-8")
+
+    assert (source / "README.md").read_text(encoding="utf-8") == "original"
+
+
+def test_project_copy_skips_dependency_and_vcs_directories(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    (source / "node_modules").mkdir(parents=True)
+    (source / ".git").mkdir()
+    (source / "src").mkdir()
+    (source / "node_modules" / "large-package.js").write_bytes(b"dependency")
+    (source / ".git" / "objects").write_bytes(b"history")
+    (source / "src" / "main.ts").write_text("export {};", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-ignored"
+
+    local_chat_module._copy_project(source, destination)
+
+    assert (destination / "src" / "main.ts").is_file()
+    assert not (destination / "node_modules").exists()
+    assert not (destination / ".git").exists()
+
+
+def test_project_copy_rejects_sources_over_the_size_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "oversized.bin").write_bytes(b"12345")
+    destination = tmp_path / "scratch" / "run-oversized"
+    monkeypatch.setattr(local_chat_module, "_PROJECT_COPY_MAX_BYTES", 4)
+
+    with pytest.raises(local_chat_module.LocalChatError, match="local_chat_project_too_large"):
+        local_chat_module._copy_project(source, destination)
+
+    assert not destination.exists()
+
+
+def test_project_copy_rejects_sources_over_the_entry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "registered-project"
+    (source / "first").mkdir(parents=True)
+    (source / "second").mkdir()
+    destination = tmp_path / "scratch" / "run-too-many-entries"
+    monkeypatch.setattr(local_chat_module, "_PROJECT_COPY_MAX_ENTRIES", 1)
+
+    with pytest.raises(local_chat_module.LocalChatError, match="local_chat_project_too_large"):
+        local_chat_module._copy_project(source, destination)
+
+    assert not destination.exists()
 
 
 class _MemoryKeyring:
@@ -211,6 +320,44 @@ def _sse_events(body: str) -> list[tuple[str, dict[str, object]]]:
         fields = dict(line.split(": ", 1) for line in block.splitlines())
         parsed.append((fields["id"], json.loads(fields["data"])))
     return parsed
+
+
+class _FailingProjectGit:
+    def run(self, _cwd: Path, _args: tuple[str, ...]) -> ProcessResult:
+        return ProcessResult(1, b"", b"project initialization failed")
+
+
+class _FailingProjectWorkspace:
+    def __init__(self) -> None:
+        self.git = _FailingProjectGit()
+
+
+def test_failed_empty_project_initialization_removes_managed_directory(tmp_path: Path) -> None:
+    token = str(uuid4())
+    client = TestClient(
+        create_app(
+            database=tmp_path / "project-cleanup.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            local_chat_service=LocalChatService(
+                backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW
+            ),
+            repository_workspace=_FailingProjectWorkspace(),  # type: ignore[arg-type]
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    session = client.get("/api/auth/session").json()
+
+    response = client.post(
+        "/api/local/projects",
+        json={"name": "Broken project"},
+        headers={"X-CSRF-Token": session["csrf_token"]},
+    )
+
+    assert response.status_code == 503
+    project_root = tmp_path / ".corvus-projects"
+    assert project_root.is_dir()
+    assert list(project_root.iterdir()) == []
 
 
 @pytest.mark.asyncio

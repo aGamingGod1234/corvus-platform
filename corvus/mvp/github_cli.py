@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
 from corvus.mvp.git_process import ProcessResult
+from corvus.safe_process import path_is_link_or_reparse
 
 
 class GitHubCliError(RuntimeError):
@@ -71,6 +73,49 @@ class GitHubCli:
             15,
         )
         return GitHubAuthStatus(hostname="github.com", authenticated=result.returncode == 0)
+
+    def authenticate(self) -> GitHubAuthStatus:
+        result = self._runner.run(
+            self._cwd,
+            ("auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"),
+            180,
+        )
+        if result.returncode != 0:
+            raise GitHubCliError("github_authentication_failed")
+        return self.auth_status()
+
+    def clone_repository(self, repo: str, target: Path) -> None:
+        self._validate_repo(repo)
+        try:
+            parent = target.parent.resolve(strict=True)
+            destination = target.resolve(strict=False)
+        except OSError as exc:
+            raise GitHubCliError("github_clone_target_invalid") from exc
+        if path_is_link_or_reparse(parent) or destination.parent != parent or destination.exists():
+            raise GitHubCliError("github_clone_target_invalid")
+        result = self._runner.run(
+            parent,
+            (
+                "repo",
+                "clone",
+                repo,
+                str(destination),
+                "--",
+                "--config",
+                "core.fsmonitor=false",
+                "--config",
+                f"core.hooksPath={Path(os.devnull)}",
+            ),
+            180,
+        )
+        if result.returncode != 0:
+            raise GitHubCliError("github_clone_failed")
+        try:
+            cloned = destination.resolve(strict=True)
+        except OSError as exc:
+            raise GitHubCliError("github_clone_failed") from exc
+        if not cloned.is_dir() or path_is_link_or_reparse(cloned) or cloned.parent != parent:
+            raise GitHubCliError("github_clone_target_invalid")
 
     def list_repositories(self, *, limit: int = 100) -> tuple[GitHubRepository, ...]:
         if limit < 1 or limit > 1_000:

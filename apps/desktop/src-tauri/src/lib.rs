@@ -28,6 +28,7 @@ const INSTANCE_CHALLENGE_BYTES: usize = 16;
 const INSTANCE_CHALLENGE_HEADER: &str = "X-Corvus-Challenge";
 const INSTANCE_PROOF_HEADER: &str = "X-Corvus-Instance-Proof";
 const SHA256_PROOF_HEX_LENGTH: usize = 64;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -389,6 +390,64 @@ fn select_repository_directory(app: tauri::AppHandle) -> Result<Option<String>, 
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|_| "external_url_invalid".to_owned())?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("corvus-platform-tau.vercel.app")
+        || parsed.path() != "/api/v2/auth/google/start"
+        || parsed.username() != ""
+        || parsed.password().is_some()
+    {
+        return Err("external_url_forbidden".to_owned());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let candidates = [
+            env::var_os("PROGRAMFILES")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+            env::var_os("PROGRAMFILES(X86)")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+            env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+        ];
+        let chrome = candidates
+            .into_iter()
+            .flatten()
+            .find(|path| path.is_file())
+            .ok_or_else(|| "chrome_unavailable".to_owned())?;
+        Command::new(chrome)
+            .arg(url)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| "chrome_launch_failed".to_owned())?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        Command::new(program)
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| "browser_launch_failed".to_owned())?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
 fn set_background_mode(enabled: bool, state: tauri::State<'_, DesktopState>) {
     state.background_mode.store(enabled, Ordering::SeqCst);
 }
@@ -443,6 +502,7 @@ pub fn run() -> Result<(), String> {
         }))
         .invoke_handler(tauri::generate_handler![
             select_repository_directory,
+            open_external_url,
             set_background_mode,
             get_background_mode
         ])
