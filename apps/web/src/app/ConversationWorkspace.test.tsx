@@ -99,6 +99,56 @@ function emptyConversationApi(stream: FakeRunStream): ConversationApi {
 }
 
 describe("ConversationWorkspace", () => {
+  it("binds a registered project to a new thread and sends its repository id", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    api.listRepositories = vi.fn().mockResolvedValue([{
+      id: "repo-1",
+      display_name: "Corvus",
+      path: "C:\\work\\corvus"
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-project" experience="developer" />);
+
+    await user.click(await screen.findByRole("button", { name: "Project · Agent directory" }));
+    await user.click(screen.getByRole("button", { name: /Corvus.*C:\\work\\corvus/ }));
+    expect(screen.getByRole("button", { name: "Project · Corvus" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this project");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledWith(
+      "Inspect this project",
+      expect.objectContaining({ repository_id: "repo-1" }),
+      expect.any(String)
+    ));
+  });
+
+  it("preserves streamed text and offers a safe recovery when read-only work is blocked", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-blocked" experience="developer" workingDirectory={"C:\\work\\corvus"} />);
+    const user = userEvent.setup();
+
+    expect(screen.getByText("C:\\work\\corvus")).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Clone the repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Working");
+    stream.emit("message", { payload: { text: "I found the repository and checked its URL." } });
+    stream.emit("failed", { payload: { reason_code: "process_frame_duplicate_key" } });
+
+    expect(await screen.findByText("I found the repository and checked its URL.")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Run paused by safety settings" })).toHaveTextContent(
+      /read-only mode prevented this run from making the requested change/i
+    );
+    expect(screen.queryByText(/process frame duplicate key/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Switch to Build" }));
+    expect(screen.getByRole("combobox", { name: "Run mode" })).toHaveValue("build");
+    expect(screen.getByRole("textbox", { name: "Message Corvus" })).toHaveValue("Clone the repository");
+  });
+
   it("ignores null streaming payloads without breaking the active run", async () => {
     const stream = new FakeRunStream();
     render(<ConversationWorkspace api={conversationApi(stream)} experience="developer"
@@ -160,7 +210,7 @@ describe("ConversationWorkspace", () => {
     expect(screen.queryByRole("option", { name: /Gemini|Grok|Unavailable|Preview/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Codex default/i })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent provider" }), "claude");
-    expect(screen.getByRole("option", { name: "Claude Sonnet (recommended)" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Claude Sonnet" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Agent model" }), "opus");
     expect(screen.getByRole("option", { name: "Max" })).toHaveValue("max");
     await user.selectOptions(screen.getByRole("combobox", { name: "Thinking level" }), "max");

@@ -21,6 +21,28 @@ function api(): PortableSkillsApi {
 }
 
 describe("PortableSkillsWorkspace", () => {
+  it("supports selecting and importing multiple discovered skills", async () => {
+    const second = { ...candidate, id: "c".repeat(64), name: "ship-release", path: "C:\\Users\\me\\.codex\\skills\\ship-release" };
+    const client = api();
+    vi.mocked(client.listSkillImportSources).mockResolvedValue([candidate, second]);
+    vi.mocked(client.previewSkillImport).mockImplementation(async (candidateId) => ({
+      ...preview,
+      candidate: candidateId === candidate.id ? candidate : second,
+      name: candidateId === candidate.id ? candidate.name : second.name,
+      digest: candidateId === candidate.id ? preview.digest : "d".repeat(64)
+    }));
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await screen.findByRole("checkbox", { name: "Select review-pr" });
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+    await user.click(screen.getByRole("button", { name: "Import selected (2)" }));
+
+    await waitFor(() => expect(client.importPortableSkill).toHaveBeenCalledTimes(2));
+    expect(client.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest);
+    expect(client.importPortableSkill).toHaveBeenCalledWith(second.id, "d".repeat(64));
+  });
+
   it("discovers, reviews, and imports a cross-agent skill", async () => {
     const user = userEvent.setup();
     const client = api();
@@ -28,8 +50,8 @@ describe("PortableSkillsWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: /review-pr/i }));
     expect(await screen.findByRole("dialog", { name: "review-pr" })).toBeVisible();
     expect(screen.getByText("Requested tools require approval.")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Package files" })).toBeVisible();
-    expect(screen.getByText("scripts/check.py")).toBeVisible();
+    expect(screen.getByRole("button", { name: /technical package details/i })).toBeVisible();
+    expect(screen.queryByText("scripts/check.py")).not.toBeInTheDocument();
     expect(screen.getByText("Imported permissions are never granted automatically.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Close skill review" })).toHaveFocus();
     await user.keyboard("{Shift>}{Tab}{/Shift}");

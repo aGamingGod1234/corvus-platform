@@ -43,6 +43,7 @@ from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessSessionEventKind,
     ProcessSessionLimits,
 )
+from corvus.safe_process import path_is_link_or_reparse
 
 _FIRST_EVENT_DIGEST = "0" * 64
 _DEFAULT_MODEL = "sonnet"
@@ -72,6 +73,7 @@ class LocalClaudeTextRequest:
     model: str = _DEFAULT_MODEL
     effort: ClaudeEffort = "medium"
     max_output_bytes: int = 100_000
+    workspace: Path | None = None
 
 
 class _ProcessSessionLike(Protocol):
@@ -222,8 +224,21 @@ class ClaudeCliAdapter(AgentRuntimePort):
             raise ClaudeAdapterError("claude_prompt_required")
         if _MODEL_PATTERN.fullmatch(request.model) is None:
             raise ClaudeAdapterError("claude_model_invalid")
-        scratch = self._scratch_root / str(request.run_id)
-        scratch.mkdir(parents=True, exist_ok=False)
+        if request.workspace is None:
+            scratch = self._scratch_root / str(request.run_id)
+            scratch.mkdir(parents=True, exist_ok=False)
+        else:
+            try:
+                scratch = request.workspace.resolve(strict=True)
+                approved_root = self._scratch_root.resolve(strict=True)
+            except OSError as error:
+                raise ClaudeAdapterError("claude_workspace_unavailable") from error
+            if (
+                not scratch.is_dir()
+                or path_is_link_or_reparse(scratch)
+                or not scratch.is_relative_to(approved_root)
+            ):
+                raise ClaudeAdapterError("claude_workspace_unavailable")
         arguments = (
             "--print",
             "--output-format",

@@ -104,6 +104,11 @@ function fakeApi(projects: Project[] = []): CorvusApi {
         refreshed_at: project.created_at
       }
     }))),
+    getGitHubAuthStatus: vi.fn().mockResolvedValue({ hostname: "github.com", authenticated: false }),
+    authenticateGitHub: vi.fn().mockResolvedValue({ hostname: "github.com", authenticated: true }),
+    listGitHubRepositories: vi.fn().mockResolvedValue([]),
+    connectGitHubRepository: vi.fn(),
+    createEmptyRepository: vi.fn(),
     registerRepository: vi.fn(),
     refreshRepository: vi.fn(),
     removeRepository: vi.fn(),
@@ -226,7 +231,7 @@ describe("Corvus operator console", () => {
     expect(screen.getByText("paired-operator")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Launch control" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New project" })).toBeVisible();
   });
 
   it("uses one local left navigation and omits permanent secondary rails", async () => {
@@ -254,7 +259,7 @@ describe("Corvus operator console", () => {
 
   it.each([
     ["everyday", "personal", ["Conversations", "Schedule", "My Work", "Files", "Settings"]],
-    ["developer", "personal", ["Threads", "Repositories", "Runs", "Schedule", "Skills", "Settings"]],
+    ["developer", "personal", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
     ["everyday", "team", ["Conversations", "Schedule", "Assigned Work", "Approvals", "People", "Settings"]],
     ["developer", "team", ["Threads", "Repositories", "Runs", "Reviews", "Schedule", "Policies", "Settings"]]
   ] as const)("provides accessible local routes for the %s %s profile", async (experience, scope, labels) => {
@@ -326,7 +331,7 @@ describe("Corvus operator console", () => {
     renderApp(api, preferenceStorage);
 
     await waitFor(() => expect(api.pair).toHaveBeenCalledWith("desktop-ephemeral-token"));
-    expect(await screen.findByRole("heading", { name: "What do you want to build?" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "What would you like to start?" })).toBeVisible();
     expect(screen.queryByDisplayValue("desktop-ephemeral-token")).not.toBeInTheDocument();
     expect(window.location.hash).toBe("");
   });

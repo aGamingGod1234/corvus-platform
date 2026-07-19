@@ -39,6 +39,63 @@ function settingsApi(): Pick<ConversationApi, "getPreferences" | "listProviders"
 }
 
 describe("SettingsPanel", () => {
+  it("tracks profile changes in the shared unsaved bar and avoids unrelated desktop mutations", async () => {
+    const applyDesktopSettings = vi.fn().mockResolvedValue(undefined);
+    const onExperienceChange = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <SettingsPanel api={settingsApi()} applyDesktopSettings={applyDesktopSettings} desktopAvailable
+        experience="developer" onExperienceChange={onExperienceChange} storage={new MemoryStorage()}
+        workspaceId="workspace-profile" workspaceKind="individual" />
+    );
+
+    await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
+    const bar = screen.getByRole("region", { name: "Unsaved settings" });
+    expect(bar).toHaveTextContent("Experience: Developer → Everyday");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onExperienceChange).toHaveBeenCalledWith("everyday"));
+    expect(applyDesktopSettings).not.toHaveBeenCalled();
+  });
+
+  it("uses editable model identifiers and category-specific headings", async () => {
+    const api = settingsApi();
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-model-text" workspaceKind="individual" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
+    const claudeModel = screen.getByRole("textbox", { name: "Claude default model" });
+    await user.clear(claudeModel);
+    await user.type(claudeModel, "claude-custom-model");
+    expect(screen.getByText("You have unsaved changes")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
+      default_provider: "claude",
+      default_model: "claude-custom-model"
+    })));
+    expect(screen.queryByText(/ready on this device|recommended/i)).not.toBeInTheDocument();
+  });
+
+  it("does not carry an Agent save error into MCP settings", async () => {
+    const api = settingsApi();
+    vi.mocked(api.updatePreferences).mockRejectedValue(new Error("save_failed"));
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-scoped-error" workspaceKind="individual" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.selectOptions(screen.getByLabelText("Response style"), "concise");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/save failed/i);
+
+    await user.click(screen.getByRole("button", { name: "MCP" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("applies explicit background, login, and notification settings to desktop", async () => {
     const storage = new MemoryStorage();
     const applyDesktopSettings = vi.fn().mockResolvedValue(undefined);
@@ -107,7 +164,7 @@ describe("SettingsPanel", () => {
     expect(loadDevicePreferences(storage, "workspace-1").theme).toBe("dark");
   });
 
-  it("truthfully labels unavailable integrations", async () => {
+  it("directs connection management to the feature that uses it", async () => {
     render(
       <SettingsPanel
         experience="developer"
@@ -120,7 +177,7 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Account" }));
     expect(screen.getByText("Web · Preview")).toBeVisible();
-    expect(screen.getByText("Not connected")).toBeVisible();
+    expect(screen.getByText("Managed where they are used")).toBeVisible();
   });
 
   it("disables API credential entry without a local credential runtime", async () => {
@@ -142,7 +199,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByText(/open Corvus desktop to manage API credentials/i)).toBeVisible();
   });
 
-  it("uses the discovered model name instead of a vague provider default", async () => {
+  it("uses the discovered model identifier as an editable starting value", async () => {
     const api = settingsApi();
     vi.mocked(api.getPreferences).mockResolvedValue({
       ...(await api.getPreferences()),
@@ -161,9 +218,8 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
-    expect(await screen.findByRole("option", { name: "GPT-5.6 Sol · Recommended" })).toBeVisible();
-    expect(screen.getByLabelText("Default model")).toHaveValue("gpt-5.6-sol");
-    expect(screen.queryByRole("option", { name: /provider default/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
+    expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
   });
 
   it("keeps curated Codex controls visible and retries failed discovery", async () => {
@@ -182,9 +238,9 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
-    expect(await screen.findByRole("option", { name: /GPT-5\.6 Sol.*Recommended/ })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Low" })).toBeVisible();
-    expect(screen.getByRole("option", { name: "Extra high" })).toBeVisible();
+    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
+    expect(screen.getByRole("radio", { name: "Low" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: "Extra high" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry discovery" }));
     await waitFor(() => expect(api.listProviders).toHaveBeenCalledTimes(2));
   });

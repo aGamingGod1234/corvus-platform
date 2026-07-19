@@ -14,6 +14,9 @@ export interface DeviceThread {
   createdAt: string;
   updatedAt: string;
   messages: DeviceMessage[];
+  workingDirectory?: string;
+  repositoryId?: string;
+  repositoryName?: string;
 }
 
 interface DeviceConversationState { version: typeof STORAGE_VERSION; threads: DeviceThread[]; }
@@ -33,7 +36,10 @@ function validThread(value: unknown): value is DeviceThread {
   const candidate = value as Record<string, unknown>;
   return typeof candidate.id === "string" && typeof candidate.title === "string" &&
     typeof candidate.createdAt === "string" && typeof candidate.updatedAt === "string" &&
-    Array.isArray(candidate.messages) && candidate.messages.every(validMessage);
+    Array.isArray(candidate.messages) && candidate.messages.every(validMessage) &&
+    (candidate.workingDirectory === undefined || typeof candidate.workingDirectory === "string") &&
+    (candidate.repositoryId === undefined || typeof candidate.repositoryId === "string") &&
+    (candidate.repositoryName === undefined || typeof candidate.repositoryName === "string");
 }
 
 export function loadDeviceThreads(storage: Storage, scope: string): DeviceThread[] {

@@ -40,11 +40,11 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Developer · Individual",
     eyebrow: "Local engineering workspace",
     routes: [
-      { id: "threads", label: "Threads", description: "Agent plans and execution context" },
       { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
       { id: "runs", label: "Runs", description: "Workflows, logs, checks, and budgets" },
       { id: "schedule", label: "Schedule", description: "Authorized routines and manual runs" },
       { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" },
+      { id: "threads", label: "Threads", description: "Start a new agent conversation" },
       SETTINGS_ROUTE
     ]
   },
@@ -84,4 +84,8 @@ export function getWorkspaceProfile(
   workspaceKind: WorkspaceKind
 ): WorkspaceProfile {
   return PROFILES[`${experience}:${workspaceKind}`];
+}
+
+export function getWorkspaceDefaultRoute(profile: WorkspaceProfile): string {
+  return profile.routes.some((route) => route.id === "threads") ? "threads" : profile.routes[0].id;
 }

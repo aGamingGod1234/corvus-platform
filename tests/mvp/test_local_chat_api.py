@@ -73,6 +73,67 @@ class _Backend:
         return None
 
 
+class _ProjectBackend(_Backend):
+    source_directory: Path | None = None
+
+    async def start_in_workspace(
+        self,
+        *,
+        run_id: UUID,
+        prompt: str,
+        model: str | None,
+        effort: str,
+        mode: str,
+        mcp_enabled: bool,
+        idempotency_key: str,
+        source_directory: Path,
+    ) -> LocalChatBackendHandle:
+        self.source_directory = source_directory
+        return await self.start(
+            run_id=run_id,
+            prompt=prompt,
+            model=model,
+            effort=effort,
+            mode=mode,
+            mcp_enabled=mcp_enabled,
+            idempotency_key=idempotency_key,
+        )
+
+
+@pytest.mark.asyncio
+async def test_project_directory_is_bound_to_a_project_aware_backend(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    backend = _ProjectBackend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+
+    await service.start(
+        owner="local:user",
+        prompt="Inspect this project",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="project-run",
+        source_directory=project,
+    )
+
+    assert backend.source_directory == project
+
+
+def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("original", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-1"
+
+    local_chat_module._copy_project(source, destination)
+    (destination / "README.md").write_text("changed", encoding="utf-8")
+
+    assert (source / "README.md").read_text(encoding="utf-8") == "original"
+
+
 class _MemoryKeyring:
     def __init__(self) -> None:
         self.values: dict[tuple[str, str], str] = {}

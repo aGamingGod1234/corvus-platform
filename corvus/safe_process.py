@@ -105,6 +105,7 @@ async def create_grouped_process(
 
     if os.name == "nt":
         process_group_flag = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        no_window_flag = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
@@ -112,7 +113,7 @@ async def create_grouped_process(
             stdin=stdin,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=process_group_flag,
+            creationflags=process_group_flag | no_window_flag,
         )
     return await asyncio.create_subprocess_exec(
         *argv,

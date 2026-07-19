@@ -30,7 +30,7 @@ from corvus.mvp.contributions import (
 from corvus.mvp.core import CorvusService, DomainConflict, DomainNotFound
 from corvus.mvp.deployment import TenantScopedQueries
 from corvus.mvp.git_process import GitProcess, GitProcessError
-from corvus.mvp.github_cli import GitHubCli
+from corvus.mvp.github_cli import GitHubCli, GitHubCliError, GitHubRepository
 from corvus.mvp.governance import (
     AutonomyDecision,
     GovernanceService,
@@ -60,6 +60,7 @@ from corvus.mvp.local_chat import (
     build_default_local_chat_service,
     discover_codex_executable,
 )
+from corvus.mvp.mcp_config import McpConfigError, McpConfigService, McpServer
 from corvus.mvp.models import (
     ApprovalRecord,
     ArtifactRecord,
@@ -108,6 +109,7 @@ from corvus.mvp.skill_imports import (
     SkillImportService,
 )
 from corvus.mvp.store import SqliteStore
+from corvus.mvp.trusted_cli import TrustedCli, TrustedCliError
 from corvus.mvp.worktrees import WorktreeManager, WorktreeOwnershipError
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
@@ -258,6 +260,7 @@ class LocalChatStartRequest(ApiModel):
     mode: Literal["chat", "build"] = "chat"
     mcp_enabled: bool = False
     safety_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    repository_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SafetyPreviewResponse(ApiModel):
@@ -283,6 +286,7 @@ class LocalChatStartResponse(ApiModel):
     mode: Literal["chat", "build"]
     storage: Literal["this_device"]
     created_at: str
+    working_directory: str
     safety: SafetyPreviewResponse
 
 
@@ -321,6 +325,40 @@ class LocalPreferencesResponse(ApiModel):
     response_tone: Literal["concise", "balanced", "detailed"]
     custom_rules: str
     updated_at: str | None
+
+
+class McpServerResponse(ApiModel):
+    name: str
+    enabled: bool
+    transport: str
+    endpoint: str
+    auth_status: str
+
+
+class McpRemoteCreateRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    url: str = Field(min_length=9, max_length=2048)
+
+
+class GitHubAuthResponse(ApiModel):
+    hostname: str
+    authenticated: bool
+
+
+class GitHubRepositoryResponse(ApiModel):
+    name: str
+    slug: str
+    url: str
+    default_branch: str | None
+    private: bool
+
+
+class GitHubRepositoryConnectRequest(ApiModel):
+    slug: str = Field(min_length=3, max_length=201, pattern=r"^[^/\s]+/[^/\s]+$")
+
+
+class EmptyProjectCreateRequest(ApiModel):
+    name: str = Field(min_length=1, max_length=120)
 
 
 class LocalPreferencesUpdate(ApiModel):
@@ -582,6 +620,16 @@ def create_app(
         cursor_secret=hmac.new(session_secret, b"local-chat-cursor", hashlib.sha256).digest(),
     )
     local_preferences = LocalPreferencesService(service.store)
+    mcp_configuration: McpConfigService | None = None
+    mcp_executable = discover_codex_executable()
+    if mcp_executable is not None:
+        try:
+            mcp_configuration = McpConfigService(
+                TrustedCli(mcp_executable),
+                cwd=database.parent,
+            )
+        except (TrustedCliError, OSError):
+            mcp_configuration = None
     credential_service = provider_credentials or ProviderCredentialService()
     git = _build_git_process("git.exe" if os.name == "nt" else "git")
     change_review = ChangeReviewService(git) if git is not None else None
@@ -599,20 +647,26 @@ def create_app(
             ).digest(),
         )
     contributions = contribution_service
+    github: GitHubCli | None = None
+    gh_executable = shutil.which("gh.exe" if os.name == "nt" else "gh")
+    if gh_executable is not None:
+        try:
+            github = GitHubCli(TrustedCli(Path(gh_executable)), cwd=database.parent)
+        except (TrustedCliError, GitHubCliError):
+            github = None
     skill_imports = skill_import_service or SkillImportService(
         service.store, library_root=database.parent / ".corvus-skills"
     )
     if contributions is None and git is not None and worktrees is not None:
         assert change_review is not None
-        gh = _build_git_process("gh.exe" if os.name == "nt" else "gh")
-        if gh is not None:
+        if github is not None:
             contributions = ContributionService(
                 service.store,
                 git,
                 worktrees,
                 change_review,
                 SecretScanner(),
-                GitHubCli(gh, cwd=database.parent),
+                github,
                 confirmation_secret=hmac.new(
                     session_secret,
                     b"contribution-confirmation",
@@ -788,6 +842,22 @@ def create_app(
             )
         return repositories
 
+    def mcp_configuration_service() -> McpConfigService:
+        if mcp_configuration is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="codex_mcp_unavailable",
+            )
+        return mcp_configuration
+
+    def github_service() -> GitHubCli:
+        if github is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_cli_unavailable",
+            )
+        return github
+
     def worktree_service() -> WorktreeManager:
         if worktrees is None:
             raise HTTPException(
@@ -901,6 +971,74 @@ def create_app(
         return [
             item.model_dump(mode="json") for item in repository_service().list(principal.tenant_id)
         ]
+
+    @app.get("/api/local/github/status", response_model=GitHubAuthResponse)
+    def github_auth_status(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> object:
+        return github_service().auth_status()
+
+    @app.post("/api/local/github/authenticate", response_model=GitHubAuthResponse)
+    def github_authenticate(
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> object:
+        try:
+            return github_service().authenticate()
+        except GitHubCliError as error:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+    @app.get("/api/local/github/repositories", response_model=list[GitHubRepositoryResponse])
+    def github_repositories(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> tuple[GitHubRepository, ...]:
+        try:
+            return github_service().list_repositories(limit=100)
+        except GitHubCliError as error:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+    @app.post("/api/local/github/repositories", response_model=RepositoryRecord)
+    def connect_github_repository(
+        body: GitHubRepositoryConnectRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> RepositoryRecord:
+        managed_root = database.parent / ".corvus-github"
+        managed_root.mkdir(parents=True, exist_ok=True)
+        target = managed_root.resolve(strict=True) / str(uuid4())
+        try:
+            github_service().clone_repository(body.slug, target)
+            return repository_service().register_local(
+                principal.tenant_id,
+                target,
+                body.slug.rsplit("/", 1)[-1],
+            )
+        except (GitHubCliError, ValueError) as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+
+    @app.post("/api/local/projects", response_model=RepositoryRecord)
+    def create_empty_project(
+        body: EmptyProjectCreateRequest,
+        principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> RepositoryRecord:
+        project_root = database.parent / ".corvus-projects"
+        project_root.mkdir(parents=True, exist_ok=True)
+        target = project_root.resolve(strict=True) / str(uuid4())
+        target.mkdir()
+        project_git = repository_service().git
+        initialized = project_git.run(target, ("init", "--initial-branch=main", "."))
+        committed = project_git.run(
+            target,
+            (
+                "-c", "user.name=Corvus",
+                "-c", "user.email=corvus@localhost",
+                "commit", "--allow-empty", "-m", "Initialize project",
+            ),
+        )
+        if initialized.returncode != 0 or committed.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="project_initialization_failed",
+            )
+        return repository_service().register_local(principal.tenant_id, target, body.name.strip())
 
     @app.get("/api/local/skills", response_model=list[PortableSkillVersion])
     def local_skills(
@@ -1323,6 +1461,10 @@ def create_app(
         try:
             preferences = local_preferences.get(principal.user_id)
             owner = f"{principal.tenant_id}:{principal.user_id}"
+            source_directory = None
+            if body.repository_id is not None:
+                repository = repository_service().get(principal.tenant_id, body.repository_id)
+                source_directory = Path(repository.path)
             if body.provider in {"openai", "anthropic", "gemini", "xai"}:
                 api_provider = cast(ApiProvider, body.provider)
                 credential = credential_service.require(principal.user_id, api_provider)
@@ -1346,6 +1488,7 @@ def create_app(
                 safety_digest=body.safety_digest,
                 idempotency_key=idempotency_key,
                 idempotency_prompt=body.prompt,
+                source_directory=source_directory,
             )
         except ProviderCredentialError as error:
             raise HTTPException(
@@ -1407,6 +1550,50 @@ def create_app(
                 }
             )
         return local_entries
+
+    @app.get("/api/local-chat/mcp", response_model=list[McpServerResponse])
+    def list_mcp_servers(
+        _principal: Annotated[SessionPrincipal, Depends(authenticated)],
+    ) -> tuple[McpServer, ...]:
+        try:
+            return mcp_configuration_service().list()
+        except McpConfigError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
+
+    @app.post("/api/local-chat/mcp", response_model=McpServerResponse)
+    def add_mcp_server(
+        body: McpRemoteCreateRequest,
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> McpServer:
+        try:
+            return mcp_configuration_service().add_remote(body.name, body.url)
+        except McpConfigError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+
+    @app.delete("/api/local-chat/mcp/{name}", status_code=status.HTTP_204_NO_CONTENT)
+    def remove_mcp_server(
+        name: str,
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> Response:
+        try:
+            mcp_configuration_service().remove(name)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        except McpConfigError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+
+    @app.post("/api/local-chat/mcp/{name}/login", status_code=status.HTTP_204_NO_CONTENT)
+    def login_mcp_server(
+        name: str,
+        _principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
+    ) -> Response:
+        try:
+            mcp_configuration_service().login(name)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        except McpConfigError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
 
     @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
     def local_chat_safety_preview(

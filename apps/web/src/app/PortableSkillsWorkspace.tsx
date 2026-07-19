@@ -31,6 +31,8 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
   const [discovering, setDiscovering] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+  const [technicalOpen, setTechnicalOpen] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
 
   const refresh = useCallback(async () => {
@@ -68,6 +70,7 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
     setBusy(true);
     setError("");
     try {
+      setTechnicalOpen(false);
       setPreview(await api.previewSkillImport(candidate.id));
     } catch (reason) {
       setError(readableError(reason));
@@ -84,6 +87,27 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
       const imported = await api.importPortableSkill(preview.candidate.id, preview.digest);
       setSkills((current) => [imported, ...current.filter((skill) => skill.id !== imported.id)]);
       setPreview(null);
+    } catch (reason) {
+      setError(readableError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importSelected(): Promise<void> {
+    if (selectedCandidateIds.size === 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      const imported: PortableSkill[] = [];
+      for (const candidate of candidates.filter((item) => selectedCandidateIds.has(item.id))) {
+        const candidatePreview = await api.previewSkillImport(candidate.id);
+        if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") continue;
+        imported.push(await api.importPortableSkill(candidate.id, candidatePreview.digest));
+      }
+      const uniqueImported = [...new Map(imported.map((skill) => [skill.id, skill])).values()];
+      setSkills((current) => [...uniqueImported, ...current.filter((skill) => !uniqueImported.some((item) => item.id === skill.id))]);
+      setSelectedCandidateIds(new Set());
     } catch (reason) {
       setError(readableError(reason));
     } finally {
@@ -133,7 +157,7 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
     <header className="resource-heading"><div><p className="eyebrow">Portable Agent Skills</p><h1 id="portable-skills-title">Skills</h1><p>Bring trusted workflows from Codex, Claude Code, Hermes, Copilot, and the open Agent Skills format.</p></div><button className="button button--primary" disabled={discovering} onClick={() => void refresh()} type="button">{discovering ? "Discovering…" : "Discover skills"}</button></header>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
     <div className="skill-source-grid" aria-label="Skill sources">{sourceCounts.map(({ source, count }) => <article key={source}><strong>{SOURCE_LABELS[source]}</strong><span>{count} found</span></article>)}</div>
-    <div className="skill-library-layout"><section><div className="section-heading"><h2>Discovered</h2><span>{candidates.length}</span></div><div className="skill-candidates">{candidates.length === 0 && !discovering ? <div className="resource-empty"><strong>No importable skills found</strong><span>Add a SKILL.md under a supported tool’s skills directory, then discover again.</span></div> : candidates.map((candidate) => <button key={candidate.id} onClick={() => void review(candidate)} type="button"><span className="skill-source-badge">{SOURCE_LABELS[candidate.source] ?? candidate.source}</span><strong>{candidate.name}</strong><small>{candidate.kind === "legacy_command" ? "Legacy command · converts for review" : candidate.path}</small></button>)}</div></section><section><div className="section-heading"><h2>Library</h2><span>{skills.length} versions</span></div><div className="portable-skill-list">{skills.length === 0 ? <div className="resource-empty"><strong>Your library is empty</strong><span>Review a discovered skill and import a digest-pinned copy.</span></div> : skills.map((skill) => <article key={skill.id}><div><span className="skill-source-badge">{skill.source}</span><strong>{skill.name} <small>v{skill.version}</small></strong><p>{skill.description}</p></div><span className="run-status" data-status={skill.status}>{skill.status}</span><div className="row-actions">{skill.status !== "active" && skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "activate")} type="button">Activate</button> : null}{skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "archive")} type="button">Archive</button> : null}</div></article>)}</div></section></div>
+    <div className="skill-library-layout"><section><div className="section-heading"><h2>Discovered</h2><div className="skill-bulk-actions"><span>{candidates.length}</span><button className="button button--quiet" disabled={busy || candidates.length === 0} onClick={() => setSelectedCandidateIds(new Set(candidates.map((candidate) => candidate.id)))} type="button">Select all</button><button className="button button--quiet" disabled={busy || selectedCandidateIds.size === 0} onClick={() => setSelectedCandidateIds(new Set())} type="button">Clear</button><button className="button" disabled={busy || selectedCandidateIds.size === 0} onClick={() => void importSelected()} type="button">Import selected ({selectedCandidateIds.size})</button></div></div><div className="skill-candidates">{candidates.length === 0 && !discovering ? <div className="resource-empty"><strong>No importable skills found</strong><span>Add a SKILL.md under a supported tool’s skills directory, then discover again.</span></div> : candidates.map((candidate) => <article key={candidate.id}><label><input aria-label={`Select ${candidate.name}`} checked={selectedCandidateIds.has(candidate.id)} onChange={(event) => setSelectedCandidateIds((current) => { const next = new Set(current); if (event.target.checked) next.add(candidate.id); else next.delete(candidate.id); return next; })} type="checkbox" /></label><button onClick={() => void review(candidate)} type="button"><span className="skill-source-badge">{SOURCE_LABELS[candidate.source] ?? candidate.source}</span><strong>{candidate.name}</strong><small>{candidate.kind === "legacy_command" ? "Legacy command · converts for review" : candidate.path}</small></button></article>)}</div></section><section><div className="section-heading"><h2>Library</h2><span>{skills.length} versions</span></div><div className="portable-skill-list">{skills.length === 0 ? <div className="resource-empty"><strong>Your library is empty</strong><span>Review a discovered skill and import a digest-pinned copy.</span></div> : skills.map((skill) => <article key={skill.id}><div><span className="skill-source-badge">{skill.source}</span><strong>{skill.name} <small>v{skill.version}</small></strong><p>{skill.description}</p></div><span className="run-status" data-status={skill.status}>{skill.status}</span><div className="row-actions">{skill.status !== "active" && skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "activate")} type="button">Activate</button> : null}{skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "archive")} type="button">Archive</button> : null}</div></article>)}</div></section></div>
     {preview ? <div className="skill-review-backdrop" role="presentation">
       <section aria-labelledby="skill-review-title" aria-modal="true" className="skill-review" onKeyDown={handleDialogKeyDown} ref={dialogRef} role="dialog">
         <header>
@@ -146,14 +170,10 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
           <span>{preview.files.length} files</span>
           <span>{preview.duplicate === "none" ? "New skill" : `${preview.duplicate} duplicate`}</span>
         </div>
-        <div className="skill-review__digest"><span>Immutable package digest</span><code title={preview.digest}>{preview.digest}</code></div>
-        <section className="skill-review__files">
-          <h3>Package files</h3>
-          <p>These normalized relative paths are copied into a Corvus-owned draft without executing them.</p>
-          <ul>{preview.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
-        </section>
         {preview.findings.length ? <div className="skill-findings"><h3>Review findings</h3>{preview.findings.map((finding, index) => <article data-severity={finding.severity} key={`${finding.code}-${index}`}><strong>{finding.message}</strong><small>{finding.location} · {finding.code}</small></article>)}</div> : <p className="skill-review__clean">No compatibility or security findings. Import still copies the package without executing it.</p>}
         <p className="skill-review__authority">Imported permissions are never granted automatically.</p>
+        <button aria-expanded={technicalOpen} className="skill-review__technical-toggle" onClick={() => setTechnicalOpen((open) => !open)} type="button">Technical package details</button>
+        {technicalOpen ? <div className="skill-review__technical"><div className="skill-review__digest"><span>Immutable package digest</span><code title={preview.digest}>{preview.digest}</code></div><section className="skill-review__files"><h3>Package files</h3><p>Normalized paths copied into the Corvus-owned draft.</p><ul>{preview.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul></section></div> : null}
         <footer><button className="button" onClick={() => setPreview(null)} type="button">Cancel</button><button className="button button--primary" disabled={busy || preview.compatibility === "blocked" || preview.duplicate === "exact"} onClick={() => void importSkill()} type="button">{preview.duplicate === "exact" ? "Already imported" : busy ? "Importing…" : "Import as draft"}</button></footer>
       </section>
     </div> : null}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -7,6 +7,7 @@ import { BrandMark } from "../components/Brand";
 
 import type {
   ConversationApi,
+  ConversationRepository,
   ProviderCatalogEntry,
   ProviderId,
   RunnableProviderId,
@@ -69,17 +70,21 @@ function safeMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message.replaceAll("_", " ") : "Corvus could not complete that action.";
 }
 
-export function ConversationWorkspace({ api, experience, storage, storageScope }: {
+export function ConversationWorkspace({ api, experience, newThreadSignal = 0, onOpenProjects, storage, storageScope, workingDirectory }: {
   api: ConversationApi;
   experience: Experience;
+  newThreadSignal?: number;
+  onOpenProjects?(): void;
   storage: Storage;
   storageScope: string;
+  workingDirectory?: string;
 }) {
   const streamRef = useRef<RunEventStream | null>(null);
   const [threads, setThreads] = useState<DeviceThread[]>(() => loadDeviceThreads(storage, storageScope));
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => threads[0]?.id ?? null);
   const activeThreadIdRef = useRef<string | null>(selectedThreadId);
   const assistantTextRef = useRef("");
+  const activePromptRef = useRef("");
   const [composer, setComposer] = useState("");
   const [assistantText, setAssistantText] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -103,8 +108,12 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
   const [safetyRefresh, setSafetyRefresh] = useState(0);
   const [safetyDetailsOpen, setSafetyDetailsOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<{ prompt: string; safety: SafetyPreview } | null>(null);
+  const [interruption, setInterruption] = useState<{ prompt: string; detail: string } | null>(null);
   const [receipt, setReceipt] = useState<SafetyReceipt | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [repositories, setRepositories] = useState<ConversationRepository[]>([]);
+  const newThreadSignalRef = useRef(newThreadSignal);
   const noun = experience === "developer" ? "thread" : "conversation";
   const sendKeyMode = loadDevicePreferences(storage, storageScope).sendKeyMode;
   const selected = threads.find((thread) => thread.id === selectedThreadId) ?? null;
@@ -114,6 +123,16 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
 
   useEffect(() => () => streamRef.current?.close(), []);
   useEffect(() => saveDeviceThreads(storage, storageScope, threads), [storage, storageScope, threads]);
+  useEffect(() => {
+    if (api.listRepositories === undefined) return;
+    let current = true;
+    void api.listRepositories().then((items) => {
+      if (current) setRepositories(items);
+    }).catch(() => {
+      if (current) setRepositories([]);
+    });
+    return () => { current = false; };
+  }, [api]);
   useEffect(() => {
     let current = true;
     setSafetyLoading(true);
@@ -156,9 +175,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
         const readyThinkingLevels = ready.thinking_levels ?? [];
         setProviderId(ready.id as RunnableProviderId);
         setModelId(
-          preferences.default_model !== null && readyModels.some((model) => model.id === preferences.default_model)
-            ? preferences.default_model
-            : readyModels[0]?.id ?? ""
+          preferences.default_model !== null ? preferences.default_model : readyModels[0]?.id ?? ""
         );
         setThinking(
           readyThinkingLevels.includes(preferences.default_effort)
@@ -175,7 +192,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     return () => { current = false; };
   }, [api, providerRefresh]);
 
-  function createConversation(): DeviceThread {
+  const createConversation = useCallback((): DeviceThread => {
     const now = new Date().toISOString();
     const created: DeviceThread = {
       id: crypto.randomUUID(),
@@ -191,7 +208,24 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     assistantTextRef.current = "";
     setHistoryOpen(false);
     return created;
+  }, [experience]);
+
+  function selectRepository(repository: ConversationRepository | null): void {
+    const thread = selected ?? createConversation();
+    setThreads((current) => current.map((item) => item.id === thread.id ? {
+      ...item,
+      repositoryId: repository?.id,
+      repositoryName: repository?.display_name,
+      workingDirectory: repository?.path
+    } : item));
+    setProjectMenuOpen(false);
   }
+
+  useEffect(() => {
+    if (newThreadSignalRef.current === newThreadSignal) return;
+    newThreadSignalRef.current = newThreadSignal;
+    createConversation();
+  }, [createConversation, newThreadSignal]);
 
   function finishRun(status: Exclude<RunStatus, "idle" | "working">, text?: string): void {
     const threadId = activeThreadIdRef.current;
@@ -254,12 +288,27 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
       finishRun("cancelled");
     });
     stream.addEventListener("failed", ({ data }) => {
+      let reasonCode = "run_failed";
       try {
         const event = JSON.parse(data) as { payload?: { reason_code?: unknown } } | null;
-        if (typeof event?.payload?.reason_code === "string") setError(event.payload.reason_code.replaceAll("_", " "));
+        if (typeof event?.payload?.reason_code === "string") reasonCode = event.payload.reason_code;
       } finally {
         loadSafetyReceipt(activeRunId);
-        finishRun("failed");
+        const partialResponse = assistantTextRef.current;
+        if (safetyPreview?.level === "read_only" && (
+          reasonCode.startsWith("process_") || reasonCode.includes("sandbox") || reasonCode.includes("permission")
+        )) {
+          setError("");
+          setInterruption({
+            prompt: activePromptRef.current,
+            detail: "Read-only mode prevented this run from making the requested change. The response already received is preserved."
+          });
+        } else if (reasonCode.includes("model")) {
+          setError("The selected model is not available for this provider. Change it in Settings, then try again.");
+        } else {
+          setError("This run stopped before it could finish. You can retry or change its safety mode.");
+        }
+        finishRun("failed", partialResponse);
       }
     });
     stream.onTerminalError(() => {
@@ -282,6 +331,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     setAssistantText("");
     assistantTextRef.current = "";
     activeThreadIdRef.current = thread.id;
+    activePromptRef.current = prompt;
     setRunStatus("working");
     setBusy(true);
     setError("");
@@ -289,6 +339,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     setThinkingNote("");
     setArtifactReady(false);
     setReceipt(null);
+    setInterruption(null);
     try {
       const run = await api.startRun(prompt, {
         provider: providerId,
@@ -296,9 +347,15 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
         effort: thinking,
         mode,
         mcp_enabled: mode === "build" && mcpEnabled,
-        safety_digest: safety.policy_digest
+        safety_digest: safety.policy_digest,
+        ...(thread.repositoryId ? { repository_id: thread.repositoryId } : {})
       }, crypto.randomUUID());
       setRunId(run.run_id);
+      if (run.working_directory) {
+        setThreads((current) => current.map((item) => item.id === thread.id
+          ? { ...item, workingDirectory: run.working_directory }
+          : item));
+      }
       listen(api.openRunEvents(run.run_id), run.run_id);
     } catch (reason) {
       setRunStatus("failed");
@@ -351,7 +408,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
     <section className="conversation-workspace" aria-label="Corvus conversations">
       <div className="conversation-panel">
         <header className="conversation-panel__header">
-          <div><h1>{selected?.title ?? (experience === "developer" ? "New thread" : "New conversation")}</h1><span className="conversation-context">This computer</span></div>
+          <div><h1>{selected?.title ?? (experience === "developer" ? "New thread" : "New conversation")}</h1><span className="conversation-context" title={selected?.workingDirectory ?? workingDirectory}>{selected?.workingDirectory ?? workingDirectory ?? "Corvus agent workspace"}</span></div>
           <div className="conversation-actions">
             <button aria-expanded={historyOpen} aria-label="Conversation history" className="icon-button" data-component-source="lucide-message-square" onClick={() => setHistoryOpen((open) => !open)} type="button"><Icon name="history" /></button>
             <button aria-label={`New ${noun}`} className="icon-button" onClick={createConversation} type="button"><Icon name="new" /></button>
@@ -363,13 +420,17 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
           </div> : null}
         </header>
         <div className="message-transcript">
-          {(selected?.messages.length ?? 0) === 0 && assistantText === "" ? <div className="conversation-empty"><BrandMark className="conversation-mark" decorative /><h2>{experience === "developer" ? "What do you want to build?" : "What can Corvus help you finish?"}</h2><p>Ask a question or hand off a complete task. Build mode works in an isolated sandbox and returns the finished project.</p><div className="starter-prompts">{(experience === "developer" ? ["Inspect this repository", "Fix the failing tests", "Build a small feature"] : ["Plan my week", "Draft a clear update", "Organize these notes"]).map((starter) => <button key={starter} onClick={() => setComposer(starter)} type="button">{starter}</button>)}</div></div> : null}
+          {(selected?.messages.length ?? 0) === 0 && assistantText === "" ? <div className="conversation-empty"><BrandMark className="conversation-mark" decorative /><h2>{experience === "developer" ? "What would you like to start?" : "What can Corvus help you finish?"}</h2><p>Ask a question or hand off a complete task. Build mode works in an isolated sandbox and returns the finished project.</p><div className="starter-prompts">{(experience === "developer" ? ["Inspect this repository", "Fix the failing tests", "Build a small feature"] : ["Plan my week", "Draft a clear update", "Organize these notes"]).map((starter) => <button key={starter} onClick={() => setComposer(starter)} type="button">{starter}</button>)}</div></div> : null}
           {selected?.messages.map((message) => <article className={`message message--${message.role}`} key={message.id}><span>{message.role === "user" ? "You" : "Corvus"}</span><MarkdownMessage>{message.content}</MarkdownMessage></article>)}
           {runStatus === "working" ? <section className="run-activity" aria-label="Run status: working"><div className="run-activity__status" role="status"><span className="activity-pulse" /><strong>Working</strong>{runNote ? <span>{runNote}</span> : null}</div><ol aria-label="Safety timeline" className="safety-timeline"><li><Icon name="shield" /><span><strong>{safetyPreview?.label ?? "Policy verified"}</strong><small>Policy locked for this run</small></span></li>{runNote ? <li><span className="safety-timeline__dot" /><span><strong>{runNote}</strong><small>Observed runtime activity</small></span></li> : null}</ol>{thinkingNote ? <details open><summary>Thinking</summary><p>{thinkingNote}</p></details> : null}</section> : null}
           {assistantText !== "" ? <article className="message message--assistant"><span>Corvus</span><MarkdownMessage>{assistantText}</MarkdownMessage></article> : null}
           {artifactReady && runId !== null ? <a className="artifact-download" href={api.artifactUrl(runId)}><Icon name="download" />Download finished project</a> : null}
           {receipt ? <section aria-label="Safety receipt" className="safety-receipt"><header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header><div className="safety-receipt__facts"><span>Original project unchanged</span><span>No blanket host access</span>{receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}</div>{receipt.activities.length > 0 ? <ul>{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}<details><summary>Verification details</summary><p>{receipt.approval}</p><code>{receipt.safety.policy_digest}</code></details></section> : null}
           {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
+          {interruption ? <section aria-label="Run paused by safety settings" className="run-interruption">
+            <div><Icon name="shield" /><div><strong>Corvus paused this run</strong><p>{interruption.detail}</p></div></div>
+            <div className="run-interruption__actions"><button className="button button--primary" onClick={() => { setMode("build"); setMcpEnabled(false); setComposer(interruption.prompt); setInterruption(null); setError(""); }} type="button">Switch to Build</button><button className="button" onClick={() => { setInterruption(null); setError(""); }} type="button">Stop here</button></div>
+          </section> : null}
         </div>
         {providerError ? <p className="conversation-error" role="alert">{providerError} <button aria-label="Retry providers" className="text-button" onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
         {safetyError ? <p className="conversation-error" role="alert">{safetyError} <button aria-label="Retry safety policy" className="text-button" onClick={() => setSafetyRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
@@ -377,6 +438,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
         <form className="composer" onSubmit={(event) => void send(event)}>
           <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />
           <div className="composer__controls">
+            <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
             <span className="composer-leading-icon" title="Agent provider"><Icon name="agent" /></span>
             <label className="sr-only" htmlFor="composer-provider">Provider</label><select aria-label="Agent provider" className="composer-control composer-control--provider" disabled={runStatus === "working"} id="composer-provider" onChange={(event) => {
               const next = event.target.value as ProviderId;
@@ -389,7 +451,7 @@ export function ConversationWorkspace({ api, experience, storage, storageScope }
               setThinking(nextThinkingLevels.includes("medium") ? "medium" : nextThinkingLevels[0] ?? "medium");
               if (next !== "codex") { setMode("chat"); setMcpEnabled(false); }
             }} value={providerId}>{providers.filter((entry) => entry.status === "ready").map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select>
-            <span className="composer-leading-icon" title="Model"><Icon name="model" /></span><label className="sr-only" htmlFor="composer-model">Model</label><select aria-label="Agent model" className="composer-control composer-control--model" disabled={runStatus === "working" || providerModels.length === 0} id="composer-model" onChange={(event) => setModelId(event.target.value)} value={modelId}>{providerModels.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}{entry.recommended ? " (recommended)" : ""}</option>)}</select>
+            <span className="composer-leading-icon" title="Model"><Icon name="model" /></span><label className="sr-only" htmlFor="composer-model">Model</label><select aria-label="Agent model" className="composer-control composer-control--model" disabled={runStatus === "working" || (providerModels.length === 0 && modelId === "")} id="composer-model" onChange={(event) => setModelId(event.target.value)} value={modelId}>{modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? <option value={modelId}>{modelId}</option> : null}{providerModels.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select>
             <span className="composer-leading-icon" title="Thinking effort"><Icon name="thinking" /></span><label className="sr-only" htmlFor="composer-thinking">Thinking</label><select aria-label="Thinking level" className="composer-control" disabled={runStatus === "working" || providerThinkingLevels.length === 0} id="composer-thinking" onChange={(event) => setThinking(event.target.value as ThinkingLevel)} value={thinking}>{providerThinkingLevels.map((level) => <option key={level} value={level}>{THINKING_LABELS[level]}</option>)}</select>
             <span className="composer-leading-icon" title="Run mode"><Icon name="mode" /></span><label className="sr-only" htmlFor="composer-mode">Mode</label><select aria-label="Run mode" className="composer-control" disabled={runStatus === "working"} id="composer-mode" onChange={(event) => { const next = event.target.value as RunMode; setMode(next); if (next === "chat") setMcpEnabled(false); }} value={mode}><option value="chat">Chat</option><option disabled={providerId !== "codex"} value="build">Build</option></select>
             {mode === "build" ? <label className="mcp-toggle"><input aria-label="Allow configured MCP servers" checked={mcpEnabled} onChange={(event) => setMcpEnabled(event.target.checked)} type="checkbox" /><span>MCP</span></label> : null}

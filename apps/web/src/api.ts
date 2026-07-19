@@ -36,6 +36,15 @@ export type WorkItem = components["schemas"]["WorkItem"];
 export type WorkItemDefinition = components["schemas"]["WorkItemDefinition"];
 export type Workflow = components["schemas"]["Workflow"];
 
+export interface GitHubAuthStatus { hostname: string; authenticated: boolean; }
+export interface GitHubRepositorySummary {
+  name: string;
+  slug: string;
+  url: string;
+  default_branch: string | null;
+  private: boolean;
+}
+
 export interface CorvusApi {
   session(): Promise<Session>;
   pair(value: string): Promise<void>;
@@ -45,6 +54,11 @@ export interface CorvusApi {
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
   createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
+  getGitHubAuthStatus(): Promise<GitHubAuthStatus>;
+  authenticateGitHub(): Promise<GitHubAuthStatus>;
+  listGitHubRepositories(): Promise<GitHubRepositorySummary[]>;
+  connectGitHubRepository(slug: string): Promise<LocalRepository>;
+  createEmptyRepository(name: string): Promise<LocalRepository>;
   getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
   listLocalRuns(): Promise<LocalRun[]>;
   startLocalRun(input: {
@@ -165,6 +179,20 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     return { "X-CSRF-Token": csrfToken };
   }
 
+  async function rawJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: { Accept: "application/json", ...init.headers }
+    });
+    if (!response.ok) {
+      let detail: unknown = `request_failed_${response.status}`;
+      try { detail = (await response.json() as { detail?: unknown }).detail ?? detail; } catch { /* sanitized fallback */ }
+      throw new ApiFailure(response.status, detail);
+    }
+    return await response.json() as T;
+  }
+
   async function loadSession(): Promise<Session> {
     const session = requireData(await client.GET("/api/auth/session"));
     csrfToken = session.csrf_token;
@@ -218,6 +246,22 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       });
       return requireData(result);
     },
+    getGitHubAuthStatus: () => rawJson("/api/local/github/status"),
+    authenticateGitHub: () => rawJson("/api/local/github/authenticate", {
+      method: "POST",
+      headers: mutationHeaders()
+    }),
+    listGitHubRepositories: () => rawJson("/api/local/github/repositories"),
+    connectGitHubRepository: (slug) => rawJson("/api/local/github/repositories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...mutationHeaders() },
+      body: JSON.stringify({ slug })
+    }),
+    createEmptyRepository: (name) => rawJson("/api/local/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...mutationHeaders() },
+      body: JSON.stringify({ name })
+    }),
     async getLocalSafetyPreview(mode) {
       const result = await client.GET("/api/local-chat/safety-preview", {
         params: { query: { provider: "codex", mode, mcp_enabled: false } }
