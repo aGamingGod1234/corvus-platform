@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import type {
   ConversationApi,
@@ -151,13 +151,45 @@ export function SettingsPanel({
   const [error, setError] = useState("");
   const [unsavedBarDismissed, setUnsavedBarDismissed] = useState(false);
   const [exitConfirmation, setExitConfirmation] = useState(false);
+  const exitDialogRef = useRef<HTMLElement>(null);
   const profileLabel = `${title(experience)} · ${title(workspaceKind)}`;
   const credentialControlsAvailable = api?.connectProviderCredential !== undefined;
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === runtime.default_provider),
     [providers, runtime.default_provider]
   );
-  const selectedThinkingLevels = selectedProvider?.thinking_levels ?? FALLBACK_PROVIDERS[0].thinking_levels;
+  const selectedThinkingLevels = selectedProvider?.status === "ready"
+    ? selectedProvider.thinking_levels
+    : [];
+
+  useEffect(() => {
+    if (!exitConfirmation) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    exitDialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => previousFocus?.focus();
+  }, [exitConfirmation]);
+
+  function handleExitDialogKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setExitConfirmation(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+    ));
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   useEffect(() => {
     const device = loadDevicePreferences(storage, workspaceId);
@@ -512,8 +544,8 @@ export function SettingsPanel({
             <div className="settings-section__heading"><h1>Models</h1><p>{CATEGORY_DESCRIPTIONS.models}</p></div>
             {providerDiscoveryError ? <div className="provider-discovery" role="alert"><span>{providerDiscoveryError}</span><button className="button" disabled={busy} onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry discovery</button></div> : null}
             <div className="settings-field"><span className="settings-field__label">Default provider</span><p>Choose the provider used when a new thread opens.</p><div className="segmented-choice" role="radiogroup" aria-label="Default provider">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <label key={entry.id}><input checked={runtime.default_provider === entry.id} disabled={busy || entry.status !== "ready"} name="default-provider" onChange={() => updateProvider(entry.id as "codex" | "claude")} type="radio" />{entry.label}</label>)}</div></div>
-            <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <section className="provider-model-settings__provider" key={entry.id}><div><h2>{entry.label}</h2><p>Enter any model identifier supported by your {entry.label} account. Editing it also makes {entry.label} the default provider.</p></div><label htmlFor={`provider-model-${entry.id}`}>Default model</label><input aria-label={`${entry.label} default model`} disabled={busy} id={`provider-model-${entry.id}`} onChange={(event) => updateProviderModel(entry.id as "codex" | "claude", event.target.value)} placeholder="Provider default" value={providerModelDrafts[entry.id as "codex" | "claude"]} /></section>)}</div>
-            <div className="settings-field"><span className="settings-field__label">Default thinking</span><p>Higher levels spend more time reasoning.</p><div className="segmented-choice" role="radiogroup" aria-label="Default thinking">{selectedThinkingLevels.map((effort) => <label key={effort}><input checked={runtime.default_effort === effort} name="default-thinking" onChange={() => updateRuntime("default_effort", effort)} type="radio" />{THINKING_LABELS[effort]}</label>)}</div></div>
+            <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <section className="provider-model-settings__provider" data-status={entry.status} key={entry.id}><div><h2>{entry.label}</h2><p>{entry.status === "ready" ? entry.status_label : `${entry.status_label}. Saved model text remains editable, but Corvus will not run it until verification succeeds.`}</p>{entry.status === "ready" && entry.models.length > 0 ? <small>Curated for this verified runtime: {entry.models.map((model) => model.label).join(", ")}</small> : null}</div><label htmlFor={`provider-model-${entry.id}`}>Default model</label><input aria-label={`${entry.label} default model`} disabled={busy} id={`provider-model-${entry.id}`} onChange={(event) => updateProviderModel(entry.id as "codex" | "claude", event.target.value)} placeholder="Provider default" value={providerModelDrafts[entry.id as "codex" | "claude"]} /></section>)}</div>
+            <div className="settings-field"><span className="settings-field__label">Default thinking</span><p>Higher levels spend more time reasoning. Options appear only after the selected provider is verified.</p>{selectedThinkingLevels.length > 0 ? <div className="segmented-choice" role="radiogroup" aria-label="Default thinking">{selectedThinkingLevels.map((effort) => <label key={effort}><input checked={runtime.default_effort === effort} name="default-thinking" onChange={() => updateRuntime("default_effort", effort)} type="radio" />{THINKING_LABELS[effort]}</label>)}</div> : <p className="settings-callout">Thinking options unavailable until provider discovery succeeds.</p>}</div>
             <div className="settings-field"><span className="settings-field__label">Default mode</span><p>Chat is read-only. Build uses a fresh writable sandbox and returns an artifact.</p><div className="segmented-choice" role="radiogroup" aria-label="Default mode"><label><input checked={runtime.default_mode === "chat"} name="default-mode" onChange={() => { updateRuntime("default_mode", "chat"); updateRuntime("mcp_enabled", false); }} type="radio" />Chat</label><label><input checked={runtime.default_mode === "build"} disabled={runtime.default_provider !== "codex"} name="default-mode" onChange={() => updateRuntime("default_mode", "build")} type="radio" />Build</label></div></div>
             <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p>{credentialControlsAvailable ? null : <p className="settings-callout">Open Corvus desktop to manage API credentials through the verified local runtime.</p>}</div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected · or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" disabled={!credentialControlsAvailable} id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={!credentialControlsAvailable || busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
           </> : null}
@@ -559,7 +591,7 @@ export function SettingsPanel({
         </div>
       </div>
       {hasUnsavedChanges && !unsavedBarDismissed ? <section aria-label="Unsaved settings" className="settings-unsaved" role="region"><div><strong>You have unsaved changes</strong><span>{changes.join(" · ")}</span></div><button className="button button--primary" disabled={busy} onClick={() => void saveSettings()} type="button">Save</button><button className="button" onClick={() => setUnsavedBarDismissed(true)} type="button">Continue</button></section> : null}
-      {exitConfirmation ? <div className="settings-exit-backdrop"><section aria-label="Unsaved settings confirmation" aria-modal="true" className="settings-exit-dialog" role="dialog"><h2>Save your changes?</h2><p>These settings have not been saved:</p><ul>{changes.map((change) => <li key={change}>{change}</li>)}</ul><div><button className="button" onClick={() => setExitConfirmation(false)} type="button">Continue editing</button><button className="button" onClick={() => onBack?.()} type="button">Discard changes</button><button className="button button--primary" onClick={() => void saveSettings().then((saved) => { if (saved) onBack?.(); })} type="button">Save and leave</button></div></section></div> : null}
+      {exitConfirmation ? <div className="settings-exit-backdrop"><section aria-label="Unsaved settings confirmation" aria-modal="true" className="settings-exit-dialog" onKeyDown={handleExitDialogKeyDown} ref={exitDialogRef} role="dialog"><h2>Save your changes?</h2><p>These settings have not been saved:</p><ul>{changes.map((change) => <li key={change}>{change}</li>)}</ul><div><button className="button" onClick={() => setExitConfirmation(false)} type="button">Continue editing</button><button className="button" onClick={() => onBack?.()} type="button">Discard changes</button><button className="button button--primary" onClick={() => void saveSettings().then((saved) => { if (saved) onBack?.(); })} type="button">Save and leave</button></div></section></div> : null}
     </section>
   );
 }

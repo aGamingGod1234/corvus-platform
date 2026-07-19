@@ -92,6 +92,9 @@ describe("ContributionPanel", () => {
       draft: true
     });
     expect(await screen.findByText("Secret scan passed")).toBeVisible();
+    expect(screen.getByText("2 paths scanned")).toBeVisible();
+    expect(screen.getByText("Draft pull request preview")).toBeVisible();
+    expect(screen.getByText(/corvus\/run-1-add-feature → main/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Publish draft pull request" })).toBeDisabled();
     await user.click(screen.getByLabelText(/I reviewed the selected files/));
     await user.click(screen.getByRole("button", { name: "Publish draft pull request" }));
@@ -133,5 +136,20 @@ describe("ContributionPanel", () => {
     expect(await screen.findByText("Secret scan passed")).toBeVisible();
     expect(screen.queryByLabelText("Commit message")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Publish draft pull request" })).toBeDisabled();
+  });
+
+  it("keeps publishing gated when a restored scan is not passing", async () => {
+    const contributionApi = api();
+    vi.mocked(contributionApi.getContribution).mockResolvedValue({
+      ...prepared,
+      secret_scan: { ...prepared.secret_scan, status: "warning" }
+    });
+    const user = userEvent.setup();
+    render(<ContributionPanel api={contributionApi} runId="run-1" />);
+
+    await user.click(await screen.findByLabelText(/I reviewed the selected files/));
+    const publish = screen.getByRole("button", { name: "Publish draft pull request" });
+    expect(publish).toBeDisabled();
+    expect(publish).toHaveAttribute("title", expect.stringMatching(/passing secret scan/i));
   });
 });

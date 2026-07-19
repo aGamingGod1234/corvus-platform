@@ -113,6 +113,16 @@ function fakeApi(projects: Project[] = []): CorvusApi {
     refreshRepository: vi.fn(),
     removeRepository: vi.fn(),
     createRepositoryRun: vi.fn(),
+    listLocalProviders: vi.fn().mockResolvedValue([{
+      id: "codex",
+      label: "OpenAI Codex",
+      runtime: "local",
+      status: "ready",
+      status_label: "CLI and login verified",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+      thinking_levels: ["low", "medium", "high", "xhigh"],
+      supports_mcp: true
+    }]),
     getLocalSafetyPreview: vi.fn(),
     listLocalRuns: vi.fn().mockResolvedValue([]),
     startLocalRun: vi.fn(),

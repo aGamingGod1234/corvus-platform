@@ -19,6 +19,8 @@
   grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--paper);
 }
 
@@ -187,6 +189,14 @@
 .runtime-state--warning > span { background: var(--approval); box-shadow: 0 0 0 4px color-mix(in oklch, var(--approval) 12%, transparent); }
 
 .adaptive-main { grid-column: 2; grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: clamp(1.25rem, 3vw, 2.5rem); background: var(--paper); }
+.adaptive-main:has(> .conversation-workspace),
+.adaptive-main:has(> .repositories-workspace),
+.adaptive-main:has(> .runs-workspace),
+.adaptive-main:has(> .portable-skills-workspace),
+.adaptive-main:has(> .schedules-workspace) {
+  overflow: hidden;
+  padding: 0;
+}
 .adaptive-shell[data-route="settings"] { grid-template-columns: 1fr; }
 .adaptive-shell[data-route="settings"] .adaptive-topbar { display: none; }
 .adaptive-shell[data-route="settings"] .adaptive-main { grid-column: 1; overflow: hidden; padding: 0; }

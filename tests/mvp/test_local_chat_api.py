@@ -626,6 +626,31 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     assert "path" not in response.text.lower()
 
 
+def test_local_chat_provider_catalog_rechecks_codex_readiness_on_retry(tmp_path: Path) -> None:
+    readiness = {"ready": False}
+    service = LocalChatService(
+        backend=_Backend(),
+        readiness_probes={"codex": lambda: readiness["ready"]},
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+    client, _headers = _client(tmp_path, "catalog-retry", service)
+
+    unavailable = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert unavailable["codex"]["status"] == "unavailable"
+    assert unavailable["codex"]["models"] == []
+    assert unavailable["codex"]["thinking_levels"] == []
+
+    readiness["ready"] = True
+    verified = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert verified["codex"]["status"] == "ready"
+    assert {model["id"] for model in verified["codex"]["models"]} == {
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+    }
+    assert verified["codex"]["thinking_levels"] == ["low", "medium", "high", "xhigh"]
+
+
 def test_api_chat_starts_without_any_local_cli(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,9 +1,17 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import type { LocalRepository, LocalRun, LocalSafetyPreview, LocalSchedule, PortableSkill } from "../api";
+import type {
+  LocalProviderCatalogEntry,
+  LocalRepository,
+  LocalRun,
+  LocalSafetyPreview,
+  LocalSchedule,
+  PortableSkill
+} from "../api";
 
 export interface SchedulesApi {
   listRepositories(): Promise<LocalRepository[]>;
+  listLocalProviders(): Promise<LocalProviderCatalogEntry[]>;
   listPortableSkills(): Promise<PortableSkill[]>;
   getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
   listLocalSchedules(): Promise<LocalSchedule[]>;
@@ -13,6 +21,7 @@ export interface SchedulesApi {
     task: string;
     recurrence: { kind: "once" | "hourly" | "daily" | "weekdays" | "weekly"; local_time?: string; weekdays: number[]; once_at?: string };
     timezone: string;
+    model?: string;
     effort: "low" | "medium" | "high" | "xhigh";
     mode: "chat" | "build";
     safetyDigest: string;
@@ -25,13 +34,20 @@ export interface SchedulesApi {
   archiveLocalSchedule(scheduleId: string): Promise<LocalSchedule>;
 }
 
+type Effort = "low" | "medium" | "high" | "xhigh";
+
 function readableError(reason: unknown): string {
   return reason instanceof Error ? reason.message : "schedule_request_failed";
+}
+
+function effortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra high" : effort[0].toUpperCase() + effort.slice(1);
 }
 
 export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOpenRun(): void }) {
   const [schedules, setSchedules] = useState<LocalSchedule[]>([]);
   const [repositories, setRepositories] = useState<LocalRepository[]>([]);
+  const [providers, setProviders] = useState<LocalProviderCatalogEntry[]>([]);
   const [skills, setSkills] = useState<PortableSkill[]>([]);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -40,27 +56,63 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
   const [cadence, setCadence] = useState<"hourly" | "daily" | "weekdays" | "weekly">("daily");
   const [localTime, setLocalTime] = useState("09:00");
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-  const [mode, setMode] = useState<"chat" | "build">("chat");
-  const [effort, setEffort] = useState<"low" | "medium" | "high" | "xhigh">("high");
+  const [mode, setMode] = useState<"chat" | "build">("build");
+  const [effort, setEffort] = useState<Effort>("high");
+  const [model, setModel] = useState("");
   const [skillId, setSkillId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [providerError, setProviderError] = useState("");
+  const [providerRefresh, setProviderRefresh] = useState(0);
+  const [providerLoading, setProviderLoading] = useState(true);
+
+  const codex = useMemo(
+    () => providers.find((provider) => provider.id === "codex") ?? null,
+    [providers]
+  );
+  const codexReady = codex?.status === "ready";
 
   const load = useCallback(async () => {
     const [loadedSchedules, loadedRepositories, loadedSkills] = await Promise.all([
       api.listLocalSchedules(), api.listRepositories(), api.listPortableSkills()
     ]);
     setSchedules(loadedSchedules);
-    setRepositories(loadedRepositories);
+    setRepositories(loadedRepositories.filter((repository) => repository.snapshot.health === "healthy"));
     setSkills(loadedSkills.filter((skill) => skill.status === "active"));
-    setRepositoryId((current) => current || loadedRepositories[0]?.id || "");
+    setRepositoryId((current) => current || loadedRepositories.find((repository) => repository.snapshot.health === "healthy")?.id || "");
   }, [api]);
+
   useEffect(() => { void load().catch((reason: unknown) => setError(readableError(reason))); }, [load]);
+  useEffect(() => {
+    let active = true;
+    setProviderError("");
+    setProviderLoading(true);
+    void api.listLocalProviders().then((catalog) => {
+      if (!active) return;
+      setProviders(catalog);
+      const verifiedCodex = catalog.find((provider) => provider.id === "codex" && provider.status === "ready");
+      if (verifiedCodex === undefined) {
+        setModel("");
+        setProviderError("Codex is not verified. Scheduled runs remain disabled.");
+        return;
+      }
+      setModel((current) => verifiedCodex.models.some((candidate) => candidate.id === current)
+        ? current
+        : verifiedCodex.models[0]?.id ?? "");
+      setEffort((current) => verifiedCodex.thinking_levels.includes(current) ? current : "medium");
+    }).catch(() => {
+      if (active) setProviderError("Provider discovery failed. Retry before creating a schedule.");
+    }).finally(() => {
+      if (active) setProviderLoading(false);
+    });
+    return () => { active = false; };
+  }, [api, providerRefresh]);
 
   async function create(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (!name.trim() || !task.trim() || !repositoryId) return;
-    setBusy(true); setError("");
+    if (!name.trim() || !task.trim() || !repositoryId || !model || !codexReady) return;
+    setBusy(true);
+    setError("");
     try {
       const preview = await api.getLocalSafetyPreview(mode);
       const recurrence = cadence === "hourly"
@@ -69,18 +121,32 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
           ? { kind: cadence, local_time: `${localTime}:00`, weekdays: [0] }
           : { kind: cadence, local_time: `${localTime}:00`, weekdays: [] };
       const record = await api.createLocalSchedule({
-        name: name.trim(), repositoryId, task: task.trim(), recurrence, timezone,
-        effort, mode, safetyDigest: preview.policy_digest,
+        name: name.trim(),
+        repositoryId,
+        task: task.trim(),
+        recurrence,
+        timezone,
+        model,
+        effort,
+        mode,
+        safetyDigest: preview.policy_digest,
         skillVersionId: skillId || undefined,
         outputPolicy: mode === "build" ? "prepare_changes" : "report_only"
       });
       setSchedules((current) => [record, ...current]);
-      setName(""); setTask(""); setCreating(false);
-    } catch (reason) { setError(readableError(reason)); } finally { setBusy(false); }
+      setName("");
+      setTask("");
+      setCreating(false);
+    } catch (reason) {
+      setError(readableError(reason));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function action(schedule: LocalSchedule, kind: "run" | "pause" | "resume" | "archive"): Promise<void> {
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
       if (kind === "run") {
         await api.runLocalScheduleNow(schedule.id);
@@ -91,14 +157,33 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
         : kind === "resume" ? await api.resumeLocalSchedule(schedule.id)
           : await api.archiveLocalSchedule(schedule.id);
       setSchedules((current) => current.map((item) => item.id === updated.id ? updated : item));
-    } catch (reason) { setError(readableError(reason)); } finally { setBusy(false); }
+    } catch (reason) {
+      setError(readableError(reason));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return <section aria-labelledby="schedules-title" className="schedules-workspace">
-    <header className="resource-heading"><div><p className="eyebrow">Local automation</p><h1 id="schedules-title">Schedule</h1><p>Run ordinary supervised tasks on a reliable cadence. Code changes always stop for review.</p></div><button className="button button--primary" disabled={!repositories.length} onClick={() => setCreating(true)} type="button">New schedule</button></header>
-    <div className="schedule-notice"><strong>Runs while Corvus is open</strong><span>The computer must be awake. Missed occurrences do not create an unsafe backlog.</span></div>
-    {creating ? <form className="schedule-editor" onSubmit={(event) => void create(event)}><label>Name<input autoFocus onChange={(event) => setName(event.target.value)} placeholder="Weekday repository review" value={name} /></label><label>Repository<select onChange={(event) => setRepositoryId(event.target.value)} value={repositoryId}>{repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.display_name}</option>)}</select></label><label className="schedule-editor__task">Task<textarea onChange={(event) => setTask(event.target.value)} placeholder="Review recent changes and prepare a concise risk report…" rows={4} value={task} /></label><label>Cadence<select onChange={(event) => setCadence(event.target.value as typeof cadence)} value={cadence}><option value="hourly">Every hour</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Every Monday</option></select></label>{cadence !== "hourly" ? <label>Local time<input onChange={(event) => setLocalTime(event.target.value)} type="time" value={localTime} /></label> : null}<label>Timezone<input onChange={(event) => setTimezone(event.target.value)} value={timezone} /></label><label>Skill<select onChange={(event) => setSkillId(event.target.value)} value={skillId}><option value="">No skill</option>{skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name} v{skill.version}</option>)}</select></label><label>Mode<select onChange={(event) => setMode(event.target.value as "chat" | "build")} value={mode}><option value="chat">Report only</option><option value="build">Prepare changes</option></select></label><label>Reasoning<select onChange={(event) => setEffort(event.target.value as typeof effort)} value={effort}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label><div className="row-actions schedule-editor__actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || !name.trim() || !task.trim() || !repositoryId} type="submit">{busy ? "Saving…" : "Create schedule"}</button></div></form> : null}
+    <header className="resource-heading"><div><p className="eyebrow">Local automation</p><h1 id="schedules-title">Schedule</h1><p>Repeat a supervised task while keeping every code change behind human review.</p></div><button className="button button--primary" disabled={!repositories.length || !codexReady || !model} onClick={() => setCreating(true)} title={providerLoading ? "Verifying Codex and login" : !codexReady ? "Verify Codex before scheduling work" : undefined} type="button">New schedule</button></header>
+    <div className="schedule-notice"><strong>Review-only output</strong><span>Schedules can report or prepare changes. They never push, open a pull request, merge, or force-push.</span></div>
+    {providerError ? <p className="inline-error provider-recovery" role="alert">{providerError} <button className="text-button" onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry providers</button></p> : null}
+    {creating ? <form className="schedule-editor" onSubmit={(event) => void create(event)}>
+      <label>Name<input autoFocus onChange={(event) => setName(event.target.value)} placeholder="Weekday repository review" value={name} /></label>
+      <label>Repository<select onChange={(event) => setRepositoryId(event.target.value)} value={repositoryId}>{repositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.display_name}</option>)}</select></label>
+      <label className="schedule-editor__task">Task<textarea onChange={(event) => setTask(event.target.value)} placeholder="Review recent changes and prepare a concise risk report..." rows={4} value={task} /></label>
+      <label>Provider<select disabled value="codex"><option value="codex">OpenAI Codex - verified local CLI</option></select></label>
+      <label>Model<select aria-label="Model" onChange={(event) => setModel(event.target.value)} value={model}>{codex?.models.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}</select></label>
+      <label>Thinking<select onChange={(event) => setEffort(event.target.value as Effort)} value={effort}>{codex?.thinking_levels.filter((level) => level !== "max").map((level) => <option key={level} value={level}>{effortLabel(level)}</option>)}</select></label>
+      <label>Skill<select onChange={(event) => setSkillId(event.target.value)} value={skillId}><option value="">No skill</option>{skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name} v{skill.version}</option>)}</select></label>
+      <label>Cadence<select onChange={(event) => setCadence(event.target.value as typeof cadence)} value={cadence}><option value="hourly">Every hour</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Every Monday</option></select></label>
+      {cadence !== "hourly" ? <label>Local time<input onChange={(event) => setLocalTime(event.target.value)} type="time" value={localTime} /></label> : null}
+      <label>Timezone<input onChange={(event) => setTimezone(event.target.value)} value={timezone} /></label>
+      <label>Mode<select onChange={(event) => setMode(event.target.value as "chat" | "build")} value={mode}><option value="chat">Report only</option><option value="build">Prepare changes for review</option></select></label>
+      <label>Output policy<input aria-label="Output policy" disabled value={mode === "build" ? "Prepare changes - stop for review" : "Report only - no repository mutation"} /></label>
+      <div className="row-actions schedule-editor__actions"><button className="button" onClick={() => setCreating(false)} type="button">Cancel</button><button className="button button--primary" disabled={busy || !name.trim() || !task.trim() || !repositoryId || !model || !codexReady} type="submit">{busy ? "Saving..." : "Create schedule"}</button></div>
+    </form> : null}
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
-    <div className="schedule-card-grid">{schedules.length === 0 ? <div className="resource-empty"><strong>No schedules yet</strong><span>Create a report-only cadence or a change task that stops at review.</span></div> : schedules.map((schedule) => <article className="schedule-card" key={schedule.id}><header><span className="run-status" data-status={schedule.status}>{schedule.status}</span><small>v{schedule.version}</small></header><h2>{schedule.name}</h2><p>{schedule.task}</p><dl><div><dt>Cadence</dt><dd>{schedule.recurrence.kind}</dd></div><div><dt>Next run</dt><dd>{schedule.next_run_at ? new Date(schedule.next_run_at).toLocaleString() : "Finished"}</dd></div><div><dt>Mode</dt><dd>{schedule.mode === "build" ? "Prepare changes" : "Report only"}</dd></div><div><dt>Timezone</dt><dd>{schedule.timezone}</dd></div></dl><footer><button className="button button--primary" disabled={busy || schedule.status === "archived"} onClick={() => void action(schedule, "run")} type="button">Run now</button>{schedule.status === "active" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "pause")} type="button">Pause</button> : schedule.status === "paused" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "resume")} type="button">Resume</button> : null}{schedule.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "archive")} type="button">Archive</button> : null}</footer></article>)}</div>
+    <div className="schedule-card-grid">{schedules.length === 0 ? <div className="resource-empty"><strong>No schedules yet</strong><span>Create a report-only cadence or a change task that stops at review.</span></div> : schedules.map((schedule) => <article className="schedule-card" key={schedule.id}><header><span className="run-status" data-status={schedule.status}>{schedule.status}</span><small>v{schedule.version}</small></header><h2>{schedule.name}</h2><p>{schedule.task}</p><dl><div><dt>Repository</dt><dd>{repositories.find((repository) => repository.id === schedule.repository_id)?.display_name ?? schedule.repository_id}</dd></div><div><dt>Skill</dt><dd>{skills.find((skill) => skill.id === schedule.skill_version_id)?.name ?? (schedule.skill_version_id ? "Selected skill" : "None")}</dd></div><div><dt>Model</dt><dd>{schedule.model ?? "Provider default"}</dd></div><div><dt>Thinking</dt><dd>{schedule.effort}</dd></div><div><dt>Cadence</dt><dd>{schedule.recurrence.kind}</dd></div><div><dt>Next run</dt><dd>{schedule.next_run_at ? new Date(schedule.next_run_at).toLocaleString() : "Finished"}</dd></div><div><dt>Output</dt><dd>{schedule.output_policy === "prepare_changes" ? "Prepare changes - review required" : "Report only"}</dd></div><div><dt>Timezone</dt><dd>{schedule.timezone}</dd></div></dl><footer><button className="button button--primary" disabled={busy || schedule.status === "archived"} onClick={() => void action(schedule, "run")} type="button">Run now</button>{schedule.status === "active" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "pause")} type="button">Pause</button> : schedule.status === "paused" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "resume")} type="button">Resume</button> : null}{schedule.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void action(schedule, "archive")} type="button">Archive</button> : null}</footer></article>)}</div>
   </section>;
 }
