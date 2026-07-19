@@ -81,6 +81,25 @@ describe("SettingsPanel", () => {
     expect(onExperienceChange).not.toHaveBeenCalled();
   });
 
+  it("contains keyboard focus while confirming unsaved settings", async () => {
+    const onBack = vi.fn();
+    const user = userEvent.setup();
+    render(<SettingsPanel api={settingsApi()} experience="developer" onBack={onBack}
+      onExperienceChange={vi.fn()} storage={new MemoryStorage()}
+      workspaceId="workspace-exit-focus" workspaceKind="individual" />);
+
+    await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
+    await user.click(screen.getByRole("button", { name: "Back to app" }));
+    const dialog = screen.getByRole("dialog", { name: "Unsaved settings confirmation" });
+    expect(screen.getByRole("button", { name: "Continue editing" })).toHaveFocus();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(screen.getByRole("button", { name: "Save and leave" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(dialog).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to app" })).toHaveFocus();
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
   it("uses editable model identifiers and category-specific headings", async () => {
     const api = settingsApi();
     render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
@@ -245,7 +264,7 @@ describe("SettingsPanel", () => {
     expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
   });
 
-  it("keeps curated Codex controls visible and retries failed discovery", async () => {
+  it("does not present failed discovery as verified and allows retry", async () => {
     const api = settingsApi();
     vi.mocked(api.listProviders).mockRejectedValue(new Error("catalog unavailable"));
     render(
@@ -262,8 +281,9 @@ describe("SettingsPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
-    expect(screen.getByRole("radio", { name: "Low" })).toBeVisible();
-    expect(screen.getByRole("radio", { name: "Extra high" })).toBeVisible();
+    expect(screen.getByText(/thinking options unavailable until provider discovery succeeds/i)).toBeVisible();
+    expect(screen.queryByRole("radio", { name: "Low" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/CLI and login verified/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry discovery" }));
     await waitFor(() => expect(api.listProviders).toHaveBeenCalledTimes(2));
   });

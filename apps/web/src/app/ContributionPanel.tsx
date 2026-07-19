@@ -116,7 +116,7 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
         <div>
           <p className="eyebrow">Isolated run {runId.slice(0, 8)}</p>
           <h2 id="contribution-title">Review contribution</h2>
-          <p>Only checked files are committed. Publishing never force-pushes or merges.</p>
+          <p>Review the real worktree diff. Preparing performs a completed secret scan, creates a local branch, and commits only checked files. Publishing never force-pushes or merges.</p>
         </div>
       </header>
       {error ? <p className="inline-error" role="alert">{error}</p> : null}
@@ -151,7 +151,7 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
             <label>Commit message<input onChange={(event) => setMessage(event.target.value)} value={message} /></label>
             <label>Pull request title<input onChange={(event) => setTitle(event.target.value)} value={title} /></label>
             <label className="contribution-form__body">Pull request body<textarea onChange={(event) => setBody(event.target.value)} rows={4} value={body} /></label>
-            <label className="contribution-draft"><input checked={draft} onChange={(event) => setDraft(event.target.checked)} type="checkbox" />Create as draft</label>
+            <label className="contribution-draft"><input checked={draft} onChange={(event) => setDraft(event.target.checked)} type="checkbox" />Create as draft (recommended for human review)</label>
           </div>
           <button
             className="button button--primary"
@@ -167,23 +167,33 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
         <div className="contribution-confirmation">
           <div className="contribution-evidence">
             <span data-status={prepared.secret_scan.status}>Secret scan {prepared.secret_scan.status}</span>
+            <span>{prepared.secret_scan.scanned_paths.length} paths scanned</span>
+            <span title={prepared.secret_scan.digest ?? "No completed digest"}>Scan digest {prepared.secret_scan.digest?.slice(0, 10) ?? "unavailable"}</span>
             <span>Branch {prepared.branch}</span>
             <span>Commit {prepared.commit_sha?.slice(0, 8) ?? "pending"}</span>
             <span>{prepared.selected_paths.length} selected files</span>
           </div>
+          <div className="contribution-pr-preview">
+            <strong>{prepared.draft ? "Draft pull request preview" : "Pull request preview"}</strong>
+            <span>{prepared.title}</span>
+            <small>{prepared.branch} → {prepared.base_branch}</small>
+            <p>{prepared.body}</p>
+          </div>
+          {prepared.secret_scan.findings.length > 0 ? <div className="contribution-findings"><strong>Secret scan findings</strong>{prepared.secret_scan.findings.map((finding, index) => <span data-severity={finding.severity} key={`${finding.path}-${finding.line ?? "file"}-${index}`}>{finding.path}{finding.line ? `:${finding.line}` : ""} · {finding.kind}</span>)}</div> : null}
           {prepared.state === "published" && prepared.pr_url && prepared.pr_number ? (
             <a href={prepared.pr_url} rel="noreferrer" target="_blank">Open pull request #{prepared.pr_number}</a>
           ) : (
             <>
               <label className="contribution-confirm-check">
                 <input checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
-                I reviewed the selected files, secret scan, branch, and commit.
+                I reviewed the selected files, completed secret scan, branch, commit, and pull-request preview. A human still decides whether to merge.
               </label>
               <button
                 className="button button--primary"
-                disabled={!confirmed || busy}
+                disabled={!confirmed || busy || prepared.secret_scan.status !== "passed"}
                 onClick={() => void publish()}
                 type="button"
+                title={prepared.secret_scan.status !== "passed" ? "A completed passing secret scan is required before publishing." : undefined}
               >
                 {busy ? "Publishing…" : `Publish ${prepared.draft ? "draft " : ""}pull request`}
               </button>

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -115,6 +117,29 @@ class RunCoordinator:
             run_id=run_id,
             retry_of_run_id=retry_of_run_id,
         )
+        self.runs.add_evidence(
+            run_id,
+            "safety_policy",
+            f"{preview.label} policy locked before Codex started",
+            preview.policy_digest,
+        )
+        base_summary = (
+            f"Pinned {repository.display_name} at {repository.snapshot.head_sha[:12]}"
+        )
+        self.runs.add_evidence(
+            run_id,
+            "repository_base",
+            base_summary,
+            hashlib.sha256(base_summary.encode("utf-8")).hexdigest(),
+        )
+        if skill_instructions is not None:
+            skill_summary = f"Active skill {request.skill_version_id} verified for this run"
+            self.runs.add_evidence(
+                run_id,
+                "skill",
+                skill_summary,
+                hashlib.sha256(skill_instructions.encode("utf-8")).hexdigest(),
+            )
         try:
             lease = self.worktrees.create(
                 repository,
@@ -244,6 +269,26 @@ class RunCoordinator:
                 if provider_event.event_type == "provider.completed":
                     saw_terminal = True
                     changes = self.review.snapshot(self.worktrees.get(run.id).root)
+                    completion_payload = json.dumps(
+                        provider_event.payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    self.runs.add_evidence(
+                        run.id,
+                        "provider_completion",
+                        "Codex reported that the provider run completed",
+                        hashlib.sha256(completion_payload.encode("utf-8")).hexdigest(),
+                    )
+                    self.runs.add_evidence(
+                        run.id,
+                        "change_set",
+                        (
+                            f"Observed {len(changes.files)} changed file"
+                            f"{'s' if len(changes.files) != 1 else ''} in the isolated worktree"
+                        ),
+                        changes.digest,
+                    )
                     target = (
                         RunStatus.REVIEW_REQUIRED
                         if run.mode == "build" and bool(changes.files)

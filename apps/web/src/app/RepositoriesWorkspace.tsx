@@ -1,15 +1,13 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { type FormEvent, useEffect, useState } from "react";
 
-import type { GitHubAuthStatus, GitHubRepositorySummary, LocalRepository, LocalWorktree } from "../api";
-import { ContributionPanel, type ContributionApi } from "./ContributionPanel";
+import type { GitHubAuthStatus, GitHubRepositorySummary, LocalRepository } from "../api";
 
-export interface RepositoryApi extends ContributionApi {
+export interface RepositoryApi {
   listRepositories(): Promise<LocalRepository[]>;
   registerRepository(path: string, displayName: string): Promise<LocalRepository>;
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
-  createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
   getGitHubAuthStatus?(): Promise<GitHubAuthStatus>;
   authenticateGitHub?(): Promise<GitHubAuthStatus>;
   listGitHubRepositories?(): Promise<GitHubRepositorySummary[]>;
@@ -19,6 +17,7 @@ export interface RepositoryApi extends ContributionApi {
 
 interface RepositoriesWorkspaceProps {
   api: RepositoryApi;
+  onOpenRuns?(repositoryId: string): void;
   pickDirectory?: () => Promise<string | null>;
 }
 
@@ -38,6 +37,7 @@ function readableError(reason: unknown): string {
 
 export function RepositoriesWorkspace({
   api,
+  onOpenRuns,
   pickDirectory = pickDesktopDirectory
 }: RepositoriesWorkspaceProps) {
   const [repositories, setRepositories] = useState<LocalRepository[]>([]);
@@ -47,7 +47,6 @@ export function RepositoriesWorkspace({
   const [path, setPath] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
-  const [activeRun, setActiveRun] = useState<LocalWorktree | null>(null);
   const [githubStatus, setGitHubStatus] = useState<GitHubAuthStatus | null>(null);
   const [githubRepositories, setGitHubRepositories] = useState<GitHubRepositorySummary[]>([]);
   const [githubOpen, setGitHubOpen] = useState(false);
@@ -135,18 +134,6 @@ export function RepositoriesWorkspace({
     }
   }
 
-  async function startRun(repository: LocalRepository): Promise<void> {
-    setBusyId(repository.id);
-    setError("");
-    try {
-      setActiveRun(await api.createRepositoryRun(repository.id));
-    } catch (reason) {
-      setError(readableError(reason));
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   async function authenticateGitHub(): Promise<void> {
     if (api.authenticateGitHub === undefined) return;
     setBusyId("github-auth");
@@ -207,6 +194,11 @@ export function RepositoriesWorkspace({
         </div>
         <div className="row-actions"><button className="button" disabled={busyId !== null} onClick={() => githubStatus?.authenticated ? setGitHubOpen((open) => !open) : void authenticateGitHub()} type="button">{busyId === "github-auth" ? "Complete sign-in in your browser…" : githubStatus?.authenticated ? "Add from GitHub" : "Connect GitHub"}</button><button className="button" onClick={() => setNewProjectOpen(true)} type="button">New project</button><button className="button button--primary" onClick={() => setCreating(true)} type="button">Add local repository</button></div>
       </header>
+
+      <section aria-label="GitHub readiness" className="github-readiness" data-ready={githubStatus?.authenticated ?? false}>
+        <div><strong>{githubStatus?.authenticated ? "GitHub authenticated" : "GitHub not authenticated"}</strong><span>{githubStatus?.authenticated ? `Ready to list repositories and create a human-confirmed draft pull request on ${githubStatus.hostname}.` : "Local repositories still work, but publishing a draft pull request remains unavailable."}</span></div>
+        {!githubStatus?.authenticated ? <button className="button" disabled={busyId !== null || api.authenticateGitHub === undefined} onClick={() => void authenticateGitHub()} type="button">Connect GitHub</button> : null}
+      </section>
 
       {newProjectOpen ? <form className="repository-new-project" onSubmit={(event) => void createEmptyProject(event)}><div><label htmlFor="new-project-name">Project name</label><input autoFocus id="new-project-name" onChange={(event) => setNewProjectName(event.target.value)} placeholder="My project" value={newProjectName} /></div><div className="row-actions"><button className="button" onClick={() => setNewProjectOpen(false)} type="button">Cancel</button><button className="button button--primary" disabled={busyId !== null || newProjectName.trim() === ""} type="submit">{busyId === "empty-project" ? "Creating…" : "Create project"}</button></div></form> : null}
 
@@ -285,14 +277,13 @@ export function RepositoriesWorkspace({
               >
                 {busyId === repository.id ? "Refreshing…" : `Refresh ${repository.display_name}`}
               </button>
-              <button className="button button--primary" disabled={busyId !== null} onClick={() => void startRun(repository)} type="button">
-                New isolated run
+              <button className="button button--primary" disabled={busyId !== null || repository.snapshot.health !== "healthy" || onOpenRuns === undefined} onClick={() => onOpenRuns?.(repository.id)} title={repository.snapshot.health !== "healthy" ? "Refresh this repository until Git reports it healthy" : undefined} type="button">
+                Use in Runs
               </button>
             </footer>
           </article>
         ))}
       </div>
-      {activeRun ? <ContributionPanel api={api} runId={activeRun.run_id} /> : null}
     </section>
   );
 }

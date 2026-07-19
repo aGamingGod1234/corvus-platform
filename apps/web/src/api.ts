@@ -45,6 +45,23 @@ export interface GitHubRepositorySummary {
   private: boolean;
 }
 
+export interface LocalProviderModel {
+  id: string;
+  label: string;
+  recommended: boolean;
+}
+
+export interface LocalProviderCatalogEntry {
+  id: string;
+  label: string;
+  runtime: "local" | "api";
+  status: "ready" | "preview" | "unavailable";
+  status_label: string;
+  models: LocalProviderModel[];
+  thinking_levels: Array<"low" | "medium" | "high" | "xhigh" | "max">;
+  supports_mcp: boolean;
+}
+
 export interface CorvusApi {
   session(): Promise<Session>;
   pair(value: string): Promise<void>;
@@ -59,6 +76,7 @@ export interface CorvusApi {
   listGitHubRepositories(): Promise<GitHubRepositorySummary[]>;
   connectGitHubRepository(slug: string): Promise<LocalRepository>;
   createEmptyRepository(name: string): Promise<LocalRepository>;
+  listLocalProviders(): Promise<LocalProviderCatalogEntry[]>;
   getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
   listLocalRuns(): Promise<LocalRun[]>;
   startLocalRun(input: {
@@ -68,6 +86,7 @@ export interface CorvusApi {
     effort: "low" | "medium" | "high" | "xhigh";
     mode: "chat" | "build";
     safetyDigest: string;
+    skillVersionId?: string;
     outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
   }): Promise<LocalRun>;
   getLocalRun(runId: string): Promise<LocalRun>;
@@ -89,6 +108,7 @@ export interface CorvusApi {
     task: string;
     recurrence: { kind: "once" | "hourly" | "daily" | "weekdays" | "weekly"; local_time?: string; weekdays: number[]; once_at?: string };
     timezone: string;
+    model?: string;
     effort: "low" | "medium" | "high" | "xhigh";
     mode: "chat" | "build";
     safetyDigest: string;
@@ -262,6 +282,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       headers: { "Content-Type": "application/json", ...mutationHeaders() },
       body: JSON.stringify({ name })
     }),
+    listLocalProviders: () => rawJson("/api/local-chat/providers"),
     async getLocalSafetyPreview(mode) {
       const result = await client.GET("/api/local-chat/safety-preview", {
         params: { query: { provider: "codex", mode, mcp_enabled: false } }
@@ -281,6 +302,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
           effort: input.effort,
           mode: input.mode,
           safety_digest: input.safetyDigest,
+          skill_version_id: input.skillVersionId,
           output_policy: input.outputPolicy
         },
         headers: mutationHeaders()
@@ -359,6 +381,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
           recurrence: input.recurrence,
           timezone: input.timezone,
           provider: "codex",
+          model: input.model,
           effort: input.effort,
           mode: input.mode,
           safety_digest: input.safetyDigest,

@@ -104,4 +104,15 @@ describe("PortableSkillsWorkspace", () => {
     await waitFor(() => expect(client.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest));
     expect(await screen.findByText("Review a pull request")).toBeVisible();
   });
+
+  it("hands an active reviewed skill to Runs", async () => {
+    const client = api();
+    vi.mocked(client.listPortableSkills).mockResolvedValue([{ ...imported, status: "active" }]);
+    const onOpenRuns = vi.fn();
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} onOpenRuns={onOpenRuns} />);
+
+    await user.click(await screen.findByRole("button", { name: "Use review-pr in Runs" }));
+    expect(onOpenRuns).toHaveBeenCalledWith(imported.id);
+  });
 });

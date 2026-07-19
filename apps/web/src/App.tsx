@@ -179,6 +179,8 @@ export function App({
       ? null
       : getWorkspaceProfile(experience, selectedWorkspace.workspace_kind);
   const [activeRoute, setActiveRoute] = useState("");
+  const [runRepositoryId, setRunRepositoryId] = useState<string | null>(null);
+  const [runSkillId, setRunSkillId] = useState<string | null>(null);
   const [newThreadSignal, setNewThreadSignal] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -712,10 +714,29 @@ export function App({
   const repositoriesSurface = (
     <RepositoriesWorkspace
       api={api}
+      onOpenRuns={(repositoryId) => {
+        setRunRepositoryId(repositoryId);
+        setActiveRoute("runs");
+      }}
     />
   );
-  const runsSurface = <RunsWorkspace api={api} />;
-  const skillsSurface = <PortableSkillsWorkspace api={api} />;
+  const runsSurface = (
+    <RunsWorkspace
+      api={api}
+      initialRepositoryId={runRepositoryId ?? undefined}
+      initialSkillId={runSkillId ?? undefined}
+      onNavigate={setActiveRoute}
+    />
+  );
+  const skillsSurface = (
+    <PortableSkillsWorkspace
+      api={api}
+      onOpenRuns={(skillId) => {
+        setRunSkillId(skillId);
+        setActiveRoute("runs");
+      }}
+    />
+  );
 
   if (localRuntime) {
     if (phase === "checking") return <LoadingScreen />;

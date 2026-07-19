@@ -36,6 +36,7 @@ from corvus.infrastructure.agent_runtimes.codex import (
 )
 from corvus.mvp.provider_catalog import build_provider_catalog
 from corvus.mvp.safety import SafetyPreview, build_safety_preview
+from corvus.mvp.trusted_cli import TrustedCli, TrustedCliError
 from corvus.safe_process import path_is_link_or_reparse
 
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
@@ -150,6 +151,7 @@ class LocalChatService:
         *,
         backend: LocalChatBackend | None = None,
         backends: Mapping[str, LocalChatBackend] | None = None,
+        readiness_probes: Mapping[str, Callable[[], bool]] | None = None,
         cursor_secret: bytes,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -159,6 +161,7 @@ class LocalChatService:
             raise ValueError("local_chat_backend_ambiguous")
         configured = dict(backends or ({"codex": backend} if backend is not None else {}))
         self._backends = configured
+        self._readiness_probes = dict(readiness_probes or {})
         self._owner_backends: dict[tuple[str, str], LocalChatBackend] = {}
         self._backend = configured.get("codex") or next(iter(configured.values()), None)
         self._cursor_secret = cursor_secret
@@ -192,8 +195,12 @@ class LocalChatService:
         idempotency_prompt: str | None = None,
         source_directory: Path | None = None,
     ) -> dict[str, object]:
-        backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
+        owner_backend = self._owner_backends.get((owner, provider))
+        backend = owner_backend or self._backends.get(provider)
         if backend is None:
+            raise LocalChatError("provider_unavailable")
+        readiness_probe = self._readiness_probes.get(provider)
+        if owner_backend is None and readiness_probe is not None and not readiness_probe():
             raise LocalChatError("provider_unavailable")
         if provider == "codex" and effort == "max":
             raise LocalChatError("provider_effort_unavailable")
@@ -467,9 +474,17 @@ class LocalChatService:
         }
 
     def provider_catalog(self) -> tuple[dict[str, object], ...]:
+        codex_detected = "codex" in self._backends
+        codex_probe = self._readiness_probes.get("codex")
+        codex_ready = codex_detected and (codex_probe is None or codex_probe())
+        claude_detected = "claude" in self._backends
+        claude_probe = self._readiness_probes.get("claude")
+        claude_ready = claude_detected and (claude_probe is None or claude_probe())
         entries = build_provider_catalog(
-            codex_available="codex" in self._backends,
-            claude_available="claude" in self._backends,
+            codex_available=codex_ready,
+            codex_detected=codex_detected,
+            claude_available=claude_ready,
+            claude_detected=claude_detected,
             codex_effective_model=_discover_codex_effective_model(),
         )
         return tuple(
@@ -800,6 +815,7 @@ def build_default_local_chat_service(
         return datetime.now(UTC)
 
     backends: dict[str, LocalChatBackend] = {}
+    readiness_probes: dict[str, Callable[[], bool]] = {}
     if codex_executable is not None:
         codex_adapter = CodexCliAdapter(
             executable=codex_executable,
@@ -809,6 +825,10 @@ def build_default_local_chat_service(
             clock=clock,
         )
         backends["codex"] = CodexLocalChatBackend(codex_adapter, clock, scratch_root / "codex")
+        readiness_probes["codex"] = lambda: _verify_codex_ready(
+            codex_executable,
+            scratch_root.parent,
+        )
     if claude_executable is not None:
         claude_adapter = ClaudeCliAdapter(
             executable=claude_executable,
@@ -817,11 +837,44 @@ def build_default_local_chat_service(
             clock=clock,
         )
         backends["claude"] = ClaudeLocalChatBackend(claude_adapter, clock, scratch_root / "claude")
+        readiness_probes["claude"] = lambda: _verify_claude_ready(
+            claude_executable,
+            scratch_root.parent,
+        )
     return LocalChatService(
         backends=backends,
+        readiness_probes=readiness_probes,
         cursor_secret=cursor_secret,
         clock=clock,
     )
+
+
+def _verify_codex_ready(executable: Path, cwd: Path) -> bool:
+    """Verify both the discovered binary and the user's local Codex login."""
+
+    try:
+        cli = TrustedCli(executable)
+        version = cli.run(cwd, ("--version",), timeout=10)
+        if version.returncode != 0 or not version.stdout.strip():
+            return False
+        login = cli.run(cwd, ("login", "status"), timeout=10)
+        return login.returncode == 0
+    except (OSError, TrustedCliError):
+        return False
+
+
+def _verify_claude_ready(executable: Path, cwd: Path) -> bool:
+    """Verify the Claude binary and login without exposing account details."""
+
+    try:
+        cli = TrustedCli(executable)
+        version = cli.run(cwd, ("--version",), timeout=10)
+        if version.returncode != 0 or not version.stdout.strip():
+            return False
+        auth = cli.run(cwd, ("auth", "status"), timeout=10)
+        return auth.returncode == 0
+    except (OSError, TrustedCliError):
+        return False
 
 
 def _discover_codex_executable() -> Path | None:

@@ -151,6 +151,14 @@ async def test_run_uses_exact_worktree_and_persists_events_before_notification(
         "provider.started",
         "provider.completed",
     ]
+    evidence = runs.evidence("local", started.id)
+    assert [item.kind for item in evidence] == [
+        "safety_policy",
+        "repository_base",
+        "provider_completion",
+        "change_set",
+    ]
+    assert evidence[-1].summary == "Observed 1 changed file in the isolated worktree"
 
 
 @pytest.mark.asyncio
@@ -254,7 +262,7 @@ async def test_selected_skill_instructions_are_tenant_scoped_and_added_to_prompt
     tmp_path: Path,
 ) -> None:
     backend = FakeBackend(change_file=False)
-    coordinator, repository, _ = _coordinator(tmp_path, backend, FakeSkills())
+    coordinator, repository, runs = _coordinator(tmp_path, backend, FakeSkills())
     request = _request(repository.id).model_copy(update={"skill_version_id": "skill-1"})  # type: ignore[attr-defined]
 
     started = await coordinator.start("local", request)
@@ -262,3 +270,7 @@ async def test_selected_skill_instructions_are_tenant_scoped_and_added_to_prompt
 
     assert "Authorized skill instructions:" in backend.prompt
     assert "Always run the focused verification command." in backend.prompt
+    skill_evidence = next(
+        item for item in runs.evidence("local", started.id) if item.kind == "skill"
+    )
+    assert skill_evidence.summary == "Active skill skill-1 verified for this run"

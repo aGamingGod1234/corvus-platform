@@ -31,11 +31,6 @@ function apiWith(overrides: Partial<RepositoryApi> = {}): RepositoryApi {
     registerRepository: vi.fn().mockResolvedValue(repository),
     refreshRepository: vi.fn().mockResolvedValue(repository),
     removeRepository: vi.fn().mockResolvedValue(undefined),
-    createRepositoryRun: vi.fn(),
-    getRunChanges: vi.fn(),
-    getContribution: vi.fn().mockRejectedValue(new Error("contribution_not_found")),
-    prepareContribution: vi.fn(),
-    publishContribution: vi.fn(),
     ...overrides
   };
 }
@@ -88,6 +83,16 @@ describe("RepositoriesWorkspace", () => {
     expect(screen.getByText(/1 ahead/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Refresh Corvus" }));
     await waitFor(() => expect(screen.getByText("Modified")).toBeVisible());
+  });
+
+  it("hands a verified healthy repository to Runs", async () => {
+    const client = apiWith({ listRepositories: vi.fn().mockResolvedValue([repository]) });
+    const onOpenRuns = vi.fn();
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={client} onOpenRuns={onOpenRuns} />);
+
+    await user.click(await screen.findByRole("button", { name: "Use in Runs" }));
+    expect(onOpenRuns).toHaveBeenCalledWith(repository.id);
   });
 
   it("renders registration failures as errors", async () => {
