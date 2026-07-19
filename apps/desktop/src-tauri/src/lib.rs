@@ -28,6 +28,7 @@ const INSTANCE_CHALLENGE_BYTES: usize = 16;
 const INSTANCE_CHALLENGE_HEADER: &str = "X-Corvus-Challenge";
 const INSTANCE_PROOF_HEADER: &str = "X-Corvus-Instance-Proof";
 const SHA256_PROOF_HEX_LENGTH: usize = 64;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -403,11 +404,20 @@ fn open_external_url(url: String) -> Result<(), String> {
     {
         use std::os::windows::process::CommandExt;
         let candidates = [
-            env::var_os("PROGRAMFILES").map(PathBuf::from).map(|path| path.join("Google/Chrome/Application/chrome.exe")),
-            env::var_os("PROGRAMFILES(X86)").map(PathBuf::from).map(|path| path.join("Google/Chrome/Application/chrome.exe")),
-            env::var_os("LOCALAPPDATA").map(PathBuf::from).map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+            env::var_os("PROGRAMFILES")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+            env::var_os("PROGRAMFILES(X86)")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
+            env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
         ];
-        let chrome = candidates.into_iter().flatten().find(|path| path.is_file())
+        let chrome = candidates
+            .into_iter()
+            .flatten()
+            .find(|path| path.is_file())
             .ok_or_else(|| "chrome_unavailable".to_owned())?;
         Command::new(chrome)
             .arg(url)
@@ -421,7 +431,11 @@ fn open_external_url(url: String) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         Command::new(program)
             .arg(url)
             .stdin(Stdio::null())

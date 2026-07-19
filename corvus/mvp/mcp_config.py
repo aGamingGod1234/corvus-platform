@@ -50,28 +50,45 @@ class McpConfigService:
             kind = transport.get("type")
             if not isinstance(name, str) or not isinstance(kind, str):
                 raise McpConfigError("mcp_list_invalid")
-            endpoint_value = transport.get("url") if kind == "streamable_http" else transport.get("command")
+            endpoint_value = (
+                transport.get("url") if kind == "streamable_http" else transport.get("command")
+            )
             endpoint = endpoint_value if isinstance(endpoint_value, str) else "Configured locally"
             auth = row.get("auth_status")
-            servers.append(McpServer(
-                name=name,
-                enabled=row.get("enabled") is True,
-                transport=kind,
-                endpoint=endpoint,
-                auth_status=auth if isinstance(auth, str) else "unknown",
-            ))
+            servers.append(
+                McpServer(
+                    name=name,
+                    enabled=row.get("enabled") is True,
+                    transport=kind,
+                    endpoint=endpoint,
+                    auth_status=auth if isinstance(auth, str) else "unknown",
+                )
+            )
         return tuple(servers)
 
     def add_remote(self, name: str, url: str) -> McpServer:
         if _NAME.fullmatch(name) is None:
             raise McpConfigError("mcp_name_invalid")
         parsed = urlsplit(url)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
             raise McpConfigError("mcp_url_invalid")
         result = self._cli.run(self._cwd, ("mcp", "add", name, "--url", url), 30)
         if result.returncode != 0:
             raise McpConfigError("mcp_add_failed")
-        return next((server for server in self.list() if server.name == name), McpServer(name, True, "streamable_http", url, "unknown"))
+        try:
+            servers = self.list()
+        except McpConfigError:
+            servers = ()
+        return next(
+            (server for server in servers if server.name == name),
+            McpServer(name, True, "streamable_http", url, "unknown"),
+        )
 
     def remove(self, name: str) -> None:
         if _NAME.fullmatch(name) is None:

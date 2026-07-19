@@ -15,6 +15,7 @@ from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
 from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
+from corvus.mvp.git_process import ProcessResult
 from corvus.mvp.local_chat import (
     LocalChatBackendEvent,
     LocalChatBackendHandle,
@@ -272,6 +273,44 @@ def _sse_events(body: str) -> list[tuple[str, dict[str, object]]]:
         fields = dict(line.split(": ", 1) for line in block.splitlines())
         parsed.append((fields["id"], json.loads(fields["data"])))
     return parsed
+
+
+class _FailingProjectGit:
+    def run(self, _cwd: Path, _args: tuple[str, ...]) -> ProcessResult:
+        return ProcessResult(1, b"", b"project initialization failed")
+
+
+class _FailingProjectWorkspace:
+    def __init__(self) -> None:
+        self.git = _FailingProjectGit()
+
+
+def test_failed_empty_project_initialization_removes_managed_directory(tmp_path: Path) -> None:
+    token = str(uuid4())
+    client = TestClient(
+        create_app(
+            database=tmp_path / "project-cleanup.sqlite3",
+            bootstrap_token=token,
+            session_secret=b"s" * 32,
+            local_chat_service=LocalChatService(
+                backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW
+            ),
+            repository_workspace=_FailingProjectWorkspace(),  # type: ignore[arg-type]
+        )
+    )
+    assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
+    session = client.get("/api/auth/session").json()
+
+    response = client.post(
+        "/api/local/projects",
+        json={"name": "Broken project"},
+        headers={"X-CSRF-Token": session["csrf_token"]},
+    )
+
+    assert response.status_code == 503
+    project_root = tmp_path / ".corvus-projects"
+    assert project_root.is_dir()
+    assert list(project_root.iterdir()) == []
 
 
 @pytest.mark.asyncio

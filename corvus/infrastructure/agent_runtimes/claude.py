@@ -237,6 +237,7 @@ class ClaudeCliAdapter(AgentRuntimePort):
                 not scratch.is_dir()
                 or path_is_link_or_reparse(scratch)
                 or not scratch.is_relative_to(approved_root)
+                or scratch == approved_root
             ):
                 raise ClaudeAdapterError("claude_workspace_unavailable")
         arguments = (

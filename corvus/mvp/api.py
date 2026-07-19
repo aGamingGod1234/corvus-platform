@@ -985,7 +985,9 @@ def create_app(
         try:
             return github_service().authenticate()
         except GitHubCliError as error:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+            ) from error
 
     @app.get("/api/local/github/repositories", response_model=list[GitHubRepositoryResponse])
     def github_repositories(
@@ -994,7 +996,9 @@ def create_app(
         try:
             return github_service().list_repositories(limit=100)
         except GitHubCliError as error:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+            ) from error
 
     @app.post("/api/local/github/repositories", response_model=RepositoryRecord)
     def connect_github_repository(
@@ -1012,7 +1016,9 @@ def create_app(
                 body.slug.rsplit("/", 1)[-1],
             )
         except (GitHubCliError, ValueError) as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
 
     @app.post("/api/local/projects", response_model=RepositoryRecord)
     def create_empty_project(
@@ -1024,21 +1030,32 @@ def create_app(
         target = project_root.resolve(strict=True) / str(uuid4())
         target.mkdir()
         project_git = repository_service().git
-        initialized = project_git.run(target, ("init", "--initial-branch=main", "."))
-        committed = project_git.run(
-            target,
-            (
-                "-c", "user.name=Corvus",
-                "-c", "user.email=corvus@localhost",
-                "commit", "--allow-empty", "-m", "Initialize project",
-            ),
-        )
-        if initialized.returncode != 0 or committed.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="project_initialization_failed",
+        try:
+            initialized = project_git.run(target, ("init", "--initial-branch=main", "."))
+            committed = project_git.run(
+                target,
+                (
+                    "-c",
+                    "user.name=Corvus",
+                    "-c",
+                    "user.email=corvus@localhost",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "Initialize project",
+                ),
             )
-        return repository_service().register_local(principal.tenant_id, target, body.name.strip())
+            if initialized.returncode != 0 or committed.returncode != 0:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="project_initialization_failed",
+                )
+            return repository_service().register_local(
+                principal.tenant_id, target, body.name.strip()
+            )
+        except Exception:
+            shutil.rmtree(target, ignore_errors=True)
+            raise
 
     @app.get("/api/local/skills", response_model=list[PortableSkillVersion])
     def local_skills(
@@ -1571,7 +1588,9 @@ def create_app(
         try:
             return mcp_configuration_service().add_remote(body.name, body.url)
         except McpConfigError as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
 
     @app.delete("/api/local-chat/mcp/{name}", status_code=status.HTTP_204_NO_CONTENT)
     def remove_mcp_server(
@@ -1582,7 +1601,9 @@ def create_app(
             mcp_configuration_service().remove(name)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         except McpConfigError as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
 
     @app.post("/api/local-chat/mcp/{name}/login", status_code=status.HTTP_204_NO_CONTENT)
     def login_mcp_server(
@@ -1593,7 +1614,9 @@ def create_app(
             mcp_configuration_service().login(name)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         except McpConfigError as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
 
     @app.get("/api/local-chat/safety-preview", response_model=SafetyPreviewResponse)
     def local_chat_safety_preview(

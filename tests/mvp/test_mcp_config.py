@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from corvus.mvp.git_process import ProcessResult
-from corvus.mvp.mcp_config import McpConfigError, McpConfigService
+from corvus.mvp.mcp_config import McpConfigError, McpConfigService, McpServer
 
 
 class _Cli:
@@ -24,17 +24,21 @@ class _Cli:
 
 def test_mcp_list_exposes_configuration_without_environment_values(tmp_path: Path) -> None:
     sensitive_value = "do-not-return-this-value"
-    cli = _Cli([{
-        "name": "example",
-        "enabled": True,
-        "transport": {
-            "type": "stdio",
-            "command": "example-mcp",
-            "env": {"TOKEN": sensitive_value},
-            "env_vars": ["TOKEN"],
-        },
-        "auth_status": "unsupported",
-    }])
+    cli = _Cli(
+        [
+            {
+                "name": "example",
+                "enabled": True,
+                "transport": {
+                    "type": "stdio",
+                    "command": "example-mcp",
+                    "env": {"TOKEN": sensitive_value},
+                    "env_vars": ["TOKEN"],
+                },
+                "auth_status": "unsupported",
+            }
+        ]
+    )
 
     servers = McpConfigService(cli, cwd=tmp_path).list()  # type: ignore[arg-type]
 
@@ -53,3 +57,14 @@ def test_mcp_add_requires_https_and_uses_argv_not_a_shell(tmp_path: Path) -> Non
 
     assert cli.calls[0] == ("mcp", "add", "example", "--url", "https://example.com/mcp")
     assert server.endpoint == "https://example.com/mcp"
+
+
+def test_mcp_add_returns_safe_fallback_when_refresh_is_invalid(tmp_path: Path) -> None:
+    cli = _Cli({"unexpected": "shape"})
+    service = McpConfigService(cli, cwd=tmp_path)  # type: ignore[arg-type]
+
+    server = service.add_remote("example", "https://example.com/mcp")
+
+    assert server == McpServer(
+        "example", True, "streamable_http", "https://example.com/mcp", "unknown"
+    )

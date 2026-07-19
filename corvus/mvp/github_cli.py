@@ -96,9 +96,15 @@ class GitHubCli:
         result = self._runner.run(
             parent,
             (
-                "repo", "clone", repo, str(destination), "--",
-                "--config", "core.fsmonitor=false",
-                "--config", f"core.hooksPath={Path(os.devnull)}",
+                "repo",
+                "clone",
+                repo,
+                str(destination),
+                "--",
+                "--config",
+                "core.fsmonitor=false",
+                "--config",
+                f"core.hooksPath={Path(os.devnull)}",
             ),
             180,
         )

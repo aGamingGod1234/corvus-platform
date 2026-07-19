@@ -27,7 +27,15 @@ class TrustedCli:
             raise TrustedCliError("trusted_cli_unavailable")
         inherited = {
             key: value
-            for key in ("APPDATA", "HOME", "LOCALAPPDATA", "TEMP", "TMP", "USERPROFILE", "XDG_CONFIG_HOME")
+            for key in (
+                "APPDATA",
+                "HOME",
+                "LOCALAPPDATA",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "XDG_CONFIG_HOME",
+            )
             if (value := os.environ.get(key)) is not None
         }
         if environment is not None:

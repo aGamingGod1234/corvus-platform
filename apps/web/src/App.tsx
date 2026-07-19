@@ -1,4 +1,4 @@
-import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createCorvusApi,
@@ -194,6 +194,10 @@ export function App({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [localSession, setLocalSession] = useState<Session | null>(null);
+  const conversationApi = useMemo(
+    () => createConversationApi(localSession?.csrf_token ?? ""),
+    [localSession?.csrf_token]
+  );
   const hostedLocalHandoff =
     selectedWorkspace !== null && !isLoopbackRuntimeHost(locationHostname);
 
@@ -768,7 +772,7 @@ export function App({
         {localSurface === "conversations" ? (
           <ConversationWorkspace
             key={localSession.user_id}
-            api={createConversationApi(localSession.csrf_token)}
+            api={conversationApi}
             experience={localProfile.experience}
             newThreadSignal={newThreadSignal}
             onOpenProjects={() => setActiveRoute("repositories")}
@@ -779,7 +783,7 @@ export function App({
           <SchedulesWorkspace api={api} onOpenRun={() => setActiveRoute("runs")} />
         ) : localSurface === "settings" ? (
           <SettingsPanel
-            api={createConversationApi(localSession.csrf_token)}
+            api={conversationApi}
             experience={localProfile.experience}
             onBack={() => setActiveRoute(getWorkspaceDefaultRoute(localProfile))}
             onExperienceChange={async (nextExperience) => {

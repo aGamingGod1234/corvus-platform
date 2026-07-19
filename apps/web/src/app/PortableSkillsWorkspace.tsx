@@ -99,15 +99,35 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
     setBusy(true);
     setError("");
     try {
-      const imported: PortableSkill[] = [];
-      for (const candidate of candidates.filter((item) => selectedCandidateIds.has(item.id))) {
-        const candidatePreview = await api.previewSkillImport(candidate.id);
-        if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") continue;
-        imported.push(await api.importPortableSkill(candidate.id, candidatePreview.digest));
-      }
+      const outcomes = await Promise.all(
+        candidates
+          .filter((item) => selectedCandidateIds.has(item.id))
+          .map(async (candidate) => {
+            try {
+              const candidatePreview = await api.previewSkillImport(candidate.id);
+              if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") {
+                return { candidateId: candidate.id, imported: null, failed: false };
+              }
+              return {
+                candidateId: candidate.id,
+                imported: await api.importPortableSkill(candidate.id, candidatePreview.digest),
+                failed: false
+              };
+            } catch {
+              return { candidateId: candidate.id, imported: null, failed: true };
+            }
+          })
+      );
+      const imported = outcomes
+        .map((outcome) => outcome.imported)
+        .filter((skill): skill is PortableSkill => skill !== null);
       const uniqueImported = [...new Map(imported.map((skill) => [skill.id, skill])).values()];
       setSkills((current) => [...uniqueImported, ...current.filter((skill) => !uniqueImported.some((item) => item.id === skill.id))]);
-      setSelectedCandidateIds(new Set());
+      const failedIds = outcomes.filter((outcome) => outcome.failed).map((outcome) => outcome.candidateId);
+      setSelectedCandidateIds(new Set(failedIds));
+      if (failedIds.length > 0) {
+        setError(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported. The remaining imports completed.`);
+      }
     } catch (reason) {
       setError(readableError(reason));
     } finally {

@@ -192,13 +192,16 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     return () => { current = false; };
   }, [api, providerRefresh]);
 
-  const createConversation = useCallback((): DeviceThread => {
+  const createConversation = useCallback((repository: ConversationRepository | null = null): DeviceThread => {
     const now = new Date().toISOString();
     const created: DeviceThread = {
       id: crypto.randomUUID(),
       title: experience === "developer" ? "New thread" : "New conversation",
       createdAt: now,
       updatedAt: now,
+      repositoryId: repository?.id,
+      repositoryName: repository?.display_name,
+      workingDirectory: repository?.path,
       messages: []
     };
     setThreads((current) => [created, ...current]);
@@ -211,13 +214,16 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   }, [experience]);
 
   function selectRepository(repository: ConversationRepository | null): void {
-    const thread = selected ?? createConversation();
-    setThreads((current) => current.map((item) => item.id === thread.id ? {
-      ...item,
-      repositoryId: repository?.id,
-      repositoryName: repository?.display_name,
-      workingDirectory: repository?.path
-    } : item));
+    if (selected) {
+      setThreads((current) => current.map((item) => item.id === selected.id ? {
+        ...item,
+        repositoryId: repository?.id,
+        repositoryName: repository?.display_name,
+        workingDirectory: repository?.path
+      } : item));
+    } else {
+      createConversation(repository);
+    }
     setProjectMenuOpen(false);
   }
 
@@ -411,7 +417,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           <div><h1>{selected?.title ?? (experience === "developer" ? "New thread" : "New conversation")}</h1><span className="conversation-context" title={selected?.workingDirectory ?? workingDirectory}>{selected?.workingDirectory ?? workingDirectory ?? "Corvus agent workspace"}</span></div>
           <div className="conversation-actions">
             <button aria-expanded={historyOpen} aria-label="Conversation history" className="icon-button" data-component-source="lucide-message-square" onClick={() => setHistoryOpen((open) => !open)} type="button"><Icon name="history" /></button>
-            <button aria-label={`New ${noun}`} className="icon-button" onClick={createConversation} type="button"><Icon name="new" /></button>
+            <button aria-label={`New ${noun}`} className="icon-button" onClick={() => createConversation()} type="button"><Icon name="new" /></button>
           </div>
           {historyOpen ? <div className="conversation-history" role="dialog" aria-label="Conversation history panel">
             <strong>{experience === "developer" ? "Threads" : "Conversations"}</strong>

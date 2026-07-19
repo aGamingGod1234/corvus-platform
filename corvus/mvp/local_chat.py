@@ -245,23 +245,28 @@ class LocalChatService:
             return dict(replay.response)
         run_id = uuid4()
         try:
-            start_arguments = {
-                "run_id": run_id,
-                "prompt": prompt,
-                "model": model,
-                "effort": effort,
-                "mode": mode,
-                "mcp_enabled": mcp_enabled,
-                "idempotency_key": f"{owner}:{idempotency_key}",
-            }
             if source_directory is None:
-                handle = await backend.start(**start_arguments)
+                handle = await backend.start(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    mode=mode,
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=f"{owner}:{idempotency_key}",
+                )
             else:
                 start_in_workspace = getattr(backend, "start_in_workspace", None)
                 if start_in_workspace is None:
                     raise LocalChatError("provider_workspace_unavailable")
                 handle = await start_in_workspace(
-                    **start_arguments,
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=effort,
+                    mode=mode,
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=f"{owner}:{idempotency_key}",
                     source_directory=source_directory,
                 )
         except (CodexAdapterError, ClaudeAdapterError) as error:
@@ -493,7 +498,9 @@ class LocalChatService:
 
 
 class CodexLocalChatBackend:
-    def __init__(self, adapter: CodexCliAdapter, clock: Callable[[], datetime], scratch_root: Path) -> None:
+    def __init__(
+        self, adapter: CodexCliAdapter, clock: Callable[[], datetime], scratch_root: Path
+    ) -> None:
         self._adapter = adapter
         self._clock = clock
         self._scratch_root = scratch_root.resolve(strict=False)
@@ -626,7 +633,9 @@ class CodexLocalChatBackend:
 
 
 class ClaudeLocalChatBackend:
-    def __init__(self, adapter: ClaudeCliAdapter, clock: Callable[[], datetime], scratch_root: Path) -> None:
+    def __init__(
+        self, adapter: ClaudeCliAdapter, clock: Callable[[], datetime], scratch_root: Path
+    ) -> None:
         self._adapter = adapter
         self._clock = clock
         self._scratch_root = scratch_root.resolve(strict=False)

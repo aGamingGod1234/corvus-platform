@@ -43,6 +43,33 @@ describe("PortableSkillsWorkspace", () => {
     expect(client.importPortableSkill).toHaveBeenCalledWith(second.id, "d".repeat(64));
   });
 
+  it("continues bulk imports when one selected skill fails", async () => {
+    const second = { ...candidate, id: "c".repeat(64), name: "ship-release", path: "C:\\Users\\me\\.codex\\skills\\ship-release" };
+    const client = api();
+    vi.mocked(client.listSkillImportSources).mockResolvedValue([candidate, second]);
+    vi.mocked(client.previewSkillImport).mockImplementation(async (candidateId) => ({
+      ...preview,
+      candidate: candidateId === candidate.id ? candidate : second,
+      name: candidateId === candidate.id ? candidate.name : second.name,
+      digest: candidateId === candidate.id ? preview.digest : "d".repeat(64)
+    }));
+    vi.mocked(client.importPortableSkill).mockImplementation(async (candidateId) => {
+      if (candidateId === candidate.id) throw new Error("first import failed");
+      return { ...imported, id: "skill-2", name: second.name, source_path: second.path };
+    });
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await screen.findByRole("checkbox", { name: "Select review-pr" });
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+    await user.click(screen.getByRole("button", { name: "Import selected (2)" }));
+
+    expect(await screen.findByText(/1 selected skill could not be imported/i)).toBeVisible();
+    expect(screen.getAllByText("ship-release").length).toBeGreaterThan(0);
+    expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select ship-release" })).not.toBeChecked();
+  });
+
   it("discovers, reviews, and imports a cross-agent skill", async () => {
     const user = userEvent.setup();
     const client = api();

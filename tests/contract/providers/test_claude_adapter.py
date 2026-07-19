@@ -203,6 +203,26 @@ async def test_claude_uses_pinned_direct_argv_and_explicit_safe_flags(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_claude_refuses_the_managed_root_as_an_explicit_workspace(tmp_path: Path) -> None:
+    adapter, _starter = _adapter(tmp_path, ())
+    binding = await _binding(adapter)
+    managed_root = tmp_path / "runs"
+    managed_root.mkdir()
+
+    with pytest.raises(ClaudeAdapterError, match="claude_workspace_unavailable"):
+        await adapter.start_local_text(
+            binding,
+            LocalClaudeTextRequest(
+                run_id=uuid4(),
+                prompt="Inspect the workspace.",
+                idempotency_key="claude-root-workspace",
+                deadline=datetime(2026, 7, 18, tzinfo=UTC),
+                workspace=managed_root,
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_claude_replaces_hidden_thinking_with_safe_status_and_streams_text(
     tmp_path: Path,
 ) -> None:
