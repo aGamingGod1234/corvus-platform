@@ -106,15 +106,19 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
             try {
               const candidatePreview = await api.previewSkillImport(candidate.id);
               if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") {
-                return { candidateId: candidate.id, imported: null, failed: false };
+                return { candidateId: candidate.id, imported: null, failed: false, requiresReview: false };
+              }
+              if (candidatePreview.compatibility === "needs_review") {
+                return { candidateId: candidate.id, imported: null, failed: false, requiresReview: true };
               }
               return {
                 candidateId: candidate.id,
                 imported: await api.importPortableSkill(candidate.id, candidatePreview.digest),
-                failed: false
+                failed: false,
+                requiresReview: false
               };
             } catch {
-              return { candidateId: candidate.id, imported: null, failed: true };
+              return { candidateId: candidate.id, imported: null, failed: true, requiresReview: false };
             }
           })
       );
@@ -124,10 +128,16 @@ export function PortableSkillsWorkspace({ api }: { api: PortableSkillsApi }) {
       const uniqueImported = [...new Map(imported.map((skill) => [skill.id, skill])).values()];
       setSkills((current) => [...uniqueImported, ...current.filter((skill) => !uniqueImported.some((item) => item.id === skill.id))]);
       const failedIds = outcomes.filter((outcome) => outcome.failed).map((outcome) => outcome.candidateId);
-      setSelectedCandidateIds(new Set(failedIds));
-      if (failedIds.length > 0) {
-        setError(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported. The remaining imports completed.`);
+      const reviewIds = outcomes.filter((outcome) => outcome.requiresReview).map((outcome) => outcome.candidateId);
+      setSelectedCandidateIds(new Set([...failedIds, ...reviewIds]));
+      const notices: string[] = [];
+      if (reviewIds.length > 0) {
+        notices.push(`${reviewIds.length} selected skill${reviewIds.length === 1 ? "" : "s"} require${reviewIds.length === 1 ? "s" : ""} individual review and were not imported.`);
       }
+      if (failedIds.length > 0) {
+        notices.push(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported.`);
+      }
+      if (notices.length > 0) setError(`${notices.join(" ")} Safe imports completed.`);
     } catch (reason) {
       setError(readableError(reason));
     } finally {

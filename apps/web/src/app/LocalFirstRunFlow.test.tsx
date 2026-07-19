@@ -5,17 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 import { LocalFirstRunFlow } from "./LocalFirstRunFlow";
 
 describe("LocalFirstRunFlow", () => {
-  it("introduces Corvus before Google and profile setup", async () => {
-    const onGoogleStart = vi.fn();
+  it("introduces Corvus before an explicitly local profile setup", async () => {
     const onComplete = vi.fn();
     const user = userEvent.setup();
-    render(<LocalFirstRunFlow onComplete={onComplete} onGoogleStart={onGoogleStart} />);
+    render(<LocalFirstRunFlow onComplete={onComplete} />);
 
     expect(screen.getByRole("heading", { name: "Welcome to Corvus" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start setup" }));
-    await user.click(screen.getByRole("button", { name: "Continue with Google" }));
-    expect(onGoogleStart).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: /I finished signing in/ }));
+    expect(screen.getByText(/device-local identity/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Google/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start local setup" }));
     await user.click(screen.getByRole("radio", { name: "Everyday" }));
     await user.click(screen.getByRole("button", { name: "Open Corvus" }));
     expect(onComplete).toHaveBeenCalledWith("everyday", "individual");

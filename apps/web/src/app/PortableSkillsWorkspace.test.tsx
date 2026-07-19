@@ -7,6 +7,7 @@ import { PortableSkillsWorkspace, type PortableSkillsApi } from "./PortableSkill
 
 const candidate = { id: "a".repeat(64), source: "claude", name: "review-pr", path: "C:\\Users\\me\\.claude\\skills\\review-pr", kind: "package" } as SkillImportCandidate;
 const preview = { candidate, name: "review-pr", description: "Review a pull request", digest: "b".repeat(64), compatibility: "needs_review", findings: [{ code: "unapproved_tools", severity: "review", location: "SKILL.md", message: "Requested tools require approval." }], files: ["SKILL.md", "scripts/check.py"], duplicate: "none" } as SkillImportPreview;
+const readyPreview = { ...preview, compatibility: "ready", findings: [] } as SkillImportPreview;
 const imported = { id: "skill-1", tenant_id: "local", name: "review-pr", description: "Review a pull request", version: 1, digest: preview.digest, source: "claude", source_path: candidate.path, package_path: "C:\\library\\skill-1", status: "draft", findings: preview.findings, created_at: "2026-07-18T00:00:00Z" } as PortableSkill;
 
 function api(): PortableSkillsApi {
@@ -26,7 +27,7 @@ describe("PortableSkillsWorkspace", () => {
     const client = api();
     vi.mocked(client.listSkillImportSources).mockResolvedValue([candidate, second]);
     vi.mocked(client.previewSkillImport).mockImplementation(async (candidateId) => ({
-      ...preview,
+      ...readyPreview,
       candidate: candidateId === candidate.id ? candidate : second,
       name: candidateId === candidate.id ? candidate.name : second.name,
       digest: candidateId === candidate.id ? preview.digest : "d".repeat(64)
@@ -48,7 +49,7 @@ describe("PortableSkillsWorkspace", () => {
     const client = api();
     vi.mocked(client.listSkillImportSources).mockResolvedValue([candidate, second]);
     vi.mocked(client.previewSkillImport).mockImplementation(async (candidateId) => ({
-      ...preview,
+      ...readyPreview,
       candidate: candidateId === candidate.id ? candidate : second,
       name: candidateId === candidate.id ? candidate.name : second.name,
       digest: candidateId === candidate.id ? preview.digest : "d".repeat(64)
@@ -68,6 +69,19 @@ describe("PortableSkillsWorkspace", () => {
     expect(screen.getAllByText("ship-release").length).toBeGreaterThan(0);
     expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Select ship-release" })).not.toBeChecked();
+  });
+
+  it("keeps review-required skills selected for individual review", async () => {
+    const client = api();
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select review-pr" }));
+    await user.click(screen.getByRole("button", { name: "Import selected (1)" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/requires individual review/i);
+    expect(client.importPortableSkill).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
   });
 
   it("discovers, reviews, and imports a cross-agent skill", async () => {

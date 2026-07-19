@@ -58,6 +58,29 @@ describe("SettingsPanel", () => {
     expect(applyDesktopSettings).not.toHaveBeenCalled();
   });
 
+  it("does not commit the workspace profile when runtime settings fail to save", async () => {
+    const api = settingsApi();
+    vi.mocked(api.updatePreferences).mockRejectedValue(new Error("runtime_save_failed"));
+    const onExperienceChange = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <SettingsPanel
+        api={api}
+        experience="developer"
+        onExperienceChange={onExperienceChange}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-atomic-profile"
+        workspaceKind="individual"
+      />
+    );
+
+    await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/runtime save failed/i);
+    expect(onExperienceChange).not.toHaveBeenCalled();
+  });
+
   it("uses editable model identifiers and category-specific headings", async () => {
     const api = settingsApi();
     render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}

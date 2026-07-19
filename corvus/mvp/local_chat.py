@@ -41,6 +41,29 @@ from corvus.safe_process import path_is_link_or_reparse
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
+_PROJECT_COPY_MAX_FILES = 20_000
+_PROJECT_COPY_MAX_ENTRIES = 30_000
+_PROJECT_COPY_MAX_BYTES = 512 * 1024 * 1024
+_PROJECT_COPY_CHUNK_BYTES = 1024 * 1024
+_PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".next",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".svn",
+        ".turbo",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+        "venv",
+    }
+)
 _WINDOWS_CODEX_TARGETS = {
     "amd64": ("codex-win32-x64", "x86_64-pc-windows-msvc"),
     "arm64": ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
@@ -913,16 +936,66 @@ def _copy_project(source_directory: Path, destination: Path) -> None:
         raise LocalChatError("local_chat_project_unavailable") from error
     if not source.is_dir() or path_is_link_or_reparse(source):
         raise LocalChatError("local_chat_project_unavailable")
+    files_to_copy: list[tuple[Path, Path, int]] = []
+    directories_to_create: list[Path] = []
+    total_bytes = 0
     try:
-        for root, directories, files in os.walk(source):
+        for root, directories, files in os.walk(source, topdown=True):
             root_path = Path(root)
-            if any(path_is_link_or_reparse(root_path / name) for name in (*directories, *files)):
+            if path_is_link_or_reparse(root_path):
                 raise LocalChatError("local_chat_project_links_forbidden")
+            relative_root = root_path.relative_to(source)
+            directories_to_create.append(relative_root)
+            if len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES:
+                raise LocalChatError("local_chat_project_too_large")
+            retained_directories: list[str] = []
+            for name in directories:
+                child = root_path / name
+                if path_is_link_or_reparse(child):
+                    raise LocalChatError("local_chat_project_links_forbidden")
+                if name not in _PROJECT_COPY_IGNORED_DIRECTORIES:
+                    retained_directories.append(name)
+            directories[:] = retained_directories
+            for name in files:
+                source_file = root_path / name
+                if path_is_link_or_reparse(source_file):
+                    raise LocalChatError("local_chat_project_links_forbidden")
+                try:
+                    size = source_file.stat().st_size
+                except OSError as error:
+                    raise LocalChatError("local_chat_project_copy_failed") from error
+                if not source_file.is_file():
+                    raise LocalChatError("local_chat_project_unavailable")
+                total_bytes += size
+                files_to_copy.append((source_file, relative_root / name, size))
+                if (
+                    len(files_to_copy) > _PROJECT_COPY_MAX_FILES
+                    or len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES
+                    or total_bytes > _PROJECT_COPY_MAX_BYTES
+                ):
+                    raise LocalChatError("local_chat_project_too_large")
+
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, destination)
+        destination.mkdir()
+        for relative_directory in directories_to_create:
+            (destination / relative_directory).mkdir(parents=True, exist_ok=True)
+        copied_bytes = 0
+        for source_file, relative_file, expected_size in files_to_copy:
+            if path_is_link_or_reparse(source_file) or source_file.stat().st_size != expected_size:
+                raise LocalChatError("local_chat_project_changed_during_copy")
+            target_file = destination / relative_file
+            with source_file.open("rb") as source_stream, target_file.open("xb") as target_stream:
+                while chunk := source_stream.read(_PROJECT_COPY_CHUNK_BYTES):
+                    copied_bytes += len(chunk)
+                    if copied_bytes > _PROJECT_COPY_MAX_BYTES:
+                        raise LocalChatError("local_chat_project_too_large")
+                    target_stream.write(chunk)
+            shutil.copystat(source_file, target_file, follow_symlinks=False)
     except LocalChatError:
+        shutil.rmtree(destination, ignore_errors=True)
         raise
     except OSError as error:
+        shutil.rmtree(destination, ignore_errors=True)
         raise LocalChatError("local_chat_project_copy_failed") from error
 
 

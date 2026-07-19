@@ -135,6 +135,53 @@ def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
     assert (source / "README.md").read_text(encoding="utf-8") == "original"
 
 
+def test_project_copy_skips_dependency_and_vcs_directories(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    (source / "node_modules").mkdir(parents=True)
+    (source / ".git").mkdir()
+    (source / "src").mkdir()
+    (source / "node_modules" / "large-package.js").write_bytes(b"dependency")
+    (source / ".git" / "objects").write_bytes(b"history")
+    (source / "src" / "main.ts").write_text("export {};", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-ignored"
+
+    local_chat_module._copy_project(source, destination)
+
+    assert (destination / "src" / "main.ts").is_file()
+    assert not (destination / "node_modules").exists()
+    assert not (destination / ".git").exists()
+
+
+def test_project_copy_rejects_sources_over_the_size_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "oversized.bin").write_bytes(b"12345")
+    destination = tmp_path / "scratch" / "run-oversized"
+    monkeypatch.setattr(local_chat_module, "_PROJECT_COPY_MAX_BYTES", 4)
+
+    with pytest.raises(local_chat_module.LocalChatError, match="local_chat_project_too_large"):
+        local_chat_module._copy_project(source, destination)
+
+    assert not destination.exists()
+
+
+def test_project_copy_rejects_sources_over_the_entry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "registered-project"
+    (source / "first").mkdir(parents=True)
+    (source / "second").mkdir()
+    destination = tmp_path / "scratch" / "run-too-many-entries"
+    monkeypatch.setattr(local_chat_module, "_PROJECT_COPY_MAX_ENTRIES", 1)
+
+    with pytest.raises(local_chat_module.LocalChatError, match="local_chat_project_too_large"):
+        local_chat_module._copy_project(source, destination)
+
+    assert not destination.exists()
+
+
 class _MemoryKeyring:
     def __init__(self) -> None:
         self.values: dict[tuple[str, str], str] = {}

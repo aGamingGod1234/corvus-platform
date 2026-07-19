@@ -280,14 +280,9 @@ export function SettingsPanel({
       const desktopChanged = runInBackground !== device.runInBackground
         || launchAtLogin !== device.launchAtLogin
         || nativeNotifications !== device.nativeNotifications;
-      if (desktopAvailable && desktopChanged) {
-        await applyDesktopSettings({ runInBackground, launchAtLogin, nativeNotifications });
-      }
-      if (profileEditable && profileExperience !== experience) {
-        await onExperienceChange(profileExperience);
-      }
+      let persistedRuntime: RuntimePreferences | null = null;
       if (api !== undefined) {
-        const saved = await api.updatePreferences({
+        persistedRuntime = await api.updatePreferences({
           expected_version: runtime.version,
           default_provider: runtime.default_provider,
           default_model: runtime.default_model,
@@ -297,14 +292,20 @@ export function SettingsPanel({
           response_tone: runtime.response_tone,
           custom_rules: runtime.custom_rules
         });
-        setRuntime(saved);
-        setSavedRuntime(saved);
-        setStatus("Saved for this local runtime");
-      } else {
-        setStatus("Saved on this device");
+      }
+      if (desktopAvailable && desktopChanged) {
+        await applyDesktopSettings({ runInBackground, launchAtLogin, nativeNotifications });
+      }
+      if (profileEditable && profileExperience !== experience) {
+        await onExperienceChange(profileExperience);
+      }
+      if (persistedRuntime !== null) {
+        setRuntime(persistedRuntime);
+        setSavedRuntime(persistedRuntime);
       }
       saveDevicePreferences(storage, workspaceId, nextDevice);
       document.documentElement.dataset.theme = theme;
+      setStatus(api === undefined ? "Saved on this device" : "Saved for this local runtime");
       setDirty(false);
       setUnsavedBarDismissed(false);
       setExitConfirmation(false);
