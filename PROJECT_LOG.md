@@ -2203,3 +2203,79 @@
 ### Review Follow-up
 - Changed checksum generation to emit sorted, basename-only entries so `sha256sum -c SHA256SUMS.txt` works with downloaded release assets outside GitHub Actions.
 - Aligned the remaining current release-status labels and installer filename in `HACKATHON_STATUS.md` with `v0.2.0-beta.1`.
+
+## 2026-07-20 - Repair functional project, identity, skill, and schedule workflows
+
+### What Was Implemented
+- Replaced the ambiguous repository flow with a centered Add project workflow for blank managed projects, local folders, pasted GitHub URLs, and explicitly authenticated GitHub repositories.
+- Isolated Corvus GitHub CLI state from machine-wide credentials, constrained accepted GitHub repository identifiers, allowed the trusted Git executable required by `gh repo clone`, and added collision-safe managed project creation with cleanup on failure.
+- Added clear Google and GitHub account actions in Settings, including an exact allowlisted desktop browser handoff and the hosted Google sign-in route.
+- Split skill imports into imported, duplicate, blocked, review-required, and failed outcomes so duplicates hydrate the library and policy failures remain actionable.
+- Made New schedule consistently available and added explicit project/provider prerequisite guidance instead of an unexplained disabled button.
+- Added the nested Vercel API rewrite needed for hosted `/api/v2/*` identity routes.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/app/*`, and `apps/web/src/styles/product-workspace.css` - functional project, account, skill, and schedule UI flows with regression coverage.
+- `apps/web/api/corvus-v2.ts`, `apps/web/vercel.json`, and `apps/web/src/v2Proxy.test.ts` - nested hosted API forwarding.
+- `apps/desktop/src-tauri/src/lib.rs` - constrained cross-platform browser launch behavior with native tests.
+- `corvus/mvp/api.py`, `corvus/mvp/github_cli.py`, `corvus/mvp/trusted_cli.py`, `openapi/corvus-mvp.json`, and focused MVP tests - managed project and isolated GitHub backend behavior.
+- `PROJECT_LOG.md` - implementation and verification evidence.
+
+### Assumptions Made (flag these for review)
+- Blank projects belong under the database-adjacent `corvus-agent-projects` directory so production uses the Corvus application-data boundary while isolated tests remain self-contained.
+- Google identity continues through the existing hosted Corvus Web route; the Vercel preview must prove nested route forwarding before merge.
+
+### Known Issues / Deferred
+- Real OAuth completion still depends on the configured hosted Google/Railway environment; this change repairs the desktop handoff and hosted route rather than inventing credentials.
+- The Vite build retains the existing advisory for a main JavaScript chunk above 500 kB; code splitting is outside this functional repair milestone.
+- Human/code-owner approval and merge remain outside this task's stop boundary.
+
+### Verification
+- Playwright drove a clean compiled sidecar through pairing, onboarding, blank project creation, schedule editing, and the Settings account controls without Computer Use.
+- Web: 36 files and 260 tests pass; TypeScript and the Vite production build pass.
+- Backend: 55 focused Python tests pass; Ruff and mypy pass.
+- Desktop: 11 Rust tests and `cargo fmt --check` pass; the release executable and packaged sidecar were built from this workspace.
+
+### Suggested Next Steps
+- Commit and open the protected-main PR, verify the Vercel preview route, resolve actionable automated review findings, then request `@asifdotpy` approval without merging.
+
+### Preview Follow-up
+- Probed the protected Vercel preview with an authenticated bypass and found that Node ESM could not resolve the extensionless import from `api/corvus-v2.ts`.
+- Changed the shared catch-all import to its emitted `.js` path and re-probed the redeployed nested route. It now reaches the proxy and returns the controlled `503 platform_proxy_unavailable` response expected when preview-only Railway configuration is absent, rather than crashing the function.
+
+### Automated Review Follow-up
+- Consume routed Add project signals in the parent so closing the dialog stays closed across workspace remounts, and keep GitHub authentication/listing errors visible inside the GitHub project dialog.
+- Reject rewritten proxy traversal markers before constructing the nested v2 request, with regression cases for dot segments, encoded separators, duplicate separators, and backslashes.
+- Prepend the explicitly validated Git executable directory to the clean child `PATH` so `gh repo clone` cannot select an earlier platform stub.
+- Retained Starlette's current `HTTP_422_UNPROCESSABLE_CONTENT` constant after runtime verification showed it exists and the suggested legacy `...ENTITY` alias is deprecated in the pinned environment.
+- Refreshed hosted account truth after a Settings experience-version conflict, matching the existing onboarding recovery boundary.
+- Added project-dialog focus trapping and Escape handling, kept connect/create/clone errors inside the modal, and aligned SVG keyword casing with the repository's CSS lint policy.
+
+## 2026-07-20 - Close PR #11 security review blockers
+
+### What Was Implemented
+- Added an explicit allowlist gate to the Vercel rewrite edge so absent or untrusted Railway origins fail closed before path reconstruction or network forwarding.
+- Reused the authoritative origin validator from the upstream proxy, preserving exact HTTPS `*.up.railway.app` production policy and restricted loopback development behavior.
+- Added a bypass-oriented edge regression matrix for missing configuration, credential injection, suffix spoofing, bare Railway suffixes, HTTP downgrade, and path/query/fragment contamination.
+- Documented the alpha GitHub CLI and Git binary-provenance trust boundary and operator requirements.
+
+### Files Modified
+- `apps/web/api/corvus-v2.ts` - fail-closed rewrite-edge origin gate and redacted unavailable response.
+- `apps/web/api/v2/[...path].ts` - export the shared origin validator for consistent enforcement at both proxy layers.
+- `apps/web/src/v2Proxy.test.ts` - malicious and legitimate origin-boundary regression coverage.
+- `README.md` - truthful GitHub CLI and Git provenance requirements for alpha installers, release builders, and demo operators.
+- `PROJECT_LOG.md` - security repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- The latest reviewer statement upgrades the earlier low/informational origin and provenance findings into merge blockers.
+- The existing redacted `503 platform_proxy_unavailable` contract remains preferable to introducing a new status-code behavior at the rewrite edge.
+
+### Known Issues / Deferred
+- Alpha installers still rely on trusted host-installed `gh` and Git binaries; cryptographic binary verification or bundling is not added by this narrow repair.
+- The web package has no lint script. TypeScript compilation, production build, focused exploit tests, and the complete web regression suite provide the available repository-native proof.
+
+### Suggested Next Steps
+- Push the verified security commit, post the exploit and control evidence on PR #11, and request `@asifdotpy` to re-review the exact new head.
+
+### Automated Review Follow-up
+- Removed redundant Promise wrappers from the async rewrite-edge early returns without changing validation, status codes, response bodies, or forwarding behavior.

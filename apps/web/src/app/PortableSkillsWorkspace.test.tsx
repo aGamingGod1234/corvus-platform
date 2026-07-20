@@ -102,6 +102,48 @@ describe("PortableSkillsWorkspace", () => {
     expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
   });
 
+  it("keeps safety-blocked skills selected and explains how to review them", async () => {
+    const client = api();
+    vi.mocked(client.previewSkillImport).mockResolvedValue({
+      ...readyPreview,
+      compatibility: "blocked",
+      findings: [{
+        code: "destructive_command",
+        severity: "blocked",
+        location: "SKILL.md",
+        message: "Destructive recursive command detected."
+      }]
+    });
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select review-pr" }));
+    await user.click(screen.getByRole("button", { name: "Import selected (1)" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /blocked by the safety review.*open it to see what needs attention/i
+    );
+    expect(client.importPortableSkill).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
+  });
+
+  it("hydrates an exact duplicate into the Library through the idempotent import", async () => {
+    const client = api();
+    vi.mocked(client.previewSkillImport).mockResolvedValue({
+      ...readyPreview,
+      duplicate: "exact"
+    });
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select review-pr" }));
+    await user.click(screen.getByRole("button", { name: "Import selected (1)" }));
+
+    await waitFor(() => expect(client.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest));
+    expect(await screen.findByText("Review a pull request")).toBeVisible();
+    expect(screen.queryByText(/already imported or blocked/i)).not.toBeInTheDocument();
+  });
+
   it("discovers, reviews, and imports a cross-agent skill", async () => {
     const user = userEvent.setup();
     const client = api();

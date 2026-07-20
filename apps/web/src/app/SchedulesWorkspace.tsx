@@ -56,7 +56,21 @@ function scheduleOutcomeLabel(schedule: LocalSchedule): string | null {
   return "Skipped: prerequisites changed";
 }
 
-export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOpenRun(runId: string): void }) {
+type SchedulePrerequisite = {
+  kind: "loading" | "project" | "provider" | "model";
+  title: string;
+  detail: string;
+};
+
+export function SchedulesWorkspace({
+  api,
+  onOpenProjects,
+  onOpenRun
+}: {
+  api: SchedulesApi;
+  onOpenProjects?: () => void;
+  onOpenRun(runId: string): void;
+}) {
   const [schedules, setSchedules] = useState<LocalSchedule[]>([]);
   const [repositories, setRepositories] = useState<LocalRepository[]>([]);
   const [providers, setProviders] = useState<LocalProviderCatalogEntry[]>([]);
@@ -81,6 +95,7 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
   const [providerError, setProviderError] = useState("");
   const [providerRefresh, setProviderRefresh] = useState(0);
   const [providerLoading, setProviderLoading] = useState(true);
+  const [prerequisiteNotice, setPrerequisiteNotice] = useState<SchedulePrerequisite | null>(null);
 
   const codex = useMemo(
     () => providers.find((provider) => provider.id === "codex") ?? null,
@@ -89,6 +104,17 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
   const codexReady = codex?.status === "ready"
     && codex.models.length > 0
     && codex.thinking_levels.some((level) => level !== "max");
+  const prerequisite: SchedulePrerequisite | null = loading
+    ? { kind: "loading", title: "Checking schedule setup", detail: "Wait while Corvus checks your projects and local agent." }
+    : repositories.length === 0
+      ? { kind: "project", title: "Project required", detail: "Connect or create a healthy project before scheduling work." }
+      : providerLoading
+        ? { kind: "provider", title: "Checking Codex", detail: "Wait while Corvus verifies Codex and your local sign-in." }
+        : codex === null || codex.status !== "ready"
+          ? { kind: "provider", title: "Codex sign-in required", detail: "Verify Codex and sign in before scheduling work." }
+          : !model || codex.models.length === 0 || !codex.thinking_levels.some((level) => level !== "max")
+            ? { kind: "model", title: "Model required", detail: "A supported Codex model is required before scheduling work." }
+            : null;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -207,9 +233,21 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
     }
   }
 
+  function openScheduleEditor(): void {
+    if (prerequisite !== null) {
+      setCreating(false);
+      setPrerequisiteNotice(prerequisite);
+      return;
+    }
+    setPrerequisiteNotice(null);
+    setAdvancedOpen(false);
+    setCreating(true);
+  }
+
   return <section aria-labelledby="schedules-title" className="schedules-workspace">
-    <header className="resource-heading"><div><p className="eyebrow">Local automation</p><h1 id="schedules-title">Schedule</h1><p>Repeat a supervised task while keeping every code change behind human review.</p></div><button className="button button--primary" disabled={loading || !repositories.length || !codexReady || !model} onClick={() => { setAdvancedOpen(false); setCreating(true); }} title={providerLoading ? "Verifying Codex and login" : !codexReady ? "Verify Codex before scheduling work" : undefined} type="button">New schedule</button></header>
+    <header className="resource-heading"><div><p className="eyebrow">Local automation</p><h1 id="schedules-title">Schedule</h1><p>Repeat a supervised task while keeping every code change behind human review.</p></div><button className="button button--primary" onClick={openScheduleEditor} title={prerequisite?.detail} type="button">New schedule</button></header>
     <div className="schedule-notice"><strong>Review-only output</strong><span>Schedules can report or prepare changes. They never push, open a pull request, merge, or force-push.</span></div>
+    {prerequisiteNotice ? <div className="schedule-notice" role="status"><strong>{prerequisiteNotice.title}</strong><span>{prerequisiteNotice.detail}</span>{prerequisiteNotice.kind === "project" && onOpenProjects ? <button className="button" onClick={onOpenProjects} type="button">Open Projects</button> : null}</div> : null}
     {providerError ? <p className="inline-error provider-recovery" role="alert">{providerError} <button className="text-button" onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry providers</button></p> : null}
     {creating ? <form className="schedule-editor" onSubmit={(event) => void create(event)}>
       <label>Name<input autoFocus onChange={(event) => setName(event.target.value)} placeholder="Weekday repository review" value={name} /></label>

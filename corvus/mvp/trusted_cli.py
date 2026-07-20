@@ -18,7 +18,13 @@ class TrustedCliError(RuntimeError):
 
 
 class TrustedCli:
-    def __init__(self, executable: Path, *, environment: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        executable: Path,
+        *,
+        environment: Mapping[str, str] | None = None,
+        additional_path_entries: tuple[Path, ...] = (),
+    ) -> None:
         try:
             self._executable = executable.expanduser().resolve(strict=True)
         except OSError as exc:
@@ -38,12 +44,33 @@ class TrustedCli:
             )
             if (value := os.environ.get(key)) is not None
         }
+        if environment is not None and any(key.casefold() == "path" for key in environment):
+            raise TrustedCliError("trusted_cli_environment_invalid")
         if environment is not None:
             inherited.update(environment)
         try:
             self._environment = build_clean_process_environment(self._executable, inherited)
+            trusted_path_entries = self._trusted_path_entries(additional_path_entries)
         except (OSError, TrustedProcessError) as exc:
             raise TrustedCliError("trusted_cli_environment_unavailable") from exc
+        if trusted_path_entries:
+            current_path = self._environment.get("PATH", "")
+            current_entries = tuple(entry for entry in current_path.split(os.pathsep) if entry)
+            combined_entries = dict.fromkeys((*trusted_path_entries, *current_entries))
+            self._environment["PATH"] = os.pathsep.join(combined_entries)
+
+    @staticmethod
+    def _trusted_path_entries(entries: tuple[Path, ...]) -> tuple[str, ...]:
+        trusted: list[str] = []
+        for entry in entries:
+            try:
+                canonical = entry.expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise TrustedCliError("trusted_cli_path_entry_unavailable") from exc
+            if not canonical.is_dir() or path_is_link_or_reparse(canonical):
+                raise TrustedCliError("trusted_cli_path_entry_unavailable")
+            trusted.append(os.fspath(canonical))
+        return tuple(trusted)
 
     def run(self, cwd: Path, args: tuple[str, ...], timeout: float = 30) -> ProcessResult:
         if not args or any(not argument or "\0" in argument for argument in args):

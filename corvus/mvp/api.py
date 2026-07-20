@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -113,6 +114,7 @@ from corvus.mvp.trusted_cli import TrustedCli, TrustedCliError
 from corvus.mvp.worktrees import WorktreeManager, WorktreeOwnershipError
 from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
+from corvus.safe_process import path_is_link_or_reparse
 
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
@@ -120,6 +122,9 @@ _INSTANCE_CHALLENGE_HEADER = "X-Corvus-Challenge"
 _INSTANCE_PROOF_HEADER = "X-Corvus-Instance-Proof"
 _MINIMUM_INSTANCE_CHALLENGE_LENGTH = 16
 _MAXIMUM_INSTANCE_CHALLENGE_LENGTH = 512
+_GITHUB_CONFIG_DIRECTORY = ".corvus-github-cli"
+_MANAGED_PROJECTS_DIRECTORY = "corvus-agent-projects"
+_MANAGED_PROJECT_NAME_LIMIT = 64
 _WEB_CONTENT_SECURITY_POLICY = (
     "default-src 'self'; script-src 'self'; style-src 'self'; "
     "font-src 'self' data:; img-src 'self' data:; connect-src 'self'; "
@@ -360,7 +365,7 @@ class GitHubRepositoryResponse(ApiModel):
 
 
 class GitHubRepositoryConnectRequest(ApiModel):
-    slug: str = Field(min_length=3, max_length=201, pattern=r"^[^/\s]+/[^/\s]+$")
+    slug: str = Field(min_length=3, max_length=2048)
 
 
 class EmptyProjectCreateRequest(ApiModel):
@@ -571,6 +576,59 @@ def _build_git_process(executable_name: str) -> GitProcess | None:
         return None
 
 
+class _ManagedDirectoryError(RuntimeError):
+    """A managed local directory could not be established without crossing authority."""
+
+
+def _managed_directory(parent: Path, name: str) -> Path:
+    try:
+        canonical_parent = parent.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise _ManagedDirectoryError("managed_directory_parent_unavailable") from exc
+    if not canonical_parent.is_dir() or path_is_link_or_reparse(canonical_parent):
+        raise _ManagedDirectoryError("managed_directory_parent_unavailable")
+    candidate = canonical_parent / name
+    if candidate.exists() and path_is_link_or_reparse(candidate):
+        raise _ManagedDirectoryError("managed_directory_invalid")
+    try:
+        candidate.mkdir(mode=0o700, exist_ok=True)
+        canonical = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise _ManagedDirectoryError("managed_directory_unavailable") from exc
+    if (
+        not canonical.is_dir()
+        or path_is_link_or_reparse(canonical)
+        or canonical.parent != canonical_parent
+    ):
+        raise _ManagedDirectoryError("managed_directory_invalid")
+    return canonical
+
+
+def _managed_project_target(root: Path, label: str) -> Path:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", label.strip()).strip("._-")
+    safe_name = (normalized or "project")[:_MANAGED_PROJECT_NAME_LIMIT]
+    target = (root / f"{safe_name}-{uuid4().hex[:12]}").resolve(strict=False)
+    if target.parent != root or target.exists() or path_is_link_or_reparse(target):
+        raise _ManagedDirectoryError("managed_project_target_invalid")
+    return target
+
+
+def _build_github_cli(data_root: Path, git_executable: str | None) -> GitHubCli | None:
+    gh_executable = shutil.which("gh.exe" if os.name == "nt" else "gh")
+    if gh_executable is None or git_executable is None:
+        return None
+    try:
+        config_root = _managed_directory(data_root, _GITHUB_CONFIG_DIRECTORY)
+        runner = TrustedCli(
+            Path(gh_executable),
+            environment={"GH_CONFIG_DIR": os.fspath(config_root)},
+            additional_path_entries=(Path(git_executable).parent,),
+        )
+        return GitHubCli(runner, cwd=data_root)
+    except (GitHubCliError, TrustedCliError, _ManagedDirectoryError):
+        return None
+
+
 def _build_repository_workspace(
     store: SqliteStore,
     git: GitProcess | None,
@@ -648,7 +706,9 @@ def create_app(
         except (TrustedCliError, OSError):
             mcp_configuration = None
     credential_service = provider_credentials or ProviderCredentialService()
-    git = _build_git_process("git.exe" if os.name == "nt" else "git")
+    git_executable_name = "git.exe" if os.name == "nt" else "git"
+    git_executable = shutil.which(git_executable_name)
+    git = _build_git_process(git_executable_name)
     change_review = ChangeReviewService(git) if git is not None else None
     repositories = repository_workspace or _build_repository_workspace(service.store, git)
     worktrees = worktree_manager
@@ -664,13 +724,7 @@ def create_app(
             ).digest(),
         )
     contributions = contribution_service
-    github: GitHubCli | None = None
-    gh_executable = shutil.which("gh.exe" if os.name == "nt" else "gh")
-    if gh_executable is not None:
-        try:
-            github = GitHubCli(TrustedCli(Path(gh_executable)), cwd=database.parent)
-        except (TrustedCliError, GitHubCliError):
-            github = None
+    github = _build_github_cli(database.parent, git_executable if git is not None else None)
     skill_imports = skill_import_service or SkillImportService(
         service.store, library_root=database.parent / ".corvus-skills"
     )
@@ -1030,18 +1084,28 @@ def create_app(
         body: GitHubRepositoryConnectRequest,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> RepositoryRecord:
-        managed_root = database.parent / ".corvus-github"
-        managed_root.mkdir(parents=True, exist_ok=True)
-        target = managed_root.resolve(strict=True) / str(uuid4())
         try:
-            github_service().clone_repository(body.slug, target)
+            repository_slug = GitHubCli.normalize_repository_reference(body.slug)
+        except GitHubCliError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
+        try:
+            managed_root = _managed_directory(database.parent, _MANAGED_PROJECTS_DIRECTORY)
+            target = _managed_project_target(managed_root, repository_slug.rsplit("/", 1)[-1])
+        except _ManagedDirectoryError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+            ) from error
+        try:
+            github_service().clone_repository(repository_slug, target)
             return repository_service().register_local(
                 principal.tenant_id,
                 target,
-                body.slug.rsplit("/", 1)[-1],
+                repository_slug.rsplit("/", 1)[-1],
             )
         except (GitHubCliError, ValueError) as error:
-            if target.parent == managed_root.resolve(strict=True):
+            if target.parent == managed_root:
                 if target.is_dir():
                     shutil.rmtree(target, ignore_errors=True)
                 elif target.exists():
@@ -1055,10 +1119,15 @@ def create_app(
         body: EmptyProjectCreateRequest,
         principal: Annotated[SessionPrincipal, Depends(mutation_authorized)],
     ) -> RepositoryRecord:
-        project_root = database.parent / ".corvus-projects"
-        project_root.mkdir(parents=True, exist_ok=True)
-        target = project_root.resolve(strict=True) / str(uuid4())
-        target.mkdir()
+        try:
+            project_root = _managed_directory(database.parent, _MANAGED_PROJECTS_DIRECTORY)
+            target = _managed_project_target(project_root, body.name)
+            target.mkdir(mode=0o700)
+        except (OSError, _ManagedDirectoryError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="project_directory_unavailable",
+            ) from error
         project_git = repository_service().git
         try:
             initialized = project_git.run(target, ("init", "--initial-branch=main", "."))

@@ -140,6 +140,12 @@ Corvus build execution is fail-closed. Production sandbox images must be digest-
 python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 ```
 
+### GitHub CLI binary provenance
+
+The alpha installers do not bundle GitHub CLI (`gh`) or Git. GitHub-backed project actions therefore require trusted, host-installed copies from the official GitHub CLI and Git distribution channels. Corvus resolves each executable to an absolute regular-file path, rejects link or reparse-point executables, launches `gh` directly without a shell, strips the inherited `PATH`, and prepends only the validated Git executable directory needed by `gh repo clone`. GitHub CLI owns its machine-local authentication token; Corvus neither imports global `gh` configuration into its isolated state nor stores that token itself.
+
+This is an explicit supply-chain trust boundary: release builders and demo operators must install `gh` and Git from signed or checksum-verified vendor packages and must not place attacker-writable directories or replacement binaries ahead of those installations.
+
 ## Status and scope
 
 This repository contains the preserved M0.5-M11 hackathon MVP foundation plus the adaptive application shell, Google-backed hosted identity/synchronization foundation, native Codex/Claude execution, and secure API Chat adapters. It is not formal certification. Real E2B lifecycle management, Cursor and API-provider Build adapters, durable provider/autonomy/budget/kill repositories, and production signing remain explicit later milestones.

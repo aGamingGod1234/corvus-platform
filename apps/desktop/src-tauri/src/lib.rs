@@ -391,42 +391,27 @@ fn select_repository_directory(app: tauri::AppHandle) -> Result<Option<String>, 
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    let parsed = tauri::Url::parse(&url).map_err(|_| "external_url_invalid".to_owned())?;
-    if parsed.scheme() != "https"
-        || parsed.host_str() != Some("corvus-platform-tau.vercel.app")
-        || parsed.path() != "/api/v2/auth/google/start"
-        || parsed.username() != ""
-        || parsed.password().is_some()
-    {
-        return Err("external_url_forbidden".to_owned());
-    }
+    validate_external_url(&url)?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let candidates = [
-            env::var_os("PROGRAMFILES")
-                .map(PathBuf::from)
-                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
-            env::var_os("PROGRAMFILES(X86)")
-                .map(PathBuf::from)
-                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
-            env::var_os("LOCALAPPDATA")
-                .map(PathBuf::from)
-                .map(|path| path.join("Google/Chrome/Application/chrome.exe")),
-        ];
-        let chrome = candidates
-            .into_iter()
-            .flatten()
-            .find(|path| path.is_file())
-            .ok_or_else(|| "chrome_unavailable".to_owned())?;
-        Command::new(chrome)
+        let windows_directory = env::var_os("WINDIR")
+            .or_else(|| env::var_os("SystemRoot"))
+            .map(PathBuf::from)
+            .ok_or_else(|| "browser_launcher_unavailable".to_owned())?;
+        let launcher = windows_directory.join("System32/rundll32.exe");
+        if !launcher.is_file() {
+            return Err("browser_launcher_unavailable".to_owned());
+        }
+        Command::new(launcher)
+            .arg("url.dll,FileProtocolHandler")
             .arg(url)
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| "chrome_launch_failed".to_owned())?;
+            .map_err(|_| "browser_launch_failed".to_owned())?;
         return Ok(());
     }
     #[cfg(not(windows))]
@@ -445,6 +430,22 @@ fn open_external_url(url: String) -> Result<(), String> {
             .map_err(|_| "browser_launch_failed".to_owned())?;
         Ok(())
     }
+}
+
+fn validate_external_url(url: &str) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|_| "external_url_invalid".to_owned())?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("corvus-platform-tau.vercel.app")
+        || parsed.path() != "/api/v2/auth/google/start"
+        || parsed.username() != ""
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("external_url_forbidden".to_owned());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -880,7 +881,7 @@ mod tests {
         SidecarLaunch, SidecarLifecycle, SidecarState, TrayAction, build_desktop_url,
         capture_bounded_stderr, packaged_sidecar_candidates, readiness_probe,
         repository_directory_string, sanitize_diagnostics, select_packaged_sidecar,
-        should_close_to_tray, tray_action,
+        should_close_to_tray, tray_action, validate_external_url,
     };
     use tauri_plugin_dialog::FilePath;
 
@@ -1025,6 +1026,29 @@ mod tests {
             repository_directory_string(FilePath::Url(remote)).unwrap_err(),
             "repository_directory_must_be_local"
         );
+    }
+
+    #[test]
+    fn external_browser_url_is_exactly_allowlisted() {
+        assert_eq!(
+            validate_external_url(
+                "https://corvus-platform-tau.vercel.app/api/v2/auth/google/start"
+            ),
+            Ok(())
+        );
+        for forbidden in [
+            "http://corvus-platform-tau.vercel.app/api/v2/auth/google/start",
+            "https://example.test/api/v2/auth/google/start",
+            "https://corvus-platform-tau.vercel.app/api/v2/auth/google/start?next=evil",
+            "https://corvus-platform-tau.vercel.app/api/v2/auth/google/start#fragment",
+            "https://corvus-platform-tau.vercel.app:444/api/v2/auth/google/start",
+            "https://user@corvus-platform-tau.vercel.app/api/v2/auth/google/start",
+        ] {
+            assert_eq!(
+                validate_external_url(forbidden),
+                Err("external_url_forbidden".to_owned())
+            );
+        }
     }
 
     #[test]

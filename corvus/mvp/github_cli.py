@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
+from urllib.parse import urlsplit
 
 from corvus.mvp.git_process import ProcessResult
 from corvus.safe_process import path_is_link_or_reparse
+
+_GITHUB_REPOSITORY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
 class GitHubCliError(RuntimeError):
@@ -85,7 +89,7 @@ class GitHubCli:
         return self.auth_status()
 
     def clone_repository(self, repo: str, target: Path) -> None:
-        self._validate_repo(repo)
+        repo = self.normalize_repository_reference(repo)
         try:
             parent = target.parent.resolve(strict=True)
             destination = target.resolve(strict=False)
@@ -151,7 +155,7 @@ class GitHubCli:
         return tuple(repositories)
 
     def list_pull_requests(self, repo: str) -> tuple[GitHubPullRequest, ...]:
-        self._validate_repo(repo)
+        repo = self.normalize_repository_reference(repo)
         payload = self._json_command(
             (
                 "pr",
@@ -183,7 +187,7 @@ class GitHubCli:
         return tuple(pulls)
 
     def pull_request_checks(self, repo: str, number: int) -> tuple[GitHubCheck, ...]:
-        self._validate_repo(repo)
+        repo = self.normalize_repository_reference(repo)
         if number <= 0:
             raise GitHubCliError("pull request number is invalid")
         payload = self._json_command(
@@ -222,7 +226,7 @@ class GitHubCli:
         body: str,
         draft: bool,
     ) -> str:
-        self._validate_repo(repo)
+        repo = self.normalize_repository_reference(repo)
         for value in (head, base, title):
             if not value or "\0" in value:
                 raise GitHubCliError("pull request input is invalid")
@@ -265,10 +269,41 @@ class GitHubCli:
             raise GitHubCliError("GitHub CLI returned invalid JSON") from exc
 
     @staticmethod
-    def _validate_repo(repo: str) -> None:
-        parts = repo.split("/")
-        if len(parts) != 2 or any(not part or "\0" in part for part in parts):
+    def normalize_repository_reference(reference: str) -> str:
+        value = reference.strip()
+        if not value or "\0" in value or "\\" in value:
             raise GitHubCliError("GitHub repository identifier is invalid")
+        if "://" in value:
+            try:
+                parsed = urlsplit(value)
+                has_port = parsed.port is not None
+            except ValueError as exc:
+                raise GitHubCliError("GitHub repository identifier is invalid") from exc
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname != "github.com"
+                or parsed.username is not None
+                or parsed.password is not None
+                or has_port
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise GitHubCliError("GitHub repository identifier is invalid")
+            parts = parsed.path.strip("/").split("/")
+        else:
+            parts = value.split("/")
+        if len(parts) != 2:
+            raise GitHubCliError("GitHub repository identifier is invalid")
+        owner, repository = parts
+        if repository.endswith(".git"):
+            repository = repository[:-4]
+        normalized = (owner, repository)
+        if any(
+            part in {"", ".", ".."} or _GITHUB_REPOSITORY_PART.fullmatch(part) is None
+            for part in normalized
+        ):
+            raise GitHubCliError("GitHub repository identifier is invalid")
+        return "/".join(normalized)
 
     @staticmethod
     def _require_list(value: object) -> list[object]:

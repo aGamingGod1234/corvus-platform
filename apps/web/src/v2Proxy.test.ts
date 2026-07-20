@@ -1,11 +1,86 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { proxyV2Request } from "../api/v2/[...path]";
+import { proxyRewrittenV2Request } from "../api/corvus-v2";
 
 const ORIGIN = "https://corvus-control.up.railway.app";
 const PRODUCTION = "production";
 
 describe("same-origin v2 proxy", () => {
+  it("restores nested v2 paths from the Vercel rewrite", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://accounts.google.com/o/oauth2/v2/auth?state=opaque" },
+      }),
+    );
+
+    const response = await proxyRewrittenV2Request(
+      new Request("https://corvus.example/api/corvus-v2?corvusPath=auth/google/start"),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(302);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://corvus-control.up.railway.app/api/v2/auth/google/start",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it.each([
+    "../admin",
+    "auth/../admin",
+    "auth//google/start",
+    "auth\\google\\start",
+    "%2e%2e/admin",
+    "auth/%2f%2fevil.example/admin",
+  ])("rejects an unsafe rewritten path %s before proxying", async (capturedPath) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const source = new URL("https://corvus.example/api/corvus-v2");
+    source.searchParams.set("corvusPath", capturedPath);
+
+    const response = await proxyRewrittenV2Request(
+      new Request(source),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unavailable or untrusted origin in the rewrite edge before forwarding", async () => {
+    const canary = "rewrite-origin-secret-canary";
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    for (const configuredOrigin of [
+      undefined,
+      "",
+      "https://evil.example",
+      "https://corvus-control.up.railway.app.evil.example",
+      "https://up.railway.app",
+      "http://corvus-control.up.railway.app",
+      `https://user:${canary}@corvus-control.up.railway.app`,
+      `https://corvus-control.up.railway.app/${canary}`,
+      `https://corvus-control.up.railway.app?token=${canary}`,
+      `https://corvus-control.up.railway.app#${canary}`,
+    ]) {
+      const response = await proxyRewrittenV2Request(
+        new Request("https://corvus.example/api/corvus-v2?corvusPath=session"),
+        configuredOrigin,
+        fetchImpl,
+        PRODUCTION,
+      );
+
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain(canary);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("returns a redacted 503 when the Railway origin is absent or invalid", async () => {
     const canary = "railway-origin-secret-canary";
     const fetchImpl = vi.fn<typeof fetch>();

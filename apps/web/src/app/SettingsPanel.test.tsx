@@ -266,9 +266,16 @@ describe("SettingsPanel", () => {
   });
 
   it("directs connection management to the feature that uses it", async () => {
+    const onGoogleSignIn = vi.fn().mockResolvedValue(undefined);
+    const connectionsApi = {
+      authenticateGitHub: vi.fn().mockResolvedValue({ authenticated: true, hostname: "github.com", login: "lucas" }),
+      getGitHubAuthStatus: vi.fn().mockResolvedValue({ authenticated: false, hostname: "github.com" })
+    };
     render(
       <SettingsPanel
+        connectionsApi={connectionsApi}
         experience="developer"
+        onGoogleSignIn={onGoogleSignIn}
         onExperienceChange={vi.fn().mockResolvedValue(undefined)}
         storage={new MemoryStorage()}
         workspaceId="workspace-2"
@@ -278,7 +285,10 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Account" }));
     expect(screen.getByText("Web / Preview")).toBeVisible();
-    expect(screen.getByText("Managed where they are used")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Sign in with Google/i }));
+    expect(onGoogleSignIn).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: /Sign in with GitHub/i }));
+    expect(connectionsApi.authenticateGitHub).toHaveBeenCalledOnce();
   });
 
   it("disables API credential entry without a local credential runtime", async () => {

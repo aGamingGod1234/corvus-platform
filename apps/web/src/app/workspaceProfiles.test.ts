@@ -5,9 +5,9 @@ import { getWorkspaceDefaultRoute, getWorkspaceProfile } from "./workspaceProfil
 describe("workspace profiles", () => {
   it.each([
     ["everyday", "individual", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
-    ["developer", "individual", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
+    ["developer", "individual", ["Projects", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
     ["everyday", "team", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
-    ["developer", "team", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]]
+    ["developer", "team", ["Projects", "Runs", "Schedule", "Skills", "Threads", "Settings"]]
   ] as const)("defines %s %s navigation", (experience, scope, labels) => {
     expect(getWorkspaceProfile(experience, scope).routes.map((route) => route.label)).toEqual(labels);
   });

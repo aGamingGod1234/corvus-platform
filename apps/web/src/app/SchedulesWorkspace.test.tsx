@@ -103,22 +103,44 @@ describe("SchedulesWorkspace", () => {
     expect(client.listLocalSchedules).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps scheduling disabled when a ready provider has no runnable catalog", async () => {
+  it("keeps New schedule actionable and routes a missing-project prerequisite", async () => {
+    const client = api();
+    vi.mocked(client.listRepositories).mockResolvedValue([]);
+    const onOpenProjects = vi.fn();
+    const user = userEvent.setup();
+
+    render(<SchedulesWorkspace api={client} onOpenProjects={onOpenProjects} onOpenRun={vi.fn()} />);
+
+    const button = await screen.findByRole("button", { name: "New schedule" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(await screen.findByText(/connect or create a healthy project before scheduling work/i)).toBeVisible();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open Projects" }));
+    expect(onOpenProjects).toHaveBeenCalledOnce();
+  });
+
+  it("explains a missing runnable model instead of disabling New schedule", async () => {
     const client = api();
     vi.mocked(client.listLocalProviders).mockResolvedValue([{
       ...codex,
       models: [],
       thinking_levels: []
     }]);
+    const user = userEvent.setup();
 
     render(<SchedulesWorkspace api={client} onOpenRun={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/returned no supported models or thinking levels/i);
-    expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
+    const button = screen.getByRole("button", { name: "New schedule" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(await screen.findByText(/supported Codex model is required before scheduling work/i)).toBeVisible();
   });
 
-  it("clears stale provider readiness when a later discovery fails", async () => {
+  it("clears stale provider readiness and explains the provider prerequisite", async () => {
     const readyClient = api();
+    const user = userEvent.setup();
     const { rerender } = render(
       <SchedulesWorkspace api={readyClient} onOpenRun={vi.fn()} />
     );
@@ -131,7 +153,10 @@ describe("SchedulesWorkspace", () => {
     rerender(<SchedulesWorkspace api={failingClient} onOpenRun={vi.fn()} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/provider discovery failed/i);
-    expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
+    const button = screen.getByRole("button", { name: "New schedule" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(await screen.findByText(/verify Codex and sign in before scheduling work/i)).toBeVisible();
   });
 
   it("opens the exact durable run created by Run now", async () => {

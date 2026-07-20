@@ -27,7 +27,7 @@ function errorResponse(status: number, code: string): Response {
   return Response.json({ detail: { code } }, { status });
 }
 
-function validatedOrigin(
+export function validatedOrigin(
   configuredOrigin: string | undefined,
   deploymentEnvironment: string | undefined,
 ): URL | null {

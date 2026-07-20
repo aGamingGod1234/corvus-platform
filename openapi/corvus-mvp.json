@@ -1095,9 +1095,8 @@
         "additionalProperties": false,
         "properties": {
           "slug": {
-            "maxLength": 201,
+            "maxLength": 2048,
             "minLength": 3,
-            "pattern": "^[^/\\s]+/[^/\\s]+$",
             "title": "Slug",
             "type": "string"
           }

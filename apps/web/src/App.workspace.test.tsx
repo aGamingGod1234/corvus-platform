@@ -150,7 +150,7 @@ describe("adaptive Corvus bootstrap", () => {
 
     await user.click(await screen.findByRole("button", { name: /Field desk/ }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Open Corvus on this computer." })).toBeVisible());
-    expect(await screen.findByRole("link", { name: "Repositories" })).toBeVisible();
+    expect(await screen.findByRole("link", { name: "Projects" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /work style/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /team workspace/i })).not.toBeInTheDocument();
     expect(screen.getAllByText("Field desk").length).toBeGreaterThan(0);
