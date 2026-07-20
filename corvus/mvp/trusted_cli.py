@@ -56,7 +56,7 @@ class TrustedCli:
         if trusted_path_entries:
             current_path = self._environment.get("PATH", "")
             current_entries = tuple(entry for entry in current_path.split(os.pathsep) if entry)
-            combined_entries = dict.fromkeys((*current_entries, *trusted_path_entries))
+            combined_entries = dict.fromkeys((*trusted_path_entries, *current_entries))
             self._environment["PATH"] = os.pathsep.join(combined_entries)
 
     @staticmethod

@@ -18,6 +18,7 @@ export interface RepositoryApi {
 
 interface RepositoriesWorkspaceProps {
   api: RepositoryApi;
+  onDialogSignalHandled?(): void;
   onOpenRuns?(repositoryId: string): void;
   openDialogSignal?: number;
   pickDirectory?: () => Promise<string | null>;
@@ -45,6 +46,7 @@ function ProjectSourceIcon({ name }: { name: "blank" | "folder" | "github" }) {
 
 export function RepositoriesWorkspace({
   api,
+  onDialogSignalHandled,
   onOpenRuns,
   openDialogSignal = 0,
   pickDirectory = pickDesktopDirectory
@@ -104,8 +106,10 @@ export function RepositoriesWorkspace({
   useEffect(() => { void loadRepositories(); }, [loadRepositories]);
   useEffect(() => { void loadGitHub(); }, [loadGitHub]);
   useEffect(() => {
-    if (openDialogSignal > 0) setAddOpen(true);
-  }, [openDialogSignal]);
+    if (openDialogSignal <= 0) return;
+    setAddOpen(true);
+    onDialogSignalHandled?.();
+  }, [onDialogSignalHandled, openDialogSignal]);
 
   function closeProjectDialog(): void {
     setAddOpen(false);
@@ -260,7 +264,7 @@ export function RepositoriesWorkspace({
           {addOpen ? <div aria-label="Project source" className="project-source-options">
             <button aria-label="Start from scratch" className="project-source-card" disabled={api.createEmptyRepository === undefined} onClick={() => { setAddOpen(false); setNewProjectOpen(true); }} type="button"><ProjectSourceIcon name="blank" /><span><strong>Start from scratch</strong><small>Create a blank Git project in the managed Corvus folder.</small></span><b aria-hidden="true">→</b></button>
             <button aria-label="Use a local folder" className="project-source-card" onClick={() => { setAddOpen(false); setCreating(true); }} type="button"><ProjectSourceIcon name="folder" /><span><strong>Use a local folder</strong><small>Choose an existing project already on this computer.</small></span><b aria-hidden="true">→</b></button>
-            <button aria-label={githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"} className="project-source-card project-source-card--github" disabled={!githubAvailable} onClick={() => { setAddOpen(false); if (githubStatus?.authenticated) setGitHubOpen(true); else void authenticateGitHub(); }} type="button"><ProjectSourceIcon name="github" /><span><strong>{githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"}</strong><small>{githubAvailable ? "Open GitHub sign-in, paste a URL, or choose a connected repository." : "Available in the installed Corvus desktop app."}</small></span><b aria-hidden="true">→</b></button>
+            <button aria-label={githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"} className="project-source-card project-source-card--github" disabled={!githubAvailable} onClick={() => { setAddOpen(false); setGitHubOpen(true); if (!githubStatus?.authenticated) void authenticateGitHub(); }} type="button"><ProjectSourceIcon name="github" /><span><strong>{githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"}</strong><small>{githubAvailable ? "Open GitHub sign-in, paste a URL, or choose a connected repository." : "Available in the installed Corvus desktop app."}</small></span><b aria-hidden="true">→</b></button>
           </div> : null}
           {newProjectOpen ? <form className="repository-new-project" onSubmit={(event) => void createEmptyProject(event)}><div><label htmlFor="new-project-name">Project name</label><input autoFocus id="new-project-name" onChange={(event) => setNewProjectName(event.target.value)} placeholder="My project" value={newProjectName} /></div><div className="row-actions"><button className="button" onClick={() => { setNewProjectOpen(false); setAddOpen(true); }} type="button">Back</button><button className="button button--primary" disabled={busyId !== null || newProjectName.trim() === ""} type="submit">{busyId === "empty-project" ? "Creating…" : "Create project"}</button></div></form> : null}
           {githubOpen ? <section className="github-repository-picker"><form className="github-url-form" onSubmit={(event) => { event.preventDefault(); void connectGitHub(githubInput); }}><label htmlFor="github-project-url">GitHub repository URL</label><div><input autoFocus id="github-project-url" onChange={(event) => setGitHubInput(event.target.value)} placeholder="https://github.com/owner/project" type="url" value={githubInput} /><button className="button button--primary" disabled={busyId !== null || githubInput.trim() === ""} type="submit">{busyId === githubInput.trim() ? "Cloning…" : "Clone project"}</button></div></form>{githubError ? <p className="inline-error" role="alert">{githubError} <button className="text-button" onClick={() => void authenticateGitHub()} type="button">Try sign-in again</button></p> : null}{githubStatus?.authenticated ? <><div className="project-dialog__divider"><span>or choose from connected GitHub</span></div><div>{githubRepositories.length === 0 ? <div className="resource-empty"><strong>No repositories returned</strong><span>Paste a GitHub URL above, or refresh after granting access.</span></div> : githubRepositories.map((repository) => <article key={repository.slug}><div><strong>{repository.slug}</strong><span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "Default branch unavailable"}</span></div><button className="button button--primary" disabled={busyId !== null} onClick={() => void connectGitHub(repository.slug)} type="button">{busyId === repository.slug ? "Cloning…" : "Use project"}</button></article>)}</div></> : <button className="project-source-card project-source-card--github" disabled={busyId !== null} onClick={() => void authenticateGitHub()} type="button"><ProjectSourceIcon name="github" /><span><strong>Sign in with GitHub</strong><small>Your browser will open. Corvus will only list repositories after you complete sign-in.</small></span><b aria-hidden="true">→</b></button>}</section> : null}

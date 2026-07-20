@@ -53,6 +53,20 @@ describe("RepositoriesWorkspace", () => {
     expect(screen.getByRole("button", { name: "Start from scratch" })).toBeVisible();
   });
 
+  it("acknowledges a routed add-project signal after opening the dialog", async () => {
+    const onDialogSignalHandled = vi.fn();
+    render(
+      <RepositoriesWorkspace
+        api={apiWith()}
+        onDialogSignalHandled={onDialogSignalHandled}
+        openDialogSignal={1}
+      />,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "Add a project" })).toBeVisible();
+    expect(onDialogSignalHandled).toHaveBeenCalledOnce();
+  });
+
   it("registers a folder selected by the desktop picker", async () => {
     const api = apiWith();
     const picker = vi.fn().mockResolvedValue("C:\\work\\corvus");
@@ -154,6 +168,23 @@ describe("RepositoriesWorkspace", () => {
 
     await waitFor(() => expect(authenticateGitHub).toHaveBeenCalledOnce());
     expect(await screen.findByText("team/corvus")).toBeVisible();
+  });
+
+  it("keeps GitHub authentication failures visible inside the project dialog", async () => {
+    const client = apiWith({
+      getGitHubAuthStatus: vi.fn().mockResolvedValue({ authenticated: false, hostname: "github.com" }),
+      authenticateGitHub: vi.fn().mockRejectedValue(new Error("github_authentication_failed")),
+      listGitHubRepositories: vi.fn().mockResolvedValue([]),
+      connectGitHubRepository: vi.fn().mockResolvedValue(repository),
+    });
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={client} />);
+
+    await user.click(await screen.findByRole("button", { name: "Add project" }));
+    await user.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/GitHub sign-in did not complete/i);
+    expect(screen.getByRole("dialog", { name: "Link a GitHub project" })).toBeVisible();
   });
 
   it("clones a pasted GitHub URL through the managed project flow", async () => {

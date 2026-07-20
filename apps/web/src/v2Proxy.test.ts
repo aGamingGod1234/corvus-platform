@@ -29,6 +29,29 @@ describe("same-origin v2 proxy", () => {
     );
   });
 
+  it.each([
+    "../admin",
+    "auth/../admin",
+    "auth//google/start",
+    "auth\\google\\start",
+    "%2e%2e/admin",
+    "auth/%2f%2fevil.example/admin",
+  ])("rejects an unsafe rewritten path %s before proxying", async (capturedPath) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const source = new URL("https://corvus.example/api/corvus-v2");
+    source.searchParams.set("corvusPath", capturedPath);
+
+    const response = await proxyRewrittenV2Request(
+      new Request(source),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("returns a redacted 503 when the Railway origin is absent or invalid", async () => {
     const canary = "railway-origin-secret-canary";
     const fetchImpl = vi.fn<typeof fetch>();

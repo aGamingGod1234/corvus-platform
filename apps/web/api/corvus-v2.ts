@@ -4,10 +4,23 @@ declare const process: { env: Record<string, string | undefined> };
 
 const REWRITE_PARAMETER = "corvusPath";
 
+function safeCapturedPath(path: string): boolean {
+  if (path === "" || path.startsWith("/") || /%(?:2e|2f|5c)/i.test(path)) return false;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return false;
+  }
+  return !decoded.includes("\\")
+    && !decoded.includes("//")
+    && decoded.split("/").every((segment) => segment !== "." && segment !== "..");
+}
+
 async function rewrittenRequest(request: Request): Promise<Request | null> {
   const source = new URL(request.url);
   const capturedPath = source.searchParams.get(REWRITE_PARAMETER);
-  if (capturedPath === null || capturedPath === "" || capturedPath.startsWith("/")) return null;
+  if (capturedPath === null || !safeCapturedPath(capturedPath)) return null;
   source.searchParams.delete(REWRITE_PARAMETER);
   source.pathname = `/api/v2/${capturedPath}`;
   const body = request.method === "GET" || request.method === "HEAD"

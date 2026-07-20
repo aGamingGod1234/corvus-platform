@@ -2242,3 +2242,9 @@
 ### Preview Follow-up
 - Probed the protected Vercel preview with an authenticated bypass and found that Node ESM could not resolve the extensionless import from `api/corvus-v2.ts`.
 - Changed the shared catch-all import to its emitted `.js` path and re-probed the redeployed nested route. It now reaches the proxy and returns the controlled `503 platform_proxy_unavailable` response expected when preview-only Railway configuration is absent, rather than crashing the function.
+
+### Automated Review Follow-up
+- Consume routed Add project signals in the parent so closing the dialog stays closed across workspace remounts, and keep GitHub authentication/listing errors visible inside the GitHub project dialog.
+- Reject rewritten proxy traversal markers before constructing the nested v2 request, with regression cases for dot segments, encoded separators, duplicate separators, and backslashes.
+- Prepend the explicitly validated Git executable directory to the clean child `PATH` so `gh repo clone` cannot select an earlier platform stub.
+- Retained Starlette's current `HTTP_422_UNPROCESSABLE_CONTENT` constant after runtime verification showed it exists and the suggested legacy `...ENTITY` alias is deprecated in the pinned environment.

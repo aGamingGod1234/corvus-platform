@@ -43,6 +43,7 @@ def test_trusted_cli_adds_only_explicit_validated_executable_directories(
     environment = captured["env"]
     assert isinstance(environment, dict)
     path_entries = environment["PATH"].split(os.pathsep)
+    assert path_entries[0] == os.fspath(git_directory.resolve())
     assert os.fspath(executable.parent.resolve()) in path_entries
     assert os.fspath(git_directory.resolve()) in path_entries
     assert os.fspath(untrusted_directory.resolve()) not in path_entries

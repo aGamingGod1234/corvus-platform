@@ -717,6 +717,7 @@ export function App({
   const repositoriesSurface = (
     <RepositoriesWorkspace
       api={api}
+      onDialogSignalHandled={() => setProjectDialogSignal(0)}
       openDialogSignal={projectDialogSignal}
       onOpenRuns={(repositoryId) => {
         setRunInitialId(null);
