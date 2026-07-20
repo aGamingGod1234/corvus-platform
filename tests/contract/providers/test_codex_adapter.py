@@ -113,6 +113,10 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
 ) -> None:
     workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
     workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._windows_profile_directory",
+        lambda: tmp_path,
+    )
     logon_sid = "S-1-5-5-100-500"
     user_sid = "S-1-5-21-100-200-300-501"
     granted: list[tuple[Path, str]] = []
@@ -161,6 +165,10 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 ) -> None:
     workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
     workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._windows_profile_directory",
+        lambda: tmp_path,
+    )
     sandbox_sid = "S-1-5-21-100-200-300-400"
     second_sandbox_sid = "S-1-5-21-100-200-300-401"
     sandbox_sids = frozenset({sandbox_sid, second_sandbox_sid})
@@ -168,7 +176,8 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
     common_git_directory = source_repository / ".git"
     common_git_directory.mkdir(parents=True)
     expected_boundaries = _workspace_traverse_boundaries(workspace)
-    barrier = threading.Barrier(len(expected_boundaries) + 2)
+    concurrent_boundaries = frozenset(expected_boundaries[:2])
+    barrier = threading.Barrier(len(concurrent_boundaries))
     granted: list[tuple[Path, str]] = []
     readable: list[tuple[Path, str]] = []
 
@@ -179,7 +188,8 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 
     def grant(directory: Path, sid: str) -> None:
         granted.append((directory, sid))
-        barrier.wait(timeout=5)
+        if directory in concurrent_boundaries and sid == min(sandbox_sids):
+            barrier.wait(timeout=5)
 
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_traverse",
@@ -188,7 +198,6 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 
     def grant_read(directory: Path, sid: str) -> None:
         readable.append((directory, sid))
-        barrier.wait(timeout=5)
 
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_read",

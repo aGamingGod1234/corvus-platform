@@ -2390,8 +2390,26 @@
 - ACL grants executed concurrently have no required ordering; only the exact directory/SID permission set is security-relevant.
 
 ### Known Issues / Deferred
-- GitHub's complete Windows/macOS/Ubuntu certification matrix must confirm the repair after the branch is pushed.
+- GitHub's first rerun exposed a second test-only portability issue: the concurrency fixture required more simultaneous worker threads than low-core hosted runners provide, and Windows used a synthetic workspace without a matching synthetic profile root. Both fixtures are now bounded and explicit; the next matrix run must confirm the repair.
 - Existing Python files from the beta.2 work do not currently satisfy `ruff format --check`; this repository's certification workflow uses `ruff check`, which passes. No unrelated bulk formatting was performed.
 
 ### Suggested Next Steps
 - Push the repair, wait for required checks and CODEOWNER review, then merge without bypassing branch protection.
+
+## 2026-07-21 — Hosted-runner ACL test portability
+### What Was Implemented
+- Made the ACL concurrency regression prove overlap across two distinct directories without requiring every managed boundary to occupy a worker thread simultaneously.
+- Bound synthetic Windows workspaces to their synthetic profile root so production profile containment remains strict while the contract test is runner-independent.
+
+### Files Modified
+- `tests/contract/providers/test_codex_adapter.py` — removed the hosted-runner thread-pool deadlock and made the Windows profile fixture explicit.
+- `PROJECT_LOG.md` — recorded the failure evidence and bounded repair.
+
+### Assumptions Made (flag these for review)
+- Two simultaneously blocked directory grants are sufficient to prove that distinct directories can execute concurrently; the exact result assertions continue to prove that both SIDs reach every required directory.
+
+### Known Issues / Deferred
+- The complete GitHub certification matrix remains the final cross-platform verification gate.
+
+### Suggested Next Steps
+- Push the fixture repair and merge only after the protected checks and current-head CODEOWNER approval pass.
