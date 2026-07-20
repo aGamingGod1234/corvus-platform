@@ -248,4 +248,30 @@ describe("RunsWorkspace", () => {
     expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(1, run.id, 0, 500);
     expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(2, run.id, 500, 500);
   });
+
+  it("continues paging terminal runs after a full refresh window", async () => {
+    const client = api();
+    const completed = { ...run, status: "completed", finished_at: "2026-07-18T00:01:00Z" } as LocalRun;
+    const durableEvent = (sequence: number) => ({
+      run_id: run.id,
+      sequence,
+      event_type: "provider.output",
+      payload: { message: `Step ${sequence}` },
+      created_at: "2026-07-18T00:00:10Z"
+    });
+    vi.mocked(client.listLocalRuns).mockResolvedValue([completed]);
+    vi.mocked(client.getLocalRun).mockResolvedValue(completed);
+    vi.mocked(client.listLocalRunEvents).mockImplementation(async (_runId, after = 0) => {
+      if (after === 10) return [durableEvent(11)];
+      return [
+        ...Array.from({ length: 499 }, () => durableEvent(after)),
+        durableEvent(after + 1)
+      ];
+    });
+
+    render(<RunsWorkspace api={client} />);
+
+    expect(await screen.findByText("Step 11", {}, { timeout: 3_000 })).toBeVisible();
+    expect(client.listLocalRunEvents).toHaveBeenLastCalledWith(run.id, 10, 500);
+  });
 });

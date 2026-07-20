@@ -230,7 +230,7 @@ export function RunsWorkspace({
     setEvidence([]);
     setEventWindowTruncated(false);
 
-    async function refreshDetail(): Promise<LocalRun | null> {
+    async function refreshDetail(): Promise<{ record: LocalRun; hasMoreEvents: boolean } | null> {
       if (refreshing) return null;
       refreshing = true;
       try {
@@ -239,6 +239,7 @@ export function RunsWorkspace({
         api.listLocalRunEvidence(selectedId!)
       ]);
         const loadedEvents: LocalRunEvent[] = [];
+        let hasMoreEvents = false;
         for (let pageIndex = 0; pageIndex < MAX_EVENT_PAGES_PER_REFRESH; pageIndex += 1) {
           const page = await api.listLocalRunEvents(selectedId!, cursor, RUN_EVENT_PAGE_SIZE);
           if (!active) return null;
@@ -248,7 +249,10 @@ export function RunsWorkspace({
             cursor = Math.max(cursor, ...nextEvents.map((event) => event.sequence));
           }
           if (page.length < RUN_EVENT_PAGE_SIZE || nextEvents.length === 0) break;
-          if (pageIndex === MAX_EVENT_PAGES_PER_REFRESH - 1) setEventWindowTruncated(true);
+          if (pageIndex === MAX_EVENT_PAGES_PER_REFRESH - 1) {
+            hasMoreEvents = true;
+            setEventWindowTruncated(true);
+          }
         }
         if (!active) return null;
         setRuns((current) => current.map((item) => item.id === record.id ? record : item));
@@ -259,23 +263,23 @@ export function RunsWorkspace({
         }
         setEvidence(loadedEvidence);
         setDetailError("");
-        return record;
+        return { record, hasMoreEvents };
       } finally {
         refreshing = false;
       }
     }
 
     function poll(): void {
-      void refreshDetail().then((record) => {
-        if (record !== null && !ACTIVE.has(record.status) && timer !== undefined) {
+      void refreshDetail().then((result) => {
+        if (result !== null && !ACTIVE.has(result.record.status) && !result.hasMoreEvents && timer !== undefined) {
           window.clearInterval(timer);
           timer = undefined;
         }
       }).catch((reason: unknown) => active && setDetailError(featureErrorMessage(reason, "run")));
     }
 
-    void refreshDetail().then((record) => {
-      if (active && record !== null && ACTIVE.has(record.status)) {
+    void refreshDetail().then((result) => {
+      if (active && result !== null && (ACTIVE.has(result.record.status) || result.hasMoreEvents)) {
         timer = window.setInterval(poll, 750);
       }
     }).catch((reason: unknown) => active && setDetailError(featureErrorMessage(reason, "run")));
