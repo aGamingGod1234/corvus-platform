@@ -52,6 +52,35 @@ describe("same-origin v2 proxy", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("rejects an unavailable or untrusted origin in the rewrite edge before forwarding", async () => {
+    const canary = "rewrite-origin-secret-canary";
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    for (const configuredOrigin of [
+      undefined,
+      "",
+      "https://evil.example",
+      "https://corvus-control.up.railway.app.evil.example",
+      "https://up.railway.app",
+      "http://corvus-control.up.railway.app",
+      `https://user:${canary}@corvus-control.up.railway.app`,
+      `https://corvus-control.up.railway.app/${canary}`,
+      `https://corvus-control.up.railway.app?token=${canary}`,
+      `https://corvus-control.up.railway.app#${canary}`,
+    ]) {
+      const response = await proxyRewrittenV2Request(
+        new Request("https://corvus.example/api/corvus-v2?corvusPath=session"),
+        configuredOrigin,
+        fetchImpl,
+        PRODUCTION,
+      );
+
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain(canary);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("returns a redacted 503 when the Railway origin is absent or invalid", async () => {
     const canary = "railway-origin-secret-canary";
     const fetchImpl = vi.fn<typeof fetch>();

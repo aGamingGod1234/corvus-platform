@@ -1,8 +1,17 @@
-import { proxyV2Request } from "./v2/[...path].js";
+import { proxyV2Request, validatedOrigin } from "./v2/[...path].js";
 
 declare const process: { env: Record<string, string | undefined> };
 
 const REWRITE_PARAMETER = "corvusPath";
+const PROXY_UNAVAILABLE_STATUS = 503;
+const PROXY_UNAVAILABLE_CODE = "platform_proxy_unavailable";
+
+function proxyUnavailableResponse(): Response {
+  return Response.json(
+    { detail: { code: PROXY_UNAVAILABLE_CODE } },
+    { status: PROXY_UNAVAILABLE_STATUS },
+  );
+}
 
 function safeCapturedPath(path: string): boolean {
   if (path === "" || path.startsWith("/") || /%(?:2e|2f|5c)/i.test(path)) return false;
@@ -40,6 +49,9 @@ export async function proxyRewrittenV2Request(
   fetchImpl: typeof fetch = fetch,
   deploymentEnvironment: string | undefined = process.env.VERCEL_ENV,
 ): Promise<Response> {
+  if (validatedOrigin(configuredOrigin, deploymentEnvironment) === null) {
+    return Promise.resolve(proxyUnavailableResponse());
+  }
   const rewritten = await rewrittenRequest(request);
   if (rewritten === null) {
     return Promise.resolve(Response.json(

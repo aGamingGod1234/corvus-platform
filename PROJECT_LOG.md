@@ -2250,3 +2250,29 @@
 - Retained Starlette's current `HTTP_422_UNPROCESSABLE_CONTENT` constant after runtime verification showed it exists and the suggested legacy `...ENTITY` alias is deprecated in the pinned environment.
 - Refreshed hosted account truth after a Settings experience-version conflict, matching the existing onboarding recovery boundary.
 - Added project-dialog focus trapping and Escape handling, kept connect/create/clone errors inside the modal, and aligned SVG keyword casing with the repository's CSS lint policy.
+
+## 2026-07-20 - Close PR #11 security review blockers
+
+### What Was Implemented
+- Added an explicit allowlist gate to the Vercel rewrite edge so absent or untrusted Railway origins fail closed before path reconstruction or network forwarding.
+- Reused the authoritative origin validator from the upstream proxy, preserving exact HTTPS `*.up.railway.app` production policy and restricted loopback development behavior.
+- Added a bypass-oriented edge regression matrix for missing configuration, credential injection, suffix spoofing, bare Railway suffixes, HTTP downgrade, and path/query/fragment contamination.
+- Documented the alpha GitHub CLI and Git binary-provenance trust boundary and operator requirements.
+
+### Files Modified
+- `apps/web/api/corvus-v2.ts` - fail-closed rewrite-edge origin gate and redacted unavailable response.
+- `apps/web/api/v2/[...path].ts` - export the shared origin validator for consistent enforcement at both proxy layers.
+- `apps/web/src/v2Proxy.test.ts` - malicious and legitimate origin-boundary regression coverage.
+- `README.md` - truthful GitHub CLI and Git provenance requirements for alpha installers, release builders, and demo operators.
+- `PROJECT_LOG.md` - security repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- The latest reviewer statement upgrades the earlier low/informational origin and provenance findings into merge blockers.
+- The existing redacted `503 platform_proxy_unavailable` contract remains preferable to introducing a new status-code behavior at the rewrite edge.
+
+### Known Issues / Deferred
+- Alpha installers still rely on trusted host-installed `gh` and Git binaries; cryptographic binary verification or bundling is not added by this narrow repair.
+- The web package has no lint script. TypeScript compilation, production build, focused exploit tests, and the complete web regression suite provide the available repository-native proof.
+
+### Suggested Next Steps
+- Push the verified security commit, post the exploit and control evidence on PR #11, and request `@asifdotpy` to re-review the exact new head.
