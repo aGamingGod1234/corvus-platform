@@ -96,6 +96,26 @@ def test_run_and_evidence_pages_are_bounded(tmp_path: Path) -> None:
     assert len(second_evidence_page) == 1
 
 
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    ((0, 0), (1_001, 0), (-1, 0), (1, -1)),
+)
+def test_run_and_evidence_pages_reject_invalid_bounds(
+    tmp_path: Path,
+    limit: int,
+    offset: int,
+) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+    runs = RunStore(store)
+    created = runs.create("tenant-a", _request(repository_id), base_sha="b" * 40)
+
+    with pytest.raises(RunStoreConflict, match="^run_list_page_invalid$"):
+        runs.list("tenant-a", limit=limit, offset=offset)
+    with pytest.raises(RunStoreConflict, match="^run_evidence_page_invalid$"):
+        runs.evidence("tenant-a", created.id, limit=limit, offset=offset)
+
+
 def test_accepts_sha256_base_object_id(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "corvus.sqlite3")
     repository_id = _repository(store)

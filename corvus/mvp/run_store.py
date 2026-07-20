@@ -152,6 +152,8 @@ class RunStore:
         return self._record(row)
 
     def list(self, tenant_id: str, *, limit: int = 1000, offset: int = 0) -> tuple[RunRecord, ...]:
+        if limit < 1 or limit > 1_000 or offset < 0:
+            raise RunStoreConflict("run_list_page_invalid")
         with self.store.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM mvp_runs WHERE tenant_id = ? "
@@ -288,6 +290,8 @@ class RunStore:
         limit: int = 1000,
         offset: int = 0,
     ) -> tuple[RunEvidence, ...]:
+        if limit < 1 or limit > 1_000 or offset < 0:
+            raise RunStoreConflict("run_evidence_page_invalid")
         self.get(tenant_id, run_id)
         with self.store.connect() as connection:
             rows = connection.execute(
