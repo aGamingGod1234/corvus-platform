@@ -283,6 +283,78 @@ def test_project_copy_rejects_sources_over_the_entry_budget(
     assert not destination.exists()
 
 
+@pytest.mark.asyncio
+async def test_codex_backend_removes_copied_workspace_when_start_fails(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _FailingAdapter:
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(self, binding: object, request: object) -> None:
+            del binding, request
+            raise local_chat_module.CodexAdapterError("codex_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    scratch_root = tmp_path / "scratch"
+    run_id = uuid4()
+    backend = local_chat_module.CodexLocalChatBackend(_FailingAdapter(), lambda: NOW, scratch_root)
+
+    with pytest.raises(local_chat_module.CodexAdapterError, match="codex_start_failed"):
+        await backend.start_in_workspace(
+            run_id=run_id,
+            prompt="Inspect the project",
+            model=None,
+            effort="medium",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="failed-codex-start",
+            source_directory=source,
+        )
+
+    assert not (scratch_root / str(run_id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_claude_backend_removes_copied_workspace_when_start_fails(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _FailingAdapter:
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(self, binding: object, request: object) -> None:
+            del binding, request
+            raise local_chat_module.ClaudeAdapterError("claude_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    scratch_root = tmp_path / "scratch"
+    run_id = uuid4()
+    backend = local_chat_module.ClaudeLocalChatBackend(_FailingAdapter(), lambda: NOW, scratch_root)
+
+    with pytest.raises(local_chat_module.ClaudeAdapterError, match="claude_start_failed"):
+        await backend.start_in_workspace(
+            run_id=run_id,
+            prompt="Inspect the project",
+            model=None,
+            effort="medium",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="failed-claude-start",
+            source_directory=source,
+        )
+
+    assert not (scratch_root / str(run_id)).exists()
+
+
 class _MemoryKeyring:
     def __init__(self) -> None:
         self.values: dict[tuple[str, str], str] = {}

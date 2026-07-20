@@ -1019,21 +1019,26 @@ class CodexLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
-        result = await self._adapter.start_local_text(
-            binding,
-            LocalCodexTextRequest(
-                run_id=run_id,
-                prompt=prompt,
-                model=model,
-                effort=_normalize_codex_effort(effort),
-                mode=_normalize_mode(mode),
-                mcp_enabled=mcp_enabled,
-                idempotency_key=idempotency_key,
-                deadline=self._clock() + _RUN_DEADLINE,
-                max_output_bytes=_MAX_OUTPUT_BYTES,
-                workspace=workspace,
-            ),
-        )
+        try:
+            result = await self._adapter.start_local_text(
+                binding,
+                LocalCodexTextRequest(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=_normalize_codex_effort(effort),
+                    mode=_normalize_mode(mode),
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=idempotency_key,
+                    deadline=self._clock() + _RUN_DEADLINE,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    workspace=workspace,
+                ),
+            )
+        except BaseException:
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
+            raise
         self._handles[result.handle.id] = result.handle
         return LocalChatBackendHandle(
             id=result.handle.id,
@@ -1156,19 +1161,24 @@ class ClaudeLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
-        result = await self._adapter.start_local_text(
-            binding,
-            LocalClaudeTextRequest(
-                run_id=run_id,
-                prompt=prompt,
-                model=model or "sonnet",
-                effort=_normalize_claude_effort(effort),
-                idempotency_key=idempotency_key,
-                deadline=self._clock() + _RUN_DEADLINE,
-                max_output_bytes=_MAX_OUTPUT_BYTES,
-                workspace=workspace,
-            ),
-        )
+        try:
+            result = await self._adapter.start_local_text(
+                binding,
+                LocalClaudeTextRequest(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model or "sonnet",
+                    effort=_normalize_claude_effort(effort),
+                    idempotency_key=idempotency_key,
+                    deadline=self._clock() + _RUN_DEADLINE,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    workspace=workspace,
+                ),
+            )
+        except BaseException:
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
+            raise
         self._handles[result.handle.id] = result.handle
         return LocalChatBackendHandle(
             id=result.handle.id,
