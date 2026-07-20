@@ -446,6 +446,7 @@ class LocalChatService:
                     record.events.append(event)
                     if event.type in {"completed", "failed", "cancelled"}:
                         record.state = event.type
+                        record.response["state"] = event.type
                     if event.type == "completed":
                         record.artifact_snapshot = self._capture_artifact(record)
                     self._persist_event(record, event)
@@ -475,6 +476,7 @@ class LocalChatService:
                 )
             )
             record.state = "failed"
+            record.response["state"] = "failed"
             self._persist_event(record, event)
             record.condition.notify_all()
 
@@ -544,6 +546,7 @@ class LocalChatService:
         if accepted:
             async with record.condition:
                 record.state = "cancelled"
+                record.response["state"] = "cancelled"
                 self._persist_state(record)
                 record.condition.notify_all()
         return {

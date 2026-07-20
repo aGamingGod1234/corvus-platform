@@ -192,6 +192,38 @@ async def test_idempotent_replay_does_not_recheck_provider_readiness() -> None:
     assert backend.starts == 1
 
 
+@pytest.mark.asyncio
+async def test_completed_local_chat_replay_returns_terminal_state() -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    request = {
+        "owner": "local:user",
+        "prompt": "Replay the completed run",
+        "provider": "codex",
+        "model": None,
+        "effort": "medium",
+        "mode": "chat",
+        "mcp_enabled": False,
+        "idempotency_key": "completed-replay",
+    }
+
+    started = await service.start(**request)
+    run_id = UUID(str(started["run_id"]))
+    assert [
+        event.type
+        async for _cursor, event in service.events(
+            owner="local:user",
+            run_id=run_id,
+            cursor=None,
+        )
+    ] == ["started", "message", "completed"]
+
+    replay = await service.start(**request)
+
+    assert replay["state"] == "completed"
+    assert backend.starts == 1
+
+
 def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
     source = tmp_path / "registered-project"
     source.mkdir()
@@ -598,7 +630,10 @@ async def test_local_chat_concurrent_idempotent_starts_launch_one_backend() -> N
 
     assert starts_before_release == 1
     assert backend.starts == 1
-    assert first_response == second_response
+    assert {key: value for key, value in first_response.items() if key != "state"} == {
+        key: value for key, value in second_response.items() if key != "state"
+    }
+    assert second_response["state"] in {"running", "completed"}
 
 
 @pytest.mark.asyncio
@@ -843,10 +878,15 @@ def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
     )
 
     assert first.status_code == replay.status_code == 202
-    assert first.json() == replay.json()
-    assert first.json()["model"] != "Codex default"
-    assert first.json()["model"]
-    assert first.json()["storage"] == "this_device"
+    first_body = first.json()
+    replay_body = replay.json()
+    assert {key: value for key, value in first_body.items() if key != "state"} == {
+        key: value for key, value in replay_body.items() if key != "state"
+    }
+    assert replay_body["state"] in {"running", "completed"}
+    assert first_body["model"] != "Codex default"
+    assert first_body["model"]
+    assert first_body["storage"] == "this_device"
     assert backend.starts == 1
     assert conflict.status_code == 409
     assert conflict.json()["detail"] == "idempotency_conflict"

@@ -139,6 +139,30 @@ describe("ConversationWorkspace", () => {
     });
   });
 
+  it("uses the first verified model when the saved model is no longer available", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 0, default_provider: "codex", default_model: "retired-model",
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: null
+    });
+    api.listProviders = vi.fn().mockResolvedValue([{
+      id: "codex", label: "Codex", status: "ready", runtime: "local",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+      status_label: "Detected on this device", thinking_levels: ["low", "medium", "high"],
+      supports_mcp: true
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-model-fallback" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveTextContent("GPT-5.6 Sol");
+    });
+  });
+
   it("keeps the composer focused and reveals advanced controls through Run options", async () => {
     const user = userEvent.setup();
     render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}

@@ -348,7 +348,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         const readyThinkingLevels = ready.thinking_levels ?? [];
         setProviderId(ready.id as RunnableProviderId);
         setModelId(
-          preferred !== undefined && preferences?.default_model !== null && preferences?.default_model !== undefined
+          preferred !== undefined
+            && preferences?.default_model !== null
+            && preferences?.default_model !== undefined
+            && readyModels.some((model) => model.id === preferences.default_model)
             ? preferences.default_model
             : readyModels[0]?.id ?? ""
         );
