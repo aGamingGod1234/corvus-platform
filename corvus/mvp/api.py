@@ -619,12 +619,20 @@ def _build_github_cli(data_root: Path, git_executable: str | None) -> GitHubCli 
         return None
     try:
         config_root = _managed_directory(data_root, _GITHUB_CONFIG_DIRECTORY)
-        runner = TrustedCli(
+        managed_runner = TrustedCli(
             Path(gh_executable),
             environment={"GH_CONFIG_DIR": os.fspath(config_root)},
             additional_path_entries=(Path(git_executable).parent,),
         )
-        return GitHubCli(runner, cwd=data_root)
+        authorization_runner = TrustedCli(
+            Path(gh_executable),
+            additional_path_entries=(Path(git_executable).parent,),
+        )
+        return GitHubCli(
+            managed_runner,
+            cwd=data_root,
+            authorization_runner=authorization_runner,
+        )
     except (GitHubCliError, TrustedCliError, _ManagedDirectoryError):
         return None
 

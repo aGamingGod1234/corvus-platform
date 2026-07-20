@@ -75,37 +75,50 @@ def test_github_cli_builder_isolates_auth_and_adds_only_the_git_directory(
     git_executable = tmp_path / "git" / "bin" / "git.exe"
     git_executable.parent.mkdir(parents=True)
     git_executable.touch()
-    captured: dict[str, Any] = {}
-    sentinel = object()
+    captured: list[dict[str, Any]] = []
+    managed_runner = object()
+    authorization_runner = object()
 
     def fake_trusted_cli(
         executable: Path,
         *,
-        environment: dict[str, str],
+        environment: dict[str, str] | None = None,
         additional_path_entries: tuple[Path, ...],
     ) -> object:
-        captured.update(
-            executable=executable,
-            environment=environment,
-            additional_path_entries=additional_path_entries,
+        captured.append(
+            {
+                "executable": executable,
+                "environment": environment,
+                "additional_path_entries": additional_path_entries,
+            }
         )
-        return sentinel
+        return managed_runner if len(captured) == 1 else authorization_runner
 
     monkeypatch.setattr(shutil, "which", lambda _name: os.fspath(gh_executable))
     monkeypatch.setattr(api_module, "TrustedCli", fake_trusted_cli)
     monkeypatch.setattr(
         api_module,
         "GitHubCli",
-        lambda runner, *, cwd: {"runner": runner, "cwd": cwd},
+        lambda runner, *, cwd, authorization_runner: {
+            "runner": runner,
+            "authorization_runner": authorization_runner,
+            "cwd": cwd,
+        },
     )
 
     client = api_module._build_github_cli(tmp_path, os.fspath(git_executable))
 
     config_root = tmp_path / ".corvus-github-cli"
-    assert cast(Any, client) == {"runner": sentinel, "cwd": tmp_path}
-    assert captured["executable"] == gh_executable
-    assert captured["environment"] == {"GH_CONFIG_DIR": os.fspath(config_root.resolve())}
-    assert captured["additional_path_entries"] == (git_executable.parent,)
+    assert cast(Any, client) == {
+        "runner": managed_runner,
+        "authorization_runner": authorization_runner,
+        "cwd": tmp_path,
+    }
+    assert len(captured) == 2
+    assert captured[0]["executable"] == gh_executable
+    assert captured[0]["environment"] == {"GH_CONFIG_DIR": os.fspath(config_root.resolve())}
+    assert captured[1]["environment"] is None
+    assert all(item["additional_path_entries"] == (git_executable.parent,) for item in captured)
     assert config_root.is_dir()
 
 

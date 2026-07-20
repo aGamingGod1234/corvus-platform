@@ -399,11 +399,24 @@ fn open_external_url(url: String) -> Result<(), String> {
             .or_else(|| env::var_os("SystemRoot"))
             .map(PathBuf::from)
             .ok_or_else(|| "browser_launcher_unavailable".to_owned())?;
-        let launcher = windows_directory.join("System32/rundll32.exe");
-        if !launcher.is_file() {
+        let explorer = windows_directory.join("explorer.exe");
+        if explorer.is_file()
+            && Command::new(explorer)
+                .arg(&url)
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .is_ok()
+        {
+            return Ok(());
+        }
+        let rundll32 = windows_directory.join("System32/rundll32.exe");
+        if !rundll32.is_file() {
             return Err("browser_launcher_unavailable".to_owned());
         }
-        Command::new(launcher)
+        Command::new(rundll32)
             .arg("url.dll,FileProtocolHandler")
             .arg(url)
             .creation_flags(CREATE_NO_WINDOW)
@@ -412,7 +425,7 @@ fn open_external_url(url: String) -> Result<(), String> {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "browser_launch_failed".to_owned())?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     {
@@ -433,7 +446,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 fn validate_external_url(url: &str) -> Result<(), String> {
-    let parsed = tauri::Url::parse(&url).map_err(|_| "external_url_invalid".to_owned())?;
+    let parsed = tauri::Url::parse(url).map_err(|_| "external_url_invalid".to_owned())?;
     if parsed.scheme() != "https"
         || parsed.host_str() != Some("corvus-platform-tau.vercel.app")
         || parsed.path() != "/api/v2/auth/google/start"

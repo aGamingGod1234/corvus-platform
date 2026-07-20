@@ -63,15 +63,25 @@ class GitHubCheck:
 
 
 class GitHubCli:
-    def __init__(self, runner: CommandRunner, *, cwd: Path) -> None:
+    def __init__(
+        self,
+        runner: CommandRunner,
+        *,
+        cwd: Path,
+        authorization_runner: CommandRunner | None = None,
+    ) -> None:
         self._runner = runner
+        self._authorization_runner = authorization_runner
         try:
             self._cwd = cwd.expanduser().resolve(strict=True)
         except OSError as exc:
             raise GitHubCliError("GitHub CLI working directory is unavailable") from exc
 
     def auth_status(self) -> GitHubAuthStatus:
-        result = self._runner.run(
+        return self._auth_status(self._runner)
+
+    def _auth_status(self, runner: CommandRunner) -> GitHubAuthStatus:
+        result = runner.run(
             self._cwd,
             ("auth", "status", "--hostname", "github.com", "--active"),
             15,
@@ -79,14 +89,23 @@ class GitHubCli:
         return GitHubAuthStatus(hostname="github.com", authenticated=result.returncode == 0)
 
     def authenticate(self) -> GitHubAuthStatus:
-        result = self._runner.run(
+        authorization_runner = self._authorization_runner or self._runner
+        existing = self._auth_status(authorization_runner)
+        if existing.authenticated:
+            self._runner = authorization_runner
+            return existing
+        result = authorization_runner.run(
             self._cwd,
             ("auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"),
             180,
         )
         if result.returncode != 0:
             raise GitHubCliError("github_authentication_failed")
-        return self.auth_status()
+        authenticated = self._auth_status(authorization_runner)
+        if not authenticated.authenticated:
+            raise GitHubCliError("github_authentication_failed")
+        self._runner = authorization_runner
+        return authenticated
 
     def clone_repository(self, repo: str, target: Path) -> None:
         repo = self.normalize_repository_reference(repo)

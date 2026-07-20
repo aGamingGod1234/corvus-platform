@@ -23,6 +23,8 @@ const MESSAGES: Record<string, string> = {
   github_authentication_failed: "GitHub sign-in did not complete. Finish the browser flow, then try again.",
   github_clone_failed: "Corvus could not clone that GitHub project. Check access and the repository URL, then try again.",
   google_sign_in_popup_blocked: "Your browser blocked the Google sign-in window. Allow popups for Corvus, then try again.",
+  external_url_invalid: "Corvus refused an invalid sign-in address.",
+  external_url_forbidden: "Corvus refused a sign-in address outside its trusted allowlist.",
   browser_launcher_unavailable: "Corvus could not find the system browser launcher on this computer.",
   browser_launch_failed: "Corvus could not open your browser. Open Corvus Web and sign in there instead.",
   provider_unavailable: "The selected provider is unavailable. Retry discovery or choose a verified provider in Settings.",
@@ -54,8 +56,8 @@ function detailFrom(reason: unknown): Record<string, unknown> | null {
 }
 
 export function featureFailure(reason: unknown, area: FeatureArea): FeatureFailure {
-  const detail = detailFrom(reason);
-  const rawMessage = reason instanceof Error ? reason.message : "";
+    const detail = detailFrom(reason);
+  const rawMessage = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
   const detailCode = typeof detail?.code === "string" ? detail.code : "";
   const code = detailCode || rawMessage || `${area}_request_failed`;
   const correlationId = typeof detail?.correlation_id === "string" ? detail.correlation_id : null;

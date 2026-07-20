@@ -80,6 +80,46 @@ def test_github_cli_auth_status_is_return_code_only(tmp_path: Path) -> None:
     assert status.hostname == "github.com"
 
 
+def test_github_cli_authorizes_an_existing_host_session_only_after_explicit_sign_in(
+    tmp_path: Path,
+) -> None:
+    isolated = FakeRunner(ProcessResult(1, b"", b"not logged in"))
+    host = FakeRunner(
+        ProcessResult(0, b"github.com authenticated", b""),
+        ProcessResult(0, b"github.com authenticated", b""),
+    )
+    client = GitHubCli(isolated, cwd=tmp_path, authorization_runner=host)
+
+    assert client.auth_status().authenticated is False
+    assert client.authenticate().authenticated is True
+    assert client.auth_status().authenticated is True
+    assert isolated.calls[0][1][:3] == ("auth", "status", "--hostname")
+    assert [call[1][1] for call in host.calls] == ["status", "status"]
+
+
+def test_github_cli_runs_web_login_when_the_host_session_is_missing(tmp_path: Path) -> None:
+    isolated = FakeRunner()
+    host = FakeRunner(
+        ProcessResult(1, b"", b"not logged in"),
+        ProcessResult(0, b"", b""),
+        ProcessResult(0, b"github.com authenticated", b""),
+    )
+    client = GitHubCli(isolated, cwd=tmp_path, authorization_runner=host)
+
+    status = client.authenticate()
+
+    assert status.authenticated is True
+    assert host.calls[1][1] == (
+        "auth",
+        "login",
+        "--hostname",
+        "github.com",
+        "--git-protocol",
+        "https",
+        "--web",
+    )
+
+
 @pytest.mark.parametrize(
     ("reference", "expected"),
     [

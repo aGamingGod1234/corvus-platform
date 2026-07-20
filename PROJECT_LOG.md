@@ -2306,3 +2306,32 @@
 
 ### Suggested Next Steps
 - Build and hash the Windows installer locally, merge the protected release-prep PR, push the reviewed tag, then verify every published release asset and checksum.
+
+## 2026-07-20 — Desktop Account Sign-In Repair
+### What Was Implemented
+- Stopped the in-progress beta packaging workflow before changing authentication behavior.
+- Kept GitHub credentials isolated until an explicit user click, then authorized the existing host GitHub CLI session or launched the normal web login when no host session exists.
+- Added a Windows browser-launch fallback through the trusted system Explorer executable while retaining the exact external URL allowlist.
+- Preserved native command error codes so the Account page reports actionable browser/authentication failures instead of the generic `Settings request failed` message.
+
+### Files Modified
+- `.gitignore` — keep local Vercel project metadata untracked.
+- `apps/desktop/src-tauri/src/lib.rs` — reliable allowlisted Windows external-browser launch.
+- `apps/web/src/app/featureFeedback.ts` — native string-error normalization and trusted-URL messages.
+- `apps/web/src/app/featureFeedback.test.ts` — native rejection regression coverage.
+- `corvus/mvp/api.py` — separate isolated and explicit host-authorization GitHub CLI runners.
+- `corvus/mvp/github_cli.py` — consent-gated host session adoption and browser-login fallback.
+- `tests/mvp/test_github_cli.py` — isolated-before-click and host-authorization coverage.
+- `tests/mvp/test_github_projects_api.py` — dual-runner construction and isolation coverage.
+- `PROJECT_LOG.md` — incident diagnosis, verification, and deployment boundary.
+
+### Assumptions Made (flag these for review)
+- Clicking `Sign in with GitHub` is explicit consent for this running Corvus process to use the host GitHub CLI session; no host credential is consulted before that click.
+- The existing exact Google sign-in URL remains the only externally launchable desktop authentication URL.
+
+### Known Issues / Deferred
+- The deployed Google endpoint currently returns `503 platform_proxy_unavailable`: the Vercel project has no `CORVUS_RAILWAY_ORIGIN`, no Corvus Railway service exists in the connected account, and no Google OAuth client ID or secret is configured locally or in Vercel. Code cannot securely manufacture those credentials; Google account continuity remains deployment-blocked even though browser launching is repaired.
+- GitHub authorization is intentionally process-local; restarting Corvus requires explicit authorization again rather than silently inheriting the host account.
+
+### Suggested Next Steps
+- Provision the Railway hosted identity service and Google OAuth client, then configure `CORVUS_RAILWAY_ORIGIN` plus the documented Google settings before presenting Google sign-in as production-ready.
