@@ -2276,3 +2276,6 @@
 
 ### Suggested Next Steps
 - Push the verified security commit, post the exploit and control evidence on PR #11, and request `@asifdotpy` to re-review the exact new head.
+
+### Automated Review Follow-up
+- Removed redundant Promise wrappers from the async rewrite-edge early returns without changing validation, status codes, response bodies, or forwarding behavior.

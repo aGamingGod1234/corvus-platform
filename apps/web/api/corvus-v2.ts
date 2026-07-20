@@ -50,14 +50,14 @@ export async function proxyRewrittenV2Request(
   deploymentEnvironment: string | undefined = process.env.VERCEL_ENV,
 ): Promise<Response> {
   if (validatedOrigin(configuredOrigin, deploymentEnvironment) === null) {
-    return Promise.resolve(proxyUnavailableResponse());
+    return proxyUnavailableResponse();
   }
   const rewritten = await rewrittenRequest(request);
   if (rewritten === null) {
-    return Promise.resolve(Response.json(
+    return Response.json(
       { detail: { code: "platform_proxy_path_invalid" } },
       { status: 400 },
-    ));
+    );
   }
   return proxyV2Request(rewritten, configuredOrigin, fetchImpl, deploymentEnvironment);
 }
