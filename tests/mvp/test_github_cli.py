@@ -80,6 +80,39 @@ def test_github_cli_auth_status_is_return_code_only(tmp_path: Path) -> None:
     assert status.hostname == "github.com"
 
 
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        ("team/corvus", "team/corvus"),
+        (" https://github.com/team/corvus ", "team/corvus"),
+        ("https://github.com/team/corvus.git/", "team/corvus"),
+    ],
+)
+def test_github_cli_normalizes_slug_or_https_repository_url(
+    reference: str,
+    expected: str,
+) -> None:
+    assert GitHubCli.normalize_repository_reference(reference) == expected
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "https://example.com/team/corvus",
+        "https://github.com/team/corvus/issues",
+        "https://user@github.com/team/corvus",
+        "https://github.com/team/../corvus",
+        "team/../corvus",
+        "team\\corvus",
+    ],
+)
+def test_github_cli_rejects_noncanonical_or_traversing_repository_references(
+    reference: str,
+) -> None:
+    with pytest.raises(GitHubCliError, match="identifier is invalid"):
+        GitHubCli.normalize_repository_reference(reference)
+
+
 def test_github_cli_requires_valid_json(tmp_path: Path) -> None:
     runner = FakeRunner(ProcessResult(0, b"not-json", b""))
 

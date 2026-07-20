@@ -19,6 +19,7 @@ export interface RepositoryApi {
 interface RepositoriesWorkspaceProps {
   api: RepositoryApi;
   onOpenRuns?(repositoryId: string): void;
+  openDialogSignal?: number;
   pickDirectory?: () => Promise<string | null>;
 }
 
@@ -32,9 +33,20 @@ function directoryName(path: string): string {
   return trimmed.split(/[\\/]/).at(-1) ?? "Repository";
 }
 
+function ProjectSourceIcon({ name }: { name: "blank" | "folder" | "github" }) {
+  if (name === "github") {
+    return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 .7A11.5 11.5 0 0 0 8.4 23c.6.1.8-.3.8-.6v-2.2c-3.4.7-4.1-1.4-4.1-1.4-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.8.1-.8 1.3.1 2 1.3 2 1.3 1.1 2 3 1.4 3.7 1 .1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.3-5.5-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.6.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.8 5.4-5.5 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 12 .7Z" /></svg>;
+  }
+  if (name === "folder") {
+    return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6.5Z" /></svg>;
+  }
+  return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>;
+}
+
 export function RepositoriesWorkspace({
   api,
   onOpenRuns,
+  openDialogSignal = 0,
   pickDirectory = pickDesktopDirectory
 }: RepositoriesWorkspaceProps) {
   const [repositories, setRepositories] = useState<LocalRepository[]>([]);
@@ -49,6 +61,7 @@ export function RepositoriesWorkspace({
   const [githubError, setGithubError] = useState("");
   const [githubStatus, setGitHubStatus] = useState<GitHubAuthStatus | null>(null);
   const [githubRepositories, setGitHubRepositories] = useState<GitHubRepositorySummary[]>([]);
+  const [githubInput, setGitHubInput] = useState("");
   const [githubOpen, setGitHubOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -90,6 +103,18 @@ export function RepositoriesWorkspace({
 
   useEffect(() => { void loadRepositories(); }, [loadRepositories]);
   useEffect(() => { void loadGitHub(); }, [loadGitHub]);
+  useEffect(() => {
+    if (openDialogSignal > 0) setAddOpen(true);
+  }, [openDialogSignal]);
+
+  function closeProjectDialog(): void {
+    setAddOpen(false);
+    setCreating(false);
+    setGitHubOpen(false);
+    setNewProjectOpen(false);
+    setGitHubInput("");
+    setGithubError("");
+  }
 
   async function browse(): Promise<void> {
     setError("");
@@ -164,15 +189,17 @@ export function RepositoriesWorkspace({
     }
   }
 
-  async function connectGitHub(repository: GitHubRepositorySummary): Promise<void> {
+  async function connectGitHub(source: string): Promise<void> {
     if (api.connectGitHubRepository === undefined) return;
-    setBusyId(repository.slug);
+    const normalizedSource = source.trim();
+    if (normalizedSource === "") return;
+    setBusyId(normalizedSource);
     setError("");
     setNotice("");
     try {
-      const connected = await api.connectGitHubRepository(repository.slug);
+      const connected = await api.connectGitHubRepository(normalizedSource);
       setRepositories((current) => [connected, ...current.filter((item) => item.id !== connected.id)]);
-      setGitHubOpen(false);
+      closeProjectDialog();
       setNotice(`${connected.display_name} was cloned into the managed project area.`);
     } catch (reason) {
       setError(featureErrorMessage(reason, "github"));
@@ -191,7 +218,7 @@ export function RepositoriesWorkspace({
       const created = await api.createEmptyRepository(newProjectName.trim());
       setRepositories((current) => [created, ...current]);
       setNewProjectName("");
-      setNewProjectOpen(false);
+      closeProjectDialog();
       setNotice(`${created.display_name} was created in the Corvus projects directory.`);
     } catch (reason) {
       setError(featureErrorMessage(reason, "repository"));
@@ -221,31 +248,25 @@ export function RepositoriesWorkspace({
       <header className="resource-heading">
         <div>
           <p className="eyebrow">This computer</p>
-          <h1 id="repositories-title">Repositories</h1>
-          <p>Connect real Git checkouts. Corvus runs changes in separate managed worktrees.</p>
+          <h1 id="repositories-title">Projects</h1>
+          <p>Choose the folder Corvus should work from. Every Build run still uses an isolated managed worktree.</p>
         </div>
-        <button aria-expanded={addOpen} className="button button--primary" disabled={busyId !== null} onClick={() => setAddOpen((open) => !open)} type="button">Add repository</button>
+        <button aria-haspopup="dialog" className="button button--primary button--with-icon" disabled={busyId !== null} onClick={() => setAddOpen(true)} type="button"><ProjectSourceIcon name="blank" />Add project</button>
       </header>
 
-      {addOpen ? <section aria-label="Add repository options" className="repository-add-options">
-        <button aria-label="GitHub" className="repository-add-option" disabled={busyId !== null || !githubAvailable} onClick={() => { setAddOpen(false); if (githubStatus?.authenticated) setGitHubOpen(true); else void authenticateGitHub(); }} title={!githubAvailable ? "GitHub connections require the installed Corvus runtime" : undefined} type="button"><strong>GitHub</strong><span>{githubAvailable ? "Connect an account or choose an authorized repository." : "Available in the installed Corvus desktop runtime."}</span></button>
-        <button aria-label="Local folder" className="repository-add-option" onClick={() => { setAddOpen(false); setCreating(true); }} type="button"><strong>Local folder</strong><span>Register an existing Git checkout on this computer.</span></button>
-        <button aria-label="Empty project" className="repository-add-option" disabled={api.createEmptyRepository === undefined} onClick={() => { setAddOpen(false); setNewProjectOpen(true); }} type="button"><strong>Empty project</strong><span>Create a new repository inside Corvus projects.</span></button>
-      </section> : null}
-
-      <section aria-label="GitHub readiness" className="github-readiness" data-ready={githubStatus?.authenticated ?? false}>
-        <div><strong>{!githubAvailable ? "GitHub connection unavailable" : githubError ? "GitHub status unavailable" : githubStatus === null ? "Checking GitHub" : githubStatus.authenticated ? "GitHub authenticated" : "GitHub not authenticated"}</strong><span>{!githubAvailable ? "Use the installed Corvus desktop runtime to connect GitHub. Local repositories remain available." : githubError || (githubStatus?.authenticated ? `Ready to list repositories and create a human-confirmed draft pull request on ${githubStatus.hostname}.` : "Local repositories still work, but publishing a draft pull request remains unavailable.")}</span></div>
-        {githubError ? <button className="button" disabled={busyId !== null} onClick={() => void loadGitHub()} type="button">Retry GitHub</button> : null}
-      </section>
-
-      {newProjectOpen ? <form className="repository-new-project" onSubmit={(event) => void createEmptyProject(event)}><div><label htmlFor="new-project-name">Project name</label><input autoFocus id="new-project-name" onChange={(event) => setNewProjectName(event.target.value)} placeholder="My project" value={newProjectName} /></div><div className="row-actions"><button className="button" onClick={() => setNewProjectOpen(false)} type="button">Cancel</button><button className="button button--primary" disabled={busyId !== null || newProjectName.trim() === ""} type="submit">{busyId === "empty-project" ? "Creating…" : "Create project"}</button></div></form> : null}
-
-      {githubOpen && githubStatus?.authenticated ? <section className="github-repository-picker"><header><div><h2>Choose a GitHub repository</h2><p>Corvus clones it into its managed project area, then uses isolated worktrees for runs.</p></div><button aria-label="Close GitHub repositories" className="icon-button" onClick={() => setGitHubOpen(false)} type="button">×</button></header><div>{githubRepositories.length === 0 ? <div className="resource-empty"><strong>No authorized repositories found</strong><span>Grant repository access in GitHub, then retry the connection.</span></div> : githubRepositories.map((repository) => <article key={repository.slug}><div><strong>{repository.slug}</strong><span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "Default branch unavailable"}</span></div><button className="button button--primary" disabled={busyId !== null} onClick={() => void connectGitHub(repository)} type="button">{busyId === repository.slug ? "Connecting…" : "Connect"}</button></article>)}</div></section> : null}
-
-      {creating ? (
-        <form className="repository-connect" onSubmit={(event) => void connect(event)}>
+      {addOpen || creating || newProjectOpen || githubOpen ? <div className="project-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && busyId === null) closeProjectDialog(); }}>
+        <section aria-labelledby="add-project-title" aria-modal="true" className="project-dialog" role="dialog">
+          <header className="project-dialog__header"><div><p className="eyebrow">Project workspace</p><h2 id="add-project-title">{creating ? "Use a local folder" : newProjectOpen ? "Start from scratch" : githubOpen ? "Link a GitHub project" : "Add a project"}</h2><p>{creating ? "Choose an existing Git checkout. Corvus will use that folder as the source for protected runs." : newProjectOpen ? "Corvus creates a named folder inside corvus-agent-projects and initializes Git for you." : githubOpen ? "Paste a repository URL or select one after signing in." : "Choose where this project should come from."}</p></div><button aria-label="Close add project" className="icon-button" disabled={busyId !== null} onClick={closeProjectDialog} type="button">×</button></header>
+          {addOpen ? <div aria-label="Project source" className="project-source-options">
+            <button aria-label="Start from scratch" className="project-source-card" disabled={api.createEmptyRepository === undefined} onClick={() => { setAddOpen(false); setNewProjectOpen(true); }} type="button"><ProjectSourceIcon name="blank" /><span><strong>Start from scratch</strong><small>Create a blank Git project in the managed Corvus folder.</small></span><b aria-hidden="true">→</b></button>
+            <button aria-label="Use a local folder" className="project-source-card" onClick={() => { setAddOpen(false); setCreating(true); }} type="button"><ProjectSourceIcon name="folder" /><span><strong>Use a local folder</strong><small>Choose an existing project already on this computer.</small></span><b aria-hidden="true">→</b></button>
+            <button aria-label={githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"} className="project-source-card project-source-card--github" disabled={!githubAvailable} onClick={() => { setAddOpen(false); if (githubStatus?.authenticated) setGitHubOpen(true); else void authenticateGitHub(); }} type="button"><ProjectSourceIcon name="github" /><span><strong>{githubStatus?.authenticated ? "Choose from GitHub" : "Sign in with GitHub"}</strong><small>{githubAvailable ? "Open GitHub sign-in, paste a URL, or choose a connected repository." : "Available in the installed Corvus desktop app."}</small></span><b aria-hidden="true">→</b></button>
+          </div> : null}
+          {newProjectOpen ? <form className="repository-new-project" onSubmit={(event) => void createEmptyProject(event)}><div><label htmlFor="new-project-name">Project name</label><input autoFocus id="new-project-name" onChange={(event) => setNewProjectName(event.target.value)} placeholder="My project" value={newProjectName} /></div><div className="row-actions"><button className="button" onClick={() => { setNewProjectOpen(false); setAddOpen(true); }} type="button">Back</button><button className="button button--primary" disabled={busyId !== null || newProjectName.trim() === ""} type="submit">{busyId === "empty-project" ? "Creating…" : "Create project"}</button></div></form> : null}
+          {githubOpen ? <section className="github-repository-picker"><form className="github-url-form" onSubmit={(event) => { event.preventDefault(); void connectGitHub(githubInput); }}><label htmlFor="github-project-url">GitHub repository URL</label><div><input autoFocus id="github-project-url" onChange={(event) => setGitHubInput(event.target.value)} placeholder="https://github.com/owner/project" type="url" value={githubInput} /><button className="button button--primary" disabled={busyId !== null || githubInput.trim() === ""} type="submit">{busyId === githubInput.trim() ? "Cloning…" : "Clone project"}</button></div></form>{githubError ? <p className="inline-error" role="alert">{githubError} <button className="text-button" onClick={() => void authenticateGitHub()} type="button">Try sign-in again</button></p> : null}{githubStatus?.authenticated ? <><div className="project-dialog__divider"><span>or choose from connected GitHub</span></div><div>{githubRepositories.length === 0 ? <div className="resource-empty"><strong>No repositories returned</strong><span>Paste a GitHub URL above, or refresh after granting access.</span></div> : githubRepositories.map((repository) => <article key={repository.slug}><div><strong>{repository.slug}</strong><span>{repository.private ? "Private" : "Public"} · {repository.default_branch ?? "Default branch unavailable"}</span></div><button className="button button--primary" disabled={busyId !== null} onClick={() => void connectGitHub(repository.slug)} type="button">{busyId === repository.slug ? "Cloning…" : "Use project"}</button></article>)}</div></> : <button className="project-source-card project-source-card--github" disabled={busyId !== null} onClick={() => void authenticateGitHub()} type="button"><ProjectSourceIcon name="github" /><span><strong>Sign in with GitHub</strong><small>Your browser will open. Corvus will only list repositories after you complete sign-in.</small></span><b aria-hidden="true">→</b></button>}</section> : null}
+          {creating ? <form className="repository-connect" onSubmit={(event) => void connect(event)}>
           <div className="repository-connect__path">
-            <label htmlFor="repository-path">Repository path</label>
+            <label htmlFor="repository-path">Project folder</label>
             <div>
               <input
                 autoFocus
@@ -267,28 +288,30 @@ export function RepositoriesWorkspace({
             />
           </div>
           <div className="row-actions">
-            <button className="button" onClick={() => setCreating(false)} type="button">Cancel</button>
+            <button className="button" onClick={() => { setCreating(false); setAddOpen(true); }} type="button">Back</button>
             <button
+              aria-label="Add local project"
               className="button button--primary"
               disabled={busyId !== null || path.trim() === "" || displayName.trim() === ""}
               type="submit"
             >
-              {busyId === "new" ? "Connecting…" : "Connect repository"}
+              {busyId === "new" ? "Adding…" : "Add project"}
             </button>
           </div>
-        </form>
-      ) : null}
+          </form> : null}
+        </section>
+      </div> : null}
 
       {notice ? <p className="inline-success" role="status">{notice}</p> : null}
-      {error ? <p className="inline-error" role="alert">{error} {loadFailed && !loading ? <button className="text-button" onClick={() => void loadRepositories()} type="button">Retry repositories</button> : null}</p> : null}
-      {loading ? <div className="resource-empty"><strong>Loading repositories…</strong></div> : null}
+      {error ? <p className="inline-error" role="alert">{error} {loadFailed && !loading ? <button className="text-button" onClick={() => void loadRepositories()} type="button">Retry projects</button> : null}</p> : null}
+      {loading ? <div className="resource-empty"><strong>Loading projects…</strong></div> : null}
       {!loading && repositories.length === 0 ? (
         <div className="resource-empty">
-          <strong>No repositories connected</strong>
-          <span>Add an existing Git checkout to unlock isolated runs and contribution review.</span>
+          <strong>No projects added yet</strong>
+          <span>Start from scratch, choose a local folder, or connect GitHub.</span>
         </div>
       ) : null}
-      <div aria-label="Connected repositories" className="repository-grid">
+      <div aria-label="Connected projects" className="repository-grid">
         {repositories.map((repository) => (
           <article className="repository-card" key={repository.id}>
             <header>

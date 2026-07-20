@@ -54,6 +54,7 @@ import { BackgroundRunNotifier } from "./app/BackgroundRunNotifier";
 import { SettingsPanel } from "./app/SettingsPanel";
 import { LocalFirstRunFlow } from "./app/LocalFirstRunFlow";
 import { loadDevicePreferences } from "./app/devicePreferences";
+import { openHostedGoogleSignIn } from "./app/externalAuth";
 
 const browserApi = createCorvusApi();
 const EVENT_TYPES = [
@@ -183,6 +184,7 @@ export function App({
   const [runInitialId, setRunInitialId] = useState<string | null>(null);
   const [runSkillId, setRunSkillId] = useState<string | null>(null);
   const [newThreadSignal, setNewThreadSignal] = useState(0);
+  const [projectDialogSignal, setProjectDialogSignal] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -715,6 +717,7 @@ export function App({
   const repositoriesSurface = (
     <RepositoriesWorkspace
       api={api}
+      openDialogSignal={projectDialogSignal}
       onOpenRuns={(repositoryId) => {
         setRunInitialId(null);
         setRunSkillId(null);
@@ -802,21 +805,33 @@ export function App({
             api={conversationApi}
             experience={localProfile.experience}
             newThreadSignal={newThreadSignal}
-            onOpenProjects={() => setActiveRoute("repositories")}
+            onOpenProjects={() => {
+              setProjectDialogSignal((signal) => signal + 1);
+              setActiveRoute("repositories");
+            }}
             storage={preferenceStorage}
             storageScope={localSession.user_id}
           />
         ) : localSurface === "schedule" ? (
-          <SchedulesWorkspace api={api} onOpenRun={(runId) => {
-            setRunRepositoryId(null);
-            setRunSkillId(null);
-            setRunInitialId(runId);
-            setActiveRoute("runs");
-          }} />
+          <SchedulesWorkspace
+            api={api}
+            onOpenProjects={() => {
+              setProjectDialogSignal((signal) => signal + 1);
+              setActiveRoute("repositories");
+            }}
+            onOpenRun={(runId) => {
+              setRunRepositoryId(null);
+              setRunSkillId(null);
+              setRunInitialId(runId);
+              setActiveRoute("runs");
+            }}
+          />
         ) : localSurface === "settings" ? (
           <SettingsPanel
             api={conversationApi}
+            connectionsApi={api}
             experience={localProfile.experience}
+            onGoogleSignIn={openHostedGoogleSignIn}
             onBack={() => setActiveRoute(getWorkspaceDefaultRoute(localProfile))}
             onExperienceChange={async (nextExperience) => {
               saveLocalWorkspacePreference(preferenceStorage, {
@@ -964,6 +979,7 @@ export function App({
         ) : (activeRoute || getWorkspaceDefaultRoute(profile)) === "settings" ? (
           <SettingsPanel
             experience={profile.experience}
+            googleSignedIn={auth.status === "authenticated"}
             onBack={() => setActiveRoute(getWorkspaceDefaultRoute(profile))}
             onExperienceChange={async (nextExperience) => {
               if (nextExperience === profile.experience) return;
@@ -971,6 +987,7 @@ export function App({
               await workspaceSync.saveExperience(nextExperience, expectedVersion);
               await auth.reloadSession();
             }}
+            onGoogleSignIn={auth.startGoogle}
             storage={preferenceStorage}
             workspaceId={selectedWorkspace.id}
             workspaceKind={selectedWorkspace.workspace_kind}

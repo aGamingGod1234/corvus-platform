@@ -528,7 +528,7 @@ def test_failed_empty_project_initialization_removes_managed_directory(tmp_path:
     )
 
     assert response.status_code == 503
-    project_root = tmp_path / ".corvus-projects"
+    project_root = tmp_path / "corvus-agent-projects"
     assert project_root.is_dir()
     assert list(project_root.iterdir()) == []
 

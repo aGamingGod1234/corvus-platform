@@ -2203,3 +2203,38 @@
 ### Review Follow-up
 - Changed checksum generation to emit sorted, basename-only entries so `sha256sum -c SHA256SUMS.txt` works with downloaded release assets outside GitHub Actions.
 - Aligned the remaining current release-status labels and installer filename in `HACKATHON_STATUS.md` with `v0.2.0-beta.1`.
+
+## 2026-07-20 - Repair functional project, identity, skill, and schedule workflows
+
+### What Was Implemented
+- Replaced the ambiguous repository flow with a centered Add project workflow for blank managed projects, local folders, pasted GitHub URLs, and explicitly authenticated GitHub repositories.
+- Isolated Corvus GitHub CLI state from machine-wide credentials, constrained accepted GitHub repository identifiers, allowed the trusted Git executable required by `gh repo clone`, and added collision-safe managed project creation with cleanup on failure.
+- Added clear Google and GitHub account actions in Settings, including an exact allowlisted desktop browser handoff and the hosted Google sign-in route.
+- Split skill imports into imported, duplicate, blocked, review-required, and failed outcomes so duplicates hydrate the library and policy failures remain actionable.
+- Made New schedule consistently available and added explicit project/provider prerequisite guidance instead of an unexplained disabled button.
+- Added the nested Vercel API rewrite needed for hosted `/api/v2/*` identity routes.
+
+### Files Modified
+- `apps/web/src/App.tsx`, `apps/web/src/app/*`, and `apps/web/src/styles/product-workspace.css` - functional project, account, skill, and schedule UI flows with regression coverage.
+- `apps/web/api/corvus-v2.ts`, `apps/web/vercel.json`, and `apps/web/src/v2Proxy.test.ts` - nested hosted API forwarding.
+- `apps/desktop/src-tauri/src/lib.rs` - constrained cross-platform browser launch behavior with native tests.
+- `corvus/mvp/api.py`, `corvus/mvp/github_cli.py`, `corvus/mvp/trusted_cli.py`, `openapi/corvus-mvp.json`, and focused MVP tests - managed project and isolated GitHub backend behavior.
+- `PROJECT_LOG.md` - implementation and verification evidence.
+
+### Assumptions Made (flag these for review)
+- Blank projects belong under the database-adjacent `corvus-agent-projects` directory so production uses the Corvus application-data boundary while isolated tests remain self-contained.
+- Google identity continues through the existing hosted Corvus Web route; the Vercel preview must prove nested route forwarding before merge.
+
+### Known Issues / Deferred
+- Real OAuth completion still depends on the configured hosted Google/Railway environment; this change repairs the desktop handoff and hosted route rather than inventing credentials.
+- The Vite build retains the existing advisory for a main JavaScript chunk above 500 kB; code splitting is outside this functional repair milestone.
+- Human/code-owner approval and merge remain outside this task's stop boundary.
+
+### Verification
+- Playwright drove a clean compiled sidecar through pairing, onboarding, blank project creation, schedule editing, and the Settings account controls without Computer Use.
+- Web: 36 files and 260 tests pass; TypeScript and the Vite production build pass.
+- Backend: 55 focused Python tests pass; Ruff and mypy pass.
+- Desktop: 11 Rust tests and `cargo fmt --check` pass; the release executable and packaged sidecar were built from this workspace.
+
+### Suggested Next Steps
+- Commit and open the protected-main PR, verify the Vercel preview route, resolve actionable automated review findings, then request `@asifdotpy` approval without merging.

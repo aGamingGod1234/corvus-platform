@@ -41,7 +41,7 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Developer / Individual",
     eyebrow: "Local engineering workspace",
     routes: [
-      { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
+      { id: "repositories", label: "Projects", description: "Folders, GitHub repositories, branches, and worktrees" },
       { id: "runs", label: "Runs", description: "Workflows, logs, checks, and budgets" },
       { id: "schedule", label: "Schedule", description: "Authorized routines and manual runs" },
       { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" },
@@ -69,7 +69,7 @@ const PROFILES: Record<`${ExperienceMode}:${WorkspaceKind}`, WorkspaceProfile> =
     label: "Developer / Team",
     eyebrow: "Governed engineering preview",
     routes: [
-      { id: "repositories", label: "Repositories", description: "Projects, branches, and worktrees" },
+      { id: "repositories", label: "Projects", description: "Folders, GitHub repositories, branches, and worktrees" },
       { id: "runs", label: "Runs", description: "Workflows, logs, checks, and budgets" },
       { id: "schedule", label: "Schedule", description: "Authorized routines and manual runs" },
       { id: "skills", label: "Skills", description: "Versioned tools, memory, and routines" },

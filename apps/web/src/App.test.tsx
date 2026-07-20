@@ -235,14 +235,14 @@ describe("Corvus operator console", () => {
 
     await user.type(await screen.findByLabelText("One-time pairing value"), "ephemeral-pairing-value");
     await user.click(screen.getByRole("button", { name: "Pair this browser" }));
-    await user.click(await screen.findByRole("link", { name: "Repositories" }));
+    await user.click(await screen.findByRole("link", { name: "Projects" }));
 
     expect(api.pair).toHaveBeenCalledWith("ephemeral-pairing-value");
     expect(api.session).toHaveBeenCalledTimes(2);
     expect(screen.getByText("paired-operator")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Launch control" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add repository" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add project" })).toBeVisible();
   });
 
   it("uses one local left navigation and omits permanent secondary rails", async () => {
@@ -270,9 +270,9 @@ describe("Corvus operator console", () => {
 
   it.each([
     ["everyday", "personal", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
-    ["developer", "personal", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
+    ["developer", "personal", ["Projects", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
     ["everyday", "team", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
-    ["developer", "team", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]]
+    ["developer", "team", ["Projects", "Runs", "Schedule", "Skills", "Threads", "Settings"]]
   ] as const)("provides accessible local routes for the %s %s profile", async (experience, scope, labels) => {
     preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
       version: 1,

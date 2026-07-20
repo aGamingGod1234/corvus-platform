@@ -1,11 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { proxyV2Request } from "../api/v2/[...path]";
+import { proxyRewrittenV2Request } from "../api/corvus-v2";
 
 const ORIGIN = "https://corvus-control.up.railway.app";
 const PRODUCTION = "production";
 
 describe("same-origin v2 proxy", () => {
+  it("restores nested v2 paths from the Vercel rewrite", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://accounts.google.com/o/oauth2/v2/auth?state=opaque" },
+      }),
+    );
+
+    const response = await proxyRewrittenV2Request(
+      new Request("https://corvus.example/api/corvus-v2?corvusPath=auth/google/start"),
+      ORIGIN,
+      fetchImpl,
+      PRODUCTION,
+    );
+
+    expect(response.status).toBe(302);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://corvus-control.up.railway.app/api/v2/auth/google/start",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("returns a redacted 503 when the Railway origin is absent or invalid", async () => {
     const canary = "railway-origin-secret-canary";
     const fetchImpl = vi.fn<typeof fetch>();

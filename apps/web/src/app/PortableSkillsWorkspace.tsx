@@ -107,7 +107,9 @@ export function PortableSkillsWorkspace({
       const imported = await api.importPortableSkill(preview.candidate.id, preview.digest);
       setSkills((current) => [imported, ...current.filter((skill) => skill.id !== imported.id)]);
       setPreview(null);
-      setNotice(`${imported.name} was imported as a digest-pinned draft. Activate it when you are ready to use it in Runs.`);
+      setNotice(preview.duplicate === "exact"
+        ? `${imported.name} is already imported and is now visible in your Library.`
+        : `${imported.name} was imported as a digest-pinned draft. Activate it when you are ready to use it in Runs.`);
     } catch (reason) {
       setError(featureErrorMessage(reason, "skill"));
     } finally {
@@ -126,28 +128,26 @@ export function PortableSkillsWorkspace({
       const outcomes: Array<{
         candidateId: string;
         imported: PortableSkill | null;
-        failed: boolean;
-        requiresReview: boolean;
+        reason: "imported" | "duplicate" | "blocked" | "review" | "failed";
       }> = [];
       for (let offset = 0; offset < selectedCandidates.length; offset += 4) {
         const batch = await Promise.all(
           selectedCandidates.slice(offset, offset + 4).map(async (candidate) => {
             try {
               const candidatePreview = await api.previewSkillImport(candidate.id);
-              if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") {
-                return { candidateId: candidate.id, imported: null, failed: false, requiresReview: false };
+              if (candidatePreview.compatibility === "blocked") {
+                return { candidateId: candidate.id, imported: null, reason: "blocked" as const };
               }
               if (candidatePreview.compatibility === "needs_review") {
-                return { candidateId: candidate.id, imported: null, failed: false, requiresReview: true };
+                return { candidateId: candidate.id, imported: null, reason: "review" as const };
               }
               return {
                 candidateId: candidate.id,
                 imported: await api.importPortableSkill(candidate.id, candidatePreview.digest),
-                failed: false,
-                requiresReview: false
+                reason: candidatePreview.duplicate === "exact" ? "duplicate" as const : "imported" as const
               };
             } catch {
-              return { candidateId: candidate.id, imported: null, failed: true, requiresReview: false };
+              return { candidateId: candidate.id, imported: null, reason: "failed" as const };
             }
           })
         );
@@ -158,13 +158,18 @@ export function PortableSkillsWorkspace({
         .filter((skill): skill is PortableSkill => skill !== null);
       const uniqueImported = [...new Map(imported.map((skill) => [skill.id, skill])).values()];
       setSkills((current) => [...uniqueImported, ...current.filter((skill) => !uniqueImported.some((item) => item.id === skill.id))]);
-      const failedIds = outcomes.filter((outcome) => outcome.failed).map((outcome) => outcome.candidateId);
-      const reviewIds = outcomes.filter((outcome) => outcome.requiresReview).map((outcome) => outcome.candidateId);
-      const skippedCount = outcomes.filter((outcome) => outcome.imported === null && !outcome.failed && !outcome.requiresReview).length;
-      setSelectedCandidateIds(new Set([...failedIds, ...reviewIds]));
-      if (uniqueImported.length > 0) {
-        setNotice(`${uniqueImported.length} skill${uniqueImported.length === 1 ? " was" : "s were"} imported safely as ${uniqueImported.length === 1 ? "a draft" : "drafts"}.`);
+      const failedIds = outcomes.filter((outcome) => outcome.reason === "failed").map((outcome) => outcome.candidateId);
+      const reviewIds = outcomes.filter((outcome) => outcome.reason === "review").map((outcome) => outcome.candidateId);
+      const blockedIds = outcomes.filter((outcome) => outcome.reason === "blocked").map((outcome) => outcome.candidateId);
+      const importedCount = outcomes.filter((outcome) => outcome.reason === "imported").length;
+      const duplicateCount = outcomes.filter((outcome) => outcome.reason === "duplicate").length;
+      setSelectedCandidateIds(new Set([...failedIds, ...reviewIds, ...blockedIds]));
+      const notices: string[] = [];
+      if (importedCount > 0) {
+        notices.push(`${importedCount} skill${importedCount === 1 ? " was" : "s were"} imported safely as ${importedCount === 1 ? "a draft" : "drafts"}.`);
       }
+      if (duplicateCount > 0) notices.push(`${duplicateCount} already imported skill${duplicateCount === 1 ? " is" : "s are"} now visible in your Library.`);
+      if (notices.length > 0) setNotice(notices.join(" "));
       const warnings: string[] = [];
       if (reviewIds.length > 0) {
         warnings.push(`${reviewIds.length} selected skill${reviewIds.length === 1 ? " requires" : "s require"} individual review and ${reviewIds.length === 1 ? "was" : "were"} not imported.`);
@@ -172,7 +177,9 @@ export function PortableSkillsWorkspace({
       if (failedIds.length > 0) {
         warnings.push(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported.`);
       }
-      if (skippedCount > 0) warnings.push(`${skippedCount} already imported or blocked skill${skippedCount === 1 ? " was" : "s were"} skipped.`);
+      if (blockedIds.length > 0) {
+        warnings.push(`${blockedIds.length} skill${blockedIds.length === 1 ? " was" : "s were"} blocked by the safety review. Open ${blockedIds.length === 1 ? "it" : "each one"} to see what needs attention.`);
+      }
       if (warnings.length > 0) setWarning(warnings.join(" "));
     } catch (reason) {
       setError(featureErrorMessage(reason, "skill"));
@@ -246,7 +253,7 @@ export function PortableSkillsWorkspace({
         <p className="skill-review__authority">Imported permissions are never granted automatically.</p>
         <button aria-expanded={technicalOpen} className="skill-review__technical-toggle" onClick={() => setTechnicalOpen((open) => !open)} type="button">Technical package details</button>
         {technicalOpen ? <div className="skill-review__technical"><div className="skill-review__digest"><span>Immutable package digest</span><code title={preview.digest}>{preview.digest}</code></div><section className="skill-review__files"><h3>Package files</h3><p>Normalized paths copied into the Corvus-owned draft.</p><ul>{preview.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul></section></div> : null}
-        <footer><button className="button" onClick={() => setPreview(null)} type="button">Cancel</button><button className="button button--primary" disabled={busy || preview.compatibility === "blocked" || preview.duplicate === "exact"} onClick={() => void importSkill()} type="button">{preview.duplicate === "exact" ? "Already imported" : busy ? "Importing…" : "Import as draft"}</button></footer>
+        <footer><button className="button" onClick={() => setPreview(null)} type="button">Cancel</button><button className="button button--primary" disabled={busy || preview.compatibility === "blocked"} onClick={() => void importSkill()} type="button">{preview.duplicate === "exact" ? "Show in Library" : busy ? "Importing…" : "Import as draft"}</button></footer>
       </section>
     </div> : null}
   </section>;
