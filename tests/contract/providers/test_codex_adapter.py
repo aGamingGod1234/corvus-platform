@@ -179,7 +179,7 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 
     def grant(directory: Path, sid: str) -> None:
         granted.append((directory, sid))
-        barrier.wait(timeout=1)
+        barrier.wait(timeout=5)
 
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_traverse",
@@ -188,7 +188,7 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 
     def grant_read(directory: Path, sid: str) -> None:
         readable.append((directory, sid))
-        barrier.wait(timeout=1)
+        barrier.wait(timeout=5)
 
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_read",

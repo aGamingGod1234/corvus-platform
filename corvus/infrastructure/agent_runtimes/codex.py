@@ -222,7 +222,7 @@ def _workspace_traverse_boundaries(
         raise TrustedProcessError("Codex workspace is outside the managed worktree root")
     managed_root = worktrees_root.parent
     resolved_home = (home or _windows_profile_directory()).resolve(strict=True)
-    if home is None and os.name == "nt":
+    if home is None:
         local_data = managed_root.parent
         app_data = local_data.parent
         if (
