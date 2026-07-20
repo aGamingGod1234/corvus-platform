@@ -81,7 +81,13 @@ function ComposerSelect<T extends string>({
     return options[next]?.disabled ? from : next;
   }
 
-  return <div className={`composer-select ${className}`.trim()} ref={rootRef}>
+  return <div
+    className={`composer-select ${className}`.trim()}
+    onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+    }}
+    ref={rootRef}
+  >
     <button
       aria-controls={listboxId}
       aria-activedescendant={open ? `${listboxId}-option-${activeIndex}` : undefined}
@@ -116,7 +122,13 @@ function ComposerSelect<T extends string>({
       role="combobox"
       type="button"
     ><span>{selectedLabel}</span><span aria-hidden="true" className="composer-select__chevron">⌄</span></button>
-    {open ? <div aria-label={ariaLabel} className="composer-select__menu" id={listboxId} role="listbox">
+    {open ? <div
+      aria-label={ariaLabel}
+      className="composer-select__menu"
+      id={listboxId}
+      onPointerDown={(event) => event.preventDefault()}
+      role="listbox"
+    >
       {options.map((option, index) => <div
         aria-disabled={option.disabled || undefined}
         aria-label={option.label}

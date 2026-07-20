@@ -156,6 +156,21 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
   });
 
+  it("closes an open composer menu when keyboard focus leaves it", async () => {
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-menu-focus" experience="developer" />);
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    const provider = screen.getByRole("combobox", { name: "Agent provider" });
+
+    await user.click(provider);
+    expect(provider).toHaveAttribute("aria-expanded", "true");
+    await user.tab();
+
+    expect(provider).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveFocus();
+  });
+
   it("keeps a verified provider usable when only saved preferences fail to load", async () => {
     const stream = new FakeRunStream();
     const client = conversationApi(stream);

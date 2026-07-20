@@ -63,7 +63,7 @@
 .onboarding-create-actions { display: flex; gap: 0.75rem; justify-content: space-between; margin-top: 0.6rem; }
 .workspace-selection-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 2rem; }
 .workspace-selection-list .choice-card { grid-template-columns: 1fr; width: 100%; text-align: left; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .cloud-preview-panel,
 .local-launch-panel { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: clamp(1.4rem, 5vw, 3rem); background: var(--raised); }

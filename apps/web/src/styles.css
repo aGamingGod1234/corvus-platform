@@ -3,7 +3,7 @@
   background: oklch(94% 0.006 240);
   font-family: "Inter Tight Variable", "Segoe UI", sans-serif;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizelegibility;
   --paper: oklch(94% 0.006 240);
   --raised: oklch(98% 0.004 240);
   --ink: oklch(24% 0.008 240);
