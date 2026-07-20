@@ -2279,3 +2279,30 @@
 
 ### Automated Review Follow-up
 - Removed redundant Promise wrappers from the async rewrite-edge early returns without changing validation, status codes, response bodies, or forwarding behavior.
+
+## 2026-07-20 — Second Beta Desktop Release
+### What Was Implemented
+- Prepared the reviewed application state for the unsigned `v0.2.0-beta.2` desktop release.
+- Aligned the Windows, Linux, and macOS package versions and documented installer filenames.
+- Kept the existing protected release workflow responsible for native packaging, checksums, and the published GitHub prerelease.
+- Rebuilt the Windows sidecar and NSIS package locally; the 35,295,869-byte installer reports version `0.2.0-beta.2`, is intentionally unsigned, and has SHA-256 `B3C8E464BB600A5D921D6F5A0D60FABFB581841187C6288C6A62391655A7AA51`.
+
+### Files Modified
+- `apps/desktop/package.json` — desktop package version.
+- `apps/desktop/src-tauri/Cargo.toml` — Rust desktop package version.
+- `apps/desktop/src-tauri/Cargo.lock` — locked local package version.
+- `apps/desktop/src-tauri/tauri.conf.json` — Tauri bundle version.
+- `README.md` — current beta installer names and tag contract.
+- `HACKATHON_STATUS.md` — current unsigned Windows artifact status.
+- `PROJECT_LOG.md` — release preparation and verification record.
+
+### Assumptions Made (flag these for review)
+- “Second beta” maps to version `0.2.0-beta.2` and tag `v0.2.0-beta.2`.
+- The previously approved unsigned x64 release posture remains appropriate for this beta.
+
+### Known Issues / Deferred
+- Windows and macOS packages are unsigned; macOS is also unnotarized.
+- Linux and macOS artifacts require their native GitHub-hosted runners and cannot be reproduced natively on this Windows workstation.
+
+### Suggested Next Steps
+- Build and hash the Windows installer locally, merge the protected release-prep PR, push the reviewed tag, then verify every published release asset and checksum.

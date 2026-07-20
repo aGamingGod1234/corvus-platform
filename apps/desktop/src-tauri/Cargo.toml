@@ -1,6 +1,6 @@
 [package]
 name = "corvus-desktop"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 description = "Supervised desktop shell for the Corvus hackathon MVP"
 edition = "2024"
 rust-version = "1.85"

@@ -113,11 +113,11 @@ pnpm --dir apps/desktop tauri build --no-bundle
 
 Unsigned beta desktop installers are built by `.github/workflows/desktop-release.yml` for:
 
-- Windows x64 NSIS: `Corvus_0.2.0-beta.1_x64-setup.exe`
-- macOS x64 DMG: `Corvus_0.2.0-beta.1_x64.dmg`
-- Linux x64: `Corvus_0.2.0-beta.1_amd64.AppImage` and `Corvus_0.2.0-beta.1_amd64.deb`
+- Windows x64 NSIS: `Corvus_0.2.0-beta.2_x64-setup.exe`
+- macOS x64 DMG: `Corvus_0.2.0-beta.2_x64.dmg`
+- Linux x64: `Corvus_0.2.0-beta.2_amd64.AppImage` and `Corvus_0.2.0-beta.2_amd64.deb`
 
-The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A published, non-draft GitHub prerelease with `SHA256SUMS.txt` is created only when the reviewed `v0.2.0-beta.1` tag points to a commit already on `main`. Download the installers and `SHA256SUMS.txt` into the same directory, then run `sha256sum -c SHA256SUMS.txt`; the manifest uses portable filenames rather than workflow-internal paths.
+The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A published, non-draft GitHub prerelease with `SHA256SUMS.txt` is created only when the reviewed `v0.2.0-beta.2` tag points to a commit already on `main`. Download the installers and `SHA256SUMS.txt` into the same directory, then run `sha256sum -c SHA256SUMS.txt`; the manifest uses portable filenames rather than workflow-internal paths.
 
 These installers are intentionally unsigned beta artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and stable release channels remain later work.
 
