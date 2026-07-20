@@ -136,10 +136,10 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
 
     await _grant_windows_sandbox_preflight(workspace)
 
-    assert granted == [
+    assert set(granted) == {
         (workspace, logon_sid),
         *((directory, logon_sid) for directory in _workspace_traverse_boundaries(workspace)),
-    ]
+    }
     assert modified == [(workspace, user_sid)]
 
 

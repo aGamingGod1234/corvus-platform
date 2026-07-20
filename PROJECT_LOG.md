@@ -2368,3 +2368,22 @@
 
 ### Suggested Next Steps
 - Have reviewers inspect PR #12 and provision the documented hosted identity dependencies separately from this local desktop hardening milestone.
+
+## 2026-07-21 — PR #12 cross-platform certification repair
+### What Was Implemented
+- Updated the beta.2 branch from the latest `main`, incorporating the hardened managed-profile boundary logic without conflicts.
+- Replaced an order-sensitive ACL preflight assertion with an exact-set assertion so the test verifies granted authority rather than nondeterministic thread scheduling.
+
+### Files Modified
+- `tests/contract/providers/test_codex_adapter.py` — made the concurrent ACL-grant regression test platform-stable while preserving the exact security invariant.
+- `PROJECT_LOG.md` — recorded the CI failure diagnosis and repair evidence.
+
+### Assumptions Made (flag these for review)
+- ACL grants executed concurrently have no required ordering; only the exact directory/SID permission set is security-relevant.
+
+### Known Issues / Deferred
+- GitHub's complete Windows/macOS/Ubuntu certification matrix must confirm the repair after the branch is pushed.
+- Existing Python files from the beta.2 work do not currently satisfy `ruff format --check`; this repository's certification workflow uses `ruff check`, which passes. No unrelated bulk formatting was performed.
+
+### Suggested Next Steps
+- Push the repair, wait for required checks and CODEOWNER review, then merge without bypassing branch protection.
