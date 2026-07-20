@@ -110,6 +110,9 @@ class ScheduleRecord(MvpModel):
     skill_version_id: str | None
     output_policy: Literal["report_only", "prepare_changes", "prepare_contribution"]
     next_run_at: datetime | None
+    last_run_status: Literal["started", "skipped"] | None = None
+    last_run_reason: str | None = None
+    last_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -185,7 +188,19 @@ class ScheduleStore:
             row = connection.execute(
                 "SELECT s.*, r.id AS revision_id, r.version, r.repository_id, r.task, "
                 "r.recurrence_json, r.timezone, r.provider, r.model, r.effort, r.mode, "
-                "r.safety_digest, r.skill_version_id, r.output_policy, r.next_run_at "
+                "r.safety_digest, r.skill_version_id, r.output_policy, r.next_run_at, "
+                "(SELECT occurrence.status FROM mvp_schedule_occurrences occurrence "
+                "WHERE occurrence.schedule_revision_id = r.id "
+                "AND occurrence.status IN ('started', 'skipped') "
+                "ORDER BY occurrence.scheduled_for DESC LIMIT 1) AS last_run_status, "
+                "(SELECT occurrence.reason_code FROM mvp_schedule_occurrences occurrence "
+                "WHERE occurrence.schedule_revision_id = r.id "
+                "AND occurrence.status IN ('started', 'skipped') "
+                "ORDER BY occurrence.scheduled_for DESC LIMIT 1) AS last_run_reason, "
+                "(SELECT occurrence.scheduled_for FROM mvp_schedule_occurrences occurrence "
+                "WHERE occurrence.schedule_revision_id = r.id "
+                "AND occurrence.status IN ('started', 'skipped') "
+                "ORDER BY occurrence.scheduled_for DESC LIMIT 1) AS last_run_at "
                 "FROM mvp_schedules s JOIN mvp_schedule_revisions r "
                 "ON r.schedule_id = s.id AND r.version = s.current_revision "
                 "WHERE s.tenant_id = ? AND s.id = ?",
@@ -195,11 +210,14 @@ class ScheduleStore:
             raise ScheduleError("schedule_not_found")
         return self._record(row)
 
-    def list(self, tenant_id: str) -> tuple[ScheduleRecord, ...]:
+    def list(
+        self, tenant_id: str, *, limit: int = 1000, offset: int = 0
+    ) -> tuple[ScheduleRecord, ...]:
         with self.store.connect() as connection:
             ids = connection.execute(
-                "SELECT id FROM mvp_schedules WHERE tenant_id = ? ORDER BY updated_at DESC, id",
-                (tenant_id,),
+                "SELECT id FROM mvp_schedules WHERE tenant_id = ? "
+                "ORDER BY updated_at DESC, id LIMIT ? OFFSET ?",
+                (tenant_id, limit, offset),
             ).fetchall()
         return tuple(self.get(tenant_id, str(row["id"])) for row in ids)
 
@@ -271,7 +289,9 @@ class ScheduleStore:
         claim: ScheduleClaim,
         run_id: str | None,
         status: str = "started",
+        reason_code: str | None = None,
     ) -> None:
+        normalized_reason = reason_code[:100] if reason_code else None
         with self.store.transaction() as connection:
             occurrence = connection.execute(
                 "SELECT claimed_at FROM mvp_schedule_occurrences "
@@ -282,10 +302,16 @@ class ScheduleStore:
             if occurrence is None:
                 return
             cursor = connection.execute(
-                "UPDATE mvp_schedule_occurrences SET run_id = ?, status = ? "
+                "UPDATE mvp_schedule_occurrences SET run_id = ?, status = ?, reason_code = ? "
                 "WHERE schedule_revision_id = ? AND scheduled_for = ? "
                 "AND run_id IS NULL AND status = 'claimed'",
-                (run_id, status, claim.schedule.revision_id, claim.scheduled_for.isoformat()),
+                (
+                    run_id,
+                    status,
+                    normalized_reason,
+                    claim.schedule.revision_id,
+                    claim.scheduled_for.isoformat(),
+                ),
             )
             if cursor.rowcount != 1:
                 return
@@ -322,6 +348,15 @@ class ScheduleStore:
             output_policy=cast(Any, str(row["output_policy"])),
             next_run_at=datetime.fromisoformat(str(row["next_run_at"]))
             if row["next_run_at"]
+            else None,
+            last_run_status=cast(Any, str(row["last_run_status"]))
+            if row["last_run_status"]
+            else None,
+            last_run_reason=str(row["last_run_reason"])
+            if row["last_run_reason"]
+            else None,
+            last_run_at=datetime.fromisoformat(str(row["last_run_at"]))
+            if row["last_run_at"]
             else None,
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),

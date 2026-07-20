@@ -79,14 +79,15 @@ class ChangeReviewService:
             {
                 "path": item.path,
                 "previous_path": item.previous_path,
-                "status": item.status,
+                # An untracked file becomes staged-added without changing its
+                # contribution semantics. Keep the digest stable across that
+                # safe staging transition so post-stage revalidation compares
+                # content rather than Git's transient index label.
+                "status": "added" if item.status == "untracked" else item.status,
                 "binary": item.binary,
-                "patch_sha256": (
-                    hashlib.sha256(item.patch.encode("utf-8")).hexdigest()
-                    if item.patch is not None
-                    else None
-                ),
-                "patch_truncated": item.patch_truncated,
+                # Bind the complete file/blob identity. Patch rendering differs
+                # for an untracked file before and after `git add`, and may be
+                # truncated for display, while content_identity remains exact.
                 "content_identity": self._content_identity(root, item.status, item.path),
             }
             for item in files

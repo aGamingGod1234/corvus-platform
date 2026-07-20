@@ -370,8 +370,9 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
         "read-only",
         "--skip-git-repo-check",
     )
-    assert starter.invocation.arguments[-1] == request.prompt
-    assert starter.invocation.stdin is None
+    assert starter.invocation.arguments[-1] == "-"
+    assert request.prompt not in starter.invocation.arguments
+    assert starter.invocation.stdin == request.prompt.encode("utf-8")
     assert starter.invocation.cwd.parent == tmp_path / "runs"
     assert starter.invocation.limits.timeout_seconds <= 120
     assert [event.event_type for event in events] == [
@@ -382,6 +383,25 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
     ]
     assert events[1].redacted_payload == {"text": "hello"}
     assert start.handle.state is AgentRunState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_keeps_large_prompts_out_of_windows_process_arguments(
+    tmp_path: Path,
+) -> None:
+    adapter, starter = _adapter(tmp_path, ())
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    prompt = "x" * 40_000
+    request = _request(binding.binding.id, binding.binding_digest).model_copy(
+        update={"prompt": prompt}
+    )
+
+    await adapter.start(request)
+
+    assert starter.invocation is not None
+    assert starter.invocation.arguments[-1] == "-"
+    assert prompt not in starter.invocation.arguments
+    assert starter.invocation.stdin == prompt.encode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -614,6 +634,11 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
         assert starter.invocation.arguments[feature_index - 1] == "--disable"
     if os.name == "nt":
         assert 'windows.sandbox="unelevated"' in starter.invocation.arguments
+    assert starter.invocation.arguments[-1] == "-"
+    assert starter.invocation.stdin is not None
+    assert starter.invocation.stdin.decode("utf-8").endswith(
+        "User request:\nBuild a complete small project."
+    )
     assert [event.event_type for event in events] == [
         AgentRunEventType.STARTED,
         AgentRunEventType.CHECKPOINT,
@@ -622,7 +647,13 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
         AgentRunEventType.ARTIFACT,
         AgentRunEventType.COMPLETED,
     ]
-    assert events[1].redacted_payload == {"activity": "command", "status": "started"}
+    assert events[1].redacted_payload == {
+        "activity": "command",
+        "label": "Run command",
+        "status": "started",
+        "tool_id": "tool-1",
+    }
+    assert "do-not-expose-this-command" not in str(events[1].redacted_payload)
     assert "do-not-expose-this-command" not in repr(events)
     artifact = adapter.artifact(start.handle)
     assert artifact is not None

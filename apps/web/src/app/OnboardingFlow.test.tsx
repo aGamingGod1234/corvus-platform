@@ -37,7 +37,7 @@ describe("OnboardingFlow", () => {
     const onGoogleStart = vi.fn();
     render(<OnboardingFlow {...onboardingProps({ authStatus: "unauthenticated", onGoogleStart })} />);
 
-    expect(screen.getByRole("heading", { name: "Start with your Corvus identity" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Welcome to Corvus" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue with Google" })).toHaveAttribute(
       "data-action",
       "sign-in-google"
@@ -48,7 +48,7 @@ describe("OnboardingFlow", () => {
     expect(onGoogleStart).toHaveBeenCalledOnce();
   });
 
-  it("resumes from server experience truth and saves an exact expected version", async () => {
+  it("combines profile choices and saves an exact expected experience version", async () => {
     const onExperienceSaved = vi
       .fn()
       .mockResolvedValue({ experience_kind: "developer", version: 5 });
@@ -58,16 +58,16 @@ describe("OnboardingFlow", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("radio", { name: /Developer/ }));
+    await user.click(screen.getByRole("radio", { name: /Individual/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(onExperienceSaved).toHaveBeenCalledWith("developer", 4);
-    await screen.findByRole("heading", { name: "Who is this workspace for?" });
+    expect(await screen.findByRole("heading", { name: "Choose protection and runtime" })).toHaveFocus();
 
     rerender(
       <OnboardingFlow
         {...onboardingProps({ experienceKind: "developer", onExperienceSaved })}
       />
     );
-    expect(screen.getByRole("heading", { name: "Who is this workspace for?" })).toBeVisible();
     expect(screen.queryByRole("radio", { name: /Everyday/ })).not.toBeInTheDocument();
   });
 
@@ -85,16 +85,14 @@ describe("OnboardingFlow", () => {
 
     await user.click(screen.getByRole("radio", { name: /Team/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByRole("heading", { name: "How much safety guidance do you want?" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Choose protection and runtime" })).toBeVisible();
     await user.click(screen.getByRole("radio", { name: /Detailed guidance/ }));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByRole("radio", { name: /Cloud Preview/ })).toBeDisabled();
-    await user.click(screen.getByRole("radio", { name: /Local/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
     await user.type(screen.getByRole("textbox", { name: "Workspace name" }), "Platform team");
-    expect(screen.getByRole("button", { name: "Join workspace" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Create team workspace" }));
+    expect(screen.getByText("Joining an existing workspace is not available yet.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Create workspace" }));
 
     expect(onCreateWorkspace).toHaveBeenCalledWith(
       { name: "Platform team", workspace_kind: "team" },
@@ -117,19 +115,16 @@ describe("OnboardingFlow", () => {
 
     await user.click(screen.getByRole("radio", { name: /Individual/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByRole("radio", { name: /Standard guidance/ }));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByRole("radio", { name: /Local/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.type(screen.getByRole("textbox", { name: "Workspace name" }), "Corvus field desk");
-    await user.click(screen.getByRole("button", { name: "Create individual workspace" }));
+    await user.click(screen.getByRole("button", { name: "Create workspace" }));
 
     const error = await screen.findByRole("alert");
     expect(error).toHaveFocus();
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue("Corvus field desk");
     const firstKey = onCreateWorkspace.mock.calls[0][1];
 
-    await user.click(screen.getByRole("button", { name: "Create individual workspace" }));
+    await user.click(screen.getByRole("button", { name: "Create workspace" }));
     await waitFor(() => expect(onWorkspaceConfirmed).toHaveBeenCalledWith(WORKSPACE));
     expect(onCreateWorkspace.mock.calls[1][1]).toBe(firstKey);
   });

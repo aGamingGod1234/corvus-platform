@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from corvus.mvp.core import DomainNotFound
 from corvus.mvp.run_coordinator import RunCoordinator, RunCoordinatorConflict
 from corvus.mvp.run_models import RunRecord, StartRunRequest
-from corvus.mvp.run_store import RunStoreNotFound
+from corvus.mvp.run_store import RunStoreConflict, RunStoreNotFound
 from corvus.mvp.schedules import ScheduleClaim, ScheduleRecord, ScheduleStore
 
 
@@ -19,8 +20,24 @@ class LocalScheduler:
         for claim in self.schedules.claim_due(now or datetime.now(UTC)):
             try:
                 run = await self._start_claim(claim)
-            except (RunCoordinatorConflict, DomainNotFound, RunStoreNotFound):
-                self.schedules.attach_run(claim, None, "skipped")
+            except RunStoreConflict as error:
+                if str(error) != "run_occurrence_exists":
+                    self.schedules.attach_run(claim, None, "skipped", str(error))
+                    continue
+                occurrence_key = self._occurrence_key(claim)
+                try:
+                    run = self.runs.runs.for_occurrence(
+                        claim.schedule.tenant_id,
+                        claim.schedule.id,
+                        occurrence_key,
+                    )
+                except RunStoreNotFound:
+                    self.schedules.attach_run(
+                        claim, None, "skipped", "scheduled_run_recovery_failed"
+                    )
+                    continue
+            except (RunCoordinatorConflict, DomainNotFound, RunStoreNotFound) as error:
+                self.schedules.attach_run(claim, None, "skipped", str(error))
                 continue
             self.schedules.attach_run(claim, run.id)
             run_ids.append(run.id)
@@ -30,14 +47,26 @@ class LocalScheduler:
         schedule = self.schedules.get(tenant_id, schedule_id)
         if schedule.status == "archived":
             raise RunCoordinatorConflict("schedule_archived")
-        return await self.runs.start(tenant_id, self._request(schedule, occurrence_key=None))
+        try:
+            return await self.runs.start(
+                tenant_id,
+                self._request(schedule, occurrence_key=f"manual:{uuid4()}"),
+            )
+        except RunStoreConflict as exc:
+            if str(exc) == "run_occurrence_exists":
+                raise RunCoordinatorConflict("schedule_run_already_active") from exc
+            raise
 
     async def _start_claim(self, claim: ScheduleClaim) -> RunRecord:
-        occurrence_key = f"{claim.schedule.revision_id}:{claim.scheduled_for.isoformat()}"
+        occurrence_key = self._occurrence_key(claim)
         return await self.runs.start(
             claim.schedule.tenant_id,
             self._request(claim.schedule, occurrence_key=occurrence_key),
         )
+
+    @staticmethod
+    def _occurrence_key(claim: ScheduleClaim) -> str:
+        return f"{claim.schedule.revision_id}:{claim.scheduled_for.isoformat()}"
 
     @staticmethod
     def _request(schedule: ScheduleRecord, occurrence_key: str | None) -> StartRunRequest:

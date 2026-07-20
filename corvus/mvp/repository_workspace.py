@@ -102,14 +102,16 @@ class RepositoryWorkspaceService:
             raise DomainConflict("repository_already_registered") from exc
         return self.refresh(tenant_id, repository_id)
 
-    def list(self, tenant_id: str) -> tuple[RepositoryRecord, ...]:
+    def list(
+        self, tenant_id: str, *, limit: int = 1000, offset: int = 0
+    ) -> tuple[RepositoryRecord, ...]:
         with self.store.connect() as connection:
             rows = connection.execute(
                 "SELECT r.*, s.branch, s.head_sha, s.clean, s.ahead, s.behind, s.health, "
                 "s.refreshed_at FROM mvp_repositories r "
                 "JOIN mvp_repository_snapshots s ON s.repository_id = r.id "
-                "WHERE r.tenant_id = ? ORDER BY r.updated_at DESC, r.id",
-                (tenant_id,),
+                "WHERE r.tenant_id = ? ORDER BY r.updated_at DESC, r.id LIMIT ? OFFSET ?",
+                (tenant_id, limit, offset),
             ).fetchall()
         return tuple(self._record(row) for row in rows)
 
@@ -260,7 +262,16 @@ class RepositoryWorkspaceService:
         if scp_match is not None:
             return scp_match.group("slug")
         parsed = urlparse(remote)
-        if parsed.hostname is None or parsed.hostname.lower() != "github.com":
+        if (
+            parsed.scheme.lower() not in {"https", "ssh"}
+            or parsed.hostname is None
+            or parsed.hostname.lower() != "github.com"
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        if parsed.scheme.lower() == "https" and parsed.username is not None:
             return None
         slug = parsed.path.strip("/").removesuffix(".git")
         if len(slug.split("/")) != 2:

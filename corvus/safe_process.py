@@ -354,6 +354,7 @@ async def _run(
     cwd: Path,
     timeout_seconds: float,
     env: Mapping[str, str] | None,
+    max_output_bytes: int,
 ) -> TrustedProcessResult:
     process = await asyncio.create_subprocess_exec(
         *argv,
@@ -363,19 +364,47 @@ async def _run(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    stdout = bytearray()
+    stderr = bytearray()
+    total = [0]
+
+    async def read_stream(
+        reader: asyncio.StreamReader | None,
+        destination: bytearray,
+    ) -> None:
+        if reader is None:
+            raise TrustedProcessError("trusted process pipes are unavailable")
+        while True:
+            chunk = await reader.read(64 * 1024)
+            if not chunk:
+                return
+            total[0] += len(chunk)
+            if total[0] > max_output_bytes:
+                raise TrustedProcessError("trusted process exceeded its output limit")
+            destination.extend(chunk)
+
+    tasks = (
+        asyncio.create_task(read_stream(process.stdout, stdout)),
+        asyncio.create_task(read_stream(process.stderr, stderr)),
+        asyncio.create_task(process.wait()),
+    )
     try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=timeout_seconds,
-        )
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout_seconds)
     except TimeoutError as exc:
-        process.kill()
-        await process.wait()
+        await _direct_process_cleanup(process)
         raise TrustedProcessError("trusted process timed out") from exc
+    except BaseException:
+        await _direct_process_cleanup(process)
+        raise
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     return TrustedProcessResult(
         returncode=int(process.returncode or 0),
-        stdout=stdout,
-        stderr=stderr,
+        stdout=bytes(stdout),
+        stderr=bytes(stderr),
     )
 
 
@@ -385,12 +414,21 @@ def _run_in_thread(
     cwd: Path,
     timeout_seconds: float,
     env: Mapping[str, str] | None,
+    max_output_bytes: int,
 ) -> TrustedProcessResult:
     outcomes: Queue[_ThreadOutcome] = Queue(maxsize=1)
 
     def target() -> None:
         try:
-            result = asyncio.run(_run(argv, cwd=cwd, timeout_seconds=timeout_seconds, env=env))
+            result = asyncio.run(
+                _run(
+                    argv,
+                    cwd=cwd,
+                    timeout_seconds=timeout_seconds,
+                    env=env,
+                    max_output_bytes=max_output_bytes,
+                )
+            )
         except BaseException as exc:
             outcomes.put((None, exc))
         else:
@@ -415,6 +453,7 @@ def run_trusted_argv(
     cwd: Path,
     timeout_seconds: float = 60,
     env: Mapping[str, str] | None = None,
+    max_output_bytes: int = 2 * 1024 * 1024,
 ) -> TrustedProcessResult:
     arguments = tuple(argv)
     if not arguments or any(not item or "\0" in item for item in arguments):
@@ -427,6 +466,8 @@ def run_trusted_argv(
         raise TrustedProcessError("trusted process working directory is unavailable")
     if timeout_seconds <= 0:
         raise TrustedProcessError("trusted process timeout must be positive")
+    if max_output_bytes <= 0:
+        raise TrustedProcessError("trusted process output limit must be positive")
     normalized = (os.fspath(executable.resolve(strict=True)), *arguments[1:])
     try:
         asyncio.get_running_loop()
@@ -437,6 +478,7 @@ def run_trusted_argv(
                 cwd=working_directory,
                 timeout_seconds=timeout_seconds,
                 env=env,
+                max_output_bytes=max_output_bytes,
             )
         )
     return _run_in_thread(
@@ -444,4 +486,5 @@ def run_trusted_argv(
         cwd=working_directory,
         timeout_seconds=timeout_seconds,
         env=env,
+        max_output_bytes=max_output_bytes,
     )

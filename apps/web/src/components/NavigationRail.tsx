@@ -82,10 +82,6 @@ export function NavigationRail({
         selectionRequired={selectionRequired}
         workspaces={workspaces}
       />
-      <div className="profile-caption">
-        <span>{profile.eyebrow}</span>
-        <strong>{profile.label}</strong>
-      </div>
       <nav aria-label={`${profile.label} navigation`} className="profile-navigation">
         {profile.routes.map((route) => (
           <a

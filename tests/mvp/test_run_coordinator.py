@@ -199,6 +199,44 @@ async def test_cancel_terminates_only_owned_backend_handle(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_run_pump_failure_cancels_provider_before_marking_failed(tmp_path: Path) -> None:
+    backend = FakeBackend(gated=True)
+    coordinator, repository, runs = _coordinator(tmp_path, backend)
+
+    async def fail_notification(_event):  # type: ignore[no-untyped-def]
+        raise RuntimeError("notification failed")
+
+    coordinator.event_notifier = fail_notification
+    started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    terminal = await coordinator.wait("local", started.id)
+
+    assert backend.cancelled is True
+    assert terminal.status == RunStatus.FAILED
+    failure = runs.events("local", started.id)[-1]
+    assert failure.event_type == "runtime.failed"
+    assert failure.payload == {
+        "reason_code": "run_event_pump_failed",
+        "provider_stop_accepted": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_pump_task_cancellation_propagates_after_stopping_provider(tmp_path: Path) -> None:
+    backend = FakeBackend(gated=True)
+    coordinator, repository, runs = _coordinator(tmp_path, backend)
+    started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
+    task = coordinator._tasks[started.id]
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert backend.cancelled is True
+    assert runs.get("local", started.id).status == RunStatus.INTERRUPTED
+
+
+@pytest.mark.asyncio
 async def test_retry_creates_new_worktree_with_lineage(tmp_path: Path) -> None:
     first_backend = FakeBackend(change_file=False)
     coordinator, repository, runs = _coordinator(tmp_path, first_backend)

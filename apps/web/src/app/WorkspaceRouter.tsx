@@ -10,7 +10,7 @@ interface WorkspaceRouterProps {
   projectName: string | null;
 }
 
-const EXECUTION_ROUTES = new Set(["repositories", "threads", "changes", "runs", "my-work"]);
+const EXECUTION_ROUTES = new Set(["repositories", "threads", "runs"]);
 const OPERATIONS_ROUTES = new Set(["skills"]);
 
 export function WorkspaceRouter({
@@ -20,13 +20,25 @@ export function WorkspaceRouter({
   profile,
   projectName
 }: WorkspaceRouterProps) {
-  const route = profile.routes.find((candidate) => candidate.id === activeRoute) ?? profile.routes[0];
+  const route = profile.routes.find((candidate) => candidate.id === activeRoute);
   const teamNotice = profile.workspaceKind === "team" ? (
     <p className="capability-notice" role="status">
       <strong>Team features require a shared workspace capability.</strong>
       This profile previews the team information architecture without creating members or permissions.
     </p>
   ) : null;
+
+  if (route === undefined) {
+    return (
+      <section className="workspace-landing">
+        <p className="eyebrow">Unavailable route</p>
+        <h1>View unavailable</h1>
+        <p className="workspace-lede">
+          This view is not part of the current workspace. Choose an available destination from the navigation.
+        </p>
+      </section>
+    );
+  }
 
   let surface: ReactNode;
   if (route.id === "settings") {

@@ -13,7 +13,7 @@ type WorkspaceCreate = components["schemas"]["WorkspaceCreate"];
 type WorkspaceKind = components["schemas"]["WorkspaceKind"];
 
 type AuthEntryStatus = Extract<AuthStatus, "unauthenticated" | "authenticated">;
-type OnboardingStep = "experience" | "workspace" | "safety" | "runtime" | "create";
+type OnboardingStep = "profile" | "protection" | "create";
 
 export interface OnboardingFlowProps {
   accountVersion: number;
@@ -76,7 +76,7 @@ const SAFETY_CHOICES: readonly Choice<SafetyGuidance>[] = [
   }
 ];
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 3;
 
 function messageFor(reason: unknown): string {
   if (!(reason instanceof Error)) return "Workspace setup could not be completed. Try again.";
@@ -84,7 +84,7 @@ function messageFor(reason: unknown): string {
 }
 
 function stepNumber(step: OnboardingStep): number {
-  return { experience: 1, workspace: 2, safety: 3, runtime: 4, create: 5 }[step];
+  return { profile: 1, protection: 2, create: 3 }[step];
 }
 
 export function OnboardingFlow({
@@ -103,9 +103,7 @@ export function OnboardingFlow({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const idempotencyKeyRef = useRef<string | null>(null);
-  const [step, setStep] = useState<OnboardingStep>(
-    experienceKind === null ? "experience" : "workspace"
-  );
+  const [step, setStep] = useState<OnboardingStep>("profile");
   const [experience, setExperience] = useState<ExperienceKind | null>(
     experienceKind ?? preselection?.experience ?? null
   );
@@ -113,9 +111,9 @@ export function OnboardingFlow({
     preselection?.workspaceKind ?? null
   );
   const [runtime, setRuntime] = useState<"local" | null>(
-    preselection?.runtimePreselection === "local" ? "local" : null
+    preselection?.runtimePreselection === "cloud_preview" ? null : "local"
   );
-  const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance | null>(null);
+  const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance | null>("standard");
   const [workspaceName, setWorkspaceName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,7 +121,6 @@ export function OnboardingFlow({
   useEffect(() => {
     if (experienceKind !== null) {
       setExperience(experienceKind);
-      setStep((current) => (current === "experience" ? "workspace" : current));
     }
   }, [experienceKind]);
 
@@ -145,9 +142,9 @@ export function OnboardingFlow({
       >
         <section className="onboarding-panel onboarding-panel--identity" aria-labelledby="identity-heading">
           <BrandLockup className="onboarding-wordmark" />
-          <p className="eyebrow">Identity first</p>
-          <h1 id="identity-heading">Start with your Corvus identity</h1>
-          <p className="onboarding-lede">Use the same governed workspace on your signed-in devices.</p>
+          <p className="eyebrow">Safety-first agent</p>
+          <h1 id="identity-heading" ref={headingRef} tabIndex={-1}>Welcome to Corvus</h1>
+          <p className="onboarding-lede">Turn local work into reviewable results with protected runs and explicit approval.</p>
           <button
             className="button button--primary onboarding-google"
             data-action="sign-in-google"
@@ -162,25 +159,24 @@ export function OnboardingFlow({
     );
   }
 
-  const heading =
-    step === "experience"
-      ? "How do you want Corvus to work with you?"
-      : step === "workspace"
-        ? "Who is this workspace for?"
-        : step === "safety"
-          ? "How much safety guidance do you want?"
-          : step === "runtime"
-            ? "Where should Corvus run?"
-            : "Name your workspace";
+  const heading = step === "profile"
+    ? "Set up your workspace"
+    : step === "protection"
+      ? "Choose protection and runtime"
+      : "Create your workspace";
 
-  async function continueExperience() {
-    if (experience === null) return;
+  async function continueProfile() {
+    if (experience === null || workspaceKind === null) return;
+    if (experienceKind !== null) {
+      setStep("protection");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const saved = await onExperienceSaved(experience, accountVersion);
       setExperience(saved.experience_kind);
-      setStep("workspace");
+      setStep("protection");
     } catch (reason) {
       setError(messageFor(reason));
     } finally {
@@ -214,16 +210,13 @@ export function OnboardingFlow({
   function back() {
     setError(null);
     setStep((current) => {
-      if (current === "create") return "runtime";
-      if (current === "runtime") return "safety";
-      if (current === "safety") return "workspace";
-      if (current === "workspace" && experienceKind === null) return "experience";
+      if (current === "create") return "protection";
+      if (current === "protection") return "profile";
       return current;
     });
   }
 
-  const canGoBack =
-    step === "create" || step === "runtime" || step === "safety" || (step === "workspace" && experienceKind === null);
+  const canGoBack = step !== "profile";
 
   return (
     <main
@@ -236,30 +229,26 @@ export function OnboardingFlow({
         <BrandLockup className="onboarding-wordmark" />
         <div className="onboarding-progress" aria-live="polite">
           <span>Step {stepNumber(step)} of {TOTAL_STEPS}</span>
-          <span>Server-backed setup</span>
         </div>
         {error !== null && <div className="setup-error" ref={errorRef} role="alert" tabIndex={-1}>{error}</div>}
         <h1 id="onboarding-heading" ref={headingRef} tabIndex={-1}>{heading}</h1>
 
-        {step === "experience" && (
-          <ChoiceGroup<ExperienceKind>
-            choices={EXPERIENCE_CHOICES}
-            dataChoice="experience"
-            groupName={`${groupName}-experience`}
-            heading={heading}
-            onChoose={setExperience}
-            selected={experience}
-          />
-        )}
-
-        {step === "workspace" && (
+        {step === "profile" && (
           <>
-            <p className="onboarding-lede">This changes presentation, not membership or authority.</p>
+            <p className="onboarding-lede">Choose how Corvus presents work and who owns this workspace. Neither choice grants new authority.</p>
+            {experienceKind === null ? <ChoiceGroup<ExperienceKind>
+              choices={EXPERIENCE_CHOICES}
+              dataChoice="experience"
+              groupName={`${groupName}-experience`}
+              label="Experience"
+              onChoose={setExperience}
+              selected={experience}
+            /> : <div className="onboarding-fixed-choice"><span>Experience</span><strong>{experienceKind === "developer" ? "Developer" : "Everyday"}</strong></div>}
             <ChoiceGroup<WorkspaceKind>
               choices={WORKSPACE_CHOICES}
               dataChoice="workspace-type"
               groupName={`${groupName}-workspace`}
-              heading={heading}
+              label="Workspace"
               onChoose={(value) => {
                 idempotencyKeyRef.current = null;
                 setWorkspaceKind(value);
@@ -269,44 +258,47 @@ export function OnboardingFlow({
           </>
         )}
 
-        {step === "safety" && (
+        {step === "protection" && (
           <>
-            <p className="onboarding-lede">This changes how Corvus explains its protection, never the protection itself.</p>
+            <p className="onboarding-lede">Guidance changes what Corvus explains. Every run keeps the same enforced protection.</p>
             <ChoiceGroup<SafetyGuidance>
               choices={SAFETY_CHOICES}
               dataChoice="safety-guidance"
               groupName={`${groupName}-safety`}
-              heading={heading}
+              label="Safety guidance"
               onChoose={setSafetyGuidance}
               selected={safetyGuidance}
             />
+            <fieldset className="onboarding-choice-list" data-choice="runtime-policy">
+              <legend>Runtime</legend>
+              <label className={`onboarding-choice ${runtime === "local" ? "onboarding-choice--selected" : ""}`}>
+                <input checked={runtime === "local"} name={`${groupName}-runtime`} onChange={() => setRuntime("local")} type="radio" value="local" />
+                <span className="onboarding-choice__marker" aria-hidden="true" />
+                <span><strong>Local</strong><small>Available now through your paired runtime.</small></span>
+              </label>
+              <label className="onboarding-choice onboarding-choice--disabled">
+                <input disabled name={`${groupName}-runtime`} type="radio" value="cloud" />
+                <span className="onboarding-choice__marker" aria-hidden="true" />
+                <span><strong>Cloud Preview</strong><small>Visible for planning, but execution is not available.</small></span>
+              </label>
+              {preselection?.runtimePreselection === "cloud_preview" && (
+                <p className="setup-notice" role="status">
+                  Your previous Cloud choice remains Preview only. Choose Local to continue.
+                  {onDismissMigration && <button className="text-button" onClick={onDismissMigration} type="button">Dismiss previous setup</button>}
+                </p>
+              )}
+            </fieldset>
           </>
-        )}
-
-        {step === "runtime" && (
-          <fieldset className="choice-grid" data-choice="runtime-policy">
-            <legend className="sr-only">{heading}</legend>
-            <label className={`choice-card ${runtime === "local" ? "choice-card--selected" : ""}`}>
-              <input checked={runtime === "local"} name={`${groupName}-runtime`} onChange={() => setRuntime("local")} type="radio" value="local" />
-              <span className="choice-card__marker" aria-hidden="true" />
-              <span><strong>Local</strong><small> — Available now through your paired local runtime.</small></span>
-            </label>
-            <label className="choice-card choice-card--disabled">
-              <input disabled name={`${groupName}-runtime`} type="radio" value="cloud" />
-              <span className="choice-card__marker" aria-hidden="true" />
-              <span><strong>Cloud Preview</strong><small> — Preview only. Cloud execution is not available yet.</small></span>
-            </label>
-            {preselection?.runtimePreselection === "cloud_preview" && (
-              <p className="setup-notice" role="status">
-                Your previous Cloud choice is preserved as Preview only. Choose Local to continue.
-                {onDismissMigration && <button className="text-button" onClick={onDismissMigration} type="button">Dismiss previous setup</button>}
-              </p>
-            )}
-          </fieldset>
         )}
 
         {step === "create" && (
           <div className="workspace-create-form">
+            <p className="onboarding-lede">Name the workspace Corvus will use on this device.</p>
+            <dl className="onboarding-summary">
+              <div><dt>Profile</dt><dd>{experience === "developer" ? "Developer" : "Everyday"} / {workspaceKind === "team" ? "Team" : "Individual"}</dd></div>
+              <div><dt>Protection</dt><dd>{safetyGuidance === "detailed" ? "Detailed guidance" : "Standard guidance"}</dd></div>
+              <div><dt>Runtime</dt><dd>Local</dd></div>
+            </dl>
             <label htmlFor="workspace-name">Workspace name</label>
             <input
               id="workspace-name"
@@ -323,6 +315,7 @@ export function OnboardingFlow({
                 : "This creates your authorized Individual workspace."}
             </p>
             <div className="onboarding-create-actions">
+              <button className="button button--quiet" disabled={busy} onClick={back} type="button">Back</button>
               <button
                 className="button button--primary"
                 data-action="create-workspace"
@@ -331,18 +324,10 @@ export function OnboardingFlow({
                 onClick={() => void createWorkspace()}
                 type="button"
               >
-                Create {workspaceKind} workspace
-              </button>
-              <button
-                className="button button--quiet"
-                data-action="join-workspace"
-                disabled
-                title="Workspace invitations are not available yet"
-                type="button"
-              >
-                Join workspace
+                Create workspace
               </button>
             </div>
+            <p className="choice-footnote">Joining an existing workspace is not available yet.</p>
           </div>
         )}
 
@@ -354,15 +339,11 @@ export function OnboardingFlow({
               data-component-source="shadcn-button"
               disabled={
                 busy ||
-                (step === "experience" && experience === null) ||
-                (step === "workspace" && workspaceKind === null) ||
-                (step === "safety" && safetyGuidance === null) ||
-                (step === "runtime" && runtime === null)
+                (step === "profile" && (experience === null || workspaceKind === null)) ||
+                (step === "protection" && (safetyGuidance === null || runtime === null))
               }
               onClick={() => {
-                if (step === "experience") void continueExperience();
-                else if (step === "workspace") setStep("safety");
-                else if (step === "safety") setStep("runtime");
+                if (step === "profile") void continueProfile();
                 else setStep("create");
               }}
               type="button"
@@ -380,25 +361,25 @@ function ChoiceGroup<T extends string>({
   choices,
   dataChoice,
   groupName,
-  heading,
+  label,
   onChoose,
   selected
 }: {
   choices: readonly Choice<T>[];
   dataChoice: string;
   groupName: string;
-  heading: string;
+  label: string;
   onChoose(value: T): void;
   selected: T | null;
 }) {
   return (
-    <fieldset className="choice-grid" data-choice={dataChoice}>
-      <legend className="sr-only">{heading}</legend>
+    <fieldset className="onboarding-choice-list" data-choice={dataChoice}>
+      <legend>{label}</legend>
       {choices.map((choice) => (
-        <label className={`choice-card ${selected === choice.value ? "choice-card--selected" : ""}`} key={choice.value}>
+        <label className={`onboarding-choice ${selected === choice.value ? "onboarding-choice--selected" : ""}`} key={choice.value}>
           <input checked={selected === choice.value} name={groupName} onChange={() => onChoose(choice.value)} type="radio" value={choice.value} />
-          <span className="choice-card__marker" aria-hidden="true" />
-          <span><strong>{choice.title}</strong><small> — {choice.description}</small></span>
+          <span className="onboarding-choice__marker" aria-hidden="true" />
+          <span><strong>{choice.title}</strong><small>{choice.description}</small></span>
         </label>
       ))}
     </fieldset>

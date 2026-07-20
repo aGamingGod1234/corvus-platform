@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -19,10 +20,15 @@ import type {
 } from "./conversationApi";
 import { loadDeviceThreads, saveDeviceThreads, type DeviceThread } from "./conversationStorage";
 import { loadDevicePreferences } from "./devicePreferences";
+import { featureErrorMessage } from "./featureFeedback";
 import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
 type Experience = "developer" | "everyday";
 type RunStatus = "idle" | "working" | "completed" | "cancelled" | "failed";
+type ToolActivity = { id: string; label: string; status: "started" | "completed" };
+type ModelUsage = { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number };
+type AssistantChunkKind = "block" | "continuation";
+type ComposerOption<T extends string> = { value: T; label: string; description?: string; disabled?: boolean };
 const TITLE_MAX = 72;
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
   low: "Low",
@@ -34,6 +40,96 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
 
 function MarkdownMessage({ children }: { children: string }) {
   return <div className="message-markdown"><ReactMarkdown rehypePlugins={[rehypeSanitize]} remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown></div>;
+}
+
+function ComposerSelect<T extends string>({
+  ariaLabel,
+  className = "",
+  disabled = false,
+  onChange,
+  options,
+  value
+}: {
+  ariaLabel: string;
+  className?: string;
+  disabled?: boolean;
+  onChange(value: T): void;
+  options: readonly ComposerOption<T>[];
+  value: T;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
+  const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
+  const selectedLabel = options[selectedIndex]?.label ?? value;
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+
+  function nextEnabledIndex(from: number, delta: number): number {
+    if (options.length === 0) return 0;
+    let next = from;
+    do { next = (next + delta + options.length) % options.length; }
+    while (options[next]?.disabled && next !== from);
+    return options[next]?.disabled ? from : next;
+  }
+
+  return <div className={`composer-select ${className}`.trim()} ref={rootRef}>
+    <button
+      aria-controls={listboxId}
+      aria-activedescendant={open ? `${listboxId}-option-${activeIndex}` : undefined}
+      aria-expanded={open}
+      aria-haspopup="listbox"
+      aria-label={ariaLabel}
+      className="composer-select__trigger"
+      disabled={disabled}
+      onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { setOpen(false); return; }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          setActiveIndex((current) => nextEnabledIndex(open ? current : selectedIndex, direction));
+          setOpen(true);
+          return;
+        }
+        if (open && (event.key === "Home" || event.key === "End")) {
+          event.preventDefault();
+          const edge = event.key === "Home" ? 0 : options.length - 1;
+          setActiveIndex(options[edge]?.disabled ? nextEnabledIndex(edge, event.key === "Home" ? 1 : -1) : edge);
+          return;
+        }
+        if (open && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          const option = options[activeIndex];
+          if (option && !option.disabled) onChange(option.value);
+          setOpen(false);
+        }
+      }}
+      role="combobox"
+      type="button"
+    ><span>{selectedLabel}</span><span aria-hidden="true" className="composer-select__chevron">⌄</span></button>
+    {open ? <div aria-label={ariaLabel} className="composer-select__menu" id={listboxId} role="listbox">
+      {options.map((option, index) => <div
+        aria-disabled={option.disabled || undefined}
+        aria-label={option.label}
+        aria-selected={option.value === value}
+        data-active={index === activeIndex || undefined}
+        id={`${listboxId}-option-${index}`}
+        key={option.value}
+        onClick={() => { if (option.disabled) return; onChange(option.value); setOpen(false); }}
+        onPointerMove={() => { if (!option.disabled) setActiveIndex(index); }}
+        role="option"
+      ><span>{option.label}</span>{option.description ? <small>{option.description}</small> : null}</div>)}
+    </div> : null}
+  </div>;
 }
 
 function Icon({ name }: { name: "history" | "new" | "send" | "stop" | "download" | "shield" | "agent" | "model" | "thinking" | "mode" }) {
@@ -67,7 +163,24 @@ function activityLabel(activity: unknown): string {
 }
 
 function safeMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message.replaceAll("_", " ") : "Corvus could not complete that action.";
+  return featureErrorMessage(reason, "run");
+}
+
+export function assistantStreamBatchSize(pendingTokens: number): number {
+  return Math.max(1, Math.ceil(pendingTokens / 120));
+}
+
+function usageValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function usageSummary(usage: ModelUsage): string {
+  const format = new Intl.NumberFormat();
+  return [
+    usage.inputTokens === undefined ? null : `${format.format(usage.inputTokens)} input`,
+    usage.cachedInputTokens === undefined ? null : `${format.format(usage.cachedInputTokens)} cached`,
+    usage.outputTokens === undefined ? null : `${format.format(usage.outputTokens)} output`
+  ].filter((item): item is string => item !== null).join(" · ");
 }
 
 export function ConversationWorkspace({ api, experience, newThreadSignal = 0, onOpenProjects, storage, storageScope, workingDirectory }: {
@@ -84,7 +197,13 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => threads[0]?.id ?? null);
   const activeThreadIdRef = useRef<string | null>(selectedThreadId);
   const assistantTextRef = useRef("");
+  const assistantTargetRef = useRef("");
+  const assistantQueueRef = useRef<string[]>([]);
+  const assistantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completedRunRef = useRef<{ runId: string } | null>(null);
   const activePromptRef = useRef("");
+  const confirmationDialogRef = useRef<HTMLDivElement | null>(null);
+  const confirmationTriggerRef = useRef<HTMLElement | null>(null);
   const [composer, setComposer] = useState("");
   const [assistantText, setAssistantText] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
@@ -93,14 +212,19 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>(FALLBACK_PROVIDERS);
   const [providerError, setProviderError] = useState("");
+  const [preferenceError, setPreferenceError] = useState("");
+  const [storageNotice, setStorageNotice] = useState("");
   const [providerRefresh, setProviderRefresh] = useState(0);
   const [providerId, setProviderId] = useState<RunnableProviderId>("codex");
   const [modelId, setModelId] = useState(FALLBACK_PROVIDERS[0].models[0]?.id ?? "");
   const [thinking, setThinking] = useState<ThinkingLevel>("medium");
   const [mode, setMode] = useState<RunMode>("chat");
   const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [runNote, setRunNote] = useState("");
   const [thinkingNote, setThinkingNote] = useState("");
+  const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
+  const [modelUsage, setModelUsage] = useState<ModelUsage | null>(null);
   const [artifactReady, setArtifactReady] = useState(false);
   const [safetyPreview, setSafetyPreview] = useState<SafetyPreview | null>(null);
   const [safetyLoading, setSafetyLoading] = useState(true);
@@ -121,8 +245,27 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const providerModels = provider.models ?? [];
   const providerThinkingLevels = provider.thinking_levels ?? [];
 
-  useEffect(() => () => streamRef.current?.close(), []);
-  useEffect(() => saveDeviceThreads(storage, storageScope, threads), [storage, storageScope, threads]);
+  useEffect(() => {
+    if (!confirmation) return;
+    const appRoot = document.getElementById("root");
+    appRoot?.setAttribute("inert", "");
+    confirmationDialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      appRoot?.removeAttribute("inert");
+      confirmationTriggerRef.current?.focus();
+    };
+  }, [confirmation]);
+
+  useEffect(() => () => {
+    streamRef.current?.close();
+    if (assistantTimerRef.current !== null) clearTimeout(assistantTimerRef.current);
+  }, []);
+  useEffect(() => {
+    const result = saveDeviceThreads(storage, storageScope, threads);
+    setStorageNotice(result.saved
+      ? result.truncated ? "Older conversation history was trimmed to keep local storage responsive." : ""
+      : "Conversation history could not be saved on this device. The current conversation remains open.");
+  }, [storage, storageScope, threads]);
   useEffect(() => {
     if (api.listRepositories === undefined) return;
     let current = true;
@@ -149,8 +292,14 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   }, [api, providerId, mode, mcpEnabled, safetyRefresh]);
   useEffect(() => {
     let current = true;
-    void Promise.all([api.listProviders(), api.getPreferences()]).then(([catalog, preferences]) => {
+    void Promise.allSettled([api.listProviders(), api.getPreferences()]).then(([catalogResult, preferencesResult]) => {
       if (!current) return;
+      if (catalogResult.status === "rejected") {
+        setProviders(FALLBACK_PROVIDERS);
+        setProviderError("Corvus could not verify local providers. Retry discovery before starting a run.");
+        return;
+      }
+      const catalog = catalogResult.value;
       if (catalog.length === 0) {
         setProviders(FALLBACK_PROVIDERS);
         setProviderError("No supported local agents were detected. Install Codex CLI or Claude Code, then retry.");
@@ -162,12 +311,24 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         setProviderError("No configured agents are ready. Configure a local CLI or API key in Settings, then retry.");
         return;
       }
-      setProviders(readyCatalog);
+      const runnableCatalog = readyCatalog.filter((entry) =>
+        (entry.models?.length ?? 0) > 0 && (entry.thinking_levels?.length ?? 0) > 0
+      );
+      if (runnableCatalog.length === 0) {
+        setProviders(FALLBACK_PROVIDERS);
+        setProviderError("A local agent was verified, but discovery returned no supported models or thinking levels. Retry discovery before starting a run.");
+        return;
+      }
+      setProviders(runnableCatalog);
       setProviderError("");
-      const preferred = catalog.find((entry) =>
+      const preferences = preferencesResult.status === "fulfilled" ? preferencesResult.value : null;
+      setPreferenceError(preferences === null
+        ? "Saved model preferences are unavailable. Corvus is using verified provider defaults for this conversation."
+        : "");
+      const preferred = preferences === null ? undefined : runnableCatalog.find((entry) =>
         entry.id === preferences.default_provider && entry.status === "ready"
       );
-      const ready = preferred ?? catalog.find((entry) =>
+      const ready = preferred ?? runnableCatalog.find((entry) =>
         entry.status === "ready"
       );
       if (ready !== undefined) {
@@ -175,19 +336,19 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         const readyThinkingLevels = ready.thinking_levels ?? [];
         setProviderId(ready.id as RunnableProviderId);
         setModelId(
-          preferences.default_model !== null ? preferences.default_model : readyModels[0]?.id ?? ""
+          preferences?.default_model !== null && preferences?.default_model !== undefined
+            ? preferences.default_model
+            : readyModels[0]?.id ?? ""
         );
         setThinking(
-          readyThinkingLevels.includes(preferences.default_effort)
+          preferences !== null && readyThinkingLevels.includes(preferences.default_effort)
             ? preferences.default_effort
             : readyThinkingLevels.includes("medium") ? "medium" : readyThinkingLevels[0] ?? "medium"
         );
-        const preferredMode = ready.id === "codex" ? preferences.default_mode : "chat";
+        const preferredMode = ready.id === "codex" ? preferences?.default_mode ?? "chat" : "chat";
         setMode(preferredMode);
-        setMcpEnabled(preferredMode === "build" && ready.supports_mcp && preferences.mcp_enabled);
+        setMcpEnabled(preferredMode === "build" && ready.supports_mcp && (preferences?.mcp_enabled ?? false));
       }
-    }).catch(() => {
-      if (current) setProviderError("Corvus could not verify local providers. Retry discovery before starting a run.");
     });
     return () => { current = false; };
   }, [api, providerRefresh]);
@@ -209,6 +370,11 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     activeThreadIdRef.current = created.id;
     setAssistantText("");
     assistantTextRef.current = "";
+    assistantTargetRef.current = "";
+    assistantQueueRef.current = [];
+    completedRunRef.current = null;
+    setToolActivities([]);
+    setModelUsage(null);
     setHistoryOpen(false);
     return created;
   }, [experience]);
@@ -229,9 +395,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
 
   useEffect(() => {
     if (newThreadSignalRef.current === newThreadSignal) return;
+    if (runStatus === "working") return;
     newThreadSignalRef.current = newThreadSignal;
     createConversation();
-  }, [createConversation, newThreadSignal]);
+  }, [createConversation, newThreadSignal, runStatus]);
 
   function finishRun(status: Exclude<RunStatus, "idle" | "working">, text?: string): void {
     const threadId = activeThreadIdRef.current;
@@ -245,11 +412,52 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     }
     setAssistantText("");
     assistantTextRef.current = "";
+    assistantTargetRef.current = "";
+    assistantQueueRef.current = [];
+    completedRunRef.current = null;
+    if (assistantTimerRef.current !== null) clearTimeout(assistantTimerRef.current);
+    assistantTimerRef.current = null;
     setRunStatus(status);
     setRunNote("");
     setThinkingNote("");
     streamRef.current?.close();
     streamRef.current = null;
+  }
+
+  function drainAssistantQueue(): void {
+    if (assistantTimerRef.current !== null) return;
+    const tick = () => {
+      assistantTimerRef.current = null;
+      const reduceMotion = typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const count = reduceMotion
+        ? assistantQueueRef.current.length
+        : assistantStreamBatchSize(assistantQueueRef.current.length);
+      const tokens = assistantQueueRef.current.splice(0, count).join("");
+      if (tokens !== "") {
+        assistantTextRef.current += tokens;
+        setAssistantText(assistantTextRef.current);
+      }
+      if (assistantQueueRef.current.length > 0) {
+        assistantTimerRef.current = setTimeout(tick, 16);
+        return;
+      }
+      const completed = completedRunRef.current;
+      if (completed !== null) {
+        completedRunRef.current = null;
+        finishRun("completed", assistantTargetRef.current);
+      }
+    };
+    assistantTimerRef.current = setTimeout(tick, 0);
+  }
+
+  function enqueueAssistantText(text: string, kind: AssistantChunkKind): void {
+    const needsParagraphBoundary = kind === "block" && assistantTargetRef.current !== "" &&
+      !/\s$/.test(assistantTargetRef.current) && !/^\s/.test(text);
+    const normalized = `${needsParagraphBoundary ? "\n\n" : ""}${text}`;
+    assistantTargetRef.current += normalized;
+    assistantQueueRef.current.push(...(normalized.match(/\S+\s*|\s+/g) ?? [normalized]));
+    drainAssistantQueue();
   }
 
   function loadSafetyReceipt(activeRunId: string): void {
@@ -266,10 +474,29 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       try {
         const event = JSON.parse(data) as { payload?: { text?: unknown } } | null;
         if (typeof event?.payload?.text === "string") {
-          assistantTextRef.current += event.payload.text;
-          setAssistantText(assistantTextRef.current);
+          enqueueAssistantText(
+            event.payload.text,
+            providerId === "codex" || providerId === "claude" ? "block" : "continuation"
+          );
         }
       } catch { setError("Corvus received an unreadable run event."); }
+    });
+    stream.addEventListener("usage", ({ data }) => {
+      try {
+        const event = JSON.parse(data) as { payload?: {
+          input_tokens?: unknown; cached_input_tokens?: unknown; output_tokens?: unknown;
+        } } | null;
+        const next: ModelUsage = {
+          inputTokens: usageValue(event?.payload?.input_tokens),
+          cachedInputTokens: usageValue(event?.payload?.cached_input_tokens),
+          outputTokens: usageValue(event?.payload?.output_tokens)
+        };
+        if (Object.values(next).some((value) => value !== undefined)) {
+          setModelUsage((current) => ({ ...current, ...Object.fromEntries(
+            Object.entries(next).filter(([, value]) => value !== undefined)
+          ) }));
+        }
+      } catch { setError("Corvus received unreadable model-usage evidence."); }
     });
     stream.addEventListener("thinking", ({ data }) => {
       try {
@@ -280,14 +507,33 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     });
     stream.addEventListener("status", ({ data }) => {
       try {
-        const event = JSON.parse(data) as { payload?: { activity?: unknown } } | null;
+        const event = JSON.parse(data) as { payload?: {
+          activity?: unknown; label?: unknown; status?: unknown; tool_id?: unknown;
+        } } | null;
         setRunNote(activityLabel(event?.payload?.activity));
+        const payload = event?.payload;
+        if (
+          typeof payload?.tool_id === "string" && typeof payload.label === "string" &&
+          (payload.status === "started" || payload.status === "completed")
+        ) {
+          setToolActivities((current) => {
+            const next = { id: payload.tool_id as string, label: payload.label as string, status: payload.status as "started" | "completed" };
+            const existing = current.findIndex((activity) => activity.id === next.id);
+            return existing < 0
+              ? [...current, next]
+              : current.map((activity, index) => index === existing ? next : activity);
+          });
+        }
       } catch { setError("Corvus received an unreadable status event."); }
     });
     stream.addEventListener("artifact", () => setArtifactReady(true));
     stream.addEventListener("completed", () => {
       loadSafetyReceipt(activeRunId);
-      finishRun("completed", assistantTextRef.current);
+      if (assistantQueueRef.current.length > 0 || assistantTimerRef.current !== null) {
+        completedRunRef.current = { runId: activeRunId };
+      } else {
+        finishRun("completed", assistantTargetRef.current);
+      }
     });
     stream.addEventListener("cancelled", () => {
       loadSafetyReceipt(activeRunId);
@@ -300,7 +546,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         if (typeof event?.payload?.reason_code === "string") reasonCode = event.payload.reason_code;
       } finally {
         loadSafetyReceipt(activeRunId);
-        const partialResponse = assistantTextRef.current;
+        const partialResponse = assistantTargetRef.current;
         if (safetyPreview?.level === "read_only" && (
           reasonCode.startsWith("process_") || reasonCode.includes("sandbox") || reasonCode.includes("permission")
         )) {
@@ -311,6 +557,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           });
         } else if (reasonCode.includes("model")) {
           setError("The selected model is not available for this provider. Change it in Settings, then try again.");
+        } else if (reasonCode === "provider_output_limit") {
+          setError("The provider response reached Corvus's 100 KB limit. The response received so far is preserved; ask for a shorter continuation.");
+        } else if (reasonCode === "provider_deadline_exceeded") {
+          setError("The provider exceeded the three-minute response deadline. The response received so far is preserved; retry with a narrower request.");
         } else {
           setError("This run stopped before it could finish. You can retry or change its safety mode.");
         }
@@ -320,7 +570,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     stream.onTerminalError(() => {
       if (streamRef.current !== stream) return;
       setError("Connection to this run ended before completion. Start the run again to continue.");
-      finishRun("failed");
+      finishRun("failed", assistantTargetRef.current);
     });
   }
 
@@ -336,6 +586,11 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     setComposer("");
     setAssistantText("");
     assistantTextRef.current = "";
+    assistantTargetRef.current = "";
+    assistantQueueRef.current = [];
+    completedRunRef.current = null;
+    if (assistantTimerRef.current !== null) clearTimeout(assistantTimerRef.current);
+    assistantTimerRef.current = null;
     activeThreadIdRef.current = thread.id;
     activePromptRef.current = prompt;
     setRunStatus("working");
@@ -343,6 +598,8 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     setError("");
     setRunNote("");
     setThinkingNote("");
+    setToolActivities([]);
+    setModelUsage(null);
     setArtifactReady(false);
     setReceipt(null);
     setInterruption(null);
@@ -354,6 +611,9 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         mode,
         mcp_enabled: mode === "build" && mcpEnabled,
         safety_digest: safety.policy_digest,
+        ...(thread.messages.length > 0 ? {
+          context: thread.messages.slice(-20).map(({ role, content }) => ({ role, content }))
+        } : {}),
         ...(thread.repositoryId ? { repository_id: thread.repositoryId } : {})
       }, crypto.randomUUID());
       setRunId(run.run_id);
@@ -377,6 +637,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       safetyPreview === null || safetyLoading
     ) return;
     if (safetyPreview.requires_confirmation) {
+      confirmationTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setConfirmation({ prompt, safety: safetyPreview });
       return;
     }
@@ -392,6 +653,26 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     if (!shouldSend) return;
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
+  }
+
+  function handleConfirmationKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setConfirmation(null);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled])"));
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   async function stop(): Promise<void> {
@@ -417,19 +698,21 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           <div><h1>{selected?.title ?? (experience === "developer" ? "New thread" : "New conversation")}</h1><span className="conversation-context" title={selected?.workingDirectory ?? workingDirectory}>{selected?.workingDirectory ?? workingDirectory ?? "Corvus agent workspace"}</span></div>
           <div className="conversation-actions">
             <button aria-expanded={historyOpen} aria-label="Conversation history" className="icon-button" data-component-source="lucide-message-square" onClick={() => setHistoryOpen((open) => !open)} type="button"><Icon name="history" /></button>
-            <button aria-label={`New ${noun}`} className="icon-button" onClick={() => createConversation()} type="button"><Icon name="new" /></button>
+            <button aria-label={`New ${noun}`} className="icon-button" disabled={runStatus === "working"} onClick={() => createConversation()} title={runStatus === "working" ? "Stop the active run before starting another conversation" : undefined} type="button"><Icon name="new" /></button>
           </div>
           {historyOpen ? <div className="conversation-history" role="dialog" aria-label="Conversation history panel">
             <strong>{experience === "developer" ? "Threads" : "Conversations"}</strong>
             {threads.length === 0 ? <p className="thread-list__empty">No conversations yet</p> : null}
-            <div className="thread-list__items">{threads.map((thread) => <button aria-current={selectedThreadId === thread.id ? "true" : undefined} key={thread.id} onClick={() => { setSelectedThreadId(thread.id); activeThreadIdRef.current = thread.id; setAssistantText(""); assistantTextRef.current = ""; setHistoryOpen(false); }} type="button"><strong>{thread.title}</strong><span>{new Date(thread.updatedAt).toLocaleDateString()}</span></button>)}</div>
+            <div className="thread-list__items">{threads.map((thread) => <button aria-current={selectedThreadId === thread.id ? "true" : undefined} disabled={runStatus === "working"} key={thread.id} onClick={() => { setSelectedThreadId(thread.id); activeThreadIdRef.current = thread.id; setAssistantText(""); assistantTextRef.current = ""; setModelUsage(null); setReceipt(null); setToolActivities([]); setArtifactReady(false); setRunStatus("idle"); setInterruption(null); setError(""); setHistoryOpen(false); }} type="button"><strong>{thread.title}</strong><span>{new Date(thread.updatedAt).toLocaleDateString()}</span></button>)}</div>
           </div> : null}
         </header>
         <div className="message-transcript">
           {(selected?.messages.length ?? 0) === 0 && assistantText === "" ? <div className="conversation-empty"><BrandMark className="conversation-mark" decorative /><h2>{experience === "developer" ? "What would you like to start?" : "What can Corvus help you finish?"}</h2><p>Ask a question or hand off a complete task. Build mode works in an isolated sandbox and returns the finished project.</p><div className="starter-prompts">{(experience === "developer" ? ["Inspect this repository", "Fix the failing tests", "Build a small feature"] : ["Plan my week", "Draft a clear update", "Organize these notes"]).map((starter) => <button key={starter} onClick={() => setComposer(starter)} type="button">{starter}</button>)}</div></div> : null}
           {selected?.messages.map((message) => <article className={`message message--${message.role}`} key={message.id}><span>{message.role === "user" ? "You" : "Corvus"}</span><MarkdownMessage>{message.content}</MarkdownMessage></article>)}
-          {runStatus === "working" ? <section className="run-activity" aria-label="Run status: working"><div className="run-activity__status" role="status"><span className="activity-pulse" /><strong>Working</strong>{runNote ? <span>{runNote}</span> : null}</div><ol aria-label="Safety timeline" className="safety-timeline"><li><Icon name="shield" /><span><strong>{safetyPreview?.label ?? "Policy verified"}</strong><small>Policy locked for this run</small></span></li>{runNote ? <li><span className="safety-timeline__dot" /><span><strong>{runNote}</strong><small>Observed runtime activity</small></span></li> : null}</ol>{thinkingNote ? <details open><summary>Thinking</summary><p>{thinkingNote}</p></details> : null}</section> : null}
+          {runStatus === "working" ? <section className="run-activity" aria-label="Run status: working"><div className="run-activity__status" role="status"><span className="activity-pulse" /><strong>Working</strong><span>{runNote || safetyPreview?.label || "Policy verified"}</span></div>{thinkingNote ? <p className="run-activity__thought">{thinkingNote}</p> : null}{toolActivities.length > 0 ? <details aria-label="Tool activity" role="region"><summary>{`Activity · ${toolActivities.length} ${toolActivities.length === 1 ? "step" : "steps"}`}</summary><ol className="tool-activity__list">{toolActivities.map((activity) => <li key={activity.id}><span aria-hidden="true" className={`tool-activity__state tool-activity__state--${activity.status}`} /><span>{activity.label}</span><small>{activity.status === "completed" ? "Completed" : "In progress"}</small></li>)}</ol></details> : null}</section> : null}
+          {runStatus !== "working" && toolActivities.length > 0 ? <details aria-label="Tool activity" className="tool-activity" role="region"><summary>{`Activity · ${toolActivities.length} ${toolActivities.length === 1 ? "step" : "steps"}`}</summary><ol className="tool-activity__list">{toolActivities.map((activity) => <li key={activity.id}><span aria-hidden="true" className={`tool-activity__state tool-activity__state--${activity.status}`} /><span>{activity.label}</span><small>{activity.status === "completed" ? "Completed" : "Stopped"}</small></li>)}</ol></details> : null}
           {assistantText !== "" ? <article className="message message--assistant"><span>Corvus</span><MarkdownMessage>{assistantText}</MarkdownMessage></article> : null}
+          {modelUsage ? <p aria-label="Model usage" className="model-usage" role="status">Model usage · {usageSummary(modelUsage)}</p> : null}
           {artifactReady && runId !== null ? <a className="artifact-download" href={api.artifactUrl(runId)}><Icon name="download" />Download finished project</a> : null}
           {receipt ? <section aria-label="Safety receipt" className="safety-receipt"><header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header><div className="safety-receipt__facts"><span>Original project unchanged</span><span>No blanket host access</span>{receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}</div>{receipt.activities.length > 0 ? <ul>{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}<details><summary>Verification details</summary><p>{receipt.approval}</p><code>{receipt.safety.policy_digest}</code></details></section> : null}
           {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
@@ -439,15 +722,22 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           </section> : null}
         </div>
         {providerError ? <p className="conversation-error" role="alert">{providerError} <button aria-label="Retry providers" className="text-button" onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
+        {preferenceError ? <p aria-label="Preference recovery" className="conversation-notice" role="status">{preferenceError}</p> : null}
+        {storageNotice ? <p className={storageNotice.startsWith("Conversation history could not") ? "conversation-error" : "conversation-notice"} role={storageNotice.startsWith("Conversation history could not") ? "alert" : "status"}>{storageNotice}</p> : null}
         {safetyError ? <p className="conversation-error" role="alert">{safetyError} <button aria-label="Retry safety policy" className="text-button" onClick={() => setSafetyRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
         {error ? <p className="conversation-error" role="alert">{error}</p> : null}
         <form className="composer" onSubmit={(event) => void send(event)}>
           <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />
           <div className="composer__controls">
-            <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
-            <span className="composer-leading-icon" title="Agent provider"><Icon name="agent" /></span>
-            <label className="sr-only" htmlFor="composer-provider">Provider</label><select aria-label="Agent provider" className="composer-control composer-control--provider" disabled={runStatus === "working"} id="composer-provider" onChange={(event) => {
-              const next = event.target.value as ProviderId;
+            <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" disabled={runStatus === "working"} onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
+            <ComposerSelect<RunMode> ariaLabel="Run mode" disabled={runStatus === "working"} onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />
+            <button aria-expanded={optionsOpen} className="composer-options-trigger" disabled={runStatus === "working"} onClick={() => setOptionsOpen((open) => !open)} type="button">Run options</button>
+            <button aria-expanded={safetyDetailsOpen} aria-label="View safety details" className={`safety-chip safety-chip--${safetyPreview?.level ?? "loading"}`} disabled={safetyLoading} onClick={() => setSafetyDetailsOpen((open) => !open)} title="Click to see details" type="button"><Icon name="shield" /><span>{safetyLoading ? "Checking safety" : safetyPreview?.label ?? "Safety unavailable"}</span></button>
+            {runStatus === "working" ? <button aria-label="Stop" className="composer-submit composer-submit--stop" disabled={busy} onClick={() => void stop()} type="button"><Icon name="stop" /></button> : <button aria-label={mode === "build" ? "Build project" : "Send message"} className="composer-submit" data-component-source="shadcn-button" disabled={busy || composer.trim() === "" || provider.status !== "ready" || safetyPreview === null || safetyLoading} type="submit"><Icon name="send" /></button>}
+          </div>
+          {optionsOpen ? <section aria-label="Run options panel" className="composer__advanced">
+            <span className="composer-option-label">Provider</span>
+            <ComposerSelect<ProviderId> ariaLabel="Agent provider" className="composer-select--provider" disabled={runStatus === "working"} onChange={(next) => {
               const nextProvider = providers.find((entry) => entry.id === next);
               if (nextProvider?.status !== "ready") return;
               setProviderId(next as RunnableProviderId);
@@ -456,18 +746,15 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
               setModelId(nextModels[0]?.id ?? "");
               setThinking(nextThinkingLevels.includes("medium") ? "medium" : nextThinkingLevels[0] ?? "medium");
               if (next !== "codex") { setMode("chat"); setMcpEnabled(false); }
-            }} value={providerId}>{providers.filter((entry) => entry.status === "ready").map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select>
-            <span className="composer-leading-icon" title="Model"><Icon name="model" /></span><label className="sr-only" htmlFor="composer-model">Model</label><select aria-label="Agent model" className="composer-control composer-control--model" disabled={runStatus === "working" || (providerModels.length === 0 && modelId === "")} id="composer-model" onChange={(event) => setModelId(event.target.value)} value={modelId}>{modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? <option value={modelId}>{modelId}</option> : null}{providerModels.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select>
-            <span className="composer-leading-icon" title="Thinking effort"><Icon name="thinking" /></span><label className="sr-only" htmlFor="composer-thinking">Thinking</label><select aria-label="Thinking level" className="composer-control" disabled={runStatus === "working" || providerThinkingLevels.length === 0} id="composer-thinking" onChange={(event) => setThinking(event.target.value as ThinkingLevel)} value={thinking}>{providerThinkingLevels.map((level) => <option key={level} value={level}>{THINKING_LABELS[level]}</option>)}</select>
-            <span className="composer-leading-icon" title="Run mode"><Icon name="mode" /></span><label className="sr-only" htmlFor="composer-mode">Mode</label><select aria-label="Run mode" className="composer-control" disabled={runStatus === "working"} id="composer-mode" onChange={(event) => { const next = event.target.value as RunMode; setMode(next); if (next === "chat") setMcpEnabled(false); }} value={mode}><option value="chat">Chat</option><option disabled={providerId !== "codex"} value="build">Build</option></select>
+            }} options={providers.filter((entry) => entry.status === "ready").map((entry) => ({ value: entry.id, label: entry.label, description: "Verified on this device" }))} value={providerId} />
+            <span className="composer-option-label">Model</span><ComposerSelect<string> ariaLabel="Agent model" className="composer-select--model" disabled={runStatus === "working" || (providerModels.length === 0 && modelId === "")} onChange={setModelId} options={[...(modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? [{ value: modelId, label: modelId, description: "Saved preference" }] : []), ...providerModels.map((entry) => ({ value: entry.id, label: entry.label, description: entry.recommended ? "Recommended" : "Available" }))]} value={modelId} />
+            <span className="composer-option-label">Thinking</span><ComposerSelect<ThinkingLevel> ariaLabel="Thinking level" disabled={runStatus === "working" || providerThinkingLevels.length === 0} onChange={setThinking} options={providerThinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level], description: level === "low" ? "Fastest" : level === "medium" ? "Balanced" : level === "high" ? "More reasoning" : "Deepest reasoning" }))} value={thinking} />
             {mode === "build" ? <label className="mcp-toggle"><input aria-label="Allow configured MCP servers" checked={mcpEnabled} onChange={(event) => setMcpEnabled(event.target.checked)} type="checkbox" /><span>MCP</span></label> : null}
-            <button aria-expanded={safetyDetailsOpen} aria-label="View safety details" className={`safety-chip safety-chip--${safetyPreview?.level ?? "loading"}`} disabled={safetyLoading} onClick={() => setSafetyDetailsOpen((open) => !open)} title="Click to see details" type="button"><Icon name="shield" /><span>{safetyLoading ? "Checking safety" : safetyPreview?.label ?? "Safety unavailable"}</span></button>
-            {runStatus === "working" ? <button aria-label="Stop" className="composer-submit composer-submit--stop" disabled={busy} onClick={() => void stop()} type="button"><Icon name="stop" /></button> : <button aria-label={mode === "build" ? "Build project" : "Send message"} className="composer-submit" data-component-source="shadcn-button" disabled={busy || composer.trim() === "" || provider.status !== "ready" || safetyPreview === null || safetyLoading} type="submit"><Icon name="send" /></button>}
-          </div>
+          </section> : null}
           {safetyDetailsOpen && safetyPreview ? <section aria-label="Safety details" className="safety-details"><header><Icon name="shield" /><div><strong>{safetyPreview.label}</strong><span>{safetyPreview.summary}</span></div></header><dl><div><dt>Files</dt><dd>{safetyPreview.filesystem}</dd></div><div><dt>Network</dt><dd>{safetyPreview.network}</dd></div><div><dt>Tools</dt><dd>{safetyPreview.mcp}</dd></div><div><dt>Output</dt><dd>{safetyPreview.output}</dd></div></dl></section> : null}
           {mode === "build" && mcpEnabled ? <p className="composer__notice">Configured MCP servers may access external systems. Corvus will work only inside a fresh build sandbox.</p> : null}
         </form>
-        {confirmation ? <div aria-label="Confirm protected build" aria-modal="true" className="safety-confirmation" role="dialog"><div className="safety-confirmation__sheet"><header><Icon name="shield" /><div><span>{confirmation.safety.label}</span><h2>Confirm protected build</h2></div></header><p>{confirmation.safety.summary}</p><dl><div><dt>Workspace</dt><dd>{confirmation.safety.filesystem}</dd></div><div><dt>Network</dt><dd>{confirmation.safety.network}</dd></div><div><dt>External tools</dt><dd>{confirmation.safety.mcp}</dd></div><div><dt>Approval</dt><dd>{confirmation.safety.approvals}</dd></div></dl><div className="safety-confirmation__actions"><button className="text-button" onClick={() => setConfirmation(null)} type="button">Cancel</button><button className="primary-action" onClick={() => { const pending = confirmation; setConfirmation(null); void startPrompt(pending.prompt, pending.safety); }} type="button">Continue in sandbox</button></div></div></div> : null}
+        {confirmation ? createPortal(<div aria-label="Confirm protected build" aria-modal="true" className="safety-confirmation" onKeyDown={handleConfirmationKeyDown} ref={confirmationDialogRef} role="dialog"><div className="safety-confirmation__sheet"><header><Icon name="shield" /><div><span>{confirmation.safety.label}</span><h2>Confirm protected build</h2></div></header><p>{confirmation.safety.summary}</p><dl><div><dt>Workspace</dt><dd>{confirmation.safety.filesystem}</dd></div><div><dt>Network</dt><dd>{confirmation.safety.network}</dd></div><div><dt>External tools</dt><dd>{confirmation.safety.mcp}</dd></div><div><dt>Approval</dt><dd>{confirmation.safety.approvals}</dd></div></dl><div className="safety-confirmation__actions"><button className="text-button" onClick={() => setConfirmation(null)} type="button">Cancel</button><button className="primary-action" onClick={() => { const pending = confirmation; setConfirmation(null); void startPrompt(pending.prompt, pending.safety); }} type="button">Continue in sandbox</button></div></div></div>, document.body) : null}
       </div>
     </section>
   );

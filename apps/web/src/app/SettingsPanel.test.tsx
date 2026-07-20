@@ -51,6 +51,7 @@ describe("SettingsPanel", () => {
 
     await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
     const bar = screen.getByRole("region", { name: "Unsaved settings" });
+    expect(screen.getByRole("button", { name: "Keep editing" })).toBeVisible();
     expect(bar).toHaveTextContent("Experience: Developer → Everyday");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -75,10 +76,45 @@ describe("SettingsPanel", () => {
     );
 
     await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.selectOptions(screen.getByLabelText("Response style"), "concise");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/runtime save failed/i);
     expect(onExperienceChange).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a saved runtime before retrying a failed desktop-only step", async () => {
+    const api = settingsApi();
+    const applyDesktopSettings = vi.fn()
+      .mockRejectedValueOnce(new Error("desktop_apply_failed"))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(
+      <SettingsPanel
+        api={api}
+        applyDesktopSettings={applyDesktopSettings}
+        desktopAvailable
+        experience="developer"
+        onExperienceChange={vi.fn().mockResolvedValue(undefined)}
+        storage={new MemoryStorage()}
+        workspaceId="workspace-partial-save"
+        workspaceKind="individual"
+      />
+    );
+
+    await user.click(screen.getByLabelText("Run in background"));
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.selectOptions(screen.getByLabelText("Response style"), "concise");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/runtime settings were saved.*desktop/i);
+    expect(api.updatePreferences).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(applyDesktopSettings).toHaveBeenCalledTimes(2));
+    expect(api.updatePreferences).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Saved on this device")).toBeVisible();
   });
 
   it("contains keyboard focus while confirming unsaved settings", async () => {
@@ -109,6 +145,9 @@ describe("SettingsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Models" }));
     expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Defaults" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("OpenAI API key")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
     const claudeModel = screen.getByRole("textbox", { name: "Claude default model" });
     await user.clear(claudeModel);
@@ -138,13 +177,32 @@ describe("SettingsPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("keeps MCP discovery failure distinct from an empty configuration and supports retry", async () => {
+    const listMcpServers = vi.fn()
+      .mockRejectedValueOnce(new Error("mcp_list_failed"))
+      .mockResolvedValueOnce([{ name: "github", enabled: true, transport: "streamable_http", endpoint: "https://example.test/mcp", auth_status: "authenticated" }]);
+    const api = { ...settingsApi(), listMcpServers };
+    const user = userEvent.setup();
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-mcp-retry" workspaceKind="individual" />);
+
+    await user.click(screen.getByRole("button", { name: "MCP" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be loaded/i);
+    expect(screen.queryByText("No MCP servers are configured.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry MCP" }));
+
+    expect(await screen.findByText("github")).toBeVisible();
+    expect(listMcpServers).toHaveBeenCalledTimes(2);
+  });
+
   it("applies explicit background, login, and notification settings to desktop", async () => {
     const storage = new MemoryStorage();
+    const api = settingsApi();
     const applyDesktopSettings = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(
       <SettingsPanel
-        api={settingsApi()}
+        api={api}
         applyDesktopSettings={applyDesktopSettings}
         desktopAvailable
         experience="developer"
@@ -170,6 +228,7 @@ describe("SettingsPanel", () => {
       launchAtLogin: true,
       nativeNotifications: true
     });
+    expect(api.updatePreferences).not.toHaveBeenCalled();
   });
 
   it("persists runtime guidance through the backend and appearance on this device", async () => {
@@ -187,7 +246,7 @@ describe("SettingsPanel", () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.getByText("Everyday · Team")).toBeVisible();
+    expect(screen.getByText("Everyday / Team")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Agent" }));
     await user.selectOptions(screen.getByLabelText("Response style"), "concise");
     await user.type(screen.getByLabelText("Custom rules"), "Always show the next action.");
@@ -218,7 +277,7 @@ describe("SettingsPanel", () => {
     );
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Account" }));
-    expect(screen.getByText("Web · Preview")).toBeVisible();
+    expect(screen.getByText("Web / Preview")).toBeVisible();
     expect(screen.getByText("Managed where they are used")).toBeVisible();
   });
 
@@ -235,6 +294,7 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
 
     expect(screen.getByLabelText("OpenAI API key")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Connect OpenAI" })).toBeDisabled();
@@ -260,6 +320,7 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
     expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
   });
@@ -280,7 +341,9 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
+    await user.click(screen.getByRole("button", { name: "Defaults" }));
     expect(screen.getByText(/thinking options unavailable until provider discovery succeeds/i)).toBeVisible();
     expect(screen.queryByRole("radio", { name: "Low" })).not.toBeInTheDocument();
     expect(screen.queryByText(/CLI and login verified/i)).not.toBeInTheDocument();
@@ -396,6 +459,7 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     const credential = screen.getByLabelText("OpenAI API key");
     await user.type(credential, "sk-test-never-render-again");
     await user.click(screen.getByRole("button", { name: "Connect OpenAI" }));

@@ -107,6 +107,7 @@ export interface LocalChatRequest {
   mcp_enabled: boolean;
   safety_digest?: string | null;
   repository_id?: string | null;
+  context?: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
 export interface ConversationRepository {

@@ -74,7 +74,7 @@ class RunStore:
         run_id: str | None = None,
         retry_of_run_id: str | None = None,
     ) -> RunRecord:
-        if len(base_sha) != 40 or any(
+        if len(base_sha) not in {40, 64} or any(
             character not in "0123456789abcdef" for character in base_sha
         ):
             raise RunStoreConflict("run_base_sha_invalid")
@@ -140,11 +140,27 @@ class RunStore:
             raise RunStoreNotFound("run_not_found")
         return self._record(row)
 
-    def list(self, tenant_id: str) -> tuple[RunRecord, ...]:
+    def for_occurrence(
+        self, tenant_id: str, schedule_id: str, occurrence_key: str
+    ) -> RunRecord:
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_runs WHERE tenant_id = ? AND schedule_id = ? "
+                "AND occurrence_key = ?",
+                (tenant_id, schedule_id, occurrence_key),
+            ).fetchone()
+        if row is None:
+            raise RunStoreNotFound("run_occurrence_not_found")
+        return self._record(row)
+
+    def list(
+        self, tenant_id: str, *, limit: int = 1000, offset: int = 0
+    ) -> tuple[RunRecord, ...]:
         with self.store.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM mvp_runs WHERE tenant_id = ? ORDER BY created_at DESC, id DESC",
-                (tenant_id,),
+                "SELECT * FROM mvp_runs WHERE tenant_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (tenant_id, limit, offset),
             ).fetchall()
         return tuple(self._record(row) for row in rows)
 
@@ -209,12 +225,22 @@ class RunStore:
             created_at=created_at,
         )
 
-    def events(self, tenant_id: str, run_id: str, *, after: int = 0) -> tuple[RunEvent, ...]:
+    def events(
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        after: int = 0,
+        limit: int = 500,
+    ) -> tuple[RunEvent, ...]:
+        if limit < 1 or limit > 1_000:
+            raise RunStoreConflict("run_event_limit_invalid")
         self.get(tenant_id, run_id)
         with self.store.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM mvp_run_events WHERE run_id = ? AND sequence > ? ORDER BY sequence",
-                (run_id, after),
+                "SELECT * FROM mvp_run_events WHERE run_id = ? AND sequence > ? "
+                "ORDER BY sequence LIMIT ?",
+                (run_id, after, limit),
             ).fetchall()
         return tuple(
             RunEvent(
@@ -258,12 +284,20 @@ class RunStore:
             raise RunStoreNotFound("run_not_found") from exc
         return evidence
 
-    def evidence(self, tenant_id: str, run_id: str) -> tuple[RunEvidence, ...]:
+    def evidence(
+        self,
+        tenant_id: str,
+        run_id: str,
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple[RunEvidence, ...]:
         self.get(tenant_id, run_id)
         with self.store.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM mvp_run_evidence WHERE run_id = ? ORDER BY created_at, id",
-                (run_id,),
+                "SELECT * FROM mvp_run_evidence WHERE run_id = ? "
+                "ORDER BY created_at, id LIMIT ? OFFSET ?",
+                (run_id, limit, offset),
             ).fetchall()
         return tuple(
             RunEvidence(

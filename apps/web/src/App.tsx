@@ -180,6 +180,7 @@ export function App({
       : getWorkspaceProfile(experience, selectedWorkspace.workspace_kind);
   const [activeRoute, setActiveRoute] = useState("");
   const [runRepositoryId, setRunRepositoryId] = useState<string | null>(null);
+  const [runInitialId, setRunInitialId] = useState<string | null>(null);
   const [runSkillId, setRunSkillId] = useState<string | null>(null);
   const [newThreadSignal, setNewThreadSignal] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pairing" | "ready">("checking");
@@ -724,6 +725,7 @@ export function App({
     <RunsWorkspace
       api={api}
       initialRepositoryId={runRepositoryId ?? undefined}
+      initialRunId={runInitialId ?? undefined}
       initialSkillId={runSkillId ?? undefined}
       onNavigate={setActiveRoute}
     />
@@ -801,7 +803,10 @@ export function App({
             storageScope={localSession.user_id}
           />
         ) : localSurface === "schedule" ? (
-          <SchedulesWorkspace api={api} onOpenRun={() => setActiveRoute("runs")} />
+          <SchedulesWorkspace api={api} onOpenRun={(runId) => {
+            setRunInitialId(runId);
+            setActiveRoute("runs");
+          }} />
         ) : localSurface === "settings" ? (
           <SettingsPanel
             api={conversationApi}

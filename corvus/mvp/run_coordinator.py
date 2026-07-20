@@ -152,6 +152,9 @@ class RunCoordinator:
                 request=request,
                 prompt=self._prompt(repository.display_name, request, skill_instructions),
             )
+        except asyncio.CancelledError:
+            self.runs.transition(tenant_id, run_id, RunStatus.INTERRUPTED)
+            raise
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
@@ -308,18 +311,50 @@ class RunCoordinator:
                     {"reason_code": "provider_stream_closed_without_terminal"},
                 )
                 await self._terminalize(tenant_id, run.id, RunStatus.INTERRUPTED)
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                self._stop_and_terminalize(
+                    tenant_id,
+                    run.id,
+                    handle,
+                    RunStatus.INTERRUPTED,
+                    "run_event_pump_cancelled",
+                )
+            )
+            raise
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            try:
-                self.runs.append_event(
-                    run.id,
-                    "runtime.failed",
-                    {"reason_code": "run_event_pump_failed"},
-                )
-                await self._terminalize(tenant_id, run.id, RunStatus.FAILED)
-            except (RunStoreConflict, RuntimeError):
-                return
+            await self._stop_and_terminalize(
+                tenant_id,
+                run.id,
+                handle,
+                RunStatus.FAILED,
+                "run_event_pump_failed",
+            )
+
+    async def _stop_and_terminalize(
+        self,
+        tenant_id: str,
+        run_id: str,
+        handle: str,
+        target: RunStatus,
+        reason_code: str,
+    ) -> None:
+        provider_stopped = False
+        try:
+            provider_stopped = await self.backend.cancel(handle)
+        except Exception:
+            provider_stopped = False
+        try:
+            self.runs.append_event(
+                run_id,
+                "runtime.interrupted" if target == RunStatus.INTERRUPTED else "runtime.failed",
+                {"reason_code": reason_code, "provider_stop_accepted": provider_stopped},
+            )
+            await self._terminalize(tenant_id, run_id, target)
+        except (RunStoreConflict, RuntimeError):
+            return
 
     async def _terminalize(
         self,

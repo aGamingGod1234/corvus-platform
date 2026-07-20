@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import type { PortableSkill, SkillImportCandidate, SkillImportPreview } from "../api";
+import { featureErrorMessage } from "./featureFeedback";
 
 export interface PortableSkillsApi {
   listPortableSkills(): Promise<PortableSkill[]>;
@@ -20,10 +21,6 @@ const SOURCE_LABELS: Record<string, string> = {
   generic: "Other folders"
 };
 
-function readableError(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "skill_request_failed";
-}
-
 export function PortableSkillsWorkspace({
   api,
   onOpenRuns
@@ -37,27 +34,33 @@ export function PortableSkillsWorkspace({
   const [discovering, setDiscovering] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [warning, setWarning] = useState("");
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
   const [technicalOpen, setTechnicalOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const dialogRef = useRef<HTMLElement>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (announce = false) => {
     setDiscovering(true);
     setError("");
+    setWarning("");
     try {
       const [library, discovered] = await Promise.all([
         api.listPortableSkills(), api.listSkillImportSources()
       ]);
       setSkills(library);
       setCandidates(discovered);
+      if (announce) setNotice(`Discovery finished. ${discovered.length} skill${discovered.length === 1 ? "" : "s"} found across supported local tools.`);
     } catch (reason) {
-      setError(readableError(reason));
+      setError(featureErrorMessage(reason, "skill"));
     } finally {
       setDiscovering(false);
     }
   }, [api]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(false); }, [refresh]);
 
   useEffect(() => {
     if (preview === null) return;
@@ -71,15 +74,24 @@ export function PortableSkillsWorkspace({
     source,
     count: candidates.filter((candidate) => candidate.source === source).length
   })), [candidates]);
+  const filteredCandidates = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return candidates.filter((candidate) => (
+      (sourceFilter === "all" || candidate.source === sourceFilter)
+      && (normalizedQuery === "" || `${candidate.name} ${candidate.path}`.toLocaleLowerCase().includes(normalizedQuery))
+    ));
+  }, [candidates, query, sourceFilter]);
 
   async function review(candidate: SkillImportCandidate): Promise<void> {
     setBusy(true);
     setError("");
+    setNotice("");
+    setWarning("");
     try {
       setTechnicalOpen(false);
       setPreview(await api.previewSkillImport(candidate.id));
     } catch (reason) {
-      setError(readableError(reason));
+      setError(featureErrorMessage(reason, "skill"));
     } finally {
       setBusy(false);
     }
@@ -89,12 +101,15 @@ export function PortableSkillsWorkspace({
     if (!preview || preview.compatibility === "blocked") return;
     setBusy(true);
     setError("");
+    setNotice("");
+    setWarning("");
     try {
       const imported = await api.importPortableSkill(preview.candidate.id, preview.digest);
       setSkills((current) => [imported, ...current.filter((skill) => skill.id !== imported.id)]);
       setPreview(null);
+      setNotice(`${imported.name} was imported as a digest-pinned draft. Activate it when you are ready to use it in Runs.`);
     } catch (reason) {
-      setError(readableError(reason));
+      setError(featureErrorMessage(reason, "skill"));
     } finally {
       setBusy(false);
     }
@@ -104,11 +119,19 @@ export function PortableSkillsWorkspace({
     if (selectedCandidateIds.size === 0) return;
     setBusy(true);
     setError("");
+    setNotice("");
+    setWarning("");
     try {
-      const outcomes = await Promise.all(
-        candidates
-          .filter((item) => selectedCandidateIds.has(item.id))
-          .map(async (candidate) => {
+      const selectedCandidates = candidates.filter((item) => selectedCandidateIds.has(item.id));
+      const outcomes: Array<{
+        candidateId: string;
+        imported: PortableSkill | null;
+        failed: boolean;
+        requiresReview: boolean;
+      }> = [];
+      for (let offset = 0; offset < selectedCandidates.length; offset += 4) {
+        const batch = await Promise.all(
+          selectedCandidates.slice(offset, offset + 4).map(async (candidate) => {
             try {
               const candidatePreview = await api.previewSkillImport(candidate.id);
               if (candidatePreview.compatibility === "blocked" || candidatePreview.duplicate === "exact") {
@@ -127,7 +150,9 @@ export function PortableSkillsWorkspace({
               return { candidateId: candidate.id, imported: null, failed: true, requiresReview: false };
             }
           })
-      );
+        );
+        outcomes.push(...batch);
+      }
       const imported = outcomes
         .map((outcome) => outcome.imported)
         .filter((skill): skill is PortableSkill => skill !== null);
@@ -135,17 +160,22 @@ export function PortableSkillsWorkspace({
       setSkills((current) => [...uniqueImported, ...current.filter((skill) => !uniqueImported.some((item) => item.id === skill.id))]);
       const failedIds = outcomes.filter((outcome) => outcome.failed).map((outcome) => outcome.candidateId);
       const reviewIds = outcomes.filter((outcome) => outcome.requiresReview).map((outcome) => outcome.candidateId);
+      const skippedCount = outcomes.filter((outcome) => outcome.imported === null && !outcome.failed && !outcome.requiresReview).length;
       setSelectedCandidateIds(new Set([...failedIds, ...reviewIds]));
-      const notices: string[] = [];
+      if (uniqueImported.length > 0) {
+        setNotice(`${uniqueImported.length} skill${uniqueImported.length === 1 ? " was" : "s were"} imported safely as ${uniqueImported.length === 1 ? "a draft" : "drafts"}.`);
+      }
+      const warnings: string[] = [];
       if (reviewIds.length > 0) {
-        notices.push(`${reviewIds.length} selected skill${reviewIds.length === 1 ? "" : "s"} require${reviewIds.length === 1 ? "s" : ""} individual review and were not imported.`);
+        warnings.push(`${reviewIds.length} selected skill${reviewIds.length === 1 ? " requires" : "s require"} individual review and ${reviewIds.length === 1 ? "was" : "were"} not imported.`);
       }
       if (failedIds.length > 0) {
-        notices.push(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported.`);
+        warnings.push(`${failedIds.length} selected skill${failedIds.length === 1 ? "" : "s"} could not be imported.`);
       }
-      if (notices.length > 0) setError(`${notices.join(" ")} Safe imports completed.`);
+      if (skippedCount > 0) warnings.push(`${skippedCount} already imported or blocked skill${skippedCount === 1 ? " was" : "s were"} skipped.`);
+      if (warnings.length > 0) setWarning(warnings.join(" "));
     } catch (reason) {
-      setError(readableError(reason));
+      setError(featureErrorMessage(reason, "skill"));
     } finally {
       setBusy(false);
     }
@@ -154,14 +184,17 @@ export function PortableSkillsWorkspace({
   async function changeStatus(skill: PortableSkill, action: "activate" | "archive"): Promise<void> {
     setBusy(true);
     setError("");
+    setNotice("");
+    setWarning("");
     try {
       const updated = action === "activate"
         ? await api.activatePortableSkill(skill.id)
         : await api.archivePortableSkill(skill.id);
       const library = await api.listPortableSkills();
       setSkills(library.map((item) => item.id === updated.id ? updated : item));
+      setNotice(action === "activate" ? `${updated.name} is active and can now be selected in Runs.` : `${updated.name} was archived and will no longer appear in new Runs.`);
     } catch (reason) {
-      setError(readableError(reason));
+      setError(featureErrorMessage(reason, "skill"));
     } finally {
       setBusy(false);
     }
@@ -190,11 +223,13 @@ export function PortableSkillsWorkspace({
   }
 
   return <section aria-labelledby="portable-skills-title" className="portable-skills-workspace">
-    <header className="resource-heading"><div><p className="eyebrow">Portable Agent Skills</p><h1 id="portable-skills-title">Skills</h1><p>Bring trusted workflows from Codex, Claude Code, Hermes, Copilot, and the open Agent Skills format.</p></div><button className="button button--primary" disabled={discovering} onClick={() => void refresh()} type="button">{discovering ? "Discovering…" : "Discover skills"}</button></header>
+    <header className="resource-heading"><div><p className="eyebrow">Portable Agent Skills</p><h1 id="portable-skills-title">Skills</h1><p>Bring trusted workflows from Codex, Claude Code, Hermes, Copilot, and the open Agent Skills format.</p></div><button className="button button--primary" disabled={discovering} onClick={() => void refresh(true)} type="button">{discovering ? "Discovering…" : "Discover skills"}</button></header>
+    {notice ? <p className="inline-success" role="status">{notice}</p> : null}
+    {warning ? <p className="inline-warning" role="status">{warning}</p> : null}
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
-    <div className="skill-source-grid" aria-label="Skill sources">{sourceCounts.map(({ source, count }) => <article key={source}><strong>{SOURCE_LABELS[source]}</strong><span>{count} found</span></article>)}</div>
+    <div className="skill-toolbar"><label className="skill-search"><span className="sr-only">Search discovered skills</span><input aria-label="Search discovered skills" onChange={(event) => setQuery(event.target.value)} placeholder="Search skills" type="search" value={query} /></label><div aria-label="Skill sources" className="skill-source-filters"><button aria-pressed={sourceFilter === "all"} onClick={() => setSourceFilter("all")} type="button">All {candidates.length}</button>{sourceCounts.filter(({ count }) => count > 0).map(({ source, count }) => <button aria-pressed={sourceFilter === source} key={source} onClick={() => setSourceFilter(source)} type="button">{SOURCE_LABELS[source]} {count}</button>)}</div></div>
     {onOpenRuns && skills.some((skill) => skill.status === "active") ? <div className="skill-run-shortcuts" aria-label="Active skills ready for a run"><span>Active skills are reviewed and selectable in Runs.</span>{skills.filter((skill) => skill.status === "active").map((skill) => <button className="button button--primary" disabled={busy} key={skill.id} onClick={() => onOpenRuns(skill.id)} type="button">Use {skill.name} in Runs</button>)}</div> : null}
-    <div className="skill-library-layout"><section><div className="section-heading"><h2>Discovered</h2><div className="skill-bulk-actions"><span>{candidates.length}</span><button className="button button--quiet" disabled={busy || candidates.length === 0} onClick={() => setSelectedCandidateIds(new Set(candidates.map((candidate) => candidate.id)))} type="button">Select all</button><button className="button button--quiet" disabled={busy || selectedCandidateIds.size === 0} onClick={() => setSelectedCandidateIds(new Set())} type="button">Clear</button><button className="button" disabled={busy || selectedCandidateIds.size === 0} onClick={() => void importSelected()} type="button">Import selected ({selectedCandidateIds.size})</button></div></div><div className="skill-candidates">{candidates.length === 0 && !discovering ? <div className="resource-empty"><strong>No importable skills found</strong><span>Add a SKILL.md under a supported tool’s skills directory, then discover again.</span></div> : candidates.map((candidate) => <article key={candidate.id}><label><input aria-label={`Select ${candidate.name}`} checked={selectedCandidateIds.has(candidate.id)} onChange={(event) => setSelectedCandidateIds((current) => { const next = new Set(current); if (event.target.checked) next.add(candidate.id); else next.delete(candidate.id); return next; })} type="checkbox" /></label><button onClick={() => void review(candidate)} type="button"><span className="skill-source-badge">{SOURCE_LABELS[candidate.source] ?? candidate.source}</span><strong>{candidate.name}</strong><small>{candidate.kind === "legacy_command" ? "Legacy command · converts for review" : candidate.path}</small></button></article>)}</div></section><section><div className="section-heading"><h2>Library</h2><span>{skills.length} versions</span></div><div className="portable-skill-list">{skills.length === 0 ? <div className="resource-empty"><strong>Your library is empty</strong><span>Review a discovered skill and import a digest-pinned copy.</span></div> : skills.map((skill) => <article key={skill.id}><div><span className="skill-source-badge">{skill.source}</span><strong>{skill.name} <small>v{skill.version}</small></strong><p>{skill.description}</p></div><span className="run-status" data-status={skill.status}>{skill.status}</span><div className="row-actions">{skill.status !== "active" && skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "activate")} type="button">Activate</button> : null}{skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "archive")} type="button">Archive</button> : null}</div></article>)}</div></section></div>
+    <div className="skill-library-layout"><section><div className="section-heading"><h2>Discovered</h2><div className="skill-bulk-actions"><span>{filteredCandidates.length}</span><button className="button button--quiet" disabled={busy || filteredCandidates.length === 0} onClick={() => setSelectedCandidateIds(new Set(filteredCandidates.map((candidate) => candidate.id)))} type="button">Select all</button><button className="button button--quiet" disabled={busy || selectedCandidateIds.size === 0} onClick={() => setSelectedCandidateIds(new Set())} type="button">Clear</button><button className="button" disabled={busy || selectedCandidateIds.size === 0} onClick={() => void importSelected()} type="button">Import selected ({selectedCandidateIds.size})</button></div></div><div className="skill-candidates">{filteredCandidates.length === 0 && !discovering ? <div className="resource-empty"><strong>{candidates.length === 0 ? "No importable skills found" : "No skills match"}</strong><span>{candidates.length === 0 ? "Add a SKILL.md under a supported tool’s skills directory, then discover again." : "Change the search or source filter."}</span></div> : filteredCandidates.map((candidate) => <article key={candidate.id}><label><input aria-label={`Select ${candidate.name}`} checked={selectedCandidateIds.has(candidate.id)} onChange={(event) => setSelectedCandidateIds((current) => { const next = new Set(current); if (event.target.checked) next.add(candidate.id); else next.delete(candidate.id); return next; })} type="checkbox" /></label><button onClick={() => void review(candidate)} type="button"><span className="skill-source-badge">{SOURCE_LABELS[candidate.source] ?? candidate.source}</span><strong>{candidate.name}</strong><small>{candidate.kind === "legacy_command" ? "Legacy command · converts for review" : candidate.path}</small></button></article>)}</div></section><section><div className="section-heading"><h2>Library</h2><span>{skills.length} versions</span></div><div className="portable-skill-list">{skills.length === 0 ? <div className="resource-empty"><strong>Your library is empty</strong><span>Review a discovered skill and import a digest-pinned copy.</span></div> : skills.map((skill) => <article key={skill.id}><div><span className="skill-source-badge">{skill.source}</span><strong>{skill.name} <small>v{skill.version}</small></strong><p>{skill.description}</p></div><span className="run-status" data-status={skill.status}>{skill.status}</span><div className="row-actions">{skill.status !== "active" && skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "activate")} type="button">Activate</button> : null}{skill.status !== "archived" ? <button className="button" disabled={busy} onClick={() => void changeStatus(skill, "archive")} type="button">Archive</button> : null}</div></article>)}</div></section></div>
     {preview ? <div className="skill-review-backdrop" role="presentation">
       <section aria-labelledby="skill-review-title" aria-modal="true" className="skill-review" onKeyDown={handleDialogKeyDown} ref={dialogRef} role="dialog">
         <header>

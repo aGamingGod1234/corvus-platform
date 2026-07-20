@@ -6,10 +6,11 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
 from pydantic import Field
@@ -210,36 +211,97 @@ class SkillImportService:
             findings=preview.findings,
             created_at=datetime.now(UTC),
         )
-        with self.store.transaction() as connection:
-            connection.execute(
-                "INSERT INTO mvp_portable_skill_versions "
-                "(id, tenant_id, name, description, version, digest, source, source_path, "
-                "package_path, status, findings_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.id,
-                    record.tenant_id,
-                    record.name,
-                    record.description,
-                    record.version,
-                    record.digest,
-                    record.source,
-                    record.source_path,
-                    record.package_path,
-                    record.status,
-                    json.dumps([item.model_dump(mode="json") for item in record.findings]),
-                    record.created_at.isoformat(),
-                ),
-            )
+        try:
+            with self.store.transaction() as connection:
+                connection.execute(
+                    "INSERT INTO mvp_portable_skill_versions "
+                    "(id, tenant_id, name, description, version, digest, source, source_path, "
+                    "package_path, status, findings_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.id,
+                        record.tenant_id,
+                        record.name,
+                        record.description,
+                        record.version,
+                        record.digest,
+                        record.source,
+                        record.source_path,
+                        record.package_path,
+                        record.status,
+                        json.dumps([item.model_dump(mode="json") for item in record.findings]),
+                        record.created_at.isoformat(),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            shutil.rmtree(target.parent, ignore_errors=True)
+            raise SkillImportError("skill_import_conflict") from exc
+        except BaseException:
+            shutil.rmtree(target.parent, ignore_errors=True)
+            raise
         return record
 
-    def list(self, tenant_id: str) -> tuple[PortableSkillVersion, ...]:
+    def list(
+        self, tenant_id: str, *, limit: int = 1000, offset: int = 0
+    ) -> tuple[PortableSkillVersion, ...]:
         with self.store.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM mvp_portable_skill_versions WHERE tenant_id = ? "
-                "ORDER BY name, version DESC",
-                (tenant_id,),
+                "ORDER BY name, version DESC LIMIT ? OFFSET ?",
+                (tenant_id, limit, offset),
             ).fetchall()
         return tuple(self._version(row) for row in rows)
+
+    def recover_interrupted_imports(self) -> int:
+        """Remove only Corvus-owned packages that never reached durable storage."""
+
+        if not self.library_root.exists():
+            return 0
+        if not self._safe_directory(self.library_root):
+            raise SkillImportError("skill_library_unsafe")
+        root = self.library_root.resolve(strict=True)
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT package_path FROM mvp_portable_skill_versions"
+            ).fetchall()
+        referenced: set[Path] = set()
+        for row in rows:
+            try:
+                package = Path(str(row["package_path"])).resolve(strict=False)
+            except OSError:
+                continue
+            if package.is_relative_to(root):
+                referenced.add(package)
+
+        recovered = 0
+        staging = root / ".staging"
+        if staging.is_dir() and not path_is_link_or_reparse(staging):
+            for candidate in tuple(staging.iterdir()):
+                if not self._is_uuid_name(candidate.name):
+                    continue
+                if self._remove_owned_directory(root, candidate):
+                    recovered += 1
+
+        for identifier in tuple(root.iterdir()):
+            if not self._is_uuid_name(identifier.name):
+                continue
+            if not self._safe_directory(identifier):
+                continue
+            for version in tuple(identifier.iterdir()):
+                if not version.name.isdecimal() or int(version.name) < 1:
+                    continue
+                if not self._safe_directory(version):
+                    continue
+                canonical = version.resolve(strict=True)
+                if canonical in referenced:
+                    continue
+                if self._remove_owned_directory(root, version):
+                    recovered += 1
+            try:
+                identifier.rmdir()
+            except OSError:
+                pass
+        return recovered
 
     def activate(self, tenant_id: str, skill_id: str) -> PortableSkillVersion:
         with self.store.transaction() as connection:
@@ -258,7 +320,7 @@ class SkillImportService:
                 "UPDATE mvp_portable_skill_versions SET status = 'active' WHERE id = ?",
                 (skill_id,),
             )
-        return next(item for item in self.list(tenant_id) if item.id == skill_id)
+        return self._get(tenant_id, skill_id)
 
     def archive(self, tenant_id: str, skill_id: str) -> PortableSkillVersion:
         with self.store.transaction() as connection:
@@ -269,7 +331,17 @@ class SkillImportService:
             )
             if cursor.rowcount != 1:
                 raise SkillImportError("skill_not_found")
-        return next(item for item in self.list(tenant_id) if item.id == skill_id)
+        return self._get(tenant_id, skill_id)
+
+    def _get(self, tenant_id: str, skill_id: str) -> PortableSkillVersion:
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_portable_skill_versions WHERE tenant_id = ? AND id = ?",
+                (tenant_id, skill_id),
+            ).fetchone()
+        if row is None:
+            raise SkillImportError("skill_not_found")
+        return self._version(row)
 
     def instructions(self, tenant_id: str, skill_id: str) -> str:
         with self.store.connect() as connection:
@@ -305,6 +377,28 @@ class SkillImportService:
             return path.is_dir() and not path_is_link_or_reparse(path)
         except OSError:
             return False
+
+    @staticmethod
+    def _is_uuid_name(value: str) -> bool:
+        try:
+            return str(UUID(value)) == value.lower()
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _remove_owned_directory(root: Path, candidate: Path) -> bool:
+        try:
+            canonical = candidate.resolve(strict=True)
+        except OSError:
+            return False
+        if (
+            not canonical.is_relative_to(root)
+            or not candidate.is_dir()
+            or path_is_link_or_reparse(candidate)
+        ):
+            return False
+        shutil.rmtree(candidate)
+        return True
 
     def _package_directories(self, root: Path) -> tuple[Path, ...]:
         if not self._safe_directory(root):
@@ -478,8 +572,15 @@ class SkillImportService:
     @staticmethod
     def _read_file(path: Path) -> str:
         try:
-            return path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
+            with path.open("rb") as stream:
+                raw = stream.read(_MAX_FILE_BYTES + 1)
+        except OSError as exc:
+            raise SkillImportError("skill_package_text_invalid") from exc
+        if len(raw) > _MAX_FILE_BYTES:
+            raise SkillImportError("skill_package_file_too_large")
+        try:
+            return raw.decode("utf-8", errors="strict").replace("\r\n", "\n").replace("\r", "\n")
+        except UnicodeError as exc:
             raise SkillImportError("skill_package_text_invalid") from exc
 
     @staticmethod

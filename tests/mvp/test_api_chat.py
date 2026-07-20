@@ -21,7 +21,7 @@ async def test_openai_api_chat_streams_each_text_delta_without_buffering() -> No
             "",
             'data: {"type":"response.output_text.delta","delta":" now"}',
             "",
-            'data: {"type":"response.completed"}',
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":4},"output_tokens":3}}}',
             "",
         )
     )
@@ -44,9 +44,68 @@ async def test_openai_api_chat_streams_each_text_delta_without_buffering() -> No
     )
     events = [event async for event in backend.events(handle)]
 
-    assert [event.type for event in events] == ["started", "message", "message", "completed"]
+    assert [event.type for event in events] == ["started", "message", "message", "usage", "completed"]
     assert [event.payload.get("text") for event in events[1:3]] == ["Hello", " now"]
+    assert events[3].payload == {
+        "input_tokens": 12,
+        "cached_input_tokens": 4,
+        "output_tokens": 3,
+    }
     assert "sk-test-never-log" not in repr(backend)
+
+
+@pytest.mark.asyncio
+async def test_api_chat_stops_an_unbounded_provider_stream_at_the_output_limit() -> None:
+    body = "\n\n".join((
+        'data: {"type":"response.output_text.delta","delta":"123"}',
+        'data: {"type":"response.output_text.delta","delta":"456"}',
+        'data: {"type":"response.completed"}',
+    ))
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+        max_output_bytes=5,
+    )
+    handle = await backend.start(
+        run_id=uuid4(), prompt="Count", model="gpt-5.6-sol", effort="medium",
+        mode="chat", mcp_enabled=False, idempotency_key="api-output-limit",
+    )
+
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "message", "failed"]
+    assert events[-1].payload == {"reason_code": "provider_output_limit"}
+
+
+@pytest.mark.parametrize(
+    ("provider", "line", "expected"),
+    (
+        (
+            "anthropic",
+            'data: {"type":"message_delta","usage":{"output_tokens":9}}',
+            {"output_tokens": 9},
+        ),
+        (
+            "gemini",
+            'data: {"usageMetadata":{"promptTokenCount":20,"cachedContentTokenCount":5,"candidatesTokenCount":7}}',
+            {"input_tokens": 20, "cached_input_tokens": 5, "output_tokens": 7},
+        ),
+        (
+            "xai",
+            'data: {"usage":{"prompt_tokens":18,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens":6}}',
+            {"input_tokens": 18, "cached_input_tokens": 2, "output_tokens": 6},
+        ),
+    ),
+)
+def test_api_chat_normalizes_provider_usage(
+    provider: Any, line: str, expected: dict[str, int]
+) -> None:
+    backend = ApiChatBackend(provider=provider, credential="test-secret", clock=lambda: NOW)
+
+    assert backend._usage(line) == expected
 
 
 @pytest.mark.asyncio

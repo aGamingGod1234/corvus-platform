@@ -15,11 +15,9 @@ export function LocalFirstRunFlow({ onComplete }: {
   return <main className="local-first-run" id="main-content"><section className="local-first-run__card">
     <BrandLockup className="onboarding-wordmark" />
     {step === "welcome" ? <>
-      <p className="eyebrow">Safety-first agent runtime</p>
       <h1>Welcome to Corvus</h1>
-      <p>Corvus helps you plan, build, and contribute with local-first execution, clear permission boundaries, isolated workspaces, and a receipt for every protected run.</p>
-      <p>This desktop alpha uses a device-local identity. Google accounts are only connected in hosted Corvus until a verified desktop handoff is available.</p>
-      <button className="button button--primary" onClick={() => setStep("profile")} type="button">Start local setup</button>
+      <p>Plan, build, and review agent work with clear safety boundaries.</p>
+      <button className="button button--primary" onClick={() => setStep("profile")} type="button">Continue</button>
     </> : null}
     {step === "profile" ? <>
       <p className="eyebrow">Local setup</p>

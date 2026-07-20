@@ -130,6 +130,38 @@ def test_prepare_commits_only_selected_paths_and_is_idempotent(tmp_path: Path) -
     assert (lease.root / "left-behind.txt").exists()  # type: ignore[attr-defined]
 
 
+def test_prepare_rechecks_files_mutated_between_review_and_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, lease, git, _ = _environment(tmp_path)
+    selected = lease.root / "selected.txt"  # type: ignore[attr-defined]
+    selected.write_text("safe\n", encoding="utf-8")
+    base_sha = _run(git, lease.root, "rev-parse", "HEAD")  # type: ignore[attr-defined]
+    original_run = git.run
+    mutated = False
+
+    def mutate_before_add(cwd: Path, args: tuple[str, ...], timeout: float = 30):  # type: ignore[no-untyped-def]
+        nonlocal mutated
+        if not mutated and args[:2] == ("add", "--"):
+            mutated = True
+            selected.write_text("sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+        return original_run(cwd, args, timeout)
+
+    monkeypatch.setattr(git, "run", mutate_before_add)
+
+    with pytest.raises(ContributionConflict, match="contribution_secret_scan_blocked"):
+        service.prepare(
+            lease.run_id,  # type: ignore[attr-defined]
+            selected_paths=("selected.txt",),
+            message="Add selected file",
+            title="Add selected file",
+            body="Prepared and reviewed by Corvus.",
+            draft=True,
+        )
+
+    assert _run(git, lease.root, "rev-parse", "HEAD") == base_sha  # type: ignore[attr-defined]
+
+
 def test_prepare_blocks_known_secret_and_digest_mismatch_blocks_publish(tmp_path: Path) -> None:
     service, lease, _, _ = _environment(tmp_path)
     (lease.root / "config.env").write_text(  # type: ignore[attr-defined]

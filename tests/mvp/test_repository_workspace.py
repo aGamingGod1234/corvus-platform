@@ -45,6 +45,23 @@ def _service(tmp_path: Path, git: GitProcess) -> RepositoryWorkspaceService:
     return RepositoryWorkspaceService(SqliteStore(tmp_path / "corvus.sqlite3"), git)
 
 
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    (
+        ("https://github.com/team/corvus.git", "team/corvus"),
+        ("ssh://git@github.com/team/corvus.git", "team/corvus"),
+        ("git@github.com:team/corvus.git", "team/corvus"),
+        ("file://github.com/team/corvus.git", None),
+        ("git://github.com/team/corvus.git", None),
+        ("https://token@github.com/team/corvus.git", None),
+    ),
+)
+def test_github_remote_slug_accepts_only_explicit_https_or_ssh_forms(
+    remote: str, expected: str | None
+) -> None:
+    assert RepositoryWorkspaceService._github_slug(remote) == expected
+
+
 def test_registers_git_root_and_refreshes_real_state(tmp_path: Path) -> None:
     root, git = _repository(tmp_path)
     nested = root / "src"

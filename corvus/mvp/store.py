@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 11
+SCHEMA_VERSION: Final = 15
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -521,6 +522,68 @@ CREATE INDEX mvp_schedules_tenant_idx ON mvp_schedules(tenant_id, updated_at DES
 CREATE INDEX mvp_schedule_due_idx ON mvp_schedule_revisions(next_run_at, schedule_id);
 """
 
+_MIGRATION_012 = """
+CREATE UNIQUE INDEX mvp_runs_schedule_active_idx
+    ON mvp_runs(schedule_id)
+    WHERE schedule_id IS NOT NULL AND status IN (
+        'preparing', 'running', 'review_required', 'contribution_ready', 'publishing'
+    );
+"""
+
+_MIGRATION_013 = """
+ALTER TABLE mvp_schedule_occurrences ADD COLUMN reason_code TEXT;
+"""
+
+_MIGRATION_014 = """
+CREATE TABLE mvp_local_chat_runs (
+    run_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    handle_id TEXT NOT NULL,
+    working_directory TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    safety_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(owner, idempotency_key)
+);
+CREATE TABLE mvp_local_chat_events (
+    run_id TEXT NOT NULL REFERENCES mvp_local_chat_runs(run_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    timestamp TEXT NOT NULL,
+    type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY(run_id, sequence)
+);
+CREATE INDEX mvp_local_chat_owner_idx
+    ON mvp_local_chat_runs(owner, created_at DESC, run_id);
+"""
+
+_MIGRATION_015 = """
+ALTER TABLE mvp_local_chat_runs ADD COLUMN artifact_json TEXT;
+"""
+
+_MIGRATIONS = (
+    _MIGRATION_001,
+    _MIGRATION_002,
+    _MIGRATION_003,
+    _MIGRATION_004,
+    _MIGRATION_005,
+    _MIGRATION_006,
+    _MIGRATION_007,
+    _MIGRATION_008,
+    _MIGRATION_009,
+    _MIGRATION_010,
+    _MIGRATION_011,
+    _MIGRATION_012,
+    _MIGRATION_013,
+    _MIGRATION_014,
+    _MIGRATION_015,
+)
+
 
 class StoreError(RuntimeError):
     pass
@@ -535,8 +598,18 @@ class SqliteStore:
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database, timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                connection.execute("PRAGMA journal_mode = WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                    connection.close()
+                    raise
+                time.sleep(0.05)
         return connection
 
     @contextmanager
@@ -558,85 +631,40 @@ class SqliteStore:
                 "CREATE TABLE IF NOT EXISTS mvp_schema_migrations "
                 "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
             )
-            rows = connection.execute(
-                "SELECT version FROM mvp_schema_migrations ORDER BY version"
-            ).fetchall()
-            versions = [int(row["version"]) for row in rows]
-            if any(version > SCHEMA_VERSION for version in versions):
-                raise StoreError("unsupported_mvp_schema_version")
-            if 1 not in versions:
-                connection.executescript(_MIGRATION_001)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(1)
-            if 2 not in versions:
-                connection.executescript(_MIGRATION_002)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(2)
-            if 3 not in versions:
-                connection.executescript(_MIGRATION_003)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(3)
-            if 4 not in versions:
-                connection.executescript(_MIGRATION_004)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(4)
-            if 5 not in versions:
-                connection.executescript(_MIGRATION_005)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(5)
-            if 6 not in versions:
-                connection.executescript(_MIGRATION_006)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(6)
-            if 7 not in versions:
-                connection.executescript(_MIGRATION_007)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(7)
-            if 8 not in versions:
-                connection.executescript(_MIGRATION_008)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(8)
-            if 9 not in versions:
-                connection.executescript(_MIGRATION_009)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(9)
-            if 10 not in versions:
-                connection.executescript(_MIGRATION_010)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (10, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
-                versions.append(10)
-            if 11 not in versions:
-                connection.executescript(_MIGRATION_011)
-                connection.execute(
-                    "INSERT INTO mvp_schema_migrations(version, applied_at) "
-                    "VALUES (11, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-                )
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    "SELECT version FROM mvp_schema_migrations ORDER BY version"
+                ).fetchall()
+                versions = {int(row["version"]) for row in rows}
+                if any(version > SCHEMA_VERSION for version in versions):
+                    raise StoreError("unsupported_mvp_schema_version")
+                for version, migration in enumerate(_MIGRATIONS, start=1):
+                    if version in versions:
+                        continue
+                    for statement in self._migration_statements(migration):
+                        connection.execute(statement)
+                    connection.execute(
+                        "INSERT INTO mvp_schema_migrations(version, applied_at) "
+                        "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                        (version,),
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    @staticmethod
+    def _migration_statements(script: str) -> tuple[str, ...]:
+        statements: list[str] = []
+        buffer = ""
+        for line in script.splitlines(keepends=True):
+            buffer += line
+            if sqlite3.complete_statement(buffer):
+                statement = buffer.strip()
+                if statement:
+                    statements.append(statement)
+                buffer = ""
+        if buffer.strip():
+            raise StoreError("invalid_mvp_migration")
+        return tuple(statements)

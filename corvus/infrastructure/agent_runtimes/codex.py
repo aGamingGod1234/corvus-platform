@@ -56,6 +56,7 @@ _MAX_TIMEOUT_SECONDS = 120.0
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
 _MAX_FRAMES = 10_000
+_MAX_STDIN_BYTES = 8 * 1024 * 1024
 _MAX_BUILD_FILES = 128
 _MAX_BUILD_FILE_BYTES = 1_000_000
 _MAX_BUILD_TOTAL_BYTES = 10_000_000
@@ -330,6 +331,8 @@ class CodexCliAdapter(AgentRuntimePort):
             return AgentRunStartResult(handle=existing, replayed=True)
         if not prompt:
             raise CodexAdapterError("codex_prompt_required")
+        if "\0" in prompt:
+            raise CodexAdapterError("codex_prompt_invalid")
         if model is not None and _MODEL_PATTERN.fullmatch(model) is None:
             raise CodexAdapterError("codex_model_invalid")
         if workspace is None:
@@ -379,8 +382,16 @@ class CodexCliAdapter(AgentRuntimePort):
         if model is not None:
             arguments.extend(("--model", model))
         arguments.extend(("--config", f'model_reasoning_effort="{effort}"'))
-        arguments.append(_build_prompt(prompt) if mode == "build" else prompt)
+        effective_prompt = _build_prompt(prompt) if mode == "build" else prompt
+        try:
+            prompt_bytes = effective_prompt.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise CodexAdapterError("codex_prompt_invalid") from exc
+        if len(prompt_bytes) > _MAX_STDIN_BYTES:
+            raise CodexAdapterError("codex_prompt_too_large")
+        arguments.append("-")
         limits = ProcessSessionLimits(
+            max_stdin_bytes=_MAX_STDIN_BYTES,
             max_stdout_bytes=max_output_bytes,
             max_stderr_bytes=min(max_output_bytes, _MAX_STDERR_BYTES),
             max_frame_bytes=min(max_output_bytes, _MAX_FRAME_BYTES),
@@ -398,6 +409,7 @@ class CodexCliAdapter(AgentRuntimePort):
             cwd=scratch,
             approved_roots=(scratch,),
             environment=MappingProxyType({"NO_COLOR": "1"}),
+            stdin=prompt_bytes,
             limits=limits,
         )
         try:
@@ -567,7 +579,7 @@ class CodexCliAdapter(AgentRuntimePort):
                 frame_type = process_event.frame.get("type")
                 item = process_event.frame.get("item")
                 item_type = item.get("type") if isinstance(item, Mapping) else None
-                if item_type in _TOOL_ITEM_TYPES:
+                if item_type in _TOOL_ITEM_TYPES and isinstance(item, Mapping):
                     if session.mode == "chat":
                         await session.process.cancel()
                         yield event(
@@ -581,9 +593,11 @@ class CodexCliAdapter(AgentRuntimePort):
                             AgentRunEventType.CHECKPOINT,
                             {
                                 "activity": _safe_activity(item_type),
+                                "label": _safe_tool_label(item_type),
                                 "status": "started"
                                 if frame_type == "item.started"
                                 else "completed",
+                                **_safe_tool_identity(item),
                             },
                         )
                 elif frame_type == "thread.started":
@@ -705,6 +719,24 @@ def _safe_activity(item_type: object) -> str:
         "web_search": "search",
     }
     return mapping.get(str(item_type), "tool")
+
+
+def _safe_tool_label(item_type: object) -> str:
+    mapping = {
+        "command_execution": "Run command",
+        "file_change": "Update files",
+        "mcp_tool_call": "Use MCP tool",
+        "tool_call": "Use tool",
+        "web_search": "Search the web",
+    }
+    return mapping.get(str(item_type), "Use tool")
+
+
+def _safe_tool_identity(item: Mapping[str, object]) -> dict[str, JsonValue]:
+    tool_id = item.get("id")
+    if not isinstance(tool_id, str) or not tool_id or len(tool_id) > 200:
+        return {}
+    return {"tool_id": tool_id}
 
 
 def _is_sensitive_build_path(relative: Path) -> bool:

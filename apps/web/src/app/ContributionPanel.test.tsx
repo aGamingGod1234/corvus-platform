@@ -123,7 +123,7 @@ describe("ContributionPanel", () => {
     await user.type(screen.getByLabelText("Pull request body"), "Unsafe");
     await user.click(screen.getByRole("button", { name: "Prepare contribution" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("contribution_secret_scan_blocked");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/contribution secret scan blocked/i);
     expect(screen.queryByText("Secret scan passed")).not.toBeInTheDocument();
   });
 
@@ -151,5 +151,19 @@ describe("ContributionPanel", () => {
     const publish = screen.getByRole("button", { name: "Publish draft pull request" });
     expect(publish).toBeDisabled();
     expect(publish).toHaveAttribute("title", expect.stringMatching(/passing secret scan/i));
+  });
+
+  it("retries a failed review load and preserves truthful empty state", async () => {
+    const contributionApi = api();
+    vi.mocked(contributionApi.getRunChanges)
+      .mockRejectedValueOnce(new Error("request_failed_503"))
+      .mockResolvedValueOnce({ ...changes, files: [] });
+    const user = userEvent.setup();
+    render(<ContributionPanel api={contributionApi} runId="run-1" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/runtime is temporarily unavailable/i);
+    await user.click(screen.getByRole("button", { name: "Retry review" }));
+    expect(await screen.findByText("No changes yet")).toBeVisible();
+    expect(contributionApi.getRunChanges).toHaveBeenCalledTimes(2);
   });
 });

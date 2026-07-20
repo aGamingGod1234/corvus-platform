@@ -124,23 +124,39 @@ class WorktreeManager:
             self._cleanup_failed_worktree(canonical_repository, target)
             self._delete_creating_lease(normalized_run_id)
             raise
-        with self.store.transaction() as connection:
-            connection.execute(
-                "UPDATE mvp_worktree_leases SET root_path = ?, ownership_digest = ?, "
-                "status = 'active' "
-                "WHERE run_id = ? AND status = 'creating'",
-                (
-                    os.fspath(canonical_target),
-                    self._ownership_digest(
+        try:
+            with self.store.transaction() as connection:
+                updated = connection.execute(
+                    "UPDATE mvp_worktree_leases SET root_path = ?, ownership_digest = ?, "
+                    "status = 'active' "
+                    "WHERE run_id = ? AND status = 'creating'",
+                    (
+                        os.fspath(canonical_target),
+                        self._ownership_digest(
+                            normalized_run_id,
+                            repository.id,
+                            canonical_target,
+                            base_sha,
+                            git_metadata_digest,
+                        ),
                         normalized_run_id,
-                        repository.id,
-                        canonical_target,
-                        base_sha,
-                        git_metadata_digest,
                     ),
-                    normalized_run_id,
-                ),
-            )
+                )
+                if updated.rowcount != 1:
+                    raise WorktreeOwnershipError("worktree_activation_failed")
+        except BaseException as exc:
+            cleanup_error: BaseException | None = None
+            try:
+                self._cleanup_failed_worktree(canonical_repository, target)
+            except BaseException as cleanup_exc:
+                cleanup_error = cleanup_exc
+            finally:
+                self._delete_creating_lease(normalized_run_id)
+            if cleanup_error is not None:
+                raise cleanup_error from exc
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            raise WorktreeOwnershipError("worktree_activation_failed") from exc
         return self.get(normalized_run_id)
 
     def get(self, run_id: str) -> WorktreeLease:
@@ -212,6 +228,58 @@ class WorktreeManager:
                 (discarded_at.isoformat(), current.run_id),
             )
         return self.get(current.run_id)
+
+    def recover_interrupted(self) -> tuple[str, ...]:
+        """Remove only manager-authenticated worktrees left in the creating state."""
+        managed_root = self._initialize_root()
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                "SELECT lease.*, repository.canonical_path FROM mvp_worktree_leases lease "
+                "JOIN mvp_repositories repository ON repository.id = lease.repository_id "
+                "WHERE lease.status = 'creating' ORDER BY lease.created_at, lease.run_id"
+            ).fetchall()
+        recovered: list[str] = []
+        for row in rows:
+            try:
+                run_id = self._run_id(str(row["run_id"]))
+                repository_id = str(row["repository_id"])
+                base_sha = str(row["base_sha"])
+                target = Path(str(row["root_path"]))
+                expected = managed_root / repository_id / run_id
+                expected_digest = self._ownership_digest(
+                    run_id,
+                    repository_id,
+                    expected,
+                    base_sha,
+                    "creating",
+                )
+                if (
+                    target != expected
+                    or not self._valid_sha(base_sha)
+                    or not hmac.compare_digest(
+                        str(row["ownership_digest"]), expected_digest
+                    )
+                    or path_is_link_or_reparse(target)
+                ):
+                    continue
+                repository_root = Path(str(row["canonical_path"])).resolve(strict=True)
+                if not repository_root.is_dir() or path_is_link_or_reparse(repository_root):
+                    continue
+                if target.exists():
+                    result = self.git.run(
+                        repository_root,
+                        ("worktree", "remove", "--force", os.fspath(target)),
+                        timeout=120,
+                    )
+                    if result.returncode != 0 or target.exists():
+                        continue
+                else:
+                    self.git.run(repository_root, ("worktree", "prune"), timeout=120)
+                self._delete_creating_lease(run_id)
+                recovered.append(run_id)
+            except (OSError, WorktreeOwnershipError):
+                continue
+        return tuple(recovered)
 
     def _validate_active_lease(self, lease: WorktreeLease) -> Path:
         managed_root = self._initialize_root()
@@ -315,4 +383,6 @@ class WorktreeManager:
 
     @staticmethod
     def _valid_sha(value: str) -> bool:
-        return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
+        return len(value) in {40, 64} and all(
+            character in "0123456789abcdef" for character in value
+        )

@@ -1,5 +1,9 @@
 const STORAGE_VERSION = 1;
 const STORAGE_PREFIX = "corvus.local-conversations.v1";
+const MAX_PERSISTED_THREADS = 50;
+const MAX_MESSAGES_PER_THREAD = 200;
+const MAX_MESSAGE_CHARACTERS = 50_000;
+const MAX_SERIALIZED_CHARACTERS = 3_000_000;
 
 export interface DeviceMessage {
   id: string;
@@ -54,7 +58,69 @@ export function loadDeviceThreads(storage: Storage, scope: string): DeviceThread
   return [];
 }
 
-export function saveDeviceThreads(storage: Storage, scope: string, threads: readonly DeviceThread[]): void {
-  const state: DeviceConversationState = { version: STORAGE_VERSION, threads: [...threads] };
-  storage.setItem(key(scope), JSON.stringify(state));
+export interface DeviceConversationSaveResult { saved: boolean; truncated: boolean; }
+
+export function saveDeviceThreads(
+  storage: Storage,
+  scope: string,
+  threads: readonly DeviceThread[]
+): DeviceConversationSaveResult {
+  let truncated = threads.length > MAX_PERSISTED_THREADS;
+  const ordered = [...threads]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, MAX_PERSISTED_THREADS)
+    .map((thread) => {
+      const selectedMessages = thread.messages.slice(-MAX_MESSAGES_PER_THREAD);
+      if (selectedMessages.length !== thread.messages.length) truncated = true;
+      return {
+        ...thread,
+        messages: selectedMessages.map((message) => {
+          const content = message.content.slice(0, MAX_MESSAGE_CHARACTERS);
+          if (content.length !== message.content.length) truncated = true;
+          return { ...message, content };
+        })
+      };
+    });
+
+  // Keep the newest useful history without repeatedly serializing the entire
+  // state. If the next thread does not fit, a logarithmic search retains as
+  // many of its newest messages as the exact serialized budget permits.
+  const persisted: DeviceThread[] = [];
+  let encodedLength = JSON.stringify({ version: STORAGE_VERSION, threads: [] }).length;
+  for (const thread of ordered) {
+    const serializedThread = JSON.stringify(thread);
+    const separatorLength = persisted.length === 0 ? 0 : 1;
+    if (encodedLength + separatorLength + serializedThread.length <= MAX_SERIALIZED_CHARACTERS) {
+      persisted.push(thread);
+      encodedLength += separatorLength + serializedThread.length;
+      continue;
+    }
+
+    truncated = true;
+    let low = 0;
+    let high = thread.messages.length;
+    let fittingThread: DeviceThread | undefined;
+    while (low <= high) {
+      const count = Math.floor((low + high) / 2);
+      const candidate = { ...thread, messages: count === 0 ? [] : thread.messages.slice(-count) };
+      const candidateLength = JSON.stringify(candidate).length;
+      if (encodedLength + separatorLength + candidateLength <= MAX_SERIALIZED_CHARACTERS) {
+        fittingThread = candidate;
+        low = count + 1;
+      } else {
+        high = count - 1;
+      }
+    }
+    if (fittingThread !== undefined) persisted.push(fittingThread);
+    break;
+  }
+
+  const state: DeviceConversationState = { version: STORAGE_VERSION, threads: persisted };
+  const encoded = JSON.stringify(state);
+  try {
+    storage.setItem(key(scope), encoded);
+    return { saved: true, truncated };
+  } catch {
+    return { saved: false, truncated };
+  }
 }

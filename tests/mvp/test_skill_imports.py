@@ -122,6 +122,56 @@ def test_import_copies_the_exact_reviewed_skill_snapshot(
     assert "rm -rf" not in imported_content
 
 
+def test_import_removes_copied_package_when_persistence_fails(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _skill(home / ".codex" / "skills", "persistence-failure")
+    store = SqliteStore(tmp_path / "db.sqlite3")
+    library = tmp_path / "library"
+    service = SkillImportService(store, library_root=library, home=home)
+    candidate = service.discover()[0]
+    preview = service.preview("local", candidate.id)
+    with store.transaction() as connection:
+        connection.execute(
+            "CREATE TRIGGER reject_portable_skill BEFORE INSERT ON mvp_portable_skill_versions "
+            "BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
+        )
+
+    with pytest.raises(SkillImportError, match="^skill_import_conflict$"):
+        service.import_draft("local", candidate.id, preview.digest)
+
+    assert not tuple(library.rglob("SKILL.md"))
+
+
+def test_recovery_removes_only_unreferenced_owned_skill_packages(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _skill(home / ".codex" / "skills", "persisted-skill")
+    library = tmp_path / "library"
+    service = SkillImportService(
+        SqliteStore(tmp_path / "db.sqlite3"), library_root=library, home=home
+    )
+    candidate = service.discover()[0]
+    preview = service.preview("local", candidate.id)
+    imported = service.import_draft("local", candidate.id, preview.digest)
+    persisted_manifest = Path(imported.package_path, "SKILL.md")
+    orphan = _skill(
+        library / "11111111-1111-4111-8111-111111111111",
+        "1",
+    )
+    staging = _skill(
+        library / ".staging" / "22222222-2222-4222-8222-222222222222",
+        "pending",
+    )
+    unmanaged = _skill(library, "manual-package")
+
+    recovered = service.recover_interrupted_imports()
+
+    assert recovered == 2
+    assert persisted_manifest.is_file()
+    assert not orphan.exists()
+    assert not staging.exists()
+    assert unmanaged.is_dir()
+
+
 def test_claude_legacy_command_is_normalized_for_review(tmp_path: Path) -> None:
     home = tmp_path / "home"
     commands = home / ".claude" / "commands"
@@ -138,3 +188,18 @@ def test_claude_legacy_command_is_normalized_for_review(tmp_path: Path) -> None:
     assert preview.name == "ship"
     assert preview.compatibility == "needs_review"
     assert preview.findings[0].code == "legacy_command"
+
+
+def test_claude_legacy_command_preview_enforces_the_file_size_limit(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    commands = home / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    commands.joinpath("oversized.md").write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+    service = SkillImportService(
+        SqliteStore(tmp_path / "db.sqlite3"), library_root=tmp_path / "library", home=home
+    )
+
+    candidate = service.discover()[0]
+
+    with pytest.raises(SkillImportError, match="^skill_package_file_too_large$"):
+        service.preview("local", candidate.id)

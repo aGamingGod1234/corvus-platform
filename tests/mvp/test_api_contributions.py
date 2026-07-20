@@ -92,6 +92,19 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
     assert client.post("/api/auth/pair", json={"token": token}).status_code == 200
     csrf = cast(str, client.get("/api/auth/session").json()["csrf_token"])
 
+    disposable = client.post(
+        f"/api/local/repositories/{repository.id}/worktrees",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert disposable.status_code == 201
+    disposable_run_id = disposable.json()["run_id"]
+    disposed = client.delete(
+        f"/api/local/worktrees/{disposable_run_id}",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert disposed.status_code == 204
+    assert worktrees.get(disposable_run_id).status == "discarded"
+
     created = client.post(
         f"/api/local/repositories/{repository.id}/worktrees",
         headers={"X-CSRF-Token": csrf},
@@ -117,12 +130,71 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
         run_id=run_id,
     )
     runs.transition("local", run_id, RunStatus.RUNNING)
-    runs.transition("local", run_id, RunStatus.REVIEW_REQUIRED)
+    managed_discard = client.delete(
+        f"/api/local/worktrees/{run_id}",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert managed_discard.status_code == 409
+    assert managed_discard.json()["error"]["message"] == (
+        "worktree_managed_by_durable_run"
+    )
+    assert worktrees.get(run_id).status == "active"
     (lease.root / "feature.txt").write_text("feature\n", encoding="utf-8")
+
+    active_run_prepare = client.post(
+        f"/api/local/runs/{run_id}/contribution/prepare",
+        json={
+            "selected_paths": ["feature.txt"],
+            "message": "Add feature",
+            "title": "Add feature",
+            "body": "Reviewed by Corvus.",
+            "draft": True,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert active_run_prepare.status_code == 409
+    assert active_run_prepare.json()["error"]["message"] == (
+        "contribution_run_not_reviewable"
+    )
+    assert runs.get("local", run_id).status == RunStatus.RUNNING
+
+    runs.transition("local", run_id, RunStatus.REVIEW_REQUIRED)
 
     changes = client.get(f"/api/local/runs/{run_id}/changes")
     assert changes.status_code == 200
     assert changes.json()["files"][0]["path"] == "feature.txt"
+
+    unsafe_publish = client.post(
+        f"/api/local/runs/{run_id}/contribution/prepare",
+        json={
+            "selected_paths": ["feature.txt"],
+            "message": "Add feature",
+            "title": "Add feature",
+            "body": "Reviewed by Corvus.",
+            "draft": False,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert unsafe_publish.status_code == 422
+
+    service_prepared = contributions.prepare(
+        run_id,
+        selected_paths=("feature.txt",),
+        message="Add feature",
+        title="Add feature",
+        body="Reviewed by Corvus.",
+        draft=True,
+    )
+    premature_publish = client.post(
+        f"/api/local/runs/{run_id}/contribution/publish",
+        json={"expected_digest": service_prepared.confirmation_digest},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert premature_publish.status_code == 409
+    assert premature_publish.json()["error"]["message"] == (
+        "contribution_run_not_publishable"
+    )
+    assert runs.get("local", run_id).status == RunStatus.REVIEW_REQUIRED
 
     prepared = client.post(
         f"/api/local/runs/{run_id}/contribution/prepare",
