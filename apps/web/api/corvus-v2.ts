@@ -1,4 +1,4 @@
-import { proxyV2Request } from "./v2/[...path]";
+import { proxyV2Request } from "./v2/[...path].js";
 
 declare const process: { env: Record<string, string | undefined> };
 

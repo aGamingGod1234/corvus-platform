@@ -2238,3 +2238,7 @@
 
 ### Suggested Next Steps
 - Commit and open the protected-main PR, verify the Vercel preview route, resolve actionable automated review findings, then request `@asifdotpy` approval without merging.
+
+### Preview Follow-up
+- Probed the protected Vercel preview with an authenticated bypass and found that Node ESM could not resolve the extensionless import from `api/corvus-v2.ts`.
+- Changed the shared catch-all import to its emitted `.js` path so the nested proxy function can load in Vercel's serverless runtime; the preview route must be probed again after redeployment.
