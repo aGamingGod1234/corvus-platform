@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationApi, RunEventListener, RunEventStream } from "./conversationApi";
-import { ConversationWorkspace } from "./ConversationWorkspace";
+import { assistantStreamBatchSize, ConversationWorkspace } from "./ConversationWorkspace";
 import { MemoryStorage } from "../test/memoryStorage";
 
 class FakeRunStream implements RunEventStream {
@@ -98,7 +98,262 @@ function emptyConversationApi(stream: FakeRunStream): ConversationApi {
   };
 }
 
+async function chooseComposerOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string
+): Promise<void> {
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(screen.getByRole("option", { name: option }));
+}
+
 describe("ConversationWorkspace", () => {
+  it("adapts rendering batches so large responses catch up without skipping short-stream motion", () => {
+    expect(assistantStreamBatchSize(1)).toBe(1);
+    expect(assistantStreamBatchSize(120)).toBe(1);
+    expect(assistantStreamBatchSize(1_200)).toBe(10);
+  });
+
+  it("uses the fallback provider model when the saved provider is unavailable", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 0, default_provider: "openai", default_model: "gpt-5.6-sol",
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: null
+    });
+    api.listProviders = vi.fn().mockResolvedValue([{
+      id: "claude", label: "Claude", status: "ready", runtime: "local",
+      models: [{ id: "sonnet", label: "Claude Sonnet", recommended: true }],
+      status_label: "Detected on this device", thinking_levels: ["low", "medium", "high"],
+      supports_mcp: false
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-provider-fallback" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Agent provider" })).toHaveTextContent("Claude");
+      expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveTextContent("Claude Sonnet");
+    });
+  });
+
+  it("uses the first verified model when the saved model is no longer available", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 0, default_provider: "codex", default_model: "retired-model",
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: null
+    });
+    api.listProviders = vi.fn().mockResolvedValue([{
+      id: "codex", label: "Codex", status: "ready", runtime: "local",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+      status_label: "Detected on this device", thinking_levels: ["low", "medium", "high"],
+      supports_mcp: true
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-model-fallback" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveTextContent("GPT-5.6 Sol");
+    });
+  });
+
+  it("keeps the composer focused and reveals advanced controls through Run options", async () => {
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-progressive-controls" experience="developer" />);
+
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("combobox", { name: "Agent provider" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Run mode" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Agent model" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
+  });
+
+  it("closes an open composer menu when keyboard focus leaves it", async () => {
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-menu-focus" experience="developer" />);
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    const provider = screen.getByRole("combobox", { name: "Agent provider" });
+
+    await user.click(provider);
+    expect(provider).toHaveAttribute("aria-expanded", "true");
+    await user.tab();
+
+    expect(provider).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveFocus();
+  });
+
+  it("keeps a verified provider usable when only saved preferences fail to load", async () => {
+    const stream = new FakeRunStream();
+    const client = conversationApi(stream);
+    vi.mocked(client.getPreferences).mockRejectedValue(new Error("preferences unavailable"));
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={client} storage={new MemoryStorage()}
+      storageScope="workspace-preference-failure" experience="developer" />);
+
+    await user.type(screen.getByLabelText("Message Corvus"), "Inspect this repository");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
+    expect(screen.queryByText(/could not verify local providers/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Preference recovery" })).toHaveTextContent(
+      /using verified provider defaults/i
+    );
+  });
+
+  it("uses application-styled accessible menus for composer choices", async () => {
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-controls" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    const thinkingControl = screen.getByRole("combobox", { name: "Thinking level" });
+    expect(thinkingControl).toHaveClass("composer-select__trigger");
+    await user.click(thinkingControl);
+    expect(screen.getByRole("listbox", { name: "Thinking level" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Extra high" })).toHaveAttribute("aria-selected", "false");
+    expect(thinkingControl).toHaveAttribute("aria-activedescendant");
+    await user.keyboard("{ArrowDown}");
+    expect(thinkingControl).toHaveTextContent("Medium");
+    await user.keyboard("{Enter}");
+    expect(thinkingControl).toHaveTextContent("High");
+    expect(screen.queryByRole("listbox", { name: "Thinking level" })).not.toBeInTheDocument();
+  });
+
+  it("sends prior thread messages as bounded context when switching from Chat to Build", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-context" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Build me a website");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("message", { payload: { text: "I can help shape the website." } });
+    stream.emit("completed", { payload: {} });
+    await screen.findByText("I can help shape the website.", {}, { timeout: 3_000 });
+
+    await chooseComposerOption(user, "Run mode", "Build");
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Continue");
+    await user.click(screen.getByRole("button", { name: "Build project" }));
+    await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
+
+    await waitFor(() => expect(api.startRun).toHaveBeenLastCalledWith(
+      "Continue",
+      expect.objectContaining({
+        mode: "build",
+        context: [
+          { role: "user", content: "Build me a website" },
+          { role: "assistant", content: "I can help shape the website." }
+        ]
+      }),
+      expect.any(String)
+    ));
+  });
+
+  it("keeps distinct provider message items as separate paragraphs", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-paragraphs" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Explain the result");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("message", { payload: { text: "The implementation is complete." } });
+    stream.emit("message", { payload: { text: "The checks also pass." } });
+
+    const first = await screen.findByText("The implementation is complete.");
+    const second = await screen.findByText("The checks also pass.");
+    expect(first.tagName).toBe("P");
+    expect(second.tagName).toBe("P");
+  });
+
+  it("joins API provider token deltas without inserting paragraph breaks", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 0, default_provider: "openai", default_model: "gpt-5.6-sol",
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: null
+    });
+    api.listProviders = vi.fn().mockResolvedValue([{
+      id: "openai", label: "OpenAI", status: "ready", runtime: "api",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+      status_label: "API key verified", thinking_levels: ["low", "medium", "high", "xhigh"],
+      supports_mcp: false
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-api-deltas" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Say hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("message", { payload: { text: "Hel" } });
+    stream.emit("message", { payload: { text: "lo" } });
+    stream.emit("message", { payload: { text: " now" } });
+
+    const result = await screen.findByText("Hello now");
+    expect(result.tagName).toBe("P");
+  });
+
+  it("shows truthful token usage supplied by the verified provider", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-usage" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Summarize this");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("usage", { payload: { input_tokens: 1234, cached_input_tokens: 200, output_tokens: 87 } });
+
+    expect(await screen.findByRole("status", { name: "Model usage" })).toHaveTextContent(
+      "Model usage · 1,234 input · 200 cached · 87 output"
+    );
+  });
+
+  it("locks thread and project switching while a run owns the active conversation", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-active-thread" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Hold this context");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(screen.getByRole("button", { name: "New thread" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Project · Agent directory" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Conversation history" }));
+    expect(screen.getByRole("button", { name: /Hold this context/ })).toBeDisabled();
+  });
+
+  it("shows sanitized tool activity while a Build run is working", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-tools" experience="developer" />);
+
+    await chooseComposerOption(user, "Run mode", "Build");
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Run the checks");
+    await user.click(screen.getByRole("button", { name: "Build project" }));
+    await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
+    stream.emit("status", {
+      payload: { activity: "command", tool_id: "tool-1", label: "Run command", status: "started" }
+    });
+
+    expect(await screen.findByRole("region", { name: "Tool activity" })).toHaveTextContent("Run command");
+    expect(screen.getByRole("region", { name: "Tool activity" })).toHaveTextContent("In progress");
+  });
+
   it("binds a registered project to a new thread and sends its repository id", async () => {
     const stream = new FakeRunStream();
     const api = conversationApi(stream);
@@ -145,7 +400,7 @@ describe("ConversationWorkspace", () => {
     expect(screen.queryByText(/process frame duplicate key/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Switch to Build" }));
-    expect(screen.getByRole("combobox", { name: "Run mode" })).toHaveValue("build");
+    expect(screen.getByRole("combobox", { name: "Run mode" })).toHaveTextContent("Build");
     expect(screen.getByRole("textbox", { name: "Message Corvus" })).toHaveValue("Clone the repository");
   });
 
@@ -206,14 +461,18 @@ describe("ConversationWorkspace", () => {
     const user = userEvent.setup();
 
     expect(screen.queryByRole("complementary", { name: "thread list" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Claude" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    await user.click(await screen.findByRole("combobox", { name: "Agent provider" }));
+    expect(screen.getByRole("option", { name: "Claude" })).toBeEnabled();
     expect(screen.queryByRole("option", { name: /Gemini|Grok|Unavailable|Preview/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Codex default/i })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Agent provider" }), "claude");
+    await user.click(screen.getByRole("option", { name: "Claude" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent model" }));
     expect(screen.getByRole("option", { name: "Claude Sonnet" })).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Agent model" }), "opus");
-    expect(screen.getByRole("option", { name: "Max" })).toHaveValue("max");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Thinking level" }), "max");
+    await user.click(screen.getByRole("option", { name: "Claude Opus" }));
+    await user.click(screen.getByRole("combobox", { name: "Thinking level" }));
+    expect(screen.getByRole("option", { name: "Max" })).toHaveAttribute("aria-selected", "false");
+    await user.click(screen.getByRole("option", { name: "Max" }));
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Review this change");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(api.startRun).toHaveBeenCalledWith("Review this change", {
@@ -222,9 +481,9 @@ describe("ConversationWorkspace", () => {
     }, expect.any(String));
     stream.emit("completed", { type: "completed", payload: {} });
     expect(await screen.findByText("Completed")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Agent provider" }), "codex");
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Agent provider" })).toHaveValue("codex"));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Run mode" }), "build");
+    await chooseComposerOption(user, "Agent provider", "Codex");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Agent provider" })).toHaveTextContent("Codex"));
+    await chooseComposerOption(user, "Run mode", "Build");
     expect(screen.getByRole("checkbox", { name: "Allow configured MCP servers" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Conversation history" }));
@@ -238,12 +497,20 @@ describe("ConversationWorkspace", () => {
     const user = userEvent.setup();
 
     await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Build a landing page");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Run mode" }), "build");
+    await chooseComposerOption(user, "Run mode", "Build");
+    await user.click(screen.getByRole("button", { name: "Run options" }));
     await user.click(screen.getByRole("checkbox", { name: "Allow configured MCP servers" }));
     expect(screen.getByText(/may access external systems/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Build project" }));
     expect(api.startRun).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Confirm protected build" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(screen.getByRole("button", { name: "Continue in sandbox" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Confirm protected build" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Build project" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Build project" }));
     expect(screen.getByText(/original project is not modified/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     expect(api.startRun).toHaveBeenCalledWith("Build a landing page", {
@@ -314,8 +581,8 @@ describe("ConversationWorkspace", () => {
     });
 
     expect(await screen.findByText("Done")).toHaveStyle({ fontWeight: "bold" });
-    expect(screen.getByText("checked").closest("ul")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
+    expect((await screen.findByText("checked")).closest("ul")).toBeVisible();
+    expect(await screen.findByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
     expect(document.querySelector("script")).toBeNull();
   });
 
@@ -359,6 +626,28 @@ describe("ConversationWorkspace", () => {
     expect(api.startRun).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Retry providers" }));
     expect(api.listProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when a verified provider returns no runnable model capabilities", async () => {
+    const stream = new FakeRunStream();
+    const api = conversationApi(stream);
+    vi.mocked(api.listProviders).mockResolvedValue([{
+      id: "codex",
+      label: "Codex",
+      status: "ready",
+      runtime: "local",
+      models: [],
+      status_label: "CLI and login verified",
+      thinking_levels: [],
+      supports_mcp: true
+    }]);
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()} storageScope="device" experience="everyday" />);
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/returned no supported models or thinking levels/i);
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Do not send this");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(api.startRun).not.toHaveBeenCalled();
   });
 
   it("cancels the active run without treating a closed stream as success", async () => {

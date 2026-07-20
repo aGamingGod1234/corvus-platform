@@ -87,4 +87,62 @@ describe("legacy Corvus transport authority", () => {
     await expect(createCorvusApi("http://127.0.0.1:8080").getContribution("run-1"))
       .rejects.toThrow("contribution_not_found");
   });
+
+  it("loads bounded local collections page by page without hiding later records", async () => {
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const request = input as Request;
+      requests.push(request);
+      const offset = new URL(request.url).searchParams.get("offset");
+      if (offset === "100") return jsonResponse([{ id: "repo-101" }]);
+      return jsonResponse(Array.from({ length: 100 }, (_, index) => ({ id: `repo-${index}` })));
+    }));
+
+    const repositories = await createCorvusApi("http://127.0.0.1:8080").listRepositories();
+
+    expect(repositories).toHaveLength(101);
+    expect(requests.map((request) => new URL(request.url).searchParams.get("offset")))
+      .toEqual(["0", "100"]);
+  });
+
+  it("loads bounded run history and evidence page by page", async () => {
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const request = input as Request;
+      requests.push(request);
+      const url = new URL(request.url);
+      const offset = url.searchParams.get("offset");
+      if (url.pathname.endsWith("/evidence")) {
+        return jsonResponse(offset === "100" ? [{ id: "evidence-101" }] : Array.from(
+          { length: 100 }, (_, index) => ({ id: `evidence-${index}` })
+        ));
+      }
+      return jsonResponse(offset === "100" ? [{ id: "run-101" }] : Array.from(
+        { length: 100 }, (_, index) => ({ id: `run-${index}` })
+      ));
+    }));
+    const api = createCorvusApi("http://127.0.0.1:8080");
+
+    const runs = await api.listLocalRuns();
+    const evidence = await api.listLocalRunEvidence("run-1");
+
+    expect(runs).toHaveLength(101);
+    expect(evidence).toHaveLength(101);
+    expect(requests.map((request) => new URL(request.url).searchParams.get("offset")))
+      .toEqual(["0", "100", "0", "100"]);
+  });
+
+  it("sends the explicit event page size used by the Runs workspace", async () => {
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(input as Request);
+      return jsonResponse([]);
+    }));
+
+    await createCorvusApi("http://127.0.0.1:8080").listLocalRunEvents("run-1", 500, 250);
+
+    const query = new URL(requests[0].url).searchParams;
+    expect(query.get("after")).toBe("500");
+    expect(query.get("limit")).toBe("250");
+  });
 });

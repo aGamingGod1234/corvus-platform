@@ -8,12 +8,16 @@ import json
 import os
 import platform
 import shutil
+import sqlite3
+import threading
+import time
 import tomllib
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from corvus.domain.agent_runtime import (
@@ -36,11 +40,15 @@ from corvus.infrastructure.agent_runtimes.codex import (
 )
 from corvus.mvp.provider_catalog import build_provider_catalog
 from corvus.mvp.safety import SafetyPreview, build_safety_preview
+from corvus.mvp.store import SqliteStore
+from corvus.mvp.trusted_cli import TrustedCli, TrustedCliError
 from corvus.safe_process import path_is_link_or_reparse
 
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
 _MAX_OUTPUT_BYTES = 100_000
+_MAX_PERSISTED_RUNS_PER_OWNER = 200
+_READINESS_CACHE_TTL_SECONDS = 5.0
 _PROJECT_COPY_MAX_FILES = 20_000
 _PROJECT_COPY_MAX_ENTRIES = 30_000
 _PROJECT_COPY_MAX_BYTES = 512 * 1024 * 1024
@@ -127,6 +135,28 @@ class LocalChatBackend(Protocol):
     def artifact(self, handle: LocalChatBackendHandle) -> LocalBuildArtifact | None: ...
 
 
+class _RecoveredLocalChatBackend:
+    async def start(self, **_kwargs: object) -> LocalChatBackendHandle:
+        raise LocalChatError("local_chat_recovered_run_terminal")
+
+    async def events(
+        self,
+        _handle: LocalChatBackendHandle,
+        _after_sequence: int = 0,
+    ) -> AsyncIterator[LocalChatBackendEvent]:
+        if False:
+            yield LocalChatBackendEvent(0, datetime.now(UTC), "failed", {})
+
+    async def cancel(self, _handle: LocalChatBackendHandle) -> bool:
+        return False
+
+    def artifact(self, _handle: LocalChatBackendHandle) -> LocalBuildArtifact | None:
+        return None
+
+
+_RECOVERED_BACKEND = _RecoveredLocalChatBackend()
+
+
 @dataclass(slots=True)
 class _RunRecord:
     owner: str
@@ -140,18 +170,25 @@ class _RunRecord:
     state: str = "running"
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     pump_task: asyncio.Task[None] | None = None
+    restored: bool = False
+    artifact_snapshot: LocalBuildArtifact | None = None
 
 
 class LocalChatService:
-    """Daemon-lifetime, owner-scoped local Codex runs. No durable transcript storage."""
+    """Owner-scoped local runs with a durable, prompt-free event journal."""
 
     def __init__(
         self,
         *,
         backend: LocalChatBackend | None = None,
         backends: Mapping[str, LocalChatBackend] | None = None,
+        readiness_probes: Mapping[str, Callable[[], bool]] | None = None,
+        readiness_cache_ttl_seconds: float = _READINESS_CACHE_TTL_SECONDS,
+        readiness_clock: Callable[[], float] | None = None,
         cursor_secret: bytes,
         clock: Callable[[], datetime] | None = None,
+        store: SqliteStore | None = None,
+        artifact_roots: tuple[Path, ...] = (),
     ) -> None:
         if len(cursor_secret) < 32:
             raise ValueError("local_chat_cursor_secret_too_short")
@@ -159,13 +196,21 @@ class LocalChatService:
             raise ValueError("local_chat_backend_ambiguous")
         configured = dict(backends or ({"codex": backend} if backend is not None else {}))
         self._backends = configured
+        self._readiness_probes = dict(readiness_probes or {})
+        self._readiness_cache_ttl_seconds = readiness_cache_ttl_seconds
+        self._readiness_clock = readiness_clock or time.monotonic
+        self._readiness_cache: dict[str, tuple[float, bool]] = {}
+        self._readiness_cache_lock = threading.Lock()
         self._owner_backends: dict[tuple[str, str], LocalChatBackend] = {}
         self._backend = configured.get("codex") or next(iter(configured.values()), None)
         self._cursor_secret = cursor_secret
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._store = store
+        self._artifact_roots = tuple(root.expanduser().absolute() for root in artifact_roots)
         self._runs: dict[UUID, _RunRecord] = {}
         self._idempotency: dict[tuple[str, str], UUID] = {}
         self._start_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._recover_persisted_runs()
 
     def register_owner_backend(
         self,
@@ -192,9 +237,13 @@ class LocalChatService:
         idempotency_prompt: str | None = None,
         source_directory: Path | None = None,
     ) -> dict[str, object]:
-        backend = self._owner_backends.get((owner, provider)) or self._backends.get(provider)
+        owner_backend = self._owner_backends.get((owner, provider))
+        backend = owner_backend or self._backends.get(provider)
         if backend is None:
             raise LocalChatError("provider_unavailable")
+        readiness_probe = (
+            None if owner_backend is not None else self._readiness_probes.get(provider)
+        )
         if provider == "codex" and effort == "max":
             raise LocalChatError("provider_effort_unavailable")
         if provider != "codex" and (mode != "chat" or mcp_enabled):
@@ -239,6 +288,7 @@ class LocalChatService:
                 idempotency_scope=idempotency_scope,
                 request_digest=request_digest,
                 backend=backend,
+                readiness_probe=readiness_probe,
                 source_directory=source_directory,
             )
 
@@ -258,14 +308,32 @@ class LocalChatService:
         idempotency_scope: tuple[str, str],
         request_digest: str,
         backend: LocalChatBackend,
+        readiness_probe: Callable[[], bool] | None,
         source_directory: Path | None,
     ) -> dict[str, object]:
         replay_id = self._idempotency.get(idempotency_scope)
+        if replay_id is None:
+            restored = self._restore_by_idempotency(owner, idempotency_key)
+            if restored is not None:
+                replay_id = restored.handle.run_id
+                self._runs[replay_id] = restored
+                self._idempotency[idempotency_scope] = replay_id
         if replay_id is not None:
             replay = self._runs[replay_id]
             if replay.request_digest != request_digest:
                 raise LocalChatConflict("idempotency_conflict")
-            return dict(replay.response)
+            replay_response = dict(replay.response)
+            if replay.restored:
+                replay_response["state"] = replay.state
+            return replay_response
+        if readiness_probe is not None:
+            provider_ready = await asyncio.to_thread(
+                self._provider_ready,
+                provider,
+                readiness_probe,
+            )
+            if not provider_ready:
+                raise LocalChatError("provider_unavailable")
         run_id = uuid4()
         try:
             if source_directory is None:
@@ -324,6 +392,12 @@ class LocalChatService:
             events=[],
             safety=safety,
         )
+        try:
+            self._persist_record(record, provider)
+        except sqlite3.Error as error:
+            with suppress(Exception):
+                await backend.cancel(handle)
+            raise LocalChatError("local_chat_persistence_failed") from error
         self._runs[run_id] = record
         self._idempotency[idempotency_scope] = run_id
         record.pump_task = asyncio.create_task(
@@ -372,6 +446,10 @@ class LocalChatService:
                     record.events.append(event)
                     if event.type in {"completed", "failed", "cancelled"}:
                         record.state = event.type
+                        record.response["state"] = event.type
+                    if event.type == "completed":
+                        record.artifact_snapshot = self._capture_artifact(record)
+                    self._persist_event(record, event)
                     record.condition.notify_all()
             if record.state == "running":
                 await self._append_runtime_failure(record, latest, "local_chat_stream_ended")
@@ -390,7 +468,7 @@ class LocalChatService:
             if record.state != "running":
                 return
             record.events.append(
-                LocalChatBackendEvent(
+                event := LocalChatBackendEvent(
                     sequence=latest + 1,
                     timestamp=self._clock(),
                     type="failed",
@@ -398,10 +476,16 @@ class LocalChatService:
                 )
             )
             record.state = "failed"
+            record.response["state"] = "failed"
+            self._persist_event(record, event)
             record.condition.notify_all()
 
     def artifact(self, *, owner: str, run_id: UUID) -> LocalBuildArtifact:
         record = self._owned_run(owner, run_id)
+        if record.restored:
+            if record.artifact_snapshot is None:
+                raise LocalChatNotFound("local_chat_artifact_not_found")
+            return self._validate_artifact(record.artifact_snapshot)
         artifact = record.backend.artifact(record.handle)
         if artifact is None:
             raise LocalChatNotFound("local_chat_artifact_not_found")
@@ -424,7 +508,11 @@ class LocalChatService:
         }
         activities = [label for key, label in activity_labels.items() if key in activity_keys]
         artifact_payload: dict[str, object] | None = None
-        artifact = record.backend.artifact(record.handle)
+        artifact = (
+            self._validated_artifact_or_none(record.artifact_snapshot)
+            if record.restored
+            else record.backend.artifact(record.handle)
+        )
         if artifact is not None:
             artifact_payload = {
                 "download_name": artifact.download_name,
@@ -458,6 +546,8 @@ class LocalChatService:
         if accepted:
             async with record.condition:
                 record.state = "cancelled"
+                record.response["state"] = "cancelled"
+                self._persist_state(record)
                 record.condition.notify_all()
         return {
             "run_id": str(run_id),
@@ -466,10 +556,45 @@ class LocalChatService:
             "reason_code": "agent_run_cancelled" if accepted else "agent_run_already_terminal",
         }
 
+    async def shutdown(self) -> tuple[str, ...]:
+        """Cancel live provider work and settle local pump tasks before process exit."""
+        live = [
+            (run_id, record) for run_id, record in self._runs.items() if record.state == "running"
+        ]
+        cancelled: list[str] = []
+        for run_id, record in live:
+            with suppress(Exception):
+                result = await self.cancel(owner=record.owner, run_id=run_id)
+                if result["accepted"]:
+                    cancelled.append(str(run_id))
+        pumps = [
+            record.pump_task
+            for _run_id, record in live
+            if record.pump_task is not None and not record.pump_task.done()
+        ]
+        if pumps:
+            _done, pending = await asyncio.wait(pumps, timeout=2)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
+        return tuple(cancelled)
+
     def provider_catalog(self) -> tuple[dict[str, object], ...]:
+        codex_detected = "codex" in self._backends
+        codex_probe = self._readiness_probes.get("codex")
+        codex_ready = codex_detected and (
+            codex_probe is None or self._provider_ready("codex", codex_probe)
+        )
+        claude_detected = "claude" in self._backends
+        claude_probe = self._readiness_probes.get("claude")
+        claude_ready = claude_detected and (
+            claude_probe is None or self._provider_ready("claude", claude_probe)
+        )
         entries = build_provider_catalog(
-            codex_available="codex" in self._backends,
-            claude_available="claude" in self._backends,
+            codex_available=codex_ready,
+            codex_detected=codex_detected,
+            claude_available=claude_ready,
+            claude_detected=claude_detected,
             codex_effective_model=_discover_codex_effective_model(),
         )
         return tuple(
@@ -486,11 +611,303 @@ class LocalChatService:
             for entry in entries
         )
 
+    def _provider_ready(self, provider: str, probe: Callable[[], bool]) -> bool:
+        with self._readiness_cache_lock:
+            now = self._readiness_clock()
+            cached = self._readiness_cache.get(provider)
+            if cached is not None and now - cached[0] < self._readiness_cache_ttl_seconds:
+                return cached[1]
+            ready = bool(probe())
+            self._readiness_cache[provider] = (now, ready)
+            return ready
+
     def _owned_run(self, owner: str, run_id: UUID) -> _RunRecord:
         record = self._runs.get(run_id)
+        if record is None:
+            restored = self._restore_by_run_id(owner, run_id)
+            if restored is not None:
+                record = restored
+                self._runs[run_id] = restored
+                self._idempotency[(owner, restored.idempotency_key)] = run_id
         if record is None or not hmac.compare_digest(record.owner, owner):
             raise LocalChatNotFound("local_chat_run_not_found")
         return record
+
+    def _persist_record(self, record: _RunRecord, provider: str) -> None:
+        if self._store is None:
+            return
+        created_at = str(record.response["created_at"])
+        with self._store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO mvp_local_chat_runs "
+                "(run_id, owner, provider, handle_id, working_directory, request_digest, "
+                "idempotency_key, response_json, safety_json, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(record.handle.run_id),
+                    record.owner,
+                    provider,
+                    str(record.handle.id),
+                    record.handle.working_directory,
+                    record.request_digest,
+                    record.idempotency_key,
+                    json.dumps(record.response, sort_keys=True, separators=(",", ":")),
+                    json.dumps(record.safety.as_dict(), sort_keys=True, separators=(",", ":")),
+                    record.state,
+                    created_at,
+                    created_at,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM mvp_local_chat_runs WHERE owner = ? AND state != 'running' "
+                "AND run_id NOT IN (SELECT run_id FROM mvp_local_chat_runs "
+                "WHERE owner = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)",
+                (record.owner, record.owner, _MAX_PERSISTED_RUNS_PER_OWNER),
+            )
+
+    def _persist_event(self, record: _RunRecord, event: LocalChatBackendEvent) -> None:
+        if self._store is None:
+            return
+        with self._store.transaction() as connection:
+            connection.execute(
+                "INSERT INTO mvp_local_chat_events "
+                "(run_id, sequence, timestamp, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(record.handle.run_id),
+                    event.sequence,
+                    event.timestamp.isoformat(),
+                    event.type,
+                    json.dumps(event.payload, sort_keys=True, separators=(",", ":")),
+                ),
+            )
+            connection.execute(
+                "UPDATE mvp_local_chat_runs SET state = ?, response_json = ?, updated_at = ? "
+                ", artifact_json = ? WHERE run_id = ?",
+                (
+                    record.state,
+                    json.dumps(record.response, sort_keys=True, separators=(",", ":")),
+                    event.timestamp.isoformat(),
+                    self._artifact_json(record.artifact_snapshot),
+                    str(record.handle.run_id),
+                ),
+            )
+
+    def _persist_state(self, record: _RunRecord) -> None:
+        if self._store is None:
+            return
+        with self._store.transaction() as connection:
+            connection.execute(
+                "UPDATE mvp_local_chat_runs SET state = ?, response_json = ?, updated_at = ? "
+                "WHERE run_id = ?",
+                (
+                    record.state,
+                    json.dumps(record.response, sort_keys=True, separators=(",", ":")),
+                    self._clock().isoformat(),
+                    str(record.handle.run_id),
+                ),
+            )
+
+    def _restore_by_idempotency(self, owner: str, idempotency_key: str) -> _RunRecord | None:
+        if self._store is None:
+            return None
+        with self._store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_local_chat_runs WHERE owner = ? AND idempotency_key = ?",
+                (owner, idempotency_key),
+            ).fetchone()
+        return self._restore_row(row)
+
+    def _restore_by_run_id(self, owner: str, run_id: UUID) -> _RunRecord | None:
+        if self._store is None:
+            return None
+        with self._store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM mvp_local_chat_runs WHERE owner = ? AND run_id = ?",
+                (owner, str(run_id)),
+            ).fetchone()
+        return self._restore_row(row)
+
+    def _restore_row(self, row: sqlite3.Row | None) -> _RunRecord | None:
+        if row is None or self._store is None:
+            return None
+        try:
+            run_id = UUID(str(row["run_id"]))
+            provider = str(row["provider"])
+            response = cast(dict[str, object], json.loads(str(row["response_json"])))
+            safety = SafetyPreview(**cast(dict[str, Any], json.loads(str(row["safety_json"]))))
+            with self._store.connect() as connection:
+                event_rows = connection.execute(
+                    "SELECT * FROM mvp_local_chat_events WHERE run_id = ? ORDER BY sequence",
+                    (str(run_id),),
+                ).fetchall()
+            events = [
+                LocalChatBackendEvent(
+                    sequence=int(event_row["sequence"]),
+                    timestamp=datetime.fromisoformat(str(event_row["timestamp"])),
+                    type=str(event_row["type"]),
+                    payload=cast(dict[str, object], json.loads(str(event_row["payload_json"]))),
+                )
+                for event_row in event_rows
+            ]
+            backend = self._owner_backends.get((str(row["owner"]), provider))
+            backend = backend or self._backends.get(provider) or _RECOVERED_BACKEND
+            state = str(row["state"])
+            response["state"] = state
+            return _RunRecord(
+                owner=str(row["owner"]),
+                backend=backend,
+                handle=LocalChatBackendHandle(
+                    id=UUID(str(row["handle_id"])),
+                    run_id=run_id,
+                    working_directory=str(row["working_directory"]),
+                ),
+                request_digest=str(row["request_digest"]),
+                idempotency_key=str(row["idempotency_key"]),
+                response=response,
+                events=events,
+                safety=safety,
+                state=state,
+                restored=True,
+                artifact_snapshot=self._artifact_from_json(row["artifact_json"]),
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise LocalChatError("local_chat_persistence_invalid") from error
+
+    def _recover_persisted_runs(self) -> None:
+        if self._store is None:
+            return
+        current = self._clock().isoformat()
+        with self._store.transaction() as connection:
+            rows = connection.execute(
+                "SELECT run_id, response_json, "
+                "COALESCE((SELECT MAX(sequence) FROM mvp_local_chat_events event "
+                "WHERE event.run_id = run.run_id), 0) AS latest_sequence "
+                "FROM mvp_local_chat_runs run WHERE state = 'running'"
+            ).fetchall()
+            for row in rows:
+                response = cast(dict[str, object], json.loads(str(row["response_json"])))
+                response["state"] = "failed"
+                connection.execute(
+                    "INSERT INTO mvp_local_chat_events "
+                    "(run_id, sequence, timestamp, type, payload_json) VALUES (?, ?, ?, 'failed', ?)",
+                    (
+                        row["run_id"],
+                        int(row["latest_sequence"]) + 1,
+                        current,
+                        json.dumps(
+                            {"reason_code": "local_chat_interrupted"},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
+                connection.execute(
+                    "UPDATE mvp_local_chat_runs SET state = 'failed', response_json = ?, "
+                    "updated_at = ? WHERE run_id = ?",
+                    (
+                        json.dumps(response, sort_keys=True, separators=(",", ":")),
+                        current,
+                        row["run_id"],
+                    ),
+                )
+
+    def _capture_artifact(self, record: _RunRecord) -> LocalBuildArtifact | None:
+        try:
+            artifact = record.backend.artifact(record.handle)
+            return self._validate_artifact(artifact) if artifact is not None else None
+        except (LocalChatNotFound, OSError, RuntimeError):
+            return None
+
+    def _validated_artifact_or_none(
+        self, artifact: LocalBuildArtifact | None
+    ) -> LocalBuildArtifact | None:
+        if artifact is None:
+            return None
+        try:
+            return self._validate_artifact(artifact)
+        except LocalChatNotFound:
+            return None
+
+    def _validate_artifact(self, artifact: LocalBuildArtifact) -> LocalBuildArtifact:
+        if (
+            artifact.secret_screening != "passed"  # noqa: S105
+            or not artifact.path.is_absolute()
+            or Path(artifact.download_name).name != artifact.download_name
+        ):
+            raise LocalChatNotFound("local_chat_artifact_invalid")
+        try:
+            canonical = artifact.path.resolve(strict=True)
+            size = canonical.stat().st_size
+        except OSError as error:
+            raise LocalChatNotFound("local_chat_artifact_not_found") from error
+        if not canonical.is_file() or path_is_link_or_reparse(canonical):
+            raise LocalChatNotFound("local_chat_artifact_invalid")
+        confined = False
+        for configured_root in self._artifact_roots:
+            try:
+                root = configured_root.resolve(strict=True)
+            except OSError:
+                continue
+            if (
+                root.is_dir()
+                and not path_is_link_or_reparse(root)
+                and canonical.is_relative_to(root)
+            ):
+                confined = True
+                break
+        if not confined or size != artifact.size_bytes:
+            raise LocalChatNotFound("local_chat_artifact_invalid")
+        digest = hashlib.sha256()
+        try:
+            with canonical.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError as error:
+            raise LocalChatNotFound("local_chat_artifact_not_found") from error
+        if not hmac.compare_digest(digest.hexdigest(), artifact.sha256_digest):
+            raise LocalChatNotFound("local_chat_artifact_invalid")
+        return LocalBuildArtifact(
+            path=canonical,
+            download_name=artifact.download_name,
+            sha256_digest=artifact.sha256_digest,
+            size_bytes=artifact.size_bytes,
+            secret_screening="passed",  # noqa: S106
+        )
+
+    @staticmethod
+    def _artifact_json(artifact: LocalBuildArtifact | None) -> str | None:
+        if artifact is None:
+            return None
+        return json.dumps(
+            {
+                "path": os.fspath(artifact.path),
+                "download_name": artifact.download_name,
+                "sha256_digest": artifact.sha256_digest,
+                "size_bytes": artifact.size_bytes,
+                "secret_screening": artifact.secret_screening,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _artifact_from_json(value: object) -> LocalBuildArtifact | None:
+        if value is None:
+            return None
+        try:
+            payload = cast(dict[str, object], json.loads(str(value)))
+            screening = str(payload["secret_screening"])
+            if screening not in {"passed", "not_scanned"}:
+                raise ValueError("artifact_screening_invalid")
+            return LocalBuildArtifact(
+                path=Path(str(payload["path"])),
+                download_name=str(payload["download_name"]),
+                sha256_digest=str(payload["sha256_digest"]),
+                size_bytes=int(cast(int, payload["size_bytes"])),
+                secret_screening=cast(Any, screening),
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise LocalChatError("local_chat_persistence_invalid") from error
 
     def _encode_cursor(self, owner: str, run_id: UUID, sequence: int) -> str:
         payload = json.dumps(
@@ -602,21 +1019,26 @@ class CodexLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
-        result = await self._adapter.start_local_text(
-            binding,
-            LocalCodexTextRequest(
-                run_id=run_id,
-                prompt=prompt,
-                model=model,
-                effort=_normalize_codex_effort(effort),
-                mode=_normalize_mode(mode),
-                mcp_enabled=mcp_enabled,
-                idempotency_key=idempotency_key,
-                deadline=self._clock() + _RUN_DEADLINE,
-                max_output_bytes=_MAX_OUTPUT_BYTES,
-                workspace=workspace,
-            ),
-        )
+        try:
+            result = await self._adapter.start_local_text(
+                binding,
+                LocalCodexTextRequest(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model,
+                    effort=_normalize_codex_effort(effort),
+                    mode=_normalize_mode(mode),
+                    mcp_enabled=mcp_enabled,
+                    idempotency_key=idempotency_key,
+                    deadline=self._clock() + _RUN_DEADLINE,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    workspace=workspace,
+                ),
+            )
+        except BaseException:
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
+            raise
         self._handles[result.handle.id] = result.handle
         return LocalChatBackendHandle(
             id=result.handle.id,
@@ -739,19 +1161,24 @@ class ClaudeLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
-        result = await self._adapter.start_local_text(
-            binding,
-            LocalClaudeTextRequest(
-                run_id=run_id,
-                prompt=prompt,
-                model=model or "sonnet",
-                effort=_normalize_claude_effort(effort),
-                idempotency_key=idempotency_key,
-                deadline=self._clock() + _RUN_DEADLINE,
-                max_output_bytes=_MAX_OUTPUT_BYTES,
-                workspace=workspace,
-            ),
-        )
+        try:
+            result = await self._adapter.start_local_text(
+                binding,
+                LocalClaudeTextRequest(
+                    run_id=run_id,
+                    prompt=prompt,
+                    model=model or "sonnet",
+                    effort=_normalize_claude_effort(effort),
+                    idempotency_key=idempotency_key,
+                    deadline=self._clock() + _RUN_DEADLINE,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    workspace=workspace,
+                ),
+            )
+        except BaseException:
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
+            raise
         self._handles[result.handle.id] = result.handle
         return LocalChatBackendHandle(
             id=result.handle.id,
@@ -792,6 +1219,7 @@ def build_default_local_chat_service(
     *,
     scratch_root: Path,
     cursor_secret: bytes,
+    store: SqliteStore | None = None,
 ) -> LocalChatService:
     codex_executable = _discover_codex_executable()
     claude_executable = _discover_claude_executable()
@@ -800,6 +1228,7 @@ def build_default_local_chat_service(
         return datetime.now(UTC)
 
     backends: dict[str, LocalChatBackend] = {}
+    readiness_probes: dict[str, Callable[[], bool]] = {}
     if codex_executable is not None:
         codex_adapter = CodexCliAdapter(
             executable=codex_executable,
@@ -809,6 +1238,10 @@ def build_default_local_chat_service(
             clock=clock,
         )
         backends["codex"] = CodexLocalChatBackend(codex_adapter, clock, scratch_root / "codex")
+        readiness_probes["codex"] = lambda: _verify_codex_ready(
+            codex_executable,
+            scratch_root.parent,
+        )
     if claude_executable is not None:
         claude_adapter = ClaudeCliAdapter(
             executable=claude_executable,
@@ -817,11 +1250,46 @@ def build_default_local_chat_service(
             clock=clock,
         )
         backends["claude"] = ClaudeLocalChatBackend(claude_adapter, clock, scratch_root / "claude")
+        readiness_probes["claude"] = lambda: _verify_claude_ready(
+            claude_executable,
+            scratch_root.parent,
+        )
     return LocalChatService(
         backends=backends,
+        readiness_probes=readiness_probes,
         cursor_secret=cursor_secret,
         clock=clock,
+        store=store,
+        artifact_roots=(scratch_root,),
     )
+
+
+def _verify_codex_ready(executable: Path, cwd: Path) -> bool:
+    """Verify both the discovered binary and the user's local Codex login."""
+
+    try:
+        cli = TrustedCli(executable)
+        version = cli.run(cwd, ("--version",), timeout=10)
+        if version.returncode != 0 or not version.stdout.strip():
+            return False
+        login = cli.run(cwd, ("login", "status"), timeout=10)
+        return login.returncode == 0
+    except (OSError, TrustedCliError):
+        return False
+
+
+def _verify_claude_ready(executable: Path, cwd: Path) -> bool:
+    """Verify the Claude binary and login without exposing account details."""
+
+    try:
+        cli = TrustedCli(executable)
+        version = cli.run(cwd, ("--version",), timeout=10)
+        if version.returncode != 0 or not version.stdout.strip():
+            return False
+        auth = cli.run(cwd, ("auth", "status"), timeout=10)
+        return auth.returncode == 0
+    except (OSError, TrustedCliError):
+        return False
 
 
 def _discover_codex_executable() -> Path | None:

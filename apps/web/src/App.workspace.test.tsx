@@ -112,7 +112,7 @@ describe("adaptive Corvus bootstrap", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "How do you want Corvus to work with you?" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Set up your workspace" })).toBeVisible();
     expect(screen.getByRole("radio", { name: /Developer/ })).toBeChecked();
     expect(loopback.session).not.toHaveBeenCalled();
   });

@@ -113,6 +113,17 @@ function fakeApi(projects: Project[] = []): CorvusApi {
     refreshRepository: vi.fn(),
     removeRepository: vi.fn(),
     createRepositoryRun: vi.fn(),
+    discardRepositoryRun: vi.fn(),
+    listLocalProviders: vi.fn().mockResolvedValue([{
+      id: "codex",
+      label: "OpenAI Codex",
+      runtime: "local",
+      status: "ready",
+      status_label: "CLI and login verified",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+      thinking_levels: ["low", "medium", "high", "xhigh"],
+      supports_mcp: true
+    }]),
     getLocalSafetyPreview: vi.fn(),
     listLocalRuns: vi.fn().mockResolvedValue([]),
     startLocalRun: vi.fn(),
@@ -231,7 +242,7 @@ describe("Corvus operator console", () => {
     expect(screen.getByText("paired-operator")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Repositories" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Launch control" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "New project" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add repository" })).toBeVisible();
   });
 
   it("uses one local left navigation and omits permanent secondary rails", async () => {
@@ -250,7 +261,7 @@ describe("Corvus operator console", () => {
     expect(sidebar.querySelectorAll("nav svg[aria-hidden='true']")).toHaveLength(6);
     expect(container.querySelector(".project-rail")).toBeNull();
     expect(screen.queryByLabelText("Work item details")).not.toBeInTheDocument();
-    expect(screen.getByText("Developer · Individual")).toBeVisible();
+    expect(screen.getByText("Developer / Individual")).toBeVisible();
     expect(screen.getByRole("link", { name: "Skip to main content" })).toHaveAttribute("href", "#main-content");
     expect(container.querySelector("main#main-content")).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("main", { name: "Threads" })).toBeVisible();
@@ -258,10 +269,10 @@ describe("Corvus operator console", () => {
   });
 
   it.each([
-    ["everyday", "personal", ["Conversations", "Schedule", "My Work", "Files", "Settings"]],
+    ["everyday", "personal", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
     ["developer", "personal", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]],
-    ["everyday", "team", ["Conversations", "Schedule", "Assigned Work", "Approvals", "People", "Settings"]],
-    ["developer", "team", ["Threads", "Repositories", "Runs", "Reviews", "Schedule", "Policies", "Settings"]]
+    ["everyday", "team", ["Conversations", "Projects", "Activity", "Schedule", "Skills", "Settings"]],
+    ["developer", "team", ["Repositories", "Runs", "Schedule", "Skills", "Threads", "Settings"]]
   ] as const)("provides accessible local routes for the %s %s profile", async (experience, scope, labels) => {
     preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
       version: 1,
@@ -290,7 +301,7 @@ describe("Corvus operator console", () => {
     }
   });
 
-  it("routes everyday work tabs to the execution surface", async () => {
+  it("does not expose unfinished everyday work routes", async () => {
     preferenceStorage.setItem("corvus.workspace-preference", JSON.stringify({
       version: 1,
       experience: "everyday",
@@ -306,13 +317,12 @@ describe("Corvus operator console", () => {
       tenant_id: "local",
       expires_at: "2026-07-15T00:00:00Z"
     });
-    const user = userEvent.setup();
     renderApp(api, preferenceStorage);
 
-    await user.click(await screen.findByRole("link", { name: "My Work" }));
-
-    expect(screen.getByRole("heading", { name: "Define the next durable outcome." })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Governed operations." })).not.toBeInTheDocument();
+    const navigation = await screen.findByRole("navigation", { name: "Local runtime navigation" });
+    expect(within(navigation).queryByRole("link", { name: "My Work" })).not.toBeInTheDocument();
+    expect(within(navigation).queryByRole("link", { name: "Files" })).not.toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Conversations" })).toBeVisible();
   });
 
   it("consumes an ephemeral desktop pairing fragment without rendering the secret", async () => {
@@ -452,6 +462,7 @@ describe("Corvus operator console", () => {
     await user.type(screen.getByLabelText("Name"), "Weekday review");
     await user.type(screen.getByLabelText("Task"), "Review changes");
     await user.selectOptions(screen.getByLabelText("Cadence"), "weekdays");
+    await user.click(screen.getByRole("button", { name: "Advanced options" }));
     await user.clear(screen.getByLabelText("Timezone"));
     await user.type(screen.getByLabelText("Timezone"), "UTC");
     await user.click(screen.getByRole("button", { name: "Create schedule" }));

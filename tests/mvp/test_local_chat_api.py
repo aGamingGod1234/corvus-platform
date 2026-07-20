@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,9 +21,12 @@ from corvus.mvp.git_process import ProcessResult
 from corvus.mvp.local_chat import (
     LocalChatBackendEvent,
     LocalChatBackendHandle,
+    LocalChatNotFound,
     LocalChatService,
 )
 from corvus.mvp.provider_credentials import ProviderCredentialService
+from corvus.mvp.safety import build_safety_preview
+from corvus.mvp.store import SqliteStore
 
 NOW = datetime(2026, 7, 17, 5, 0, tzinfo=UTC)
 
@@ -123,6 +128,102 @@ async def test_project_directory_is_bound_to_a_project_aware_backend(tmp_path: P
     assert backend.source_directory == project
 
 
+@pytest.mark.asyncio
+async def test_provider_readiness_probe_runs_off_the_event_loop() -> None:
+    backend = _Backend()
+    service = LocalChatService(
+        backend=backend,
+        readiness_probes={
+            "codex": lambda: threading.current_thread() is not threading.main_thread()
+        },
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+
+    await service.start(
+        owner="local:user",
+        prompt="Check provider readiness",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="readiness-thread",
+    )
+
+    assert backend.starts == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotent_replay_does_not_recheck_provider_readiness() -> None:
+    backend = _Backend()
+    readiness = {"ready": True, "calls": 0}
+    readiness_clock = {"now": 0.0}
+
+    def probe() -> bool:
+        readiness["calls"] += 1
+        return bool(readiness["ready"])
+
+    service = LocalChatService(
+        backend=backend,
+        readiness_probes={"codex": probe},
+        readiness_clock=lambda: readiness_clock["now"],
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+    request = {
+        "owner": "local:user",
+        "prompt": "Replay this run",
+        "provider": "codex",
+        "model": None,
+        "effort": "medium",
+        "mode": "chat",
+        "mcp_enabled": False,
+        "idempotency_key": "readiness-replay",
+    }
+
+    first = await service.start(**request)
+    readiness["ready"] = False
+    readiness_clock["now"] = 10.0
+    replay = await service.start(**request)
+
+    assert replay == first
+    assert readiness["calls"] == 1
+    assert backend.starts == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_local_chat_replay_returns_terminal_state() -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    request = {
+        "owner": "local:user",
+        "prompt": "Replay the completed run",
+        "provider": "codex",
+        "model": None,
+        "effort": "medium",
+        "mode": "chat",
+        "mcp_enabled": False,
+        "idempotency_key": "completed-replay",
+    }
+
+    started = await service.start(**request)
+    run_id = UUID(str(started["run_id"]))
+    assert [
+        event.type
+        async for _cursor, event in service.events(
+            owner="local:user",
+            run_id=run_id,
+            cursor=None,
+        )
+    ] == ["started", "message", "completed"]
+
+    replay = await service.start(**request)
+
+    assert replay["state"] == "completed"
+    assert backend.starts == 1
+
+
 def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
     source = tmp_path / "registered-project"
     source.mkdir()
@@ -180,6 +281,78 @@ def test_project_copy_rejects_sources_over_the_entry_budget(
         local_chat_module._copy_project(source, destination)
 
     assert not destination.exists()
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_removes_copied_workspace_when_start_fails(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _FailingAdapter:
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(self, binding: object, request: object) -> None:
+            del binding, request
+            raise local_chat_module.CodexAdapterError("codex_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    scratch_root = tmp_path / "scratch"
+    run_id = uuid4()
+    backend = local_chat_module.CodexLocalChatBackend(_FailingAdapter(), lambda: NOW, scratch_root)
+
+    with pytest.raises(local_chat_module.CodexAdapterError, match="codex_start_failed"):
+        await backend.start_in_workspace(
+            run_id=run_id,
+            prompt="Inspect the project",
+            model=None,
+            effort="medium",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="failed-codex-start",
+            source_directory=source,
+        )
+
+    assert not (scratch_root / str(run_id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_claude_backend_removes_copied_workspace_when_start_fails(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _FailingAdapter:
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(self, binding: object, request: object) -> None:
+            del binding, request
+            raise local_chat_module.ClaudeAdapterError("claude_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    scratch_root = tmp_path / "scratch"
+    run_id = uuid4()
+    backend = local_chat_module.ClaudeLocalChatBackend(_FailingAdapter(), lambda: NOW, scratch_root)
+
+    with pytest.raises(local_chat_module.ClaudeAdapterError, match="claude_start_failed"):
+        await backend.start_in_workspace(
+            run_id=run_id,
+            prompt="Inspect the project",
+            model=None,
+            effort="medium",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key="failed-claude-start",
+            source_directory=source,
+        )
+
+    assert not (scratch_root / str(run_id)).exists()
 
 
 class _MemoryKeyring:
@@ -529,7 +702,226 @@ async def test_local_chat_concurrent_idempotent_starts_launch_one_backend() -> N
 
     assert starts_before_release == 1
     assert backend.starts == 1
-    assert first_response == second_response
+    assert {key: value for key, value in first_response.items() if key != "state"} == {
+        key: value for key, value in second_response.items() if key != "state"
+    }
+    assert second_response["state"] in {"running", "completed"}
+
+
+@pytest.mark.asyncio
+async def test_local_chat_completed_run_replays_after_service_restart(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    first_backend = _Backend()
+    first_service = LocalChatService(
+        backend=first_backend,
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+    )
+    request = {
+        "owner": "local:restart",
+        "prompt": "Remember this run",
+        "provider": "codex",
+        "model": None,
+        "effort": "medium",
+        "mode": "chat",
+        "mcp_enabled": False,
+        "idempotency_key": "restart-once",
+    }
+    response = await first_service.start(**request)
+    first_events = [
+        event
+        async for _cursor, event in first_service.events(
+            owner="local:restart", run_id=UUID(response["run_id"]), cursor=None
+        )
+    ]
+    assert first_events[-1].type == "completed"
+
+    restarted_backend = _Backend()
+    restarted = LocalChatService(
+        backend=restarted_backend,
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+    )
+
+    replay = await restarted.start(**request)
+    replayed_events = [
+        event
+        async for _cursor, event in restarted.events(
+            owner="local:restart",
+            run_id=UUID(response["run_id"]),
+            cursor=None,
+            follow=False,
+        )
+    ]
+
+    assert replay["run_id"] == response["run_id"]
+    assert replay["state"] == "completed"
+    assert [event.type for event in replayed_events] == ["started", "message", "completed"]
+    assert restarted_backend.starts == 0
+
+
+@pytest.mark.asyncio
+async def test_local_build_artifact_reopens_after_restart_when_digest_matches(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    artifact_path = artifact_root / "project.zip"
+    artifact_path.write_bytes(b"screened build")
+    artifact = LocalBuildArtifact(
+        path=artifact_path,
+        download_name="project.zip",
+        sha256_digest=hashlib.sha256(b"screened build").hexdigest(),
+        size_bytes=len(b"screened build"),
+        secret_screening="passed",  # noqa: S106
+    )
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    service = LocalChatService(
+        backend=_ArtifactBackend(artifact),
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+        artifact_roots=(artifact_root,),
+    )
+    response = await service.start(
+        owner="local:artifact-restart",
+        prompt="Build it",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="build",
+        mcp_enabled=False,
+        idempotency_key="artifact-restart",
+        safety_digest=build_safety_preview(
+            provider="codex", mode="build", mcp_enabled=False
+        ).policy_digest,
+    )
+    run_id = UUID(response["run_id"])
+    _ = [
+        event
+        async for _cursor, event in service.events(
+            owner="local:artifact-restart", run_id=run_id, cursor=None
+        )
+    ]
+
+    restarted = LocalChatService(
+        backend=_Backend(),
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+        artifact_roots=(artifact_root,),
+    )
+
+    assert restarted.artifact(owner="local:artifact-restart", run_id=run_id) == artifact
+
+    artifact_path.write_bytes(b"tampered build")
+    with pytest.raises(LocalChatNotFound, match="local_chat_artifact_invalid"):
+        restarted.artifact(owner="local:artifact-restart", run_id=run_id)
+
+
+@pytest.mark.asyncio
+async def test_local_chat_running_run_becomes_interrupted_after_restart(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    backend = _GatedBackend()
+    first_service = LocalChatService(
+        backend=backend,
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+    )
+    response = await first_service.start(
+        owner="local:interrupted",
+        prompt="Long running work",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="interrupted-once",
+    )
+    await asyncio.wait_for(backend.started.wait(), timeout=0.2)
+    run_id = UUID(response["run_id"])
+    pump = first_service._runs[run_id].pump_task
+    assert pump is not None
+    pump.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pump
+
+    restarted = LocalChatService(
+        backend=_Backend(),
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+        store=store,
+    )
+    events = [
+        event
+        async for _cursor, event in restarted.events(
+            owner="local:interrupted", run_id=run_id, cursor=None, follow=False
+        )
+    ]
+
+    assert [event.type for event in events] == ["started", "failed"]
+    assert events[-1].payload == {"reason_code": "local_chat_interrupted"}
+
+
+@pytest.mark.asyncio
+async def test_local_chat_shutdown_cancels_live_provider_handle() -> None:
+    backend = _CancellableBackend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    response = await service.start(
+        owner="local:shutdown",
+        prompt="Keep working",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="shutdown-once",
+    )
+    run_id = UUID(response["run_id"])
+
+    await service.shutdown()
+
+    assert service._runs[run_id].state == "cancelled"
+    assert service._runs[run_id].handle.id in backend.cancelled
+
+
+@pytest.mark.asyncio
+async def test_local_chat_journal_prunes_old_terminal_runs_per_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(local_chat_module, "_MAX_PERSISTED_RUNS_PER_OWNER", 2)
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    service = LocalChatService(
+        backend=_Backend(), cursor_secret=b"c" * 32, clock=lambda: NOW, store=store
+    )
+    for index in range(3):
+        response = await service.start(
+            owner="local:retention",
+            prompt=f"Run {index}",
+            provider="codex",
+            model=None,
+            effort="medium",
+            mode="chat",
+            mcp_enabled=False,
+            idempotency_key=f"retention-{index}",
+        )
+        _ = [
+            event
+            async for _cursor, event in service.events(
+                owner="local:retention", run_id=UUID(response["run_id"]), cursor=None
+            )
+        ]
+
+    with store.connect() as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) AS count FROM mvp_local_chat_runs WHERE owner = ?",
+            ("local:retention",),
+        ).fetchone()
+    assert count is not None
+    assert count["count"] == 2
 
 
 def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
@@ -558,13 +950,45 @@ def test_local_chat_requires_csrf_and_idempotently_starts_this_device_run(
     )
 
     assert first.status_code == replay.status_code == 202
-    assert first.json() == replay.json()
-    assert first.json()["model"] != "Codex default"
-    assert first.json()["model"]
-    assert first.json()["storage"] == "this_device"
+    first_body = first.json()
+    replay_body = replay.json()
+    assert {key: value for key, value in first_body.items() if key != "state"} == {
+        key: value for key, value in replay_body.items() if key != "state"
+    }
+    assert replay_body["state"] in {"running", "completed"}
+    assert first_body["model"] != "Codex default"
+    assert first_body["model"]
+    assert first_body["storage"] == "this_device"
     assert backend.starts == 1
     assert conflict.status_code == 409
     assert conflict.json()["detail"] == "idempotency_conflict"
+
+
+def test_local_chat_includes_bounded_conversation_context_in_provider_prompt(
+    tmp_path: Path,
+) -> None:
+    backend = _Backend()
+    service = LocalChatService(backend=backend, cursor_secret=b"c" * 32, clock=lambda: NOW)
+    client, headers = _client(tmp_path, "context", service)
+
+    response = client.post(
+        "/api/local-chat/runs",
+        json={
+            "prompt": "Continue",
+            "context": [
+                {"role": "user", "content": "Build me a website"},
+                {"role": "assistant", "content": "I can help shape the website."},
+            ],
+        },
+        headers={**headers, "Idempotency-Key": "context-run"},
+    )
+
+    assert response.status_code == 202
+    assert backend.last_prompt is not None
+    assert "Conversation so far:" in backend.last_prompt
+    assert "User: Build me a website" in backend.last_prompt
+    assert "Corvus: I can help shape the website." in backend.last_prompt
+    assert backend.last_prompt.endswith("User request:\nContinue")
 
 
 def test_local_build_requires_current_safety_digest(tmp_path: Path) -> None:
@@ -624,6 +1048,46 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
     assert catalog["gemini"]["status"] == "unavailable"
     assert catalog["xai"]["status"] == "unavailable"
     assert "path" not in response.text.lower()
+
+
+def test_local_chat_provider_catalog_rechecks_codex_readiness_on_retry(tmp_path: Path) -> None:
+    readiness = {"ready": False}
+    readiness_clock = {"now": 0.0}
+    probe_calls = 0
+
+    def probe() -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        return readiness["ready"]
+
+    service = LocalChatService(
+        backend=_Backend(),
+        readiness_probes={"codex": probe},
+        readiness_clock=lambda: readiness_clock["now"],
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+    client, _headers = _client(tmp_path, "catalog-retry", service)
+
+    unavailable = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert unavailable["codex"]["status"] == "unavailable"
+    assert unavailable["codex"]["models"] == []
+    assert unavailable["codex"]["thinking_levels"] == []
+
+    cached = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert cached["codex"]["status"] == "unavailable"
+    assert probe_calls == 1
+
+    readiness["ready"] = True
+    readiness_clock["now"] = 10.0
+    verified = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert verified["codex"]["status"] == "ready"
+    assert {model["id"] for model in verified["codex"]["models"]} == {
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+    }
+    assert verified["codex"]["thinking_levels"] == ["low", "medium", "high", "xhigh"]
+    assert probe_calls == 2
 
 
 def test_api_chat_starts_without_any_local_cli(

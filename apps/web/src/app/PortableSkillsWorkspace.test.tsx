@@ -22,6 +22,24 @@ function api(): PortableSkillsApi {
 }
 
 describe("PortableSkillsWorkspace", () => {
+  it("searches and filters discovered skills without changing the library", async () => {
+    const second: SkillImportCandidate = { ...candidate, id: "c".repeat(64), source: "codex", name: "ship-release", path: "C:\\Users\\me\\.codex\\skills\\ship-release" };
+    const client = api();
+    vi.mocked(client.listSkillImportSources).mockResolvedValue([candidate, second]);
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} />);
+
+    await screen.findByRole("button", { name: /review-pr/i });
+    await user.type(screen.getByRole("searchbox", { name: "Search discovered skills" }), "ship");
+    expect(screen.queryByRole("button", { name: /review-pr/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /ship-release/i })).toBeVisible();
+
+    await user.clear(screen.getByRole("searchbox", { name: "Search discovered skills" }));
+    await user.click(screen.getByRole("button", { name: "Claude Code 1" }));
+    expect(screen.getByRole("button", { name: /review-pr/i })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /ship-release/i })).not.toBeInTheDocument();
+  });
+
   it("supports selecting and importing multiple discovered skills", async () => {
     const second = { ...candidate, id: "c".repeat(64), name: "ship-release", path: "C:\\Users\\me\\.codex\\skills\\ship-release" };
     const client = api();
@@ -79,7 +97,7 @@ describe("PortableSkillsWorkspace", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Select review-pr" }));
     await user.click(screen.getByRole("button", { name: "Import selected (1)" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/requires individual review/i);
+    expect(await screen.findByRole("status")).toHaveTextContent(/requires individual review/i);
     expect(client.importPortableSkill).not.toHaveBeenCalled();
     expect(screen.getByRole("checkbox", { name: "Select review-pr" })).toBeChecked();
   });
@@ -103,5 +121,16 @@ describe("PortableSkillsWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Import as draft" }));
     await waitFor(() => expect(client.importPortableSkill).toHaveBeenCalledWith(candidate.id, preview.digest));
     expect(await screen.findByText("Review a pull request")).toBeVisible();
+  });
+
+  it("hands an active reviewed skill to Runs", async () => {
+    const client = api();
+    vi.mocked(client.listPortableSkills).mockResolvedValue([{ ...imported, status: "active" }]);
+    const onOpenRuns = vi.fn();
+    const user = userEvent.setup();
+    render(<PortableSkillsWorkspace api={client} onOpenRuns={onOpenRuns} />);
+
+    await user.click(await screen.findByRole("button", { name: "Use review-pr in Runs" }));
+    expect(onOpenRuns).toHaveBeenCalledWith(imported.id);
   });
 });

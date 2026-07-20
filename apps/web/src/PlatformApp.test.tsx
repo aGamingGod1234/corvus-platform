@@ -133,6 +133,7 @@ describe("PlatformApp composition", () => {
     );
 
     expect(await screen.findByText("real-operator")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Run options" }));
     expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Local launch control/ })).not.toBeInTheDocument();
     expect(screen.queryByText("local-runtime@corvus.invalid")).not.toBeInTheDocument();
@@ -160,7 +161,7 @@ describe("PlatformApp composition", () => {
       />
     );
 
-    expect(await screen.findByText("Everyday · Team")).toBeVisible();
+    expect(await screen.findByText("Everyday / Team")).toBeVisible();
     expect(screen.getByRole("button", { name: "New conversation" })).toBeVisible();
   });
 
@@ -182,6 +183,7 @@ describe("PlatformApp composition", () => {
       />
     );
     await user.click(await screen.findByRole("radio", { name: /Everyday/ }));
+    await user.click(screen.getByRole("radio", { name: /Individual/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/conflict/i);
     await waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));

@@ -2,15 +2,27 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { LocalRepository, LocalSafetyPreview, LocalSchedule } from "../api";
+import type { LocalProviderCatalogEntry, LocalRepository, LocalRun, LocalSafetyPreview, LocalSchedule } from "../api";
 import { SchedulesWorkspace, type SchedulesApi } from "./SchedulesWorkspace";
 
-const repository = { id: "repo-1", display_name: "Corvus" } as LocalRepository;
-const schedule = { id: "schedule-1", name: "Weekday review", task: "Review changes", status: "active", version: 1, recurrence: { kind: "weekdays", local_time: "09:00:00", weekdays: [] }, next_run_at: "2026-07-20T09:00:00Z", mode: "chat", timezone: "UTC" } as unknown as LocalSchedule;
+const repository = { id: "repo-1", display_name: "Corvus", snapshot: { health: "healthy" } } as LocalRepository;
+const codex = {
+  id: "codex", label: "OpenAI Codex", runtime: "local", status: "ready",
+  status_label: "CLI and login verified",
+  models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }],
+  thinking_levels: ["low", "medium", "high", "xhigh"], supports_mcp: true
+} as LocalProviderCatalogEntry;
+const schedule = {
+  id: "schedule-1", repository_id: repository.id, name: "Weekday review", task: "Review changes",
+  status: "active", version: 1, recurrence: { kind: "weekdays", local_time: "09:00:00", weekdays: [] },
+  next_run_at: "2026-07-20T09:00:00Z", model: "gpt-5.6-sol", effort: "high", mode: "build",
+  output_policy: "prepare_changes", skill_version_id: null, timezone: "UTC"
+} as unknown as LocalSchedule;
 
 function api(): SchedulesApi {
   return {
     listRepositories: vi.fn().mockResolvedValue([repository]),
+    listLocalProviders: vi.fn().mockResolvedValue([codex]),
     listPortableSkills: vi.fn().mockResolvedValue([]),
     getLocalSafetyPreview: vi.fn().mockResolvedValue({ policy_digest: "a".repeat(64) } as LocalSafetyPreview),
     listLocalSchedules: vi.fn().mockResolvedValue([]),
@@ -23,6 +35,21 @@ function api(): SchedulesApi {
 }
 
 describe("SchedulesWorkspace", () => {
+  it("inherits runtime defaults and keeps advanced schedule controls collapsed", async () => {
+    const user = userEvent.setup();
+    render(<SchedulesWorkspace api={api()} onOpenRun={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "New schedule" }));
+
+    expect(screen.getByRole("button", { name: "Advanced options" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Cadence")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Advanced options" }));
+    expect(screen.getByLabelText("Model")).toBeVisible();
+    expect(screen.getByLabelText("Thinking")).toBeVisible();
+    expect(screen.getByLabelText("Timezone")).toBeVisible();
+  });
+
   it("creates a timezone-aware supervised schedule", async () => {
     const user = userEvent.setup();
     const client = api();
@@ -31,11 +58,18 @@ describe("SchedulesWorkspace", () => {
     await user.type(screen.getByLabelText("Name"), "Weekday review");
     await user.type(screen.getByLabelText("Task"), "Review changes");
     await user.selectOptions(screen.getByLabelText("Cadence"), "weekdays");
+    await user.click(screen.getByRole("button", { name: "Advanced options" }));
     await user.clear(screen.getByLabelText("Timezone"));
     await user.type(screen.getByLabelText("Timezone"), "UTC");
     await user.click(screen.getByRole("button", { name: "Create schedule" }));
     await waitFor(() => expect(client.createLocalSchedule).toHaveBeenCalledWith(expect.objectContaining({
-      repositoryId: repository.id, timezone: "UTC", recurrence: expect.objectContaining({ kind: "weekdays" })
+      repositoryId: repository.id,
+      model: "gpt-5.6-sol",
+      effort: "high",
+      mode: "build",
+      outputPolicy: "prepare_changes",
+      timezone: "UTC",
+      recurrence: expect.objectContaining({ kind: "weekdays" })
     })));
     expect(await screen.findByRole("heading", { name: "Weekday review" })).toBeVisible();
   });
@@ -53,5 +87,77 @@ describe("SchedulesWorkspace", () => {
     await waitFor(() => expect(client.createLocalSchedule).toHaveBeenCalledWith(
       expect.objectContaining({ recurrence: expect.objectContaining({ weekdays: [0] }) })
     ));
+  });
+
+  it("retries schedule data without losing provider readiness", async () => {
+    const client = api();
+    vi.mocked(client.listLocalSchedules)
+      .mockRejectedValueOnce(new Error("request_failed_503"))
+      .mockResolvedValueOnce([]);
+    const user = userEvent.setup();
+    render(<SchedulesWorkspace api={client} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/runtime is temporarily unavailable/i);
+    await user.click(screen.getByRole("button", { name: "Retry schedules" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "New schedule" })).toBeEnabled());
+    expect(client.listLocalSchedules).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps scheduling disabled when a ready provider has no runnable catalog", async () => {
+    const client = api();
+    vi.mocked(client.listLocalProviders).mockResolvedValue([{
+      ...codex,
+      models: [],
+      thinking_levels: []
+    }]);
+
+    render(<SchedulesWorkspace api={client} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/returned no supported models or thinking levels/i);
+    expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
+  });
+
+  it("clears stale provider readiness when a later discovery fails", async () => {
+    const readyClient = api();
+    const { rerender } = render(
+      <SchedulesWorkspace api={readyClient} onOpenRun={vi.fn()} />
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "New schedule" })).toBeEnabled());
+    const failingClient = {
+      ...readyClient,
+      listLocalProviders: vi.fn().mockRejectedValue(new Error("provider discovery failed"))
+    };
+
+    rerender(<SchedulesWorkspace api={failingClient} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/provider discovery failed/i);
+    expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
+  });
+
+  it("opens the exact durable run created by Run now", async () => {
+    const client = api();
+    const onOpenRun = vi.fn();
+    vi.mocked(client.listLocalSchedules).mockResolvedValue([schedule]);
+    vi.mocked(client.runLocalScheduleNow).mockResolvedValue({ id: "run-now-1" } as LocalRun);
+    const user = userEvent.setup();
+
+    render(<SchedulesWorkspace api={client} onOpenRun={onOpenRun} />);
+    await user.click(await screen.findByRole("button", { name: "Run now" }));
+
+    await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith("run-now-1"));
+  });
+
+  it("explains the latest skipped occurrence instead of hiding it", async () => {
+    const client = api();
+    vi.mocked(client.listLocalSchedules).mockResolvedValue([{
+      ...schedule,
+      last_run_status: "skipped",
+      last_run_reason: "repository_not_healthy",
+      last_run_at: "2026-07-20T08:00:00Z"
+    } as unknown as LocalSchedule]);
+
+    render(<SchedulesWorkspace api={client} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByText("Skipped: repository needs attention")).toBeVisible();
   });
 });

@@ -1,6 +1,7 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { ChangeSet, Contribution } from "../api";
+import { featureErrorMessage } from "./featureFeedback";
 
 export interface ContributionApi {
   getRunChanges(runId: string): Promise<ChangeSet>;
@@ -12,14 +13,10 @@ export interface ContributionApi {
       message: string;
       title: string;
       body: string;
-      draft: boolean;
+      draft: true;
     }
   ): Promise<Contribution>;
   publishContribution(runId: string, expectedDigest: string): Promise<Contribution>;
-}
-
-function errorText(reason: unknown): string {
-  return reason instanceof Error ? reason.message : "contribution_request_failed";
 }
 
 export function ContributionPanel({ api, runId }: { api: ContributionApi; runId: string }) {
@@ -28,38 +25,43 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [draft, setDraft] = useState(true);
+  const draft = true;
   const [prepared, setPrepared] = useState<Contribution | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    let active = true;
+  const load = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    setLoadFailed(false);
     setChanges(null);
     setPrepared(null);
     setConfirmed(false);
     setError("");
-    Promise.all([
-      api.getRunChanges(runId),
-      api.getContribution(runId).catch((reason: unknown) => {
-        if (errorText(reason).includes("contribution_not_found")) return null;
-        throw reason;
-      })
-    ])
-      .then(([loaded, existing]) => {
-        if (!active) return;
-        setChanges(loaded);
-        setSelected(new Set(loaded.files.map((file) => file.path)));
-        setPrepared(existing);
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(errorText(reason));
-      });
-    return () => {
-      active = false;
-    };
+    try {
+      const [loaded, existing] = await Promise.all([
+        api.getRunChanges(runId),
+        api.getContribution(runId).catch((reason: unknown) => {
+          const message = reason instanceof Error ? reason.message : "";
+          if (message.includes("contribution_not_found")) return null;
+          throw reason;
+        })
+      ]);
+      setChanges(loaded);
+      setSelected(new Set(loaded.files.map((file) => file.path)));
+      setPrepared(existing);
+    } catch (reason) {
+      setLoadFailed(true);
+      setError(featureErrorMessage(reason, "contribution"));
+    } finally {
+      setLoading(false);
+    }
   }, [api, runId]);
+
+  useEffect(() => { void load(); }, [load]);
 
   const selectedPaths = useMemo(
     () => changes?.files.map((file) => file.path).filter((path) => selected.has(path)) ?? [],
@@ -80,6 +82,7 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
     if (selectedPaths.length === 0) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const result = await api.prepareContribution(runId, {
         selectedPaths,
@@ -90,8 +93,9 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
       });
       setPrepared(result);
       setConfirmed(false);
+      setNotice("Contribution prepared locally. Review the completed scan, branch, commit, and draft pull request before publishing.");
     } catch (reason) {
-      setError(errorText(reason));
+      setError(featureErrorMessage(reason, "contribution"));
     } finally {
       setBusy(false);
     }
@@ -101,10 +105,12 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
     if (prepared === null || !confirmed) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       setPrepared(await api.publishContribution(runId, prepared.confirmation_digest));
+      setNotice("Draft pull request published. A human review and merge decision are still required.");
     } catch (reason) {
-      setError(errorText(reason));
+      setError(featureErrorMessage(reason, "contribution"));
     } finally {
       setBusy(false);
     }
@@ -116,11 +122,13 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
         <div>
           <p className="eyebrow">Isolated run {runId.slice(0, 8)}</p>
           <h2 id="contribution-title">Review contribution</h2>
-          <p>Only checked files are committed. Publishing never force-pushes or merges.</p>
+          <p>Review the real worktree diff. Preparing performs a completed secret scan, creates a local branch, and commits only checked files. Publishing never force-pushes or merges.</p>
         </div>
       </header>
-      {error ? <p className="inline-error" role="alert">{error}</p> : null}
-      {changes === null && !error ? <p className="quiet-copy">Loading worktree changes…</p> : null}
+      <div className="contribution-toolbar"><button className="button button--quiet" disabled={busy || loading} onClick={() => void load()} type="button">Refresh review</button></div>
+      {notice ? <p className="inline-success" role="status">{notice}</p> : null}
+      {error ? <p className="inline-error" role="alert">{error} {loadFailed ? <button className="text-button" disabled={loading} onClick={() => void load()} type="button">Retry review</button> : null}</p> : null}
+      {loading ? <p className="quiet-copy">Loading worktree changes…</p> : null}
       {changes?.files.length === 0 ? (
         <div className="resource-empty">
           <strong>No changes yet</strong>
@@ -151,7 +159,7 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
             <label>Commit message<input onChange={(event) => setMessage(event.target.value)} value={message} /></label>
             <label>Pull request title<input onChange={(event) => setTitle(event.target.value)} value={title} /></label>
             <label className="contribution-form__body">Pull request body<textarea onChange={(event) => setBody(event.target.value)} rows={4} value={body} /></label>
-            <label className="contribution-draft"><input checked={draft} onChange={(event) => setDraft(event.target.checked)} type="checkbox" />Create as draft</label>
+            <p className="contribution-draft"><strong>Draft pull request</strong><span>Corvus always publishes contributions as drafts so a human review remains required.</span></p>
           </div>
           <button
             className="button button--primary"
@@ -167,23 +175,34 @@ export function ContributionPanel({ api, runId }: { api: ContributionApi; runId:
         <div className="contribution-confirmation">
           <div className="contribution-evidence">
             <span data-status={prepared.secret_scan.status}>Secret scan {prepared.secret_scan.status}</span>
+            <span>{prepared.secret_scan.scanned_paths.length} paths scanned</span>
+            <span title={prepared.secret_scan.digest ?? "No completed digest"}>Scan digest {prepared.secret_scan.digest?.slice(0, 10) ?? "unavailable"}</span>
             <span>Branch {prepared.branch}</span>
             <span>Commit {prepared.commit_sha?.slice(0, 8) ?? "pending"}</span>
             <span>{prepared.selected_paths.length} selected files</span>
           </div>
+          <div className="contribution-pr-preview">
+            <strong>{prepared.draft ? "Draft pull request preview" : "Pull request preview"}</strong>
+            <span>{prepared.title}</span>
+            <small>{prepared.branch} → {prepared.base_branch}</small>
+            <p>{prepared.body}</p>
+          </div>
+          <p className="quiet-copy">This prepared selection is locked to its confirmation digest. Start a new run if you need to change the committed files.</p>
+          {prepared.secret_scan.findings.length > 0 ? <div className="contribution-findings"><strong>Secret scan findings</strong>{prepared.secret_scan.findings.map((finding, index) => <span data-severity={finding.severity} key={`${finding.path}-${finding.line ?? "file"}-${index}`}>{finding.path}{finding.line ? `:${finding.line}` : ""} · {finding.kind}</span>)}</div> : null}
           {prepared.state === "published" && prepared.pr_url && prepared.pr_number ? (
             <a href={prepared.pr_url} rel="noreferrer" target="_blank">Open pull request #{prepared.pr_number}</a>
           ) : (
             <>
               <label className="contribution-confirm-check">
                 <input checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
-                I reviewed the selected files, secret scan, branch, and commit.
+                I reviewed the selected files, completed secret scan, branch, commit, and pull-request preview. A human still decides whether to merge.
               </label>
               <button
                 className="button button--primary"
-                disabled={!confirmed || busy}
+                disabled={!confirmed || busy || prepared.secret_scan.status !== "passed"}
                 onClick={() => void publish()}
                 type="button"
+                title={prepared.secret_scan.status !== "passed" ? "A completed passing secret scan is required before publishing." : undefined}
               >
                 {busy ? "Publishing…" : `Publish ${prepared.draft ? "draft " : ""}pull request`}
               </button>

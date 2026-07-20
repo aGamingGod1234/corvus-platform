@@ -51,10 +51,15 @@ def build_provider_catalog(
     codex_available: bool,
     claude_available: bool,
     *,
+    codex_detected: bool | None = None,
+    claude_detected: bool | None = None,
     codex_models: tuple[str, ...] = (),
     codex_effective_model: str | None = None,
 ) -> tuple[ProviderCatalogEntry, ...]:
     """Return the UI-safe provider catalog without local identity details."""
+
+    codex_was_detected = codex_available if codex_detected is None else codex_detected
+    claude_was_detected = claude_available if claude_detected is None else claude_detected
 
     return (
         ProviderCatalogEntry(
@@ -62,9 +67,15 @@ def build_provider_catalog(
             name="OpenAI Codex",
             transport="local",
             status="ready" if codex_available else "unavailable",
-            status_label="Ready on this device" if codex_available else "Not installed",
-            models=_codex_models(codex_models, codex_effective_model),
-            thinking_levels=("low", "medium", "high", "xhigh"),
+            status_label=(
+                "CLI and login verified"
+                if codex_available
+                else "Detected, but CLI or login verification failed"
+                if codex_was_detected
+                else "Not installed"
+            ),
+            models=(_codex_models(codex_models, codex_effective_model) if codex_available else ()),
+            thinking_levels=("low", "medium", "high", "xhigh") if codex_available else (),
             supports_mcp=True,
         ),
         ProviderCatalogEntry(
@@ -72,12 +83,20 @@ def build_provider_catalog(
             name="Claude Code",
             transport="local",
             status="ready" if claude_available else "unavailable",
-            status_label="Ready on this device" if claude_available else "Not installed",
+            status_label=(
+                "CLI and login verified"
+                if claude_available
+                else "Detected, but CLI or login verification failed"
+                if claude_was_detected
+                else "Not installed"
+            ),
             models=(
                 ProviderModel("sonnet", "Claude Sonnet", recommended=True),
                 ProviderModel("opus", "Claude Opus"),
-            ),
-            thinking_levels=("low", "medium", "high", "xhigh", "max"),
+            )
+            if claude_available
+            else (),
+            thinking_levels=("low", "medium", "high", "xhigh", "max") if claude_available else (),
             supports_mcp=False,
         ),
         ProviderCatalogEntry(

@@ -94,6 +94,8 @@ class ContributionService:
         body: str,
         draft: bool,
     ) -> ContributionRecord:
+        if not draft:
+            raise ContributionConflict("contribution_draft_required")
         message = self._required_text(message, "contribution_message_invalid", 200)
         title = self._required_text(title, "contribution_title_invalid", 200)
         body = self._required_text(body, "contribution_body_invalid", 20_000)
@@ -354,6 +356,10 @@ class ContributionService:
         }
         if staged_paths != set(stage_paths):
             raise ContributionConflict("contribution_stage_selection_mismatch")
+        # Re-read and re-scan after staging. This binds the bytes selected by `git add`
+        # to the reviewed change set and catches filesystem watchers that mutate a file
+        # between the first review and index staging.
+        self._revalidate_prepare(root, record)
         committed = self.git.run(
             root,
             ("commit", "--no-verify", "-m", record.message),

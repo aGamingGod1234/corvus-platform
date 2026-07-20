@@ -74,6 +74,8 @@ def test_repository_api_requires_session_and_mutation_auth(tmp_path: Path) -> No
     assert created.status_code == 201, created.text
     repository_id = created.json()["id"]
     assert client.get("/api/local/repositories").json()[0]["id"] == repository_id
+    assert client.get("/api/local/repositories?limit=1&offset=1").json() == []
+    assert client.get("/api/local/repositories?limit=0&offset=0").status_code == 422
 
     refreshed = client.post(
         f"/api/local/repositories/{repository_id}/refresh",

@@ -827,6 +827,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/local/worktrees/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard Local Worktree */
+        delete: operations["discard_local_worktree_api_local_worktrees__run_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/offline-intents": {
         parameters: {
             query?: never;
@@ -1813,8 +1830,9 @@ export interface components {
             /**
              * Draft
              * @default true
+             * @constant
              */
-            draft: boolean;
+            draft: true;
             /** Message */
             message: string;
             /** Selected Paths */
@@ -2065,8 +2083,20 @@ export interface components {
              */
             state: "running" | "cancelled" | "completed" | "failed";
         };
+        /** LocalChatContextMessage */
+        LocalChatContextMessage: {
+            /** Content */
+            content: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
         /** LocalChatStartRequest */
         LocalChatStartRequest: {
+            /** Context */
+            context?: components["schemas"]["LocalChatContextMessage"][];
             /**
              * Effort
              * @default normal
@@ -2831,6 +2861,12 @@ export interface components {
             effort: "low" | "medium" | "high" | "xhigh";
             /** Id */
             id: string;
+            /** Last Run At */
+            last_run_at?: string | null;
+            /** Last Run Reason */
+            last_run_reason?: string | null;
+            /** Last Run Status */
+            last_run_status?: ("started" | "skipped") | null;
             /**
              * Mode
              * @enum {string}
@@ -4252,7 +4288,10 @@ export interface operations {
     };
     local_repositories_api_local_repositories_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4266,6 +4305,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepositoryRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4404,7 +4452,10 @@ export interface operations {
     };
     local_runs_api_local_runs_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4418,6 +4469,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4694,6 +4754,7 @@ export interface operations {
         parameters: {
             query?: {
                 after?: number;
+                limit?: number;
             };
             header?: never;
             path: {
@@ -4725,7 +4786,10 @@ export interface operations {
     };
     local_run_evidence_api_local_runs__run_id__evidence_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path: {
                 run_id: string;
@@ -4789,7 +4853,10 @@ export interface operations {
     };
     local_schedules_api_local_schedules_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4803,6 +4870,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4976,7 +5052,10 @@ export interface operations {
     };
     local_skills_api_local_skills_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4990,6 +5069,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PortableSkillVersion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5134,6 +5222,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PortableSkillVersion"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_local_worktree_api_local_worktrees__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

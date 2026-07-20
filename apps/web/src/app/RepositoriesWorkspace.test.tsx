@@ -31,16 +31,29 @@ function apiWith(overrides: Partial<RepositoryApi> = {}): RepositoryApi {
     registerRepository: vi.fn().mockResolvedValue(repository),
     refreshRepository: vi.fn().mockResolvedValue(repository),
     removeRepository: vi.fn().mockResolvedValue(undefined),
-    createRepositoryRun: vi.fn(),
-    getRunChanges: vi.fn(),
-    getContribution: vi.fn().mockRejectedValue(new Error("contribution_not_found")),
-    prepareContribution: vi.fn(),
-    publishContribution: vi.fn(),
     ...overrides
   };
 }
 
 describe("RepositoriesWorkspace", () => {
+  async function openLocalRepositoryForm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByRole("button", { name: "Add repository" }));
+    await user.click(screen.getByRole("button", { name: "Local folder" }));
+  }
+
+  it("offers one clear add flow for every supported repository source", async () => {
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={apiWith({ createEmptyRepository: vi.fn() })} />);
+
+    await screen.findByText("No repositories connected");
+    expect(screen.getByRole("button", { name: "Add repository" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Local folder" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(screen.getByRole("button", { name: "GitHub" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Local folder" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Empty project" })).toBeVisible();
+  });
+
   it("registers a folder selected by the desktop picker", async () => {
     const api = apiWith();
     const picker = vi.fn().mockResolvedValue("C:\\work\\corvus");
@@ -48,7 +61,7 @@ describe("RepositoriesWorkspace", () => {
     const user = userEvent.setup();
 
     expect(await screen.findByText("No repositories connected")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Add local repository" }));
+    await openLocalRepositoryForm(user);
     await user.click(screen.getByRole("button", { name: "Browse" }));
     expect(screen.getByLabelText("Repository path")).toHaveValue("C:\\work\\corvus");
     expect(screen.getByLabelText("Display name")).toHaveValue("corvus");
@@ -69,7 +82,7 @@ describe("RepositoriesWorkspace", () => {
     const user = userEvent.setup();
 
     await screen.findByText("No repositories connected");
-    await user.click(screen.getByRole("button", { name: "Add local repository" }));
+    await openLocalRepositoryForm(user);
     await user.click(screen.getByRole("button", { name: "Browse" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect repository" })).toBeDisabled();
@@ -90,6 +103,16 @@ describe("RepositoriesWorkspace", () => {
     await waitFor(() => expect(screen.getByText("Modified")).toBeVisible());
   });
 
+  it("hands a verified healthy repository to Runs", async () => {
+    const client = apiWith({ listRepositories: vi.fn().mockResolvedValue([repository]) });
+    const onOpenRuns = vi.fn();
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={client} onOpenRuns={onOpenRuns} />);
+
+    await user.click(await screen.findByRole("button", { name: "Use in Runs" }));
+    expect(onOpenRuns).toHaveBeenCalledWith(repository.id);
+  });
+
   it("renders registration failures as errors", async () => {
     const api = apiWith({
       registerRepository: vi.fn().mockRejectedValue(new Error("not_a_git_repository"))
@@ -98,12 +121,42 @@ describe("RepositoriesWorkspace", () => {
     const user = userEvent.setup();
 
     await screen.findByText("No repositories connected");
-    await user.click(screen.getByRole("button", { name: "Add local repository" }));
+    await openLocalRepositoryForm(user);
     await user.type(screen.getByLabelText("Repository path"), "C:\\plain");
     await user.type(screen.getByLabelText("Display name"), "Plain");
     await user.click(screen.getByRole("button", { name: "Connect repository" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("not_a_git_repository");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not a git repository/i);
     expect(screen.queryByText("C:\\plain", { selector: "small" })).not.toBeInTheDocument();
+  });
+
+  it("recovers from an initial repository load failure", async () => {
+    const client = apiWith();
+    vi.mocked(client.listRepositories)
+      .mockRejectedValueOnce(new Error("request_failed_503"))
+      .mockResolvedValueOnce([repository]);
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={client} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/runtime is temporarily unavailable/i);
+    await user.click(screen.getByRole("button", { name: "Retry repositories" }));
+    expect(await screen.findByText("team/corvus")).toBeVisible();
+    expect(client.listRepositories).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes only the Corvus registration after inline confirmation", async () => {
+    const client = apiWith({ listRepositories: vi.fn().mockResolvedValue([repository]) });
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={client} />);
+
+    await screen.findByText("team/corvus");
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(client.removeRepository).not.toHaveBeenCalled();
+    expect(screen.getByText("Remove from Corvus?")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(client.removeRepository).toHaveBeenCalledWith(repository.id));
+    expect(await screen.findByRole("status")).toHaveTextContent(/files on disk were not deleted/i);
+    expect(screen.queryByText("team/corvus")).not.toBeInTheDocument();
   });
 });

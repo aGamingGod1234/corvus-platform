@@ -61,6 +61,89 @@ def test_persists_runs_events_and_evidence_across_restart(tmp_path: Path) -> Non
     assert restarted.evidence("tenant-a", created.id) == (evidence,)
 
 
+def test_event_pages_are_bounded_and_resume_after_the_last_sequence(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+    runs = RunStore(store)
+    created = runs.create("tenant-a", _request(repository_id), base_sha="b" * 40)
+    for index in range(12):
+        runs.append_event(created.id, "provider.output", {"index": index})
+
+    first_page = runs.events("tenant-a", created.id, limit=5)
+    second_page = runs.events("tenant-a", created.id, after=first_page[-1].sequence, limit=5)
+
+    assert [event.sequence for event in first_page] == [1, 2, 3, 4, 5]
+    assert [event.sequence for event in second_page] == [6, 7, 8, 9, 10]
+
+
+def test_run_and_evidence_pages_are_bounded(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+    runs = RunStore(store)
+    first = runs.create("tenant-a", _request(repository_id), base_sha="b" * 40)
+    second = runs.create("tenant-a", _request(repository_id), base_sha="c" * 40)
+    expected_run_ids = {first.id, second.id}
+    for index in range(3):
+        runs.add_evidence(first.id, "test", f"Evidence {index}", f"{index + 1}" * 64)
+
+    first_run_page = runs.list("tenant-a", limit=1, offset=0)
+    second_run_page = runs.list("tenant-a", limit=1, offset=1)
+    first_evidence_page = runs.evidence("tenant-a", first.id, limit=2, offset=0)
+    second_evidence_page = runs.evidence("tenant-a", first.id, limit=2, offset=2)
+
+    assert {first_run_page[0].id, second_run_page[0].id} == expected_run_ids
+    assert len(first_evidence_page) == 2
+    assert len(second_evidence_page) == 1
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    ((0, 0), (1_001, 0), (-1, 0), (1, -1)),
+)
+def test_run_and_evidence_pages_reject_invalid_bounds(
+    tmp_path: Path,
+    limit: int,
+    offset: int,
+) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+    runs = RunStore(store)
+    created = runs.create("tenant-a", _request(repository_id), base_sha="b" * 40)
+
+    with pytest.raises(RunStoreConflict, match="^run_list_page_invalid$"):
+        runs.list("tenant-a", limit=limit, offset=offset)
+    with pytest.raises(RunStoreConflict, match="^run_evidence_page_invalid$"):
+        runs.evidence("tenant-a", created.id, limit=limit, offset=offset)
+
+
+def test_accepts_sha256_base_object_id(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+
+    created = RunStore(store).create("tenant-a", _request(repository_id), base_sha="c" * 64)
+
+    assert created.base_sha == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "base_sha",
+    (
+        "a" * 39,
+        "a" * 41,
+        "a" * 63,
+        "a" * 65,
+        "A" * 40,
+        "g" * 64,
+    ),
+)
+def test_rejects_noncanonical_base_object_id(tmp_path: Path, base_sha: str) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+
+    with pytest.raises(RunStoreConflict, match="^run_base_sha_invalid$"):
+        RunStore(store).create("tenant-a", _request(repository_id), base_sha=base_sha)
+
+
 def test_rejects_invalid_transitions_and_keeps_terminal_state(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "corvus.sqlite3")
     repository_id = _repository(store)

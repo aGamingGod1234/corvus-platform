@@ -32,8 +32,8 @@ def test_provider_catalog_is_truthful_and_contains_recommended_models() -> None:
     assert any(model.recommended for model in by_id["claude"].models)
     assert by_id["claude"].thinking_levels[-1] == "max"
     assert by_id["codex"].thinking_levels == ("low", "medium", "high", "xhigh")
-    assert by_id["codex"].status_label == "Ready on this device"
-    assert by_id["claude"].status_label == "Ready on this device"
+    assert by_id["codex"].status_label == "CLI and login verified"
+    assert by_id["claude"].status_label == "CLI and login verified"
 
 
 def test_provider_catalog_never_serializes_executable_paths_or_secrets() -> None:
@@ -57,6 +57,36 @@ def test_ready_codex_always_has_curated_models_when_cli_config_is_empty() -> Non
 
     assert [model.id for model in codex.models] == ["gpt-5.6-sol", "gpt-5.6-terra"]
     assert codex.models[0].recommended is True
+
+
+def test_unverified_codex_never_exposes_models_or_efforts() -> None:
+    catalog = build_provider_catalog(
+        codex_available=False,
+        codex_detected=True,
+        claude_available=False,
+    )
+
+    codex = next(provider for provider in catalog if provider.id == "codex")
+
+    assert codex.status == "unavailable"
+    assert codex.status_label == "Detected, but CLI or login verification failed"
+    assert codex.models == ()
+    assert codex.thinking_levels == ()
+
+
+def test_unverified_claude_never_exposes_models_or_efforts() -> None:
+    catalog = build_provider_catalog(
+        codex_available=False,
+        claude_available=False,
+        claude_detected=True,
+    )
+
+    claude = next(provider for provider in catalog if provider.id == "claude")
+
+    assert claude.status == "unavailable"
+    assert claude.status_label == "Detected, but CLI or login verification failed"
+    assert claude.models == ()
+    assert claude.thinking_levels == ()
 
 
 def test_single_token_codex_model_keeps_a_visible_label() -> None:

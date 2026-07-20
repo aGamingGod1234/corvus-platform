@@ -54,8 +54,8 @@ describe("NavigationRail", () => {
       />
     );
 
-    const navigation = screen.getByRole("navigation", { name: "Everyday · Individual navigation" });
-    expect(navigation.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(5);
+    const navigation = screen.getByRole("navigation", { name: "Everyday / Individual navigation" });
+    expect(navigation.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(6);
     expect(navigation).not.toHaveTextContent("01");
   });
 });

@@ -45,6 +45,23 @@ export interface GitHubRepositorySummary {
   private: boolean;
 }
 
+export interface LocalProviderModel {
+  id: string;
+  label: string;
+  recommended: boolean;
+}
+
+export interface LocalProviderCatalogEntry {
+  id: string;
+  label: string;
+  runtime: "local" | "api";
+  status: "ready" | "preview" | "unavailable";
+  status_label: string;
+  models: LocalProviderModel[];
+  thinking_levels: Array<"low" | "medium" | "high" | "xhigh" | "max">;
+  supports_mcp: boolean;
+}
+
 export interface CorvusApi {
   session(): Promise<Session>;
   pair(value: string): Promise<void>;
@@ -54,11 +71,13 @@ export interface CorvusApi {
   refreshRepository(repositoryId: string): Promise<LocalRepository>;
   removeRepository(repositoryId: string): Promise<void>;
   createRepositoryRun(repositoryId: string): Promise<LocalWorktree>;
+  discardRepositoryRun(runId: string): Promise<void>;
   getGitHubAuthStatus(): Promise<GitHubAuthStatus>;
   authenticateGitHub(): Promise<GitHubAuthStatus>;
   listGitHubRepositories(): Promise<GitHubRepositorySummary[]>;
   connectGitHubRepository(slug: string): Promise<LocalRepository>;
   createEmptyRepository(name: string): Promise<LocalRepository>;
+  listLocalProviders(): Promise<LocalProviderCatalogEntry[]>;
   getLocalSafetyPreview(mode: "chat" | "build"): Promise<LocalSafetyPreview>;
   listLocalRuns(): Promise<LocalRun[]>;
   startLocalRun(input: {
@@ -68,10 +87,11 @@ export interface CorvusApi {
     effort: "low" | "medium" | "high" | "xhigh";
     mode: "chat" | "build";
     safetyDigest: string;
+    skillVersionId?: string;
     outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
   }): Promise<LocalRun>;
   getLocalRun(runId: string): Promise<LocalRun>;
-  listLocalRunEvents(runId: string, after?: number): Promise<LocalRunEvent[]>;
+  listLocalRunEvents(runId: string, after?: number, limit?: number): Promise<LocalRunEvent[]>;
   listLocalRunEvidence(runId: string): Promise<LocalRunEvidence[]>;
   cancelLocalRun(runId: string): Promise<LocalRun>;
   retryLocalRun(runId: string): Promise<LocalRun>;
@@ -89,6 +109,7 @@ export interface CorvusApi {
     task: string;
     recurrence: { kind: "once" | "hourly" | "daily" | "weekdays" | "weekly"; local_time?: string; weekdays: number[]; once_at?: string };
     timezone: string;
+    model?: string;
     effort: "low" | "medium" | "high" | "xhigh";
     mode: "chat" | "build";
     safetyDigest: string;
@@ -108,7 +129,7 @@ export interface CorvusApi {
       message: string;
       title: string;
       body: string;
-      draft: boolean;
+      draft: true;
     }
   ): Promise<Contribution>;
   publishContribution(runId: string, expectedDigest: string): Promise<Contribution>;
@@ -160,13 +181,31 @@ export interface CorvusApi {
 
 export class ApiFailure extends Error {
   readonly status: number;
+  readonly detail: Readonly<Record<string, unknown>> | null;
+  readonly code: string;
+  readonly correlationId: string | null;
 
   constructor(status: number, detail: unknown) {
-    super(typeof detail === "string" ? detail : `request_failed_${status}`);
+    const structured = typeof detail === "object" && detail !== null
+      ? detail as Record<string, unknown>
+      : null;
+    const code = typeof detail === "string"
+      ? detail
+      : typeof structured?.code === "string"
+        ? structured.code
+        : `request_failed_${status}`;
+    super(code);
     this.name = "ApiFailure";
     this.status = status;
+    this.detail = structured;
+    this.code = code;
+    this.correlationId = typeof structured?.correlation_id === "string"
+      ? structured.correlation_id
+      : null;
   }
 }
+
+const LOCAL_PAGE_SIZE = 100;
 
 export function createCorvusApi(baseUrl = ""): CorvusApi {
   const client = createClient<paths>({ baseUrl, credentials: "include" });
@@ -199,6 +238,19 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     return session;
   }
 
+  async function collectLocalPages<T>(
+    load: (offset: number) => Promise<T[]>
+  ): Promise<T[]> {
+    const maxPages = 20;
+    const collected: T[] = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const items = await load(page * LOCAL_PAGE_SIZE);
+      collected.push(...items);
+      if (items.length < LOCAL_PAGE_SIZE) return collected;
+    }
+    throw new ApiFailure(413, "local_collection_limit_exceeded");
+  }
+
   return {
     session: loadSession,
     async pair(value) {
@@ -213,8 +265,11 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       return requireData(result);
     },
     async listRepositories() {
-      const result = await client.GET("/api/local/repositories");
-      return requireData(result);
+      return collectLocalPages<LocalRepository>(async (offset) => requireData(
+        await client.GET("/api/local/repositories", {
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
+        })
+      ));
     },
     async registerRepository(path, displayName) {
       const result = await client.POST("/api/local/repositories", {
@@ -246,6 +301,15 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       });
       return requireData(result);
     },
+    async discardRepositoryRun(runId) {
+      const result = await client.DELETE("/api/local/worktrees/{run_id}", {
+        params: { path: { run_id: runId } },
+        headers: mutationHeaders()
+      });
+      if (result.error) {
+        throw new ApiFailure(result.response.status, readDetail(result.error));
+      }
+    },
     getGitHubAuthStatus: () => rawJson("/api/local/github/status"),
     authenticateGitHub: () => rawJson("/api/local/github/authenticate", {
       method: "POST",
@@ -262,6 +326,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       headers: { "Content-Type": "application/json", ...mutationHeaders() },
       body: JSON.stringify({ name })
     }),
+    listLocalProviders: () => rawJson("/api/local-chat/providers"),
     async getLocalSafetyPreview(mode) {
       const result = await client.GET("/api/local-chat/safety-preview", {
         params: { query: { provider: "codex", mode, mcp_enabled: false } }
@@ -269,7 +334,11 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       return requireData(result);
     },
     async listLocalRuns() {
-      return requireData(await client.GET("/api/local/runs"));
+      return collectLocalPages<LocalRun>(async (offset) => requireData(
+        await client.GET("/api/local/runs", {
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
+        })
+      ));
     },
     async startLocalRun(input) {
       const result = await client.POST("/api/local/runs", {
@@ -281,6 +350,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
           effort: input.effort,
           mode: input.mode,
           safety_digest: input.safetyDigest,
+          skill_version_id: input.skillVersionId,
           output_policy: input.outputPolicy
         },
         headers: mutationHeaders()
@@ -292,15 +362,17 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
         params: { path: { run_id: runId } }
       }));
     },
-    async listLocalRunEvents(runId, after = 0) {
+    async listLocalRunEvents(runId, after = 0, limit = 500) {
       return requireData(await client.GET("/api/local/runs/{run_id}/events", {
-        params: { path: { run_id: runId }, query: { after } }
+        params: { path: { run_id: runId }, query: { after, limit } }
       }));
     },
     async listLocalRunEvidence(runId) {
-      return requireData(await client.GET("/api/local/runs/{run_id}/evidence", {
-        params: { path: { run_id: runId } }
-      }));
+      return collectLocalPages<LocalRunEvidence>(async (offset) => requireData(
+        await client.GET("/api/local/runs/{run_id}/evidence", {
+          params: { path: { run_id: runId }, query: { limit: LOCAL_PAGE_SIZE, offset } }
+        })
+      ));
     },
     async cancelLocalRun(runId) {
       return requireData(await client.POST("/api/local/runs/{run_id}/cancel", {
@@ -321,7 +393,11 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       }));
     },
     async listPortableSkills() {
-      return requireData(await client.GET("/api/local/skills"));
+      return collectLocalPages<PortableSkill>(async (offset) => requireData(
+        await client.GET("/api/local/skills", {
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
+        })
+      ));
     },
     async listSkillImportSources() {
       return requireData(await client.GET("/api/local/skills/sources"));
@@ -348,7 +424,11 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
       }));
     },
     async listLocalSchedules() {
-      return requireData(await client.GET("/api/local/schedules"));
+      return collectLocalPages<LocalSchedule>(async (offset) => requireData(
+        await client.GET("/api/local/schedules", {
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
+        })
+      ));
     },
     async createLocalSchedule(input) {
       return requireData(await client.POST("/api/local/schedules", {
@@ -359,6 +439,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
           recurrence: input.recurrence,
           timezone: input.timezone,
           provider: "codex",
+          model: input.model,
           effort: input.effort,
           mode: input.mode,
           safety_digest: input.safetyDigest,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -17,6 +19,10 @@ from corvus.mvp.local_chat import (
 
 ApiProvider = Literal["openai", "anthropic", "gemini", "xai"]
 _HTTP_TIMEOUT_SECONDS = 120.0
+_ABSOLUTE_DEADLINE_SECONDS = 180.0
+_MAX_OUTPUT_BYTES = 100_000
+_MAX_EVENT_OVERHEAD_BYTES = 65_536
+_STREAM_CHUNK_BYTES = 16_384
 _ENDPOINTS: dict[ApiProvider, str] = {
     "openai": "https://api.openai.com/v1/responses",
     "anthropic": "https://api.anthropic.com/v1/messages",
@@ -27,6 +33,39 @@ _ENDPOINTS: dict[ApiProvider, str] = {
 
 class ApiChatError(RuntimeError):
     pass
+
+
+class _ProviderStreamLimit(RuntimeError):
+    pass
+
+
+async def _bounded_response_lines(
+    response: httpx.Response,
+    *,
+    max_line_bytes: int,
+) -> AsyncIterator[str]:
+    """Decode provider lines while keeping any incomplete frame strictly bounded."""
+
+    buffered = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=_STREAM_CHUNK_BYTES):
+        chunk_start = 0
+        while chunk_start < len(chunk):
+            newline = chunk.find(b"\n", chunk_start)
+            chunk_end = len(chunk) if newline < 0 else newline
+            buffered.extend(chunk[chunk_start:chunk_end])
+            if len(buffered) > max_line_bytes:
+                raise _ProviderStreamLimit("provider_event_limit")
+            if newline < 0:
+                break
+            if buffered.endswith(b"\r"):
+                del buffered[-1]
+            yield buffered.decode("utf-8")
+            buffered.clear()
+            chunk_start = newline + 1
+    if buffered:
+        if buffered.endswith(b"\r"):
+            del buffered[-1]
+        yield buffered.decode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +85,8 @@ class ApiChatBackend:
         credential: str,
         clock: Callable[[], datetime],
         http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        max_output_bytes: int = _MAX_OUTPUT_BYTES,
+        absolute_deadline_seconds: float = _ABSOLUTE_DEADLINE_SECONDS,
     ) -> None:
         if not credential.strip():
             raise ApiChatError("provider_credential_missing")
@@ -55,6 +96,10 @@ class ApiChatBackend:
         self._http_client_factory = http_client_factory or (
             lambda: httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=False)
         )
+        if max_output_bytes < 1 or absolute_deadline_seconds <= 0:
+            raise ValueError("provider_stream_limits_invalid")
+        self._max_output_bytes = max_output_bytes
+        self._absolute_deadline_seconds = absolute_deadline_seconds
         self._requests: dict[UUID, _ApiRequest] = {}
         self._cancelled: set[UUID] = set()
         self._active_responses: dict[UUID, httpx.Response] = {}
@@ -109,44 +154,74 @@ class ApiChatBackend:
                 )
             return
         request_failed = False
+        failure_reason = "provider_request_failed"
         stream_completed = False
+        output_bytes = 0
+        deadline = asyncio.get_running_loop().time() + self._absolute_deadline_seconds
         try:
-            async with self._http_client_factory() as client:
-                if handle.id in self._cancelled:
-                    sequence += 1
-                    if sequence > after_sequence:
-                        yield LocalChatBackendEvent(
-                            sequence, self._clock(), "cancelled", {"status": "cancelled"}
+            async with AsyncExitStack() as stack:
+                async with asyncio.timeout_at(deadline):
+                    client = await stack.enter_async_context(self._http_client_factory())
+                    response = await stack.enter_async_context(
+                        client.stream(
+                            "POST",
+                            self._url(request.model),
+                            headers=self._headers(),
+                            json=self._body(request),
                         )
-                    return
-                async with client.stream(
-                    "POST",
-                    self._url(request.model),
-                    headers=self._headers(),
-                    json=self._body(request),
-                ) as response:
-                    self._active_responses[handle.id] = response
-                    try:
-                        response.raise_for_status()
-                        async for line in response.aiter_lines():
-                            if handle.id in self._cancelled:
-                                break
-                            terminal_state = self._terminal_state(line)
-                            if terminal_state == "failed":
+                    )
+                    response.raise_for_status()
+                self._active_responses[handle.id] = response
+                try:
+                    lines = aiter(
+                        _bounded_response_lines(
+                            response,
+                            max_line_bytes=(self._max_output_bytes + _MAX_EVENT_OVERHEAD_BYTES),
+                        )
+                    )
+                    while handle.id not in self._cancelled:
+                        if asyncio.get_running_loop().time() >= deadline:
+                            raise TimeoutError
+                        try:
+                            async with asyncio.timeout_at(deadline):
+                                line = await anext(lines)
+                        except StopAsyncIteration:
+                            break
+                        terminal_state = self._terminal_state(line)
+                        if terminal_state == "failed":
+                            request_failed = True
+                            break
+                        usage = self._usage(line)
+                        if usage:
+                            sequence += 1
+                            if sequence > after_sequence:
+                                usage_payload: dict[str, object] = dict(usage)
+                                yield LocalChatBackendEvent(
+                                    sequence, self._clock(), "usage", usage_payload
+                                )
+                        text = self._text_delta(line)
+                        if text:
+                            output_bytes += len(text.encode("utf-8"))
+                            if output_bytes > self._max_output_bytes:
                                 request_failed = True
+                                failure_reason = "provider_output_limit"
                                 break
-                            text = self._text_delta(line)
-                            if text:
-                                sequence += 1
-                                if sequence > after_sequence:
-                                    yield LocalChatBackendEvent(
-                                        sequence, self._clock(), "message", {"text": text}
-                                    )
-                            if terminal_state == "completed":
-                                stream_completed = True
-                                break
-                    finally:
-                        self._active_responses.pop(handle.id, None)
+                            sequence += 1
+                            if sequence > after_sequence:
+                                yield LocalChatBackendEvent(
+                                    sequence, self._clock(), "message", {"text": text}
+                                )
+                        if terminal_state == "completed":
+                            stream_completed = True
+                            break
+                finally:
+                    self._active_responses.pop(handle.id, None)
+        except TimeoutError:
+            request_failed = True
+            failure_reason = "provider_deadline_exceeded"
+        except _ProviderStreamLimit:
+            request_failed = True
+            failure_reason = "provider_output_limit"
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
             request_failed = True
         if handle.id in self._cancelled:
@@ -163,7 +238,7 @@ class ApiChatBackend:
                     sequence,
                     self._clock(),
                     "failed",
-                    {"reason_code": "provider_request_failed"},
+                    {"reason_code": failure_reason},
                 )
             return
         sequence += 1
@@ -299,12 +374,78 @@ class ApiChatBackend:
             return None
         return "completed" if reason == "stop" else "failed"
 
+    def _usage(self, line: str) -> dict[str, int] | None:
+        if not line.startswith("data:"):
+            return None
+        raw = line.removeprefix("data:").strip()
+        if not raw or raw == "[DONE]":
+            return None
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return None
+        if self._provider == "openai":
+            response = payload.get("response")
+            usage = response.get("usage") if isinstance(response, dict) else None
+            if not isinstance(usage, dict):
+                return None
+            details = usage.get("input_tokens_details")
+            return _normalized_usage(
+                input_tokens=usage.get("input_tokens"),
+                cached_input_tokens=details.get("cached_tokens")
+                if isinstance(details, dict)
+                else None,
+                output_tokens=usage.get("output_tokens"),
+            )
+        if self._provider == "anthropic":
+            message = payload.get("message")
+            usage = message.get("usage") if isinstance(message, dict) else payload.get("usage")
+            if not isinstance(usage, dict):
+                return None
+            return _normalized_usage(
+                input_tokens=usage.get("input_tokens"),
+                cached_input_tokens=usage.get("cache_read_input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+            )
+        if self._provider == "gemini":
+            usage = payload.get("usageMetadata")
+            if not isinstance(usage, dict):
+                return None
+            return _normalized_usage(
+                input_tokens=usage.get("promptTokenCount"),
+                cached_input_tokens=usage.get("cachedContentTokenCount"),
+                output_tokens=usage.get("candidatesTokenCount"),
+            )
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        details = usage.get("prompt_tokens_details")
+        return _normalized_usage(
+            input_tokens=usage.get("prompt_tokens"),
+            cached_input_tokens=details.get("cached_tokens") if isinstance(details, dict) else None,
+            output_tokens=usage.get("completion_tokens"),
+        )
+
 
 def _supports_openai_reasoning_effort(model: str) -> bool:
     normalized = model.strip().lower()
     return normalized.startswith(("gpt-5", "gpt-oss-", "codex-")) or bool(
         re.fullmatch(r"o\d+(?:[-.].+)?", normalized)
     )
+
+
+def _normalized_usage(
+    *, input_tokens: object, cached_input_tokens: object, output_tokens: object
+) -> dict[str, int] | None:
+    normalized = {
+        key: value
+        for key, value in (
+            ("input_tokens", input_tokens),
+            ("cached_input_tokens", cached_input_tokens),
+            ("output_tokens", output_tokens),
+        )
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    }
+    return normalized or None
 
 
 def _gemini_text(payload: dict[str, Any]) -> str | None:

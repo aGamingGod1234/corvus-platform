@@ -38,6 +38,22 @@ def test_trusted_process_rejects_path_lookup_and_missing_working_directory(tmp_p
         run_trusted_argv([sys.executable, "-V"], cwd=tmp_path / "missing")
 
 
+def test_trusted_process_stops_reading_when_combined_output_exceeds_limit(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(TrustedProcessError, match="output limit"):
+        run_trusted_argv(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('x' * 4096); sys.stdout.flush()",
+            ],
+            cwd=tmp_path,
+            timeout_seconds=10,
+            max_output_bytes=128,
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
 async def test_tree_termination_confirms_descendants_after_leader_exits_first(

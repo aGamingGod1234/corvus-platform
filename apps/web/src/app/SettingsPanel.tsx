@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import type {
   ConversationApi,
@@ -25,8 +25,10 @@ import {
 } from "./desktopPreferences";
 import type { ExperienceMode, WorkspaceKind } from "./preferences";
 import { FALLBACK_PROVIDERS } from "./providerDefaults";
+import { featureErrorMessage } from "./featureFeedback";
 
 type SettingsCategory = "general" | "models" | "agent" | "mcp" | "safety" | "appearance" | "account";
+type ModelsView = "defaults" | "providers";
 type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences" | "listProviderCredentials" | "connectProviderCredential" | "verifyProviderCredential" | "removeProviderCredential" | "listMcpServers" | "addMcpServer" | "removeMcpServer" | "loginMcpServer">;
 
 const API_PROVIDERS: ReadonlyArray<{ id: ProviderCredentialId; label: string; environment: string }> = [
@@ -81,9 +83,7 @@ function title(value: string): string {
 }
 
 function safeError(reason: unknown): string {
-  return reason instanceof Error
-    ? reason.message.replaceAll("_", " ")
-    : "Corvus could not save these settings.";
+  return featureErrorMessage(reason, "settings");
 }
 
 function SettingsRow({ children, description, label }: {
@@ -123,6 +123,7 @@ export function SettingsPanel({
   workspaceKind: WorkspaceKind;
 }) {
   const [category, setCategory] = useState<SettingsCategory>("general");
+  const [modelsView, setModelsView] = useState<ModelsView>("defaults");
   const [theme, setTheme] = useState<ThemePreference>(() => loadDevicePreferences(storage, workspaceId).theme);
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>(() => loadDevicePreferences(storage, workspaceId).sendKeyMode);
   const [safetyGuidance, setSafetyGuidance] = useState<SafetyGuidance>(() => loadDevicePreferences(storage, workspaceId).safetyGuidance);
@@ -142,6 +143,9 @@ export function SettingsPanel({
   const [credentialDrafts, setCredentialDrafts] = useState<Partial<Record<ProviderCredentialId, string>>>({});
   const [verifiedModels, setVerifiedModels] = useState<Partial<Record<ProviderCredentialId, string[]>>>({});
   const [mcpServers, setMcpServers] = useState<McpServerConfiguration[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpError, setMcpError] = useState("");
+  const [mcpRefresh, setMcpRefresh] = useState(0);
   const [mcpName, setMcpName] = useState("");
   const [mcpUrl, setMcpUrl] = useState("");
   const [profileExperience, setProfileExperience] = useState<ExperienceMode>(experience);
@@ -151,13 +155,45 @@ export function SettingsPanel({
   const [error, setError] = useState("");
   const [unsavedBarDismissed, setUnsavedBarDismissed] = useState(false);
   const [exitConfirmation, setExitConfirmation] = useState(false);
-  const profileLabel = `${title(experience)} · ${title(workspaceKind)}`;
+  const exitDialogRef = useRef<HTMLElement>(null);
+  const profileLabel = `${title(experience)} / ${title(workspaceKind)}`;
   const credentialControlsAvailable = api?.connectProviderCredential !== undefined;
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === runtime.default_provider),
     [providers, runtime.default_provider]
   );
-  const selectedThinkingLevels = selectedProvider?.thinking_levels ?? FALLBACK_PROVIDERS[0].thinking_levels;
+  const selectedThinkingLevels = selectedProvider?.status === "ready"
+    ? selectedProvider.thinking_levels
+    : [];
+
+  useEffect(() => {
+    if (!exitConfirmation) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    exitDialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => previousFocus?.focus();
+  }, [exitConfirmation]);
+
+  function handleExitDialogKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setExitConfirmation(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+    ));
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   useEffect(() => {
     const device = loadDevicePreferences(storage, workspaceId);
@@ -221,15 +257,27 @@ export function SettingsPanel({
         if (current) setError("Provider credentials could not be checked. No key was read or exposed.");
       });
     }
-    if (api.listMcpServers !== undefined) {
-      void api.listMcpServers().then((servers) => {
-        if (current) setMcpServers(servers);
-      }).catch(() => {
-        if (current) setError("Configured MCP servers could not be loaded.");
-      });
-    }
     return () => { current = false; };
   }, [api, experience, providerRefresh, storage, workspaceId]);
+
+  useEffect(() => {
+    if (api?.listMcpServers === undefined) {
+      setMcpServers([]);
+      setMcpError("");
+      return;
+    }
+    let current = true;
+    setMcpLoading(true);
+    setMcpError("");
+    void api.listMcpServers().then((servers) => {
+      if (current) setMcpServers(servers);
+    }).catch(() => {
+      if (current) setMcpError("Configured MCP servers could not be loaded. Existing Codex configuration was not changed.");
+    }).finally(() => {
+      if (current) setMcpLoading(false);
+    });
+    return () => { current = false; };
+  }, [api, mcpRefresh]);
 
   function updateRuntime<Key extends keyof RuntimePreferences>(
     key: Key,
@@ -276,12 +324,20 @@ export function SettingsPanel({
       launchAtLogin,
       nativeNotifications
     };
+    const completedSteps: string[] = [];
     try {
       const desktopChanged = runInBackground !== device.runInBackground
         || launchAtLogin !== device.launchAtLogin
         || nativeNotifications !== device.nativeNotifications;
+      const runtimeChanged = runtime.default_provider !== savedRuntime.default_provider
+        || runtime.default_model !== savedRuntime.default_model
+        || runtime.default_effort !== savedRuntime.default_effort
+        || runtime.default_mode !== savedRuntime.default_mode
+        || runtime.mcp_enabled !== savedRuntime.mcp_enabled
+        || runtime.response_tone !== savedRuntime.response_tone
+        || runtime.custom_rules !== savedRuntime.custom_rules;
       let persistedRuntime: RuntimePreferences | null = null;
-      if (api !== undefined) {
+      if (api !== undefined && runtimeChanged) {
         persistedRuntime = await api.updatePreferences({
           expected_version: runtime.version,
           default_provider: runtime.default_provider,
@@ -292,20 +348,24 @@ export function SettingsPanel({
           response_tone: runtime.response_tone,
           custom_rules: runtime.custom_rules
         });
+        // A later device/profile failure must not make the next attempt reuse
+        // the now-stale preference version. Acknowledge each durable step as
+        // soon as it succeeds and leave only unfinished work dirty.
+        setRuntime(persistedRuntime);
+        setSavedRuntime(persistedRuntime);
+        completedSteps.push("Runtime settings");
       }
       if (desktopAvailable && desktopChanged) {
         await applyDesktopSettings({ runInBackground, launchAtLogin, nativeNotifications });
       }
-      if (profileEditable && profileExperience !== experience) {
-        await onExperienceChange(profileExperience);
-      }
-      if (persistedRuntime !== null) {
-        setRuntime(persistedRuntime);
-        setSavedRuntime(persistedRuntime);
-      }
       saveDevicePreferences(storage, workspaceId, nextDevice);
       document.documentElement.dataset.theme = theme;
-      setStatus(api === undefined ? "Saved on this device" : "Saved for this local runtime");
+      completedSteps.push("Device settings");
+      if (profileEditable && profileExperience !== experience) {
+        await onExperienceChange(profileExperience);
+        completedSteps.push("Workspace profile");
+      }
+      setStatus(persistedRuntime !== null ? "Saved for this local runtime" : "Saved on this device");
       setDirty(false);
       setUnsavedBarDismissed(false);
       setExitConfirmation(false);
@@ -321,7 +381,11 @@ export function SettingsPanel({
         setDirty(false);
         setError("Settings changed in another session. The current saved values are loaded for review.");
       } else {
-        setError(safeError(reason));
+        const failure = safeError(reason);
+        setError(completedSteps.length === 0
+          ? failure
+          : `${completedSteps.join(" and ")} were saved, but ${failure}`);
+        setDirty(true);
       }
       return false;
     } finally {
@@ -433,6 +497,7 @@ export function SettingsPanel({
     if (api?.addMcpServer === undefined || mcpName.trim() === "" || mcpUrl.trim() === "") return;
     setBusy(true);
     setError("");
+    setMcpError("");
     try {
       const server = await api.addMcpServer(mcpName.trim(), mcpUrl.trim());
       setMcpServers((current) => [...current.filter((item) => item.name !== server.name), server]);
@@ -450,6 +515,7 @@ export function SettingsPanel({
     if (api?.removeMcpServer === undefined) return;
     setBusy(true);
     setError("");
+    setMcpError("");
     try {
       await api.removeMcpServer(name);
       setMcpServers((current) => current.filter((server) => server.name !== name));
@@ -465,6 +531,7 @@ export function SettingsPanel({
     if (api?.loginMcpServer === undefined) return;
     setBusy(true);
     setError("");
+    setMcpError("");
     try {
       await api.loginMcpServer(name);
       setMcpServers(await api.listMcpServers?.() ?? []);
@@ -511,11 +578,15 @@ export function SettingsPanel({
           {category === "models" ? <>
             <div className="settings-section__heading"><h1>Models</h1><p>{CATEGORY_DESCRIPTIONS.models}</p></div>
             {providerDiscoveryError ? <div className="provider-discovery" role="alert"><span>{providerDiscoveryError}</span><button className="button" disabled={busy} onClick={() => setProviderRefresh((value) => value + 1)} type="button">Retry discovery</button></div> : null}
-            <div className="settings-field"><span className="settings-field__label">Default provider</span><p>Choose the provider used when a new thread opens.</p><div className="segmented-choice" role="radiogroup" aria-label="Default provider">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <label key={entry.id}><input checked={runtime.default_provider === entry.id} disabled={busy || entry.status !== "ready"} name="default-provider" onChange={() => updateProvider(entry.id as "codex" | "claude")} type="radio" />{entry.label}</label>)}</div></div>
-            <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <section className="provider-model-settings__provider" key={entry.id}><div><h2>{entry.label}</h2><p>Enter any model identifier supported by your {entry.label} account. Editing it also makes {entry.label} the default provider.</p></div><label htmlFor={`provider-model-${entry.id}`}>Default model</label><input aria-label={`${entry.label} default model`} disabled={busy} id={`provider-model-${entry.id}`} onChange={(event) => updateProviderModel(entry.id as "codex" | "claude", event.target.value)} placeholder="Provider default" value={providerModelDrafts[entry.id as "codex" | "claude"]} /></section>)}</div>
-            <div className="settings-field"><span className="settings-field__label">Default thinking</span><p>Higher levels spend more time reasoning.</p><div className="segmented-choice" role="radiogroup" aria-label="Default thinking">{selectedThinkingLevels.map((effort) => <label key={effort}><input checked={runtime.default_effort === effort} name="default-thinking" onChange={() => updateRuntime("default_effort", effort)} type="radio" />{THINKING_LABELS[effort]}</label>)}</div></div>
-            <div className="settings-field"><span className="settings-field__label">Default mode</span><p>Chat is read-only. Build uses a fresh writable sandbox and returns an artifact.</p><div className="segmented-choice" role="radiogroup" aria-label="Default mode"><label><input checked={runtime.default_mode === "chat"} name="default-mode" onChange={() => { updateRuntime("default_mode", "chat"); updateRuntime("mcp_enabled", false); }} type="radio" />Chat</label><label><input checked={runtime.default_mode === "build"} disabled={runtime.default_provider !== "codex"} name="default-mode" onChange={() => updateRuntime("default_mode", "build")} type="radio" />Build</label></div></div>
-            <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p>{credentialControlsAvailable ? null : <p className="settings-callout">Open Corvus desktop to manage API credentials through the verified local runtime.</p>}</div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected · or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" disabled={!credentialControlsAvailable} id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={!credentialControlsAvailable || busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
+            <div aria-label="Model settings view" className="settings-view-switch"><button aria-pressed={modelsView === "defaults"} onClick={() => setModelsView("defaults")} type="button">Defaults</button><button aria-pressed={modelsView === "providers"} onClick={() => setModelsView("providers")} type="button">Providers</button></div>
+            {modelsView === "defaults" ? <>
+              <div className="settings-field"><span className="settings-field__label">Default provider</span><p>Choose the verified provider used when a new conversation opens.</p><div className="segmented-choice" role="radiogroup" aria-label="Default provider">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <label key={entry.id}><input checked={runtime.default_provider === entry.id} disabled={busy || entry.status !== "ready"} name="default-provider" onChange={() => updateProvider(entry.id as "codex" | "claude")} type="radio" />{entry.label}</label>)}</div></div>
+              <div className="settings-field"><span className="settings-field__label">Default thinking</span><p>Options appear only after the selected provider is verified.</p>{selectedThinkingLevels.length > 0 ? <div className="segmented-choice" role="radiogroup" aria-label="Default thinking">{selectedThinkingLevels.map((effort) => <label key={effort}><input checked={runtime.default_effort === effort} name="default-thinking" onChange={() => updateRuntime("default_effort", effort)} type="radio" />{THINKING_LABELS[effort]}</label>)}</div> : <p className="settings-callout">Thinking options unavailable until provider discovery succeeds.</p>}</div>
+              <div className="settings-field"><span className="settings-field__label">Default mode</span><p>Chat is read-only. Build uses a fresh writable sandbox and returns an artifact.</p><div className="segmented-choice" role="radiogroup" aria-label="Default mode"><label><input checked={runtime.default_mode === "chat"} name="default-mode" onChange={() => { updateRuntime("default_mode", "chat"); updateRuntime("mcp_enabled", false); }} type="radio" />Chat</label><label><input checked={runtime.default_mode === "build"} disabled={runtime.default_provider !== "codex"} name="default-mode" onChange={() => updateRuntime("default_mode", "build")} type="radio" />Build</label></div></div>
+            </> : <>
+              <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <section className="provider-model-settings__provider" data-status={entry.status} key={entry.id}><div><h2>{entry.label}</h2><p>{entry.status === "ready" ? entry.status_label : `${entry.status_label}. Saved model text remains editable, but Corvus will not run it until verification succeeds.`}</p>{entry.status === "ready" && entry.models.length > 0 ? <small>Verified models: {entry.models.map((model) => model.label).join(", ")}</small> : null}</div><label htmlFor={`provider-model-${entry.id}`}>Default model</label><input aria-label={`${entry.label} default model`} disabled={busy} id={`provider-model-${entry.id}`} onChange={(event) => updateProviderModel(entry.id as "codex" | "claude", event.target.value)} placeholder="Provider model ID" value={providerModelDrafts[entry.id as "codex" | "claude"]} /></section>)}</div>
+              <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p>{credentialControlsAvailable ? null : <p className="settings-callout">Open Corvus desktop to manage API credentials through the verified local runtime.</p>}</div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected, or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" disabled={!credentialControlsAvailable} id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={!credentialControlsAvailable || busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
+            </>}
           </> : null}
 
           {category === "agent" ? <>
@@ -528,7 +599,9 @@ export function SettingsPanel({
             <div className="settings-section__heading"><h1>MCP</h1><p>{CATEGORY_DESCRIPTIONS.mcp}</p></div>
             <SettingsRow description="MCP tools may access external systems. Corvus keeps them off for ordinary chats." label="Enable by default"><label className="switch"><input aria-label="Enable MCP by default" checked={runtime.mcp_enabled} disabled={runtime.default_provider !== "codex" || runtime.default_mode !== "build"} onChange={(event) => updateRuntime("mcp_enabled", event.target.checked)} type="checkbox" /><span /></label></SettingsRow>
             <div className="settings-section__subheading"><h3>Configured servers</h3><p>These are read directly from your Codex configuration. Credential values are never displayed.</p></div>
-            <div className="mcp-server-list">{mcpServers.length === 0 ? <p className="settings-callout">No MCP servers are configured.</p> : mcpServers.map((server) => <article key={server.name}><div><strong>{server.name}</strong><span>{server.transport.replaceAll("_", " ")} · {server.endpoint}</span><small>{server.auth_status.replaceAll("_", " ")}</small></div><div>{server.auth_status === "not_logged_in" ? <button className="button" disabled={busy} onClick={() => void loginMcpServer(server.name)} type="button">Sign in</button> : null}<button className="button" disabled={busy} onClick={() => void removeMcpServer(server.name)} type="button">Remove</button></div></article>)}</div>
+            {api?.listMcpServers === undefined ? <p className="settings-callout">Open Corvus desktop to read and manage your Codex MCP configuration.</p> : null}
+            {mcpError ? <p className="settings-error" role="alert">{mcpError} <button className="text-button" disabled={mcpLoading} onClick={() => setMcpRefresh((value) => value + 1)} type="button">Retry MCP</button></p> : null}
+            <div className="mcp-server-list">{mcpLoading ? <p className="settings-callout">Reading MCP servers from Codex…</p> : !mcpError && mcpServers.length === 0 && api?.listMcpServers !== undefined ? <p className="settings-callout">No MCP servers are configured.</p> : mcpServers.map((server) => <article key={server.name}><div><strong>{server.name}</strong><span>{server.transport.replaceAll("_", " ")} / {server.endpoint}</span><small>{server.auth_status.replaceAll("_", " ")}</small></div><div>{server.auth_status === "not_logged_in" ? <button className="button" disabled={busy} onClick={() => void loginMcpServer(server.name)} type="button">Sign in</button> : null}<button className="button" disabled={busy} onClick={() => void removeMcpServer(server.name)} type="button">Remove</button></div></article>)}</div>
             <div className="mcp-add-server"><h3>Add remote server</h3><p>Use an HTTPS MCP endpoint. OAuth sign-in remains with Codex.</p><label htmlFor="mcp-server-name">Name</label><input id="mcp-server-name" onChange={(event) => setMcpName(event.target.value)} placeholder="example" value={mcpName} /><label htmlFor="mcp-server-url">Server URL</label><input id="mcp-server-url" onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://example.com/mcp" type="url" value={mcpUrl} /><button className="button button--primary" disabled={busy || mcpName.trim() === "" || mcpUrl.trim() === "" || api?.addMcpServer === undefined} onClick={() => void addMcpServer()} type="button">Add MCP server</button></div>
           </> : null}
 
@@ -549,7 +622,7 @@ export function SettingsPanel({
 
           {category === "account" ? <>
             <div className="settings-section__heading"><h1>Account</h1><p>{CATEGORY_DESCRIPTIONS.account}</p></div>
-            <SettingsRow description={api === undefined ? "Open the local app to run agents on this computer." : "Preferences are protected by this paired local session."} label="Runtime"><span className="settings-value">{api === undefined ? "Web · Preview" : "This computer · Connected"}</span></SettingsRow>
+            <SettingsRow description={api === undefined ? "Open the local app to run agents on this computer." : "Preferences are protected by this paired local session."} label="Runtime"><span className="settings-value">{api === undefined ? "Web / Preview" : "This computer / Connected"}</span></SettingsRow>
             <SettingsRow description="Google identity is connected during first-run setup. Connect GitHub from Repositories, where you can choose exactly which repositories Corvus may clone." label="Connections"><span className="settings-value">Managed where they are used</span></SettingsRow>
           </> : null}
 
@@ -558,8 +631,8 @@ export function SettingsPanel({
           {error ? <p className="settings-error" role="alert">{error}</p> : null}
         </div>
       </div>
-      {hasUnsavedChanges && !unsavedBarDismissed ? <section aria-label="Unsaved settings" className="settings-unsaved" role="region"><div><strong>You have unsaved changes</strong><span>{changes.join(" · ")}</span></div><button className="button button--primary" disabled={busy} onClick={() => void saveSettings()} type="button">Save</button><button className="button" onClick={() => setUnsavedBarDismissed(true)} type="button">Continue</button></section> : null}
-      {exitConfirmation ? <div className="settings-exit-backdrop"><section aria-label="Unsaved settings confirmation" aria-modal="true" className="settings-exit-dialog" role="dialog"><h2>Save your changes?</h2><p>These settings have not been saved:</p><ul>{changes.map((change) => <li key={change}>{change}</li>)}</ul><div><button className="button" onClick={() => setExitConfirmation(false)} type="button">Continue editing</button><button className="button" onClick={() => onBack?.()} type="button">Discard changes</button><button className="button button--primary" onClick={() => void saveSettings().then((saved) => { if (saved) onBack?.(); })} type="button">Save and leave</button></div></section></div> : null}
+      {hasUnsavedChanges && !unsavedBarDismissed ? <section aria-label="Unsaved settings" aria-live="polite" className="settings-unsaved" role="region"><div><strong>You have unsaved changes</strong><span>{changes.join(", ")}</span></div><button className="button button--primary" disabled={busy} onClick={() => void saveSettings()} type="button">Save</button><button className="button" onClick={() => setUnsavedBarDismissed(true)} type="button">Keep editing</button></section> : null}
+      {exitConfirmation ? <div className="settings-exit-backdrop"><section aria-label="Unsaved settings confirmation" aria-modal="true" className="settings-exit-dialog" onKeyDown={handleExitDialogKeyDown} ref={exitDialogRef} role="dialog"><h2>Save your changes?</h2><p>These settings have not been saved:</p><ul>{changes.map((change) => <li key={change}>{change}</li>)}</ul><div><button className="button" onClick={() => setExitConfirmation(false)} type="button">Continue editing</button><button className="button" onClick={() => onBack?.()} type="button">Discard changes</button><button className="button button--primary" onClick={() => void saveSettings().then((saved) => { if (saved) onBack?.(); })} type="button">Save and leave</button></div></section></div> : null}
     </section>
   );
 }

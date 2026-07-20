@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -115,6 +117,27 @@ class RunCoordinator:
             run_id=run_id,
             retry_of_run_id=retry_of_run_id,
         )
+        self.runs.add_evidence(
+            run_id,
+            "safety_policy",
+            f"{preview.label} policy locked before Codex started",
+            preview.policy_digest,
+        )
+        base_summary = f"Pinned {repository.display_name} at {repository.snapshot.head_sha[:12]}"
+        self.runs.add_evidence(
+            run_id,
+            "repository_base",
+            base_summary,
+            hashlib.sha256(base_summary.encode("utf-8")).hexdigest(),
+        )
+        if skill_instructions is not None:
+            skill_summary = f"Active skill {request.skill_version_id} verified for this run"
+            self.runs.add_evidence(
+                run_id,
+                "skill",
+                skill_summary,
+                hashlib.sha256(skill_instructions.encode("utf-8")).hexdigest(),
+            )
         try:
             lease = self.worktrees.create(
                 repository,
@@ -127,6 +150,9 @@ class RunCoordinator:
                 request=request,
                 prompt=self._prompt(repository.display_name, request, skill_instructions),
             )
+        except asyncio.CancelledError:
+            self.runs.transition(tenant_id, run_id, RunStatus.INTERRUPTED)
+            raise
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
@@ -244,6 +270,26 @@ class RunCoordinator:
                 if provider_event.event_type == "provider.completed":
                     saw_terminal = True
                     changes = self.review.snapshot(self.worktrees.get(run.id).root)
+                    completion_payload = json.dumps(
+                        provider_event.payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    self.runs.add_evidence(
+                        run.id,
+                        "provider_completion",
+                        "Codex reported that the provider run completed",
+                        hashlib.sha256(completion_payload.encode("utf-8")).hexdigest(),
+                    )
+                    self.runs.add_evidence(
+                        run.id,
+                        "change_set",
+                        (
+                            f"Observed {len(changes.files)} changed file"
+                            f"{'s' if len(changes.files) != 1 else ''} in the isolated worktree"
+                        ),
+                        changes.digest,
+                    )
                     target = (
                         RunStatus.REVIEW_REQUIRED
                         if run.mode == "build" and bool(changes.files)
@@ -263,18 +309,50 @@ class RunCoordinator:
                     {"reason_code": "provider_stream_closed_without_terminal"},
                 )
                 await self._terminalize(tenant_id, run.id, RunStatus.INTERRUPTED)
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                self._stop_and_terminalize(
+                    tenant_id,
+                    run.id,
+                    handle,
+                    RunStatus.INTERRUPTED,
+                    "run_event_pump_cancelled",
+                )
+            )
+            raise
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            try:
-                self.runs.append_event(
-                    run.id,
-                    "runtime.failed",
-                    {"reason_code": "run_event_pump_failed"},
-                )
-                await self._terminalize(tenant_id, run.id, RunStatus.FAILED)
-            except (RunStoreConflict, RuntimeError):
-                return
+            await self._stop_and_terminalize(
+                tenant_id,
+                run.id,
+                handle,
+                RunStatus.FAILED,
+                "run_event_pump_failed",
+            )
+
+    async def _stop_and_terminalize(
+        self,
+        tenant_id: str,
+        run_id: str,
+        handle: str,
+        target: RunStatus,
+        reason_code: str,
+    ) -> None:
+        provider_stopped = False
+        try:
+            provider_stopped = await self.backend.cancel(handle)
+        except Exception:
+            provider_stopped = False
+        try:
+            self.runs.append_event(
+                run_id,
+                "runtime.interrupted" if target == RunStatus.INTERRUPTED else "runtime.failed",
+                {"reason_code": reason_code, "provider_stop_accepted": provider_stopped},
+            )
+            await self._terminalize(tenant_id, run_id, target)
+        except (RunStoreConflict, RuntimeError):
+            return
 
     async def _terminalize(
         self,
