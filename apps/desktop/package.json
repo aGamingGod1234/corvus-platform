@@ -1,7 +1,7 @@
 {
   "name": "@corvus/desktop",
   "private": true,
-  "version": "0.2.0-alpha.2",
+  "version": "0.2.0-beta.1",
   "scripts": {
     "tauri": "tauri",
     "check": "tauri build --no-bundle"
