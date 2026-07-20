@@ -196,4 +196,34 @@ describe("PlatformApp composition", () => {
       "csrf-opaque"
     ));
   });
+
+  it("refreshes hosted account truth when a Settings experience save conflicts", async () => {
+    const getSession = vi.fn()
+      .mockResolvedValueOnce(SESSION)
+      .mockResolvedValue({ ...SESSION, account_version: 2 });
+    const updateOnboarding = vi.fn().mockRejectedValue(
+      new AuthApiError(409, "account_version_conflict"),
+    );
+    const hostedApi = platformApi({ getSession, updateOnboarding });
+    const user = userEvent.setup();
+    render(
+      <PlatformApp
+        hostedApi={hostedApi}
+        locationHostname="corvus.example"
+        loopbackApi={readyLoopbackApi()}
+        preferenceStorage={new MemoryStorage()}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Field desk/ }));
+    await user.click(await screen.findByRole("link", { name: "Settings" }));
+    await user.selectOptions(screen.getByLabelText("Experience"), "everyday");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));
+    expect(updateOnboarding).toHaveBeenCalledWith(
+      { experience_kind: "everyday", expected_version: 1 },
+      "csrf-opaque",
+    );
+  });
 });

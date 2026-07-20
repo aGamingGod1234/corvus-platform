@@ -985,8 +985,19 @@ export function App({
             onExperienceChange={async (nextExperience) => {
               if (nextExperience === profile.experience) return;
               const expectedVersion = workspaceSync.accountProfile?.version ?? auth.session!.account_version;
-              await workspaceSync.saveExperience(nextExperience, expectedVersion);
-              await auth.reloadSession();
+              try {
+                await workspaceSync.saveExperience(nextExperience, expectedVersion);
+                await auth.reloadSession();
+              } catch (reason) {
+                if (
+                  reason instanceof AuthApiError &&
+                  reason.status === 409 &&
+                  reason.code === "account_version_conflict"
+                ) {
+                  await auth.reloadSession();
+                }
+                throw reason;
+              }
             }}
             onGoogleSignIn={auth.startGoogle}
             storage={preferenceStorage}

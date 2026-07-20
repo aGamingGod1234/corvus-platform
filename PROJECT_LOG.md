@@ -2248,3 +2248,5 @@
 - Reject rewritten proxy traversal markers before constructing the nested v2 request, with regression cases for dot segments, encoded separators, duplicate separators, and backslashes.
 - Prepend the explicitly validated Git executable directory to the clean child `PATH` so `gh repo clone` cannot select an earlier platform stub.
 - Retained Starlette's current `HTTP_422_UNPROCESSABLE_CONTENT` constant after runtime verification showed it exists and the suggested legacy `...ENTITY` alias is deprecated in the pinned environment.
+- Refreshed hosted account truth after a Settings experience-version conflict, matching the existing onboarding recovery boundary.
+- Added project-dialog focus trapping and Escape handling, kept connect/create/clone errors inside the modal, and aligned SVG keyword casing with the repository's CSS lint policy.

@@ -17,7 +17,7 @@
 .github-readiness p { min-width: 0; margin: 0; color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
 .repository-add-options { display: grid; margin: .75rem 0; border-block: 1px solid var(--line); }
 .button--with-icon { display: inline-flex; gap: .45rem; align-items: center; }
-.button--with-icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.button--with-icon svg { width: 1rem; height: 1rem; fill: none; stroke: currentcolor; stroke-width: 1.8; }
 .project-dialog-backdrop { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; padding: 1rem; background: color-mix(in oklch, #050608 68%, transparent); }
 .project-dialog { width: min(38rem, 100%); max-height: min(48rem, calc(100vh - 2rem)); overflow-y: auto; border: 1px solid color-mix(in oklch, var(--signal) 18%, var(--line)); border-radius: var(--radius-lg); padding: 1.15rem; color: var(--ink); background: var(--raised); }
 .project-dialog__header { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; padding-bottom: .9rem; }
@@ -28,8 +28,8 @@
 .project-source-card { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: .75rem; align-items: center; width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md); padding: .8rem; color: var(--ink); background: var(--paper); cursor: pointer; text-align: left; }
 .project-source-card:hover:not(:disabled), .project-source-card:focus-visible { border-color: color-mix(in oklch, var(--signal) 55%, var(--line)); background: color-mix(in oklch, var(--signal) 7%, var(--paper)); }
 .project-source-card:disabled { cursor: not-allowed; opacity: .5; }
-.project-source-card > svg { width: 2.25rem; height: 2.25rem; border-radius: .55rem; padding: .48rem; fill: none; stroke: currentColor; stroke-width: 1.7; background: color-mix(in oklch, var(--signal) 11%, transparent); }
-.project-source-card--github > svg { fill: currentColor; stroke: none; background: color-mix(in oklch, var(--ink) 9%, transparent); }
+.project-source-card > svg { width: 2.25rem; height: 2.25rem; border-radius: .55rem; padding: .48rem; fill: none; stroke: currentcolor; stroke-width: 1.7; background: color-mix(in oklch, var(--signal) 11%, transparent); }
+.project-source-card--github > svg { fill: currentcolor; stroke: none; background: color-mix(in oklch, var(--ink) 9%, transparent); }
 .project-source-card > span { display: grid; gap: .15rem; }
 .project-source-card strong { font-size: .84rem; }
 .project-source-card small { color: var(--muted); font-size: .7rem; line-height: 1.35; }

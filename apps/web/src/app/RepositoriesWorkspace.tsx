@@ -1,7 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import type { GitHubAuthStatus, GitHubRepositorySummary, LocalRepository } from "../api";
+import { focusFirstControl, trapDialogFocus } from "../components/dialogFocus";
 import { featureErrorMessage } from "./featureFeedback";
 
 export interface RepositoryApi {
@@ -65,6 +66,7 @@ export function RepositoriesWorkspace({
   const [githubRepositories, setGitHubRepositories] = useState<GitHubRepositorySummary[]>([]);
   const [githubInput, setGitHubInput] = useState("");
   const [githubOpen, setGitHubOpen] = useState(false);
+  const projectDialogRef = useRef<HTMLElement>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -107,9 +109,14 @@ export function RepositoriesWorkspace({
   useEffect(() => { void loadGitHub(); }, [loadGitHub]);
   useEffect(() => {
     if (openDialogSignal <= 0) return;
+    setError("");
     setAddOpen(true);
     onDialogSignalHandled?.();
   }, [onDialogSignalHandled, openDialogSignal]);
+  const dialogOpen = addOpen || creating || newProjectOpen || githubOpen;
+  useEffect(() => {
+    if (dialogOpen) focusFirstControl(projectDialogRef.current);
+  }, [dialogOpen]);
 
   function closeProjectDialog(): void {
     setAddOpen(false);
@@ -118,6 +125,7 @@ export function RepositoriesWorkspace({
     setNewProjectOpen(false);
     setGitHubInput("");
     setGithubError("");
+    setError("");
   }
 
   async function browse(): Promise<void> {
@@ -255,12 +263,13 @@ export function RepositoriesWorkspace({
           <h1 id="repositories-title">Projects</h1>
           <p>Choose the folder Corvus should work from. Every Build run still uses an isolated managed worktree.</p>
         </div>
-        <button aria-haspopup="dialog" className="button button--primary button--with-icon" disabled={busyId !== null} onClick={() => setAddOpen(true)} type="button"><ProjectSourceIcon name="blank" />Add project</button>
+        <button aria-haspopup="dialog" className="button button--primary button--with-icon" disabled={busyId !== null} onClick={() => { setError(""); setAddOpen(true); }} type="button"><ProjectSourceIcon name="blank" />Add project</button>
       </header>
 
-      {addOpen || creating || newProjectOpen || githubOpen ? <div className="project-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && busyId === null) closeProjectDialog(); }}>
-        <section aria-labelledby="add-project-title" aria-modal="true" className="project-dialog" role="dialog">
+      {dialogOpen ? <div className="project-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && busyId === null) closeProjectDialog(); }}>
+        <section aria-labelledby="add-project-title" aria-modal="true" className="project-dialog" onKeyDown={(event) => { if (event.key === "Escape" && busyId === null) { event.preventDefault(); closeProjectDialog(); } else trapDialogFocus(event, projectDialogRef.current); }} ref={projectDialogRef} role="dialog">
           <header className="project-dialog__header"><div><p className="eyebrow">Project workspace</p><h2 id="add-project-title">{creating ? "Use a local folder" : newProjectOpen ? "Start from scratch" : githubOpen ? "Link a GitHub project" : "Add a project"}</h2><p>{creating ? "Choose an existing Git checkout. Corvus will use that folder as the source for protected runs." : newProjectOpen ? "Corvus creates a named folder inside corvus-agent-projects and initializes Git for you." : githubOpen ? "Paste a repository URL or select one after signing in." : "Choose where this project should come from."}</p></div><button aria-label="Close add project" className="icon-button" disabled={busyId !== null} onClick={closeProjectDialog} type="button">×</button></header>
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
           {addOpen ? <div aria-label="Project source" className="project-source-options">
             <button aria-label="Start from scratch" className="project-source-card" disabled={api.createEmptyRepository === undefined} onClick={() => { setAddOpen(false); setNewProjectOpen(true); }} type="button"><ProjectSourceIcon name="blank" /><span><strong>Start from scratch</strong><small>Create a blank Git project in the managed Corvus folder.</small></span><b aria-hidden="true">→</b></button>
             <button aria-label="Use a local folder" className="project-source-card" onClick={() => { setAddOpen(false); setCreating(true); }} type="button"><ProjectSourceIcon name="folder" /><span><strong>Use a local folder</strong><small>Choose an existing project already on this computer.</small></span><b aria-hidden="true">→</b></button>
@@ -307,7 +316,7 @@ export function RepositoriesWorkspace({
       </div> : null}
 
       {notice ? <p className="inline-success" role="status">{notice}</p> : null}
-      {error ? <p className="inline-error" role="alert">{error} {loadFailed && !loading ? <button className="text-button" onClick={() => void loadRepositories()} type="button">Retry projects</button> : null}</p> : null}
+      {error && !dialogOpen ? <p className="inline-error" role="alert">{error} {loadFailed && !loading ? <button className="text-button" onClick={() => void loadRepositories()} type="button">Retry projects</button> : null}</p> : null}
       {loading ? <div className="resource-empty"><strong>Loading projects…</strong></div> : null}
       {!loading && repositories.length === 0 ? (
         <div className="resource-empty">

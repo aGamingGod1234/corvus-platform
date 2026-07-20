@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -65,6 +65,20 @@ describe("RepositoriesWorkspace", () => {
 
     expect(await screen.findByRole("dialog", { name: "Add a project" })).toBeVisible();
     expect(onDialogSignalHandled).toHaveBeenCalledOnce();
+  });
+
+  it("traps keyboard focus in the project dialog and closes on Escape", async () => {
+    const user = userEvent.setup();
+    render(<RepositoriesWorkspace api={apiWith()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Add project" }));
+    const dialog = screen.getByRole("dialog", { name: "Add a project" });
+    const closeButton = within(dialog).getByRole("button", { name: "Close add project" });
+    await waitFor(() => expect(closeButton).toHaveFocus());
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(within(dialog).getByRole("button", { name: "Use a local folder" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Add a project" })).not.toBeInTheDocument();
   });
 
   it("registers a folder selected by the desktop picker", async () => {
@@ -139,7 +153,8 @@ describe("RepositoriesWorkspace", () => {
     await user.type(screen.getByLabelText("Display name"), "Plain");
     await user.click(screen.getByRole("button", { name: "Add local project" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/not a git repository/i);
+    const dialog = screen.getByRole("dialog", { name: "Use a local folder" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/not a git repository/i);
     expect(screen.queryByText("C:\\plain", { selector: "small" })).not.toBeInTheDocument();
   });
 
