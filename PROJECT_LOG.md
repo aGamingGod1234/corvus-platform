@@ -2199,3 +2199,7 @@
 
 ### Suggested Next Steps
 - Validate the synchronized manifests and release workflow, obtain code-owner approval, tag the merged commit, and verify every uploaded installer against `SHA256SUMS.txt`.
+
+### Review Follow-up
+- Changed checksum generation to emit sorted, basename-only entries so `sha256sum -c SHA256SUMS.txt` works with downloaded release assets outside GitHub Actions.
+- Aligned the remaining current release-status labels and installer filename in `HACKATHON_STATUS.md` with `v0.2.0-beta.1`.

@@ -133,7 +133,10 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="$(node -p "require('./apps/desktop/package.json').version")"
           test "$TAG" = "v$VERSION"
-          find release-assets -maxdepth 2 -type f -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+          while IFS= read -r -d '' artifact; do
+            digest="$(sha256sum "$artifact" | cut -d ' ' -f 1)"
+            printf '%s  %s\n' "$digest" "$(basename "$artifact")"
+          done < <(find release-assets -maxdepth 2 -type f -print0 | sort -z) > SHA256SUMS.txt
 
       - name: Publish prerelease
         env:
