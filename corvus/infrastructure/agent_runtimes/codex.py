@@ -318,21 +318,42 @@ async def _grant_windows_workspace_access(
     if not sandbox_sids:
         raise TrustedProcessError("Codex sandbox SID was not applied to the workspace")
     access_tasks = [
-        asyncio.to_thread(grant_windows_sid_traverse, ancestor, sid)
+        asyncio.to_thread(
+            _grant_windows_sids_sequentially,
+            ancestor,
+            sandbox_sids,
+            grant_windows_sid_traverse,
+        )
         for ancestor in _workspace_traverse_boundaries(workspace)
-        for sid in sandbox_sids
     ]
     if linked_git_access_paths is not None:
         source_repository, common_git_directory = linked_git_access_paths
-        access_tasks.extend(
-            asyncio.to_thread(grant_windows_sid_traverse, source_repository, sid)
-            for sid in sandbox_sids
+        access_tasks.append(
+            asyncio.to_thread(
+                _grant_windows_sids_sequentially,
+                source_repository,
+                sandbox_sids,
+                grant_windows_sid_traverse,
+            )
         )
-        access_tasks.extend(
-            asyncio.to_thread(grant_windows_sid_read, common_git_directory, sid)
-            for sid in sandbox_sids
+        access_tasks.append(
+            asyncio.to_thread(
+                _grant_windows_sids_sequentially,
+                common_git_directory,
+                sandbox_sids,
+                grant_windows_sid_read,
+            )
         )
     await asyncio.gather(*access_tasks)
+
+
+def _grant_windows_sids_sequentially(
+    directory: Path,
+    sids: frozenset[str],
+    grant: Callable[[Path, str], None],
+) -> None:
+    for sid in sorted(sids):
+        grant(directory, sid)
 
 
 async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
@@ -342,8 +363,8 @@ async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
     )
     if logon_sid is None or user_sid is None:
         raise TrustedProcessError("Windows sandbox identity is unavailable")
+    await asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid)
     await asyncio.gather(
-        asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid),
         *(
             asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
             for directory in (workspace, *_workspace_traverse_boundaries(workspace))
@@ -785,7 +806,7 @@ class CodexCliAdapter(AgentRuntimePort):
             if session.workspace_access_task is not None and session.workspace_access_task.done():
                 try:
                     await session.workspace_access_task
-                except TrustedProcessError:
+                except Exception:  # noqa: BLE001
                     await session.process.cancel()
                     yield event(
                         AgentRunEventType.FAILED,
@@ -793,6 +814,7 @@ class CodexCliAdapter(AgentRuntimePort):
                     )
                     session.terminal_state = AgentRunState.FAILED
                     terminal = True
+                    session.workspace_access_task = None
                     continue
                 session.workspace_access_task = None
             if terminal:

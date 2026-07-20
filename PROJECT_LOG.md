@@ -2373,9 +2373,17 @@
 ### What Was Implemented
 - Updated the beta.2 branch from the latest `main`, incorporating the hardened managed-profile boundary logic without conflicts.
 - Replaced an order-sensitive ACL preflight assertion with an exact-set assertion so the test verifies granted authority rather than nondeterministic thread scheduling.
+- Registered the background-mode getter in the explicit Tauri command manifest and capability allowlist.
+- Bounded desktop preference reads before allocation and made writes durable and atomic through a same-directory temporary file plus rename.
+- Serialized multiple SID updates per directory while retaining concurrency across distinct directories, preventing Windows DACL lost-update races.
+- Switched ACL persistence to `SetNamedSecurityInfoW` so inheritable grants propagate through existing managed descendants.
+- Converted unexpected background workspace-access failures into one redacted terminal failure event instead of aborting the event stream.
 
 ### Files Modified
 - `tests/contract/providers/test_codex_adapter.py` — made the concurrent ACL-grant regression test platform-stable while preserving the exact security invariant.
+- `apps/desktop/src-tauri/build.rs`, `apps/desktop/src-tauri/capabilities/default.json` — exposed the registered background-mode getter through narrowly generated IPC permission.
+- `apps/desktop/src-tauri/src/lib.rs` — bounded preference reads, atomic replacement, and regression coverage.
+- `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/safe_process.py` — safe ACL sequencing, failure terminalization, and inherited Windows DACL propagation.
 - `PROJECT_LOG.md` — recorded the CI failure diagnosis and repair evidence.
 
 ### Assumptions Made (flag these for review)

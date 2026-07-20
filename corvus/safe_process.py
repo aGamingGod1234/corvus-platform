@@ -810,19 +810,34 @@ def _grant_windows_sid_access(
         ctypes.POINTER(ctypes.c_void_p),
     )
     build_security.restype = wintypes.DWORD
-    set_file_security = advapi32.SetFileSecurityW
-    set_file_security.argtypes = (
-        wintypes.LPCWSTR,
+    get_security_descriptor_dacl = advapi32.GetSecurityDescriptorDacl
+    get_security_descriptor_dacl.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.BOOL),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.BOOL),
+    )
+    get_security_descriptor_dacl.restype = wintypes.BOOL
+    set_named_security = advapi32.SetNamedSecurityInfoW
+    set_named_security.argtypes = (
+        wintypes.LPWSTR,
+        wintypes.DWORD,
         wintypes.DWORD,
         ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
     )
-    set_file_security.restype = wintypes.BOOL
+    set_named_security.restype = wintypes.DWORD
     kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
     kernel32.LocalFree.restype = ctypes.c_void_p
 
     sid_pointer = ctypes.c_void_p()
     security_descriptor = ctypes.c_void_p()
     updated_security_descriptor = ctypes.c_void_p()
+    updated_dacl = ctypes.c_void_p()
+    dacl_present = wintypes.BOOL()
+    dacl_defaulted = wintypes.BOOL()
     try:
         if not convert_sid(sid, ctypes.byref(sid_pointer)):
             raise TrustedProcessError("trusted ACL SID conversion failed")
@@ -865,11 +880,25 @@ def _grant_windows_sid_access(
         )
         if result != 0:
             raise TrustedProcessError("trusted ACL update failed")
-        if not set_file_security(
-            path_buffer,
-            _WINDOWS_DACL_SECURITY_INFORMATION,
+        if not get_security_descriptor_dacl(
             updated_security_descriptor,
+            ctypes.byref(dacl_present),
+            ctypes.byref(updated_dacl),
+            ctypes.byref(dacl_defaulted),
         ):
+            raise TrustedProcessError("trusted ACL update failed")
+        if not dacl_present.value or not updated_dacl.value:
+            raise TrustedProcessError("trusted ACL update failed")
+        result = set_named_security(
+            path_buffer,
+            _WINDOWS_SE_FILE_OBJECT,
+            _WINDOWS_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            updated_dacl,
+            None,
+        )
+        if result != 0:
             raise TrustedProcessError("trusted ACL access grant failed")
     finally:
         for pointer in (updated_security_descriptor, security_descriptor, sid_pointer):

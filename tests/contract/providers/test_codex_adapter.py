@@ -117,6 +117,16 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     user_sid = "S-1-5-21-100-200-300-501"
     granted: list[tuple[Path, str]] = []
     modified: list[tuple[Path, str]] = []
+    operations: list[tuple[str, Path, str]] = []
+
+    def grant_traverse(directory: Path, sid: str) -> None:
+        granted.append((directory, sid))
+        operations.append(("traverse", directory, sid))
+
+    def grant_modify(directory: Path, sid: str) -> None:
+        modified.append((directory, sid))
+        operations.append(("modify", directory, sid))
+
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.windows_current_logon_sid",
         lambda: logon_sid,
@@ -127,11 +137,11 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     )
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_traverse",
-        lambda directory, sid: granted.append((directory, sid)),
+        grant_traverse,
     )
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_modify",
-        lambda directory, sid: modified.append((directory, sid)),
+        grant_modify,
     )
 
     await _grant_windows_sandbox_preflight(workspace)
@@ -141,6 +151,7 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
         *((directory, logon_sid) for directory in _workspace_traverse_boundaries(workspace)),
     }
     assert modified == [(workspace, user_sid)]
+    assert operations[0] == ("modify", workspace, user_sid)
 
 
 @pytest.mark.asyncio
@@ -151,6 +162,8 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
     workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
     workspace.mkdir(parents=True)
     sandbox_sid = "S-1-5-21-100-200-300-400"
+    second_sandbox_sid = "S-1-5-21-100-200-300-401"
+    sandbox_sids = frozenset({sandbox_sid, second_sandbox_sid})
     source_repository = tmp_path / "source"
     common_git_directory = source_repository / ".git"
     common_git_directory.mkdir(parents=True)
@@ -161,7 +174,7 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
 
     monkeypatch.setattr(
         "corvus.infrastructure.agent_runtimes.codex.windows_directory_acl_sids",
-        lambda _workspace: frozenset({sandbox_sid}),
+        lambda _workspace: sandbox_sids,
     )
 
     def grant(directory: Path, sid: str) -> None:
@@ -189,10 +202,10 @@ async def test_workspace_access_grants_managed_boundaries_concurrently(
     )
 
     assert set(granted) == {
-        *((boundary, sandbox_sid) for boundary in expected_boundaries),
-        (source_repository, sandbox_sid),
+        *((boundary, sid) for boundary in expected_boundaries for sid in sandbox_sids),
+        *((source_repository, sid) for sid in sandbox_sids),
     }
-    assert readable == [(common_git_directory, sandbox_sid)]
+    assert set(readable) == {(common_git_directory, sid) for sid in sandbox_sids}
 
 
 def test_linked_git_access_paths_validate_bidirectional_metadata(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ fn main() {
             "open_external_url",
             "select_repository_directory",
             "set_background_mode",
+            "get_background_mode",
             "load_desktop_preferences",
             "save_desktop_preferences",
         ]),

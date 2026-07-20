@@ -474,6 +474,14 @@ fn get_background_mode(state: tauri::State<'_, DesktopState>) -> bool {
 }
 
 fn load_desktop_preferences_file(path: &Path) -> Result<Option<String>, String> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.len() > MAX_DESKTOP_PREFERENCES_BYTES as u64 => {
+            return Err("desktop_preferences_too_large".to_owned());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("desktop_preferences_read_failed:{error}")),
+    }
     match fs::read_to_string(path) {
         Ok(payload) => {
             if payload.len() > MAX_DESKTOP_PREFERENCES_BYTES {
@@ -495,7 +503,27 @@ fn save_desktop_preferences_file(path: &Path, payload: &str) -> Result<(), Strin
         .ok_or_else(|| "desktop_preferences_path_invalid".to_owned())?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("desktop_preferences_directory_failed:{error}"))?;
-    fs::write(path, payload).map_err(|error| format!("desktop_preferences_write_failed:{error}"))
+    let temporary_path = path.with_extension(format!("{}.tmp", rand::rng().next_u64()));
+    let write_result = (|| -> Result<(), String> {
+        let mut temporary_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("desktop_preferences_write_failed:{error}"))?;
+        temporary_file
+            .write_all(payload.as_bytes())
+            .map_err(|error| format!("desktop_preferences_write_failed:{error}"))?;
+        temporary_file
+            .sync_all()
+            .map_err(|error| format!("desktop_preferences_write_failed:{error}"))?;
+        drop(temporary_file);
+        fs::rename(&temporary_path, path)
+            .map_err(|error| format!("desktop_preferences_write_failed:{error}"))
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    write_result
 }
 
 fn desktop_preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1156,6 +1184,12 @@ mod tests {
             load_desktop_preferences_file(&path).unwrap().as_deref(),
             Some(payload)
         );
+        let replacement = r#"{"corvus.local-first-run":"updated"}"#;
+        save_desktop_preferences_file(&path, replacement).unwrap();
+        assert_eq!(
+            load_desktop_preferences_file(&path).unwrap().as_deref(),
+            Some(replacement)
+        );
 
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -1169,5 +1203,12 @@ mod tests {
             save_desktop_preferences_file(&path, &payload),
             Err("desktop_preferences_too_large".to_owned())
         );
+
+        std::fs::write(&path, &payload).unwrap();
+        assert_eq!(
+            load_desktop_preferences_file(&path),
+            Err("desktop_preferences_too_large".to_owned())
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -10,6 +10,7 @@
     "allow-open-external-url",
     "allow-select-repository-directory",
     "allow-set-background-mode",
+    "allow-get-background-mode",
     "allow-load-desktop-preferences",
     "allow-save-desktop-preferences",
     "autostart:allow-enable",
