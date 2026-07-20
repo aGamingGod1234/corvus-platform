@@ -154,6 +154,44 @@ async def test_provider_readiness_probe_runs_off_the_event_loop() -> None:
     assert backend.starts == 1
 
 
+@pytest.mark.asyncio
+async def test_idempotent_replay_does_not_recheck_provider_readiness() -> None:
+    backend = _Backend()
+    readiness = {"ready": True, "calls": 0}
+    readiness_clock = {"now": 0.0}
+
+    def probe() -> bool:
+        readiness["calls"] += 1
+        return bool(readiness["ready"])
+
+    service = LocalChatService(
+        backend=backend,
+        readiness_probes={"codex": probe},
+        readiness_clock=lambda: readiness_clock["now"],
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+    request = {
+        "owner": "local:user",
+        "prompt": "Replay this run",
+        "provider": "codex",
+        "model": None,
+        "effort": "medium",
+        "mode": "chat",
+        "mcp_enabled": False,
+        "idempotency_key": "readiness-replay",
+    }
+
+    first = await service.start(**request)
+    readiness["ready"] = False
+    readiness_clock["now"] = 10.0
+    replay = await service.start(**request)
+
+    assert replay == first
+    assert readiness["calls"] == 1
+    assert backend.starts == 1
+
+
 def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
     source = tmp_path / "registered-project"
     source.mkdir()
@@ -902,9 +940,18 @@ def test_local_chat_provider_catalog_is_truthful_and_path_free(tmp_path: Path) -
 
 def test_local_chat_provider_catalog_rechecks_codex_readiness_on_retry(tmp_path: Path) -> None:
     readiness = {"ready": False}
+    readiness_clock = {"now": 0.0}
+    probe_calls = 0
+
+    def probe() -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        return readiness["ready"]
+
     service = LocalChatService(
         backend=_Backend(),
-        readiness_probes={"codex": lambda: readiness["ready"]},
+        readiness_probes={"codex": probe},
+        readiness_clock=lambda: readiness_clock["now"],
         cursor_secret=b"c" * 32,
         clock=lambda: NOW,
     )
@@ -915,7 +962,12 @@ def test_local_chat_provider_catalog_rechecks_codex_readiness_on_retry(tmp_path:
     assert unavailable["codex"]["models"] == []
     assert unavailable["codex"]["thinking_levels"] == []
 
+    cached = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
+    assert cached["codex"]["status"] == "unavailable"
+    assert probe_calls == 1
+
     readiness["ready"] = True
+    readiness_clock["now"] = 10.0
     verified = {entry["id"]: entry for entry in client.get("/api/local-chat/providers").json()}
     assert verified["codex"]["status"] == "ready"
     assert {model["id"] for model in verified["codex"]["models"]} == {
@@ -923,6 +975,7 @@ def test_local_chat_provider_catalog_rechecks_codex_readiness_on_retry(tmp_path:
         "gpt-5.6-terra",
     }
     assert verified["codex"]["thinking_levels"] == ["low", "medium", "high", "xhigh"]
+    assert probe_calls == 2
 
 
 def test_api_chat_starts_without_any_local_cli(

@@ -117,6 +117,23 @@ describe("SchedulesWorkspace", () => {
     expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
   });
 
+  it("clears stale provider readiness when a later discovery fails", async () => {
+    const readyClient = api();
+    const { rerender } = render(
+      <SchedulesWorkspace api={readyClient} onOpenRun={vi.fn()} />
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "New schedule" })).toBeEnabled());
+    const failingClient = {
+      ...readyClient,
+      listLocalProviders: vi.fn().mockRejectedValue(new Error("provider discovery failed"))
+    };
+
+    rerender(<SchedulesWorkspace api={failingClient} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/provider discovery failed/i);
+    expect(screen.getByRole("button", { name: "New schedule" })).toBeDisabled();
+  });
+
   it("opens the exact durable run created by Run now", async () => {
     const client = api();
     const onOpenRun = vi.fn();

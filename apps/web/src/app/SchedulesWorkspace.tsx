@@ -137,7 +137,10 @@ export function SchedulesWorkspace({ api, onOpenRun }: { api: SchedulesApi; onOp
         ? current
         : supportedEfforts.includes("medium") ? "medium" : supportedEfforts[0] as Effort);
     }).catch(() => {
-      if (active) setProviderError("Provider discovery failed. Retry before creating a schedule.");
+      if (!active) return;
+      setProviders([]);
+      setModel("");
+      setProviderError("Provider discovery failed. Retry before creating a schedule.");
     }).finally(() => {
       if (active) setProviderLoading(false);
     });

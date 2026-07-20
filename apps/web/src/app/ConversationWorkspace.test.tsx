@@ -114,6 +114,31 @@ describe("ConversationWorkspace", () => {
     expect(assistantStreamBatchSize(1_200)).toBe(10);
   });
 
+  it("uses the fallback provider model when the saved provider is unavailable", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 0, default_provider: "openai", default_model: "gpt-5.6-sol",
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: null
+    });
+    api.listProviders = vi.fn().mockResolvedValue([{
+      id: "claude", label: "Claude", status: "ready", runtime: "local",
+      models: [{ id: "sonnet", label: "Claude Sonnet", recommended: true }],
+      status_label: "Detected on this device", thinking_levels: ["low", "medium", "high"],
+      supports_mcp: false
+    }]);
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-provider-fallback" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Agent provider" })).toHaveTextContent("Claude");
+      expect(screen.getByRole("combobox", { name: "Agent model" })).toHaveTextContent("Claude Sonnet");
+    });
+  });
+
   it("keeps the composer focused and reveals advanced controls through Run options", async () => {
     const user = userEvent.setup();
     render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}

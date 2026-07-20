@@ -716,6 +716,8 @@ export function App({
     <RepositoriesWorkspace
       api={api}
       onOpenRuns={(repositoryId) => {
+        setRunInitialId(null);
+        setRunSkillId(null);
         setRunRepositoryId(repositoryId);
         setActiveRoute("runs");
       }}
@@ -734,6 +736,8 @@ export function App({
     <PortableSkillsWorkspace
       api={api}
       onOpenRuns={(skillId) => {
+        setRunRepositoryId(null);
+        setRunInitialId(null);
         setRunSkillId(skillId);
         setActiveRoute("runs");
       }}
@@ -804,6 +808,8 @@ export function App({
           />
         ) : localSurface === "schedule" ? (
           <SchedulesWorkspace api={api} onOpenRun={(runId) => {
+            setRunRepositoryId(null);
+            setRunSkillId(null);
             setRunInitialId(runId);
             setActiveRoute("runs");
           }} />

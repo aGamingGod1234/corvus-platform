@@ -123,6 +123,42 @@ async def test_api_chat_rejects_an_oversized_event_before_json_parsing() -> None
     assert events[-1].payload == {"reason_code": "provider_output_limit"}
 
 
+@pytest.mark.asyncio
+async def test_api_chat_deadline_does_not_cancel_consumer_while_yield_is_suspended() -> None:
+    body = "\n\n".join(
+        (
+            'data: {"type":"response.output_text.delta","delta":"first"}',
+            'data: {"type":"response.completed"}',
+        )
+    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+        absolute_deadline_seconds=0.01,
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Keep cancellation inside the provider read",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-yield-deadline",
+    )
+    events = backend.events(handle)
+
+    assert (await anext(events)).type == "started"
+    assert (await anext(events)).type == "message"
+    await asyncio.sleep(0.02)
+
+    failed = await anext(events)
+    assert failed.type == "failed"
+    assert failed.payload == {"reason_code": "provider_deadline_exceeded"}
+
+
 @pytest.mark.parametrize(
     ("provider", "line", "expected"),
     (

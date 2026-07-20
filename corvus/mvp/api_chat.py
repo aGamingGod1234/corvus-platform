@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -156,60 +157,65 @@ class ApiChatBackend:
         failure_reason = "provider_request_failed"
         stream_completed = False
         output_bytes = 0
+        deadline = asyncio.get_running_loop().time() + self._absolute_deadline_seconds
         try:
-            async with asyncio.timeout(self._absolute_deadline_seconds):
-                async with self._http_client_factory() as client:
-                    if handle.id in self._cancelled:
-                        sequence += 1
-                        if sequence > after_sequence:
-                            yield LocalChatBackendEvent(
-                                sequence, self._clock(), "cancelled", {"status": "cancelled"}
-                            )
-                        return
-                    async with client.stream(
-                        "POST",
-                        self._url(request.model),
-                        headers=self._headers(),
-                        json=self._body(request),
-                    ) as response:
-                        self._active_responses[handle.id] = response
+            async with AsyncExitStack() as stack:
+                async with asyncio.timeout_at(deadline):
+                    client = await stack.enter_async_context(self._http_client_factory())
+                    response = await stack.enter_async_context(
+                        client.stream(
+                            "POST",
+                            self._url(request.model),
+                            headers=self._headers(),
+                            json=self._body(request),
+                        )
+                    )
+                    response.raise_for_status()
+                self._active_responses[handle.id] = response
+                try:
+                    lines = aiter(
+                        _bounded_response_lines(
+                            response,
+                            max_line_bytes=(self._max_output_bytes + _MAX_EVENT_OVERHEAD_BYTES),
+                        )
+                    )
+                    while handle.id not in self._cancelled:
+                        if asyncio.get_running_loop().time() >= deadline:
+                            raise TimeoutError
                         try:
-                            response.raise_for_status()
-                            async for line in _bounded_response_lines(
-                                response,
-                                max_line_bytes=(self._max_output_bytes + _MAX_EVENT_OVERHEAD_BYTES),
-                            ):
-                                if handle.id in self._cancelled:
-                                    break
-                                terminal_state = self._terminal_state(line)
-                                if terminal_state == "failed":
-                                    request_failed = True
-                                    break
-                                usage = self._usage(line)
-                                if usage:
-                                    sequence += 1
-                                    if sequence > after_sequence:
-                                        usage_payload: dict[str, object] = dict(usage)
-                                        yield LocalChatBackendEvent(
-                                            sequence, self._clock(), "usage", usage_payload
-                                        )
-                                text = self._text_delta(line)
-                                if text:
-                                    output_bytes += len(text.encode("utf-8"))
-                                    if output_bytes > self._max_output_bytes:
-                                        request_failed = True
-                                        failure_reason = "provider_output_limit"
-                                        break
-                                    sequence += 1
-                                    if sequence > after_sequence:
-                                        yield LocalChatBackendEvent(
-                                            sequence, self._clock(), "message", {"text": text}
-                                        )
-                                if terminal_state == "completed":
-                                    stream_completed = True
-                                    break
-                        finally:
-                            self._active_responses.pop(handle.id, None)
+                            async with asyncio.timeout_at(deadline):
+                                line = await anext(lines)
+                        except StopAsyncIteration:
+                            break
+                        terminal_state = self._terminal_state(line)
+                        if terminal_state == "failed":
+                            request_failed = True
+                            break
+                        usage = self._usage(line)
+                        if usage:
+                            sequence += 1
+                            if sequence > after_sequence:
+                                usage_payload: dict[str, object] = dict(usage)
+                                yield LocalChatBackendEvent(
+                                    sequence, self._clock(), "usage", usage_payload
+                                )
+                        text = self._text_delta(line)
+                        if text:
+                            output_bytes += len(text.encode("utf-8"))
+                            if output_bytes > self._max_output_bytes:
+                                request_failed = True
+                                failure_reason = "provider_output_limit"
+                                break
+                            sequence += 1
+                            if sequence > after_sequence:
+                                yield LocalChatBackendEvent(
+                                    sequence, self._clock(), "message", {"text": text}
+                                )
+                        if terminal_state == "completed":
+                            stream_completed = True
+                            break
+                finally:
+                    self._active_responses.pop(handle.id, None)
         except TimeoutError:
             request_failed = True
             failure_reason = "provider_deadline_exceeded"
