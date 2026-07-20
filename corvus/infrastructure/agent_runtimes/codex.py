@@ -46,12 +46,30 @@ from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessSessionEventKind,
     ProcessSessionLimits,
 )
-from corvus.safe_process import path_is_link_or_reparse
+from corvus.safe_process import (
+    TrustedProcessError,
+    grant_windows_sid_modify,
+    grant_windows_sid_read,
+    grant_windows_sid_traverse,
+    path_is_link_or_reparse,
+    windows_current_logon_sid,
+    windows_current_user_sid,
+    windows_directory_acl_sids,
+)
 from corvus.security import SecretRedactor, is_sensitive_field_name
 
 _FIRST_EVENT_DIGEST = "0" * 64
 _DEFAULT_MODEL_LABEL = "Codex default"
 _MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+_WINDOWS_ACL_POLL_ATTEMPTS = 1_200
+_WINDOWS_ACL_POLL_INTERVAL_SECONDS = 0.05
+_WINDOWS_CSIDL_PROFILE = 0x0028
+_WINDOWS_PROFILE_BUFFER_LENGTH = 32_768
+_WINDOWS_SHGFP_TYPE_CURRENT = 0
+_WINDOWS_APP_DATA_DIRECTORY = "AppData"
+_WINDOWS_LOCAL_DATA_DIRECTORY = "Local"
+_WINDOWS_DESKTOP_DATA_DIRECTORY = "app.corvus.desktop"
+_MAX_GIT_POINTER_BYTES = 4_096
 _MAX_TIMEOUT_SECONDS = 120.0
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
@@ -142,7 +160,7 @@ class LocalCodexTextRequest:
     deadline: datetime
     model: str | None = None
     effort: Literal["low", "medium", "high", "xhigh"] = "medium"
-    mode: Literal["chat", "build"] = "chat"
+    mode: Literal["chat", "inspect", "build"] = "chat"
     mcp_enabled: bool = False
     max_output_bytes: int = 100_000
     workspace: Path | None = None
@@ -171,14 +189,177 @@ async def _start_process_session(invocation: ProcessInvocation) -> _ProcessSessi
     return await ProcessSession.start(invocation)
 
 
+def _windows_profile_directory() -> Path:
+    if os.name != "nt":
+        return Path.home().resolve(strict=True)
+    import ctypes
+
+    profile_buffer = ctypes.create_unicode_buffer(_WINDOWS_PROFILE_BUFFER_LENGTH)
+    result = ctypes.windll.shell32.SHGetFolderPathW(
+        None,
+        _WINDOWS_CSIDL_PROFILE,
+        None,
+        _WINDOWS_SHGFP_TYPE_CURRENT,
+        profile_buffer,
+    )
+    if result != 0 or not profile_buffer.value:
+        raise TrustedProcessError("Windows profile directory is unavailable")
+    try:
+        return Path(profile_buffer.value).resolve(strict=True)
+    except OSError as exc:
+        raise TrustedProcessError("Windows profile directory is unavailable") from exc
+
+
+def _workspace_traverse_boundaries(
+    workspace: Path,
+    *,
+    home: Path | None = None,
+) -> tuple[Path, ...]:
+    resolved_workspace = workspace.resolve(strict=True)
+    repository_worktrees = resolved_workspace.parent
+    worktrees_root = repository_worktrees.parent
+    if worktrees_root.name != ".corvus-worktrees":
+        raise TrustedProcessError("Codex workspace is outside the managed worktree root")
+    managed_root = worktrees_root.parent
+    resolved_home = (home or _windows_profile_directory()).resolve(strict=True)
+    if home is None and os.name == "nt":
+        local_data = managed_root.parent
+        app_data = local_data.parent
+        if (
+            managed_root.name.casefold() == _WINDOWS_DESKTOP_DATA_DIRECTORY.casefold()
+            and local_data.name.casefold() == _WINDOWS_LOCAL_DATA_DIRECTORY.casefold()
+            and app_data.name.casefold() == _WINDOWS_APP_DATA_DIRECTORY.casefold()
+        ):
+            resolved_home = app_data.parent.resolve(strict=True)
+    if not resolved_workspace.is_relative_to(resolved_home):
+        raise TrustedProcessError("Codex workspace is outside the user profile")
+    boundaries: list[Path] = []
+    ancestor = repository_worktrees
+    while True:
+        boundaries.append(ancestor)
+        if ancestor == resolved_home:
+            break
+        ancestor = ancestor.parent
+    return tuple(boundaries)
+
+
+def _linked_git_access_paths(workspace: Path) -> tuple[Path, Path] | None:
+    git_pointer = workspace / ".git"
+    if git_pointer.is_dir() and not path_is_link_or_reparse(git_pointer):
+        return None
+    if not git_pointer.exists():
+        return None
+    if not git_pointer.is_file() or path_is_link_or_reparse(git_pointer):
+        raise TrustedProcessError("Codex linked Git pointer is invalid")
+    try:
+        if git_pointer.stat().st_size > _MAX_GIT_POINTER_BYTES:
+            raise TrustedProcessError("Codex linked Git pointer is oversized")
+        pointer_text = git_pointer.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise TrustedProcessError("Codex linked Git pointer is unavailable") from exc
+    prefix = "gitdir: "
+    if not pointer_text.startswith(prefix) or "\n" in pointer_text or "\r" in pointer_text:
+        raise TrustedProcessError("Codex linked Git pointer is malformed")
+    raw_git_directory = Path(pointer_text.removeprefix(prefix))
+    candidate = (
+        raw_git_directory if raw_git_directory.is_absolute() else workspace / raw_git_directory
+    )
+    try:
+        git_directory = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise TrustedProcessError("Codex linked Git directory is unavailable") from exc
+    worktrees_directory = git_directory.parent
+    common_git_directory = worktrees_directory.parent
+    source_repository = common_git_directory.parent
+    if (
+        not git_directory.is_dir()
+        or path_is_link_or_reparse(git_directory)
+        or worktrees_directory.name != "worktrees"
+        or common_git_directory.name != ".git"
+        or not common_git_directory.is_dir()
+        or path_is_link_or_reparse(common_git_directory)
+        or not source_repository.is_dir()
+        or path_is_link_or_reparse(source_repository)
+    ):
+        raise TrustedProcessError("Codex linked Git directory is untrusted")
+    reverse_pointer = git_directory / "gitdir"
+    common_pointer = git_directory / "commondir"
+    try:
+        reverse_text = reverse_pointer.read_text(encoding="utf-8").strip()
+        common_text = common_pointer.read_text(encoding="utf-8").strip()
+        reverse_candidate = Path(reverse_text)
+        if not reverse_candidate.is_absolute():
+            reverse_candidate = git_directory / reverse_candidate
+        common_candidate = Path(common_text)
+        if not common_candidate.is_absolute():
+            common_candidate = git_directory / common_candidate
+        if (
+            reverse_candidate.resolve(strict=True) != git_pointer.resolve(strict=True)
+            or common_candidate.resolve(strict=True) != common_git_directory
+        ):
+            raise TrustedProcessError("Codex linked Git metadata does not match the workspace")
+    except (OSError, UnicodeError) as exc:
+        raise TrustedProcessError("Codex linked Git metadata is unavailable") from exc
+    return source_repository, common_git_directory
+
+
+async def _grant_windows_workspace_access(
+    workspace: Path,
+    baseline_sids: frozenset[str],
+    linked_git_access_paths: tuple[Path, Path] | None = None,
+) -> None:
+    sandbox_sids: frozenset[str] = frozenset()
+    for _attempt in range(_WINDOWS_ACL_POLL_ATTEMPTS):
+        observed_sids = await asyncio.to_thread(windows_directory_acl_sids, workspace)
+        sandbox_sids = observed_sids - baseline_sids
+        if sandbox_sids:
+            break
+        await asyncio.sleep(_WINDOWS_ACL_POLL_INTERVAL_SECONDS)
+    if not sandbox_sids:
+        raise TrustedProcessError("Codex sandbox SID was not applied to the workspace")
+    access_tasks = [
+        asyncio.to_thread(grant_windows_sid_traverse, ancestor, sid)
+        for ancestor in _workspace_traverse_boundaries(workspace)
+        for sid in sandbox_sids
+    ]
+    if linked_git_access_paths is not None:
+        source_repository, common_git_directory = linked_git_access_paths
+        access_tasks.extend(
+            asyncio.to_thread(grant_windows_sid_traverse, source_repository, sid)
+            for sid in sandbox_sids
+        )
+        access_tasks.extend(
+            asyncio.to_thread(grant_windows_sid_read, common_git_directory, sid)
+            for sid in sandbox_sids
+        )
+    await asyncio.gather(*access_tasks)
+
+
+async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
+    logon_sid, user_sid = await asyncio.gather(
+        asyncio.to_thread(windows_current_logon_sid),
+        asyncio.to_thread(windows_current_user_sid),
+    )
+    if logon_sid is None or user_sid is None:
+        raise TrustedProcessError("Windows sandbox identity is unavailable")
+    await asyncio.gather(
+        asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid),
+        *(
+            asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
+            for directory in (workspace, *_workspace_traverse_boundaries(workspace))
+        )
+    )
+
+
 class _RunSession:
     def __init__(
         self,
         process: _ProcessSessionLike,
         *,
         scratch: Path,
-        mode: Literal["chat", "build"],
+        mode: Literal["chat", "inspect", "build"],
         package_artifact: bool,
+        workspace_access_task: asyncio.Task[None] | None = None,
     ) -> None:
         self.process = process
         self.events: list[AgentRunEvent] = []
@@ -189,6 +370,7 @@ class _RunSession:
         self.scratch = scratch
         self.mode = mode
         self.package_artifact = package_artifact
+        self.workspace_access_task = workspace_access_task
         self.artifact: LocalBuildArtifact | None = None
         self.provider_completed = False
 
@@ -318,7 +500,7 @@ class CodexCliAdapter(AgentRuntimePort):
         prompt: str,
         model: str | None,
         effort: Literal["low", "medium", "high", "xhigh"],
-        mode: Literal["chat", "build"],
+        mode: Literal["chat", "inspect", "build"],
         mcp_enabled: bool,
         idempotency_key: str,
         deadline: datetime,
@@ -360,6 +542,8 @@ class CodexCliAdapter(AgentRuntimePort):
             sandbox,
             "--skip-git-repo-check",
             "--ephemeral",
+            "--cd",
+            os.fspath(scratch),
             "--ignore-rules",
         ]
         if not mcp_enabled:
@@ -412,10 +596,37 @@ class CodexCliAdapter(AgentRuntimePort):
             stdin=prompt_bytes,
             limits=limits,
         )
+        prepare_windows_access = (
+            os.name == "nt"
+            and workspace is not None
+            and self._session_starter is _start_process_session
+        )
+        linked_git_access_paths = (
+            _linked_git_access_paths(scratch) if prepare_windows_access else None
+        )
+        if prepare_windows_access:
+            try:
+                await _grant_windows_sandbox_preflight(scratch)
+            except TrustedProcessError as error:
+                raise CodexAdapterError("codex_sandbox_preflight_failed") from error
+        baseline_sids = (
+            windows_directory_acl_sids(scratch) if prepare_windows_access else frozenset()
+        )
         try:
             process = await self._session_starter(invocation)
         except ProcessSessionError as error:
             raise CodexAdapterError("codex_process_unavailable") from error
+        workspace_access_task = (
+            asyncio.create_task(
+                _grant_windows_workspace_access(
+                    scratch,
+                    baseline_sids,
+                    linked_git_access_paths,
+                )
+            )
+            if prepare_windows_access
+            else None
+        )
         handle = AgentRunHandle(
             run_id=run_id,
             provider_binding_id=binding.id,
@@ -427,6 +638,7 @@ class CodexCliAdapter(AgentRuntimePort):
             scratch=scratch,
             mode=mode,
             package_artifact=package_artifact,
+            workspace_access_task=workspace_access_task,
         )
         self._sessions[handle.id] = run_session
         self._idempotency_handles[idempotency_key] = handle
@@ -570,6 +782,19 @@ class CodexCliAdapter(AgentRuntimePort):
 
         async for process_event in session.process.events(session.process_sequence):
             session.process_sequence = max(session.process_sequence, process_event.sequence)
+            if session.workspace_access_task is not None and session.workspace_access_task.done():
+                try:
+                    await session.workspace_access_task
+                except TrustedProcessError:
+                    await session.process.cancel()
+                    yield event(
+                        AgentRunEventType.FAILED,
+                        {"reason_code": "codex_workspace_access_unavailable"},
+                    )
+                    session.terminal_state = AgentRunState.FAILED
+                    terminal = True
+                    continue
+                session.workspace_access_task = None
             if terminal:
                 continue
             if (
@@ -689,6 +914,9 @@ class CodexCliAdapter(AgentRuntimePort):
         if not terminal:
             yield event(AgentRunEventType.FAILED, {"reason_code": "codex_stream_incomplete"})
             session.terminal_state = AgentRunState.FAILED
+        if session.workspace_access_task is not None:
+            session.workspace_access_task.cancel()
+            session.workspace_access_task = None
 
 
 def _normalize_effort(value: str) -> Literal["low", "medium", "high", "xhigh"]:

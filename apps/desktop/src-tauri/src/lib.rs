@@ -20,6 +20,8 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
+const DESKTOP_PREFERENCES_FILE: &str = "desktop-preferences.json";
+const MAX_DESKTOP_PREFERENCES_BYTES: usize = 1_048_576;
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_FAILED_HEALTH_CHECKS: u8 = 6;
@@ -471,6 +473,48 @@ fn get_background_mode(state: tauri::State<'_, DesktopState>) -> bool {
     state.background_mode.load(Ordering::SeqCst)
 }
 
+fn load_desktop_preferences_file(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path) {
+        Ok(payload) => {
+            if payload.len() > MAX_DESKTOP_PREFERENCES_BYTES {
+                return Err("desktop_preferences_too_large".to_owned());
+            }
+            Ok(Some(payload))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("desktop_preferences_read_failed:{error}")),
+    }
+}
+
+fn save_desktop_preferences_file(path: &Path, payload: &str) -> Result<(), String> {
+    if payload.len() > MAX_DESKTOP_PREFERENCES_BYTES {
+        return Err("desktop_preferences_too_large".to_owned());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "desktop_preferences_path_invalid".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("desktop_preferences_directory_failed:{error}"))?;
+    fs::write(path, payload).map_err(|error| format!("desktop_preferences_write_failed:{error}"))
+}
+
+fn desktop_preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(DESKTOP_PREFERENCES_FILE))
+        .map_err(|error| format!("desktop_preferences_path_failed:{error}"))
+}
+
+#[tauri::command]
+fn load_desktop_preferences(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    load_desktop_preferences_file(&desktop_preferences_path(&app)?)
+}
+
+#[tauri::command]
+fn save_desktop_preferences(app: tauri::AppHandle, payload: String) -> Result<(), String> {
+    save_desktop_preferences_file(&desktop_preferences_path(&app)?, &payload)
+}
+
 fn should_close_to_tray(background_mode: bool, quitting: bool) -> bool {
     background_mode && !quitting
 }
@@ -518,7 +562,9 @@ pub fn run() -> Result<(), String> {
             select_repository_directory,
             open_external_url,
             set_background_mode,
-            get_background_mode
+            get_background_mode,
+            load_desktop_preferences,
+            save_desktop_preferences
         ])
         .manage(DesktopState::default())
         .setup(|app| setup_app(app).map_err(|error| std::io::Error::other(error).into()))
@@ -892,9 +938,10 @@ mod tests {
 
     use super::{
         SidecarLaunch, SidecarLifecycle, SidecarState, TrayAction, build_desktop_url,
-        capture_bounded_stderr, packaged_sidecar_candidates, readiness_probe,
-        repository_directory_string, sanitize_diagnostics, select_packaged_sidecar,
-        should_close_to_tray, tray_action, validate_external_url,
+        capture_bounded_stderr, load_desktop_preferences_file, packaged_sidecar_candidates,
+        readiness_probe, repository_directory_string, sanitize_diagnostics,
+        save_desktop_preferences_file, select_packaged_sidecar, should_close_to_tray, tray_action,
+        validate_external_url,
     };
     use tauri_plugin_dialog::FilePath;
 
@@ -1094,5 +1141,33 @@ mod tests {
 
         assert_eq!(selected, std::fs::canonicalize(executable).unwrap());
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn desktop_preferences_round_trip_in_the_native_app_data_file() {
+        let directory =
+            std::env::temp_dir().join(format!("corvus-desktop-preferences-{}", std::process::id()));
+        let path = directory.join("desktop-preferences.json");
+        let payload = r#"{"corvus.local-first-run":"complete"}"#;
+
+        assert_eq!(load_desktop_preferences_file(&path).unwrap(), None);
+        save_desktop_preferences_file(&path, payload).unwrap();
+        assert_eq!(
+            load_desktop_preferences_file(&path).unwrap().as_deref(),
+            Some(payload)
+        );
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn desktop_preferences_reject_oversized_payloads() {
+        let path = std::env::temp_dir().join("corvus-desktop-preferences-too-large.json");
+        let payload = "x".repeat(super::MAX_DESKTOP_PREFERENCES_BYTES + 1);
+
+        assert_eq!(
+            save_desktop_preferences_file(&path, &payload),
+            Err("desktop_preferences_too_large".to_owned())
+        );
     }
 }

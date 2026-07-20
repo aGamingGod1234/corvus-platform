@@ -173,6 +173,25 @@ async def test_read_only_completion_has_no_review_state(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_completion_without_changes_is_failed(tmp_path: Path) -> None:
+    backend = FakeBackend(change_file=False)
+    coordinator, repository, runs = _coordinator(tmp_path, backend)
+
+    started = await coordinator.start("local", _request(repository.id))
+    completed = await coordinator.wait("local", started.id)
+
+    assert completed.status == RunStatus.FAILED
+    evidence = runs.evidence("local", started.id)
+    assert [item.kind for item in evidence][-2:] == [
+        "change_set",
+        "runtime_validation",
+    ]
+    assert evidence[-1].summary == (
+        "Build run completed without producing any reviewable file changes"
+    )
+
+
+@pytest.mark.asyncio
 async def test_preflight_rejects_wrong_safety_digest_before_creating_run(tmp_path: Path) -> None:
     backend = FakeBackend()
     coordinator, repository, runs = _coordinator(tmp_path, backend)
@@ -271,7 +290,10 @@ async def test_discard_removes_terminal_managed_worktree(tmp_path: Path) -> None
 async def test_wait_rejects_cross_tenant_cache_access(tmp_path: Path) -> None:
     backend = FakeBackend(change_file=False)
     coordinator, repository, _ = _coordinator(tmp_path, backend)
-    started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]
+    started = await coordinator.start(
+        "local",
+        _request(repository.id, mode="chat"),  # type: ignore[attr-defined]
+    )
 
     with pytest.raises(RunCoordinatorConflict, match="run_not_owned_by_coordinator"):
         await coordinator.wait("another-tenant", started.id)

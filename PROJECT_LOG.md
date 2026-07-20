@@ -2335,3 +2335,36 @@
 
 ### Suggested Next Steps
 - Provision the Railway hosted identity service and Google OAuth client, then configure `CORVUS_RAILWAY_ORIGIN` plus the documented Google settings before presenting Google sign-in as production-ready.
+
+## 2026-07-21 — Desktop end-to-end interaction hardening
+### What Was Implemented
+- Repaired Windows restricted-token sandbox startup so supervised local runs retain the existing authority boundary while inheriting only the filesystem access required for the selected project.
+- Hardened Codex execution and scheduled report-only runs, including streamed output parsing, cancellation, model/thinking selection, and review-required completion behavior.
+- Made skill imports handle modern text and binary skill assets without failing the whole import, while continuing to reject unsafe paths and duplicate or blocked content.
+- Added persisted desktop preferences for launch, notifications, close behavior, theme, and composer send behavior through narrow native commands and generated Tauri permissions.
+- Restricted native external-browser launches to the approved Google OAuth route and documented the GitHub flow truthfully: explicit consent adopts an existing local CLI session or opens GitHub web login when needed.
+- Added a loading gate to GitHub account status so the interface never briefly advertises an incorrect sign-in state.
+- Required credential-free HTTPS URLs before remote MCP servers can be added, with inline accessible validation feedback.
+- Built, installed, and exercised the current Windows desktop application across onboarding, conversations, projects, activity, schedules, skills, settings, streaming, Markdown, safety receipts, provider/model/thinking controls, and keyboard send modes.
+
+### Files Modified
+- `apps/desktop/src-tauri/build.rs`, `apps/desktop/src-tauri/capabilities/default.json`, `apps/desktop/src-tauri/permissions/`, `apps/desktop/src-tauri/src/lib.rs` — native preferences, trusted browser launch, generated command permissions, and Windows sandbox integration.
+- `apps/web/src/app/SettingsPanel.tsx`, `apps/web/src/app/SettingsPanel.test.tsx` — truthful account state, MCP URL validation, and regression coverage.
+- `apps/web/src/app/desktopPreferences.ts`, `apps/web/src/app/desktopPreferences.test.ts`, `apps/web/src/main.tsx` — typed persisted desktop preferences and bootstrap wiring.
+- `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/mvp/run_coordinator.py` — Codex streaming, scheduling, cancellation, and report-only coordination.
+- `corvus/mvp/skill_imports.py` — robust skill asset import behavior.
+- `corvus/safe_process.py` — restricted Windows process construction and sandbox filesystem access preparation.
+- `tests/contract/providers/test_codex_adapter.py`, `tests/mvp/test_run_coordinator.py`, `tests/mvp/test_skill_imports.py`, `tests/unit/test_safe_process.py` — focused runtime, scheduler, skill, and sandbox regression coverage.
+
+### Assumptions Made (flag these for review)
+- An explicit click on GitHub sign-in authorizes Corvus to use an already authenticated host GitHub CLI session for the current process; it does not silently inherit that identity before the click.
+- Remote MCP transport is limited to credential-free HTTPS URLs in this milestone; secrets remain managed by the existing settings/backend credential flow.
+- A fast provider may finish before a live Stop click is processed; automated cancellation coverage remains the authoritative check for the cancellation race.
+
+### Known Issues / Deferred
+- Google account continuity remains deployment-blocked until the external Railway identity service and Google OAuth credentials are configured; the desktop now launches only the approved route and reports failures accurately.
+- The full unrestricted Python suite exceeded the five-minute execution window without emitting a failure. The 86 directly affected backend/security tests passed with one expected POSIX-only skip, all 276 web tests passed, lint passed, and the production desktop bundle compiled successfully.
+- The Windows beta installer is unsigned, as explicitly accepted for the alpha/beta release phase.
+
+### Suggested Next Steps
+- Have reviewers inspect PR #12 and provision the documented hosted identity dependencies separately from this local desktop hardening milestone.

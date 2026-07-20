@@ -98,6 +98,18 @@ function safeError(reason: unknown): string {
   return featureErrorMessage(reason, "settings");
 }
 
+function isHttpsMcpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname !== ""
+      && url.username === ""
+      && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
 function SettingsRow({ children, description, label }: {
   children: ReactNode;
   description: string;
@@ -174,11 +186,16 @@ export function SettingsPanel({
   const [connectionBusy, setConnectionBusy] = useState<"github" | "google" | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [githubStatus, setGitHubStatus] = useState<GitHubAuthStatus | null>(null);
+  const [githubStatusLoading, setGitHubStatusLoading] = useState(connectionsApi !== undefined);
   const [unsavedBarDismissed, setUnsavedBarDismissed] = useState(false);
   const [exitConfirmation, setExitConfirmation] = useState(false);
   const exitDialogRef = useRef<HTMLElement>(null);
   const profileLabel = `${title(experience)} / ${title(workspaceKind)}`;
   const credentialControlsAvailable = api?.connectProviderCredential !== undefined;
+  const mcpUrlIsValid = mcpUrl.trim() === "" || isHttpsMcpUrl(mcpUrl.trim());
+  const canAddMcpServer = api?.addMcpServer !== undefined
+    && mcpName.trim() !== ""
+    && isHttpsMcpUrl(mcpUrl.trim());
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === runtime.default_provider),
     [providers, runtime.default_provider]
@@ -188,12 +205,18 @@ export function SettingsPanel({
     : [];
 
   useEffect(() => {
-    if (connectionsApi === undefined) return;
+    if (connectionsApi === undefined) {
+      setGitHubStatusLoading(false);
+      return;
+    }
     let current = true;
+    setGitHubStatusLoading(true);
     void connectionsApi.getGitHubAuthStatus().then((nextStatus) => {
       if (current) setGitHubStatus(nextStatus);
     }).catch(() => {
       if (current) setConnectionError("GitHub status is unavailable. You can retry sign-in below.");
+    }).finally(() => {
+      if (current) setGitHubStatusLoading(false);
     });
     return () => { current = false; };
   }, [connectionsApi]);
@@ -546,7 +569,7 @@ export function SettingsPanel({
   }
 
   async function addMcpServer(): Promise<void> {
-    if (api?.addMcpServer === undefined || mcpName.trim() === "" || mcpUrl.trim() === "") return;
+    if (!canAddMcpServer || api?.addMcpServer === undefined) return;
     setBusy(true);
     setError("");
     setMcpError("");
@@ -654,7 +677,7 @@ export function SettingsPanel({
             {api?.listMcpServers === undefined ? <p className="settings-callout">Open Corvus desktop to read and manage your Codex MCP configuration.</p> : null}
             {mcpError ? <p className="settings-error" role="alert">{mcpError} <button className="text-button" disabled={mcpLoading} onClick={() => setMcpRefresh((value) => value + 1)} type="button">Retry MCP</button></p> : null}
             <div className="mcp-server-list">{mcpLoading ? <p className="settings-callout">Reading MCP servers from Codex…</p> : !mcpError && mcpServers.length === 0 && api?.listMcpServers !== undefined ? <p className="settings-callout">No MCP servers are configured.</p> : mcpServers.map((server) => <article key={server.name}><div><strong>{server.name}</strong><span>{server.transport.replaceAll("_", " ")} / {server.endpoint}</span><small>{server.auth_status.replaceAll("_", " ")}</small></div><div>{server.auth_status === "not_logged_in" ? <button className="button" disabled={busy} onClick={() => void loginMcpServer(server.name)} type="button">Sign in</button> : null}<button className="button" disabled={busy} onClick={() => void removeMcpServer(server.name)} type="button">Remove</button></div></article>)}</div>
-            <div className="mcp-add-server"><h3>Add remote server</h3><p>Use an HTTPS MCP endpoint. OAuth sign-in remains with Codex.</p><label htmlFor="mcp-server-name">Name</label><input id="mcp-server-name" onChange={(event) => setMcpName(event.target.value)} placeholder="example" value={mcpName} /><label htmlFor="mcp-server-url">Server URL</label><input id="mcp-server-url" onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://example.com/mcp" type="url" value={mcpUrl} /><button className="button button--primary" disabled={busy || mcpName.trim() === "" || mcpUrl.trim() === "" || api?.addMcpServer === undefined} onClick={() => void addMcpServer()} type="button">Add MCP server</button></div>
+            <div className="mcp-add-server"><h3>Add remote server</h3><p>Use an HTTPS MCP endpoint. OAuth sign-in remains with Codex.</p><label htmlFor="mcp-server-name">Name</label><input id="mcp-server-name" onChange={(event) => setMcpName(event.target.value)} placeholder="example" value={mcpName} /><label htmlFor="mcp-server-url">Server URL</label><input aria-describedby={!mcpUrlIsValid ? "mcp-server-url-error" : undefined} aria-invalid={!mcpUrlIsValid} id="mcp-server-url" onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://example.com/mcp" type="url" value={mcpUrl} />{!mcpUrlIsValid ? <small className="settings-error" id="mcp-server-url-error" role="alert">Use an HTTPS URL without embedded credentials.</small> : null}<button className="button button--primary" disabled={busy || !canAddMcpServer} onClick={() => void addMcpServer()} type="button">Add MCP server</button></div>
           </> : null}
 
           {category === "safety" ? <>
@@ -675,10 +698,10 @@ export function SettingsPanel({
           {category === "account" ? <>
             <div className="settings-section__heading"><h1>Account</h1><p>{CATEGORY_DESCRIPTIONS.account}</p></div>
             <SettingsRow description={api === undefined ? "Open the local app to run agents on this computer." : "Preferences are protected by this paired local session."} label="Runtime"><span className="settings-value">{api === undefined ? "Web / Preview" : "This computer / Connected"}</span></SettingsRow>
-            <div className="settings-section__subheading"><h3>Connected accounts</h3><p>These buttons always open a real sign-in flow. Corvus never treats another app's account as permission.</p></div>
+            <div className="settings-section__subheading"><h3>Connected accounts</h3><p>Google opens a browser sign-in. GitHub confirms your CLI session or opens GitHub's browser flow when needed. Corvus only connects after you choose it here.</p></div>
             <div className="account-connections">
               <button className="account-connection account-connection--google" disabled={connectionBusy !== null || onGoogleSignIn === undefined || googleSignedIn} onClick={() => void connectAccount("google")} type="button"><AccountBrandIcon provider="google" /><span><strong>{googleSignedIn ? "Google connected" : "Sign in with Google"}</strong><small>{googleSignedIn ? "Your Corvus Web identity is active." : "Open Corvus Web in your browser for identity and device continuity."}</small></span><b aria-hidden="true">{connectionBusy === "google" ? "…" : googleSignedIn ? "✓" : "→"}</b></button>
-              <button className="account-connection account-connection--github" disabled={connectionBusy !== null || connectionsApi === undefined || githubStatus?.authenticated === true} onClick={() => void connectAccount("github")} type="button"><AccountBrandIcon provider="github" /><span><strong>{githubStatus?.authenticated ? "GitHub connected" : "Sign in with GitHub"}</strong><small>{githubStatus?.authenticated ? `Authorized for this Corvus installation on ${githubStatus.hostname}.` : "Open GitHub's browser flow before Corvus lists or clones projects."}</small></span><b aria-hidden="true">{connectionBusy === "github" ? "…" : githubStatus?.authenticated ? "✓" : "→"}</b></button>
+              <button className="account-connection account-connection--github" disabled={connectionBusy !== null || connectionsApi === undefined || githubStatusLoading || githubStatus?.authenticated === true} onClick={() => void connectAccount("github")} type="button"><AccountBrandIcon provider="github" /><span><strong>{githubStatusLoading ? "Checking GitHub…" : githubStatus?.authenticated ? "GitHub connected" : "Sign in with GitHub"}</strong><small>{githubStatusLoading ? "Checking authorization for this Corvus installation." : githubStatus?.authenticated ? `Authorized for this Corvus installation on ${githubStatus.hostname}.` : "Authorize your GitHub CLI session; a browser opens when sign-in is required."}</small></span><b aria-hidden="true">{connectionBusy === "github" || githubStatusLoading ? "…" : githubStatus?.authenticated ? "✓" : "→"}</b></button>
             </div>
             {connectionError ? <p className="settings-error" role="alert">{connectionError}</p> : null}
           </> : null}
