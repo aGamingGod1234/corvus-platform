@@ -29,7 +29,7 @@ export interface RunsApi extends ContributionApi {
     outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
   }): Promise<LocalRun>;
   getLocalRun(runId: string): Promise<LocalRun>;
-  listLocalRunEvents(runId: string, after?: number): Promise<LocalRunEvent[]>;
+  listLocalRunEvents(runId: string, after?: number, limit?: number): Promise<LocalRunEvent[]>;
   listLocalRunEvidence(runId: string): Promise<LocalRunEvidence[]>;
   cancelLocalRun(runId: string): Promise<LocalRun>;
   retryLocalRun(runId: string): Promise<LocalRun>;
@@ -240,7 +240,7 @@ export function RunsWorkspace({
       ]);
         const loadedEvents: LocalRunEvent[] = [];
         for (let pageIndex = 0; pageIndex < MAX_EVENT_PAGES_PER_REFRESH; pageIndex += 1) {
-          const page = await api.listLocalRunEvents(selectedId!, cursor);
+          const page = await api.listLocalRunEvents(selectedId!, cursor, RUN_EVENT_PAGE_SIZE);
           if (!active) return null;
           const nextEvents = page.filter((event) => event.sequence > cursor);
           if (nextEvents.length > 0) {

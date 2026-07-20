@@ -135,9 +135,7 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
         headers={"X-CSRF-Token": csrf},
     )
     assert managed_discard.status_code == 409
-    assert managed_discard.json()["error"]["message"] == (
-        "worktree_managed_by_durable_run"
-    )
+    assert managed_discard.json()["error"]["message"] == ("worktree_managed_by_durable_run")
     assert worktrees.get(run_id).status == "active"
     (lease.root / "feature.txt").write_text("feature\n", encoding="utf-8")
 
@@ -153,9 +151,7 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
         headers={"X-CSRF-Token": csrf},
     )
     assert active_run_prepare.status_code == 409
-    assert active_run_prepare.json()["error"]["message"] == (
-        "contribution_run_not_reviewable"
-    )
+    assert active_run_prepare.json()["error"]["message"] == ("contribution_run_not_reviewable")
     assert runs.get("local", run_id).status == RunStatus.RUNNING
 
     runs.transition("local", run_id, RunStatus.REVIEW_REQUIRED)
@@ -191,9 +187,7 @@ def test_contribution_api_reviews_prepares_confirms_and_publishes(tmp_path: Path
         headers={"X-CSRF-Token": csrf},
     )
     assert premature_publish.status_code == 409
-    assert premature_publish.json()["error"]["message"] == (
-        "contribution_run_not_publishable"
-    )
+    assert premature_publish.json()["error"]["message"] == ("contribution_run_not_publishable")
     assert runs.get("local", run_id).status == RunStatus.REVIEW_REQUIRED
 
     prepared = client.post(

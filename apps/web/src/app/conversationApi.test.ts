@@ -83,6 +83,31 @@ describe("conversation API", () => {
     expect(api.artifactUrl("run-1")).toBe("http://127.0.0.1:8765/api/local-chat/runs/run-1/artifact");
   });
 
+  it("loads every repository page for the conversation project picker", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://127.0.0.1");
+      const offset = url.searchParams.get("offset");
+      const repositories = offset === "100"
+        ? [{ id: "repo-101", display_name: "Later repository", path: "C:\\later" }]
+        : Array.from({ length: 100 }, (_, index) => ({
+            id: `repo-${index}`,
+            display_name: `Repository ${index}`,
+            path: `C:\\repo-${index}`
+          }));
+      return new Response(JSON.stringify(repositories), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repositories = await createConversationApi("csrf").listRepositories!();
+
+    expect(repositories).toHaveLength(101);
+    expect(fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://127.0.0.1").search))
+      .toEqual(["?limit=100&offset=0", "?limit=100&offset=100"]);
+  });
+
   it("rejects a cross-origin non-loopback runtime before making a request", () => {
     expect(() => createConversationApi("csrf", "https://runtime.example.com"))
       .toThrow(new ConversationApiError(400, "runtime_base_url_untrusted", null));

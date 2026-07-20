@@ -994,9 +994,7 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return [
             item.model_dump(mode="json")
-            for item in repository_service().list(
-                principal.tenant_id, limit=limit, offset=offset
-            )
+            for item in repository_service().list(principal.tenant_id, limit=limit, offset=offset)
         ]
 
     @app.get("/api/local/github/status", response_model=GitHubAuthResponse)
@@ -1325,9 +1323,7 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return [
             item.model_dump(mode="json")
-            for item in durable_runs.events(
-                principal.tenant_id, run_id, after=after, limit=limit
-            )
+            for item in durable_runs.events(principal.tenant_id, run_id, after=after, limit=limit)
         ]
 
     @app.get("/api/local/runs/{run_id}/evidence", response_model=list[RunEvidence])

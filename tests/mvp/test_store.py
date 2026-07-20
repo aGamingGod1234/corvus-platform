@@ -27,7 +27,9 @@ def test_concurrent_initialization_applies_each_migration_once(tmp_path: Path) -
     assert versions == list(range(1, SCHEMA_VERSION + 1))
 
 
-def test_failed_migration_does_not_record_partial_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_failed_migration_does_not_record_partial_schema(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     database = tmp_path / "corvus.sqlite3"
     migrations = store_module._MIGRATIONS
     monkeypatch.setattr(

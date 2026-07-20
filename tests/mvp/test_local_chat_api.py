@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -125,6 +126,32 @@ async def test_project_directory_is_bound_to_a_project_aware_backend(tmp_path: P
     )
 
     assert backend.source_directory == project
+
+
+@pytest.mark.asyncio
+async def test_provider_readiness_probe_runs_off_the_event_loop() -> None:
+    backend = _Backend()
+    service = LocalChatService(
+        backend=backend,
+        readiness_probes={
+            "codex": lambda: threading.current_thread() is not threading.main_thread()
+        },
+        cursor_secret=b"c" * 32,
+        clock=lambda: NOW,
+    )
+
+    await service.start(
+        owner="local:user",
+        prompt="Check provider readiness",
+        provider="codex",
+        model=None,
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="readiness-thread",
+    )
+
+    assert backend.starts == 1
 
 
 def test_project_copy_creates_an_isolated_workspace(tmp_path: Path) -> None:
@@ -557,9 +584,12 @@ async def test_local_chat_completed_run_replays_after_service_restart(tmp_path: 
         "idempotency_key": "restart-once",
     }
     response = await first_service.start(**request)
-    first_events = [event async for _cursor, event in first_service.events(
-        owner="local:restart", run_id=UUID(response["run_id"]), cursor=None
-    )]
+    first_events = [
+        event
+        async for _cursor, event in first_service.events(
+            owner="local:restart", run_id=UUID(response["run_id"]), cursor=None
+        )
+    ]
     assert first_events[-1].type == "completed"
 
     restarted_backend = _Backend()
@@ -571,12 +601,15 @@ async def test_local_chat_completed_run_replays_after_service_restart(tmp_path: 
     )
 
     replay = await restarted.start(**request)
-    replayed_events = [event async for _cursor, event in restarted.events(
-        owner="local:restart",
-        run_id=UUID(response["run_id"]),
-        cursor=None,
-        follow=False,
-    )]
+    replayed_events = [
+        event
+        async for _cursor, event in restarted.events(
+            owner="local:restart",
+            run_id=UUID(response["run_id"]),
+            cursor=None,
+            follow=False,
+        )
+    ]
 
     assert replay["run_id"] == response["run_id"]
     assert replay["state"] == "completed"
@@ -597,7 +630,7 @@ async def test_local_build_artifact_reopens_after_restart_when_digest_matches(
         download_name="project.zip",
         sha256_digest=hashlib.sha256(b"screened build").hexdigest(),
         size_bytes=len(b"screened build"),
-            secret_screening="passed",  # noqa: S106
+        secret_screening="passed",  # noqa: S106
     )
     store = SqliteStore(tmp_path / "corvus.sqlite3")
     service = LocalChatService(
@@ -621,9 +654,12 @@ async def test_local_build_artifact_reopens_after_restart_when_digest_matches(
         ).policy_digest,
     )
     run_id = UUID(response["run_id"])
-    _ = [event async for _cursor, event in service.events(
-        owner="local:artifact-restart", run_id=run_id, cursor=None
-    )]
+    _ = [
+        event
+        async for _cursor, event in service.events(
+            owner="local:artifact-restart", run_id=run_id, cursor=None
+        )
+    ]
 
     restarted = LocalChatService(
         backend=_Backend(),
@@ -674,9 +710,12 @@ async def test_local_chat_running_run_becomes_interrupted_after_restart(tmp_path
         clock=lambda: NOW,
         store=store,
     )
-    events = [event async for _cursor, event in restarted.events(
-        owner="local:interrupted", run_id=run_id, cursor=None, follow=False
-    )]
+    events = [
+        event
+        async for _cursor, event in restarted.events(
+            owner="local:interrupted", run_id=run_id, cursor=None, follow=False
+        )
+    ]
 
     assert [event.type for event in events] == ["started", "failed"]
     assert events[-1].payload == {"reason_code": "local_chat_interrupted"}
@@ -724,9 +763,12 @@ async def test_local_chat_journal_prunes_old_terminal_runs_per_owner(
             mcp_enabled=False,
             idempotency_key=f"retention-{index}",
         )
-        _ = [event async for _cursor, event in service.events(
-            owner="local:retention", run_id=UUID(response["run_id"]), cursor=None
-        )]
+        _ = [
+            event
+            async for _cursor, event in service.events(
+                owner="local:retention", run_id=UUID(response["run_id"]), cursor=None
+            )
+        ]
 
     with store.connect() as connection:
         count = connection.execute(

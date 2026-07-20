@@ -131,4 +131,18 @@ describe("legacy Corvus transport authority", () => {
     expect(requests.map((request) => new URL(request.url).searchParams.get("offset")))
       .toEqual(["0", "100", "0", "100"]);
   });
+
+  it("sends the explicit event page size used by the Runs workspace", async () => {
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(input as Request);
+      return jsonResponse([]);
+    }));
+
+    await createCorvusApi("http://127.0.0.1:8080").listLocalRunEvents("run-1", 500, 250);
+
+    const query = new URL(requests[0].url).searchParams;
+    expect(query.get("after")).toBe("500");
+    expect(query.get("limit")).toBe("250");
+  });
 });

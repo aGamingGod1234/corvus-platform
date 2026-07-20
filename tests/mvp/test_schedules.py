@@ -278,9 +278,14 @@ async def test_scheduler_recovers_run_created_before_occurrence_attachment(tmp_p
     schedule = schedules.create(
         "local",
         ScheduleCreateRequest(
-            name="Hourly review", repository_id=repository.id, task="Review changes",
-            recurrence=Recurrence(kind="hourly"), timezone="UTC", mode="chat",
-            safety_digest="a" * 64, output_policy="report_only",
+            name="Hourly review",
+            repository_id=repository.id,
+            task="Review changes",
+            recurrence=Recurrence(kind="hourly"),
+            timezone="UTC",
+            mode="chat",
+            safety_digest="a" * 64,
+            output_policy="report_only",
         ),
         now=datetime(2026, 7, 18, 10, 15, tzinfo=UTC),
     )
@@ -290,9 +295,13 @@ async def test_scheduler_recovers_run_created_before_occurrence_attachment(tmp_p
     existing = run_store.create(
         "local",
         StartRunRequest(
-            repository_id=repository.id, task=schedule.task, mode="chat",
-            safety_digest=schedule.safety_digest, output_policy="report_only",
-            schedule_id=schedule.id, occurrence_key=occurrence_key,
+            repository_id=repository.id,
+            task=schedule.task,
+            mode="chat",
+            safety_digest=schedule.safety_digest,
+            output_policy="report_only",
+            schedule_id=schedule.id,
+            occurrence_key=occurrence_key,
         ),
         base_sha=repository.snapshot.head_sha,
     )

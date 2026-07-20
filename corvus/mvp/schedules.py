@@ -352,9 +352,7 @@ class ScheduleStore:
             last_run_status=cast(Any, str(row["last_run_status"]))
             if row["last_run_status"]
             else None,
-            last_run_reason=str(row["last_run_reason"])
-            if row["last_run_reason"]
-            else None,
+            last_run_reason=str(row["last_run_reason"]) if row["last_run_reason"] else None,
             last_run_at=datetime.fromisoformat(str(row["last_run_at"]))
             if row["last_run_at"]
             else None,

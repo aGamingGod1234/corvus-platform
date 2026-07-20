@@ -233,8 +233,10 @@ class LocalChatService:
         if backend is None:
             raise LocalChatError("provider_unavailable")
         readiness_probe = self._readiness_probes.get(provider)
-        if owner_backend is None and readiness_probe is not None and not readiness_probe():
-            raise LocalChatError("provider_unavailable")
+        if owner_backend is None and readiness_probe is not None:
+            provider_ready = await asyncio.to_thread(readiness_probe)
+            if not provider_ready:
+                raise LocalChatError("provider_unavailable")
         if provider == "codex" and effort == "max":
             raise LocalChatError("provider_effort_unavailable")
         if provider != "codex" and (mode != "chat" or mcp_enabled):
@@ -537,9 +539,7 @@ class LocalChatService:
     async def shutdown(self) -> tuple[str, ...]:
         """Cancel live provider work and settle local pump tasks before process exit."""
         live = [
-            (run_id, record)
-            for run_id, record in self._runs.items()
-            if record.state == "running"
+            (run_id, record) for run_id, record in self._runs.items() if record.state == "running"
         ]
         cancelled: list[str] = []
         for run_id, record in live:
@@ -673,9 +673,7 @@ class LocalChatService:
                 ),
             )
 
-    def _restore_by_idempotency(
-        self, owner: str, idempotency_key: str
-    ) -> _RunRecord | None:
+    def _restore_by_idempotency(self, owner: str, idempotency_key: str) -> _RunRecord | None:
         if self._store is None:
             return None
         with self._store.connect() as connection:
@@ -702,9 +700,7 @@ class LocalChatService:
             run_id = UUID(str(row["run_id"]))
             provider = str(row["provider"])
             response = cast(dict[str, object], json.loads(str(row["response_json"])))
-            safety = SafetyPreview(
-                **cast(dict[str, Any], json.loads(str(row["safety_json"])))
-            )
+            safety = SafetyPreview(**cast(dict[str, Any], json.loads(str(row["safety_json"]))))
             with self._store.connect() as connection:
                 event_rows = connection.execute(
                     "SELECT * FROM mvp_local_chat_events WHERE run_id = ? ORDER BY sequence",
@@ -715,9 +711,7 @@ class LocalChatService:
                     sequence=int(event_row["sequence"]),
                     timestamp=datetime.fromisoformat(str(event_row["timestamp"])),
                     type=str(event_row["type"]),
-                    payload=cast(
-                        dict[str, object], json.loads(str(event_row["payload_json"]))
-                    ),
+                    payload=cast(dict[str, object], json.loads(str(event_row["payload_json"]))),
                 )
                 for event_row in event_rows
             ]

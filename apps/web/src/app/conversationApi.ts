@@ -192,6 +192,9 @@ interface ApiErrorDetail {
 }
 interface ApiErrorBody { detail?: string | ApiErrorDetail; }
 
+const LOCAL_REPOSITORY_PAGE_SIZE = 100;
+const MAX_LOCAL_REPOSITORY_PAGES = 20;
+
 export class ConversationApiError extends Error {
   constructor(
     readonly status: number,
@@ -255,6 +258,23 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
     };
   }
 
+  async function listAllRepositories(): Promise<ConversationRepository[]> {
+    const repositories: ConversationRepository[] = [];
+    for (let page = 0; page < MAX_LOCAL_REPOSITORY_PAGES; page += 1) {
+      const query = new URLSearchParams({
+        limit: String(LOCAL_REPOSITORY_PAGE_SIZE),
+        offset: String(page * LOCAL_REPOSITORY_PAGE_SIZE)
+      });
+      const items = await requestJson<ConversationRepository[]>(
+        `/api/local/repositories?${query.toString()}`,
+        { method: "GET", headers: { Accept: "application/json" } }
+      );
+      repositories.push(...items);
+      if (items.length < LOCAL_REPOSITORY_PAGE_SIZE) return repositories;
+    }
+    throw new ConversationApiError(413, "local_collection_limit_exceeded", null);
+  }
+
   return {
     listProviders: async () => {
       const providers = await requestJson<ProviderCatalogEntry[]>("/api/local-chat/providers", {
@@ -267,10 +287,7 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
         thinking_levels: Array.isArray(provider.thinking_levels) ? provider.thinking_levels : []
       }));
     },
-    listRepositories: () => requestJson("/api/local/repositories", {
-      method: "GET",
-      headers: { Accept: "application/json" }
-    }),
+    listRepositories: listAllRepositories,
     getPreferences: () => requestJson("/api/local-chat/preferences", {
       method: "GET",
       headers: { Accept: "application/json" }

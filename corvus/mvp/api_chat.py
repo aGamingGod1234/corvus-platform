@@ -20,6 +20,8 @@ ApiProvider = Literal["openai", "anthropic", "gemini", "xai"]
 _HTTP_TIMEOUT_SECONDS = 120.0
 _ABSOLUTE_DEADLINE_SECONDS = 180.0
 _MAX_OUTPUT_BYTES = 100_000
+_MAX_EVENT_OVERHEAD_BYTES = 65_536
+_STREAM_CHUNK_BYTES = 16_384
 _ENDPOINTS: dict[ApiProvider, str] = {
     "openai": "https://api.openai.com/v1/responses",
     "anthropic": "https://api.anthropic.com/v1/messages",
@@ -30,6 +32,39 @@ _ENDPOINTS: dict[ApiProvider, str] = {
 
 class ApiChatError(RuntimeError):
     pass
+
+
+class _ProviderStreamLimit(RuntimeError):
+    pass
+
+
+async def _bounded_response_lines(
+    response: httpx.Response,
+    *,
+    max_line_bytes: int,
+) -> AsyncIterator[str]:
+    """Decode provider lines while keeping any incomplete frame strictly bounded."""
+
+    buffered = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=_STREAM_CHUNK_BYTES):
+        chunk_start = 0
+        while chunk_start < len(chunk):
+            newline = chunk.find(b"\n", chunk_start)
+            chunk_end = len(chunk) if newline < 0 else newline
+            buffered.extend(chunk[chunk_start:chunk_end])
+            if len(buffered) > max_line_bytes:
+                raise _ProviderStreamLimit("provider_event_limit")
+            if newline < 0:
+                break
+            if buffered.endswith(b"\r"):
+                del buffered[-1]
+            yield buffered.decode("utf-8")
+            buffered.clear()
+            chunk_start = newline + 1
+    if buffered:
+        if buffered.endswith(b"\r"):
+            del buffered[-1]
+        yield buffered.decode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +175,10 @@ class ApiChatBackend:
                         self._active_responses[handle.id] = response
                         try:
                             response.raise_for_status()
-                            async for line in response.aiter_lines():
+                            async for line in _bounded_response_lines(
+                                response,
+                                max_line_bytes=(self._max_output_bytes + _MAX_EVENT_OVERHEAD_BYTES),
+                            ):
                                 if handle.id in self._cancelled:
                                     break
                                 terminal_state = self._terminal_state(line)
@@ -175,6 +213,9 @@ class ApiChatBackend:
         except TimeoutError:
             request_failed = True
             failure_reason = "provider_deadline_exceeded"
+        except _ProviderStreamLimit:
+            request_failed = True
+            failure_reason = "provider_output_limit"
         except (httpx.HTTPError, ValueError, json.JSONDecodeError):
             request_failed = True
         if handle.id in self._cancelled:
@@ -344,7 +385,9 @@ class ApiChatBackend:
             details = usage.get("input_tokens_details")
             return _normalized_usage(
                 input_tokens=usage.get("input_tokens"),
-                cached_input_tokens=details.get("cached_tokens") if isinstance(details, dict) else None,
+                cached_input_tokens=details.get("cached_tokens")
+                if isinstance(details, dict)
+                else None,
                 output_tokens=usage.get("output_tokens"),
             )
         if self._provider == "anthropic":

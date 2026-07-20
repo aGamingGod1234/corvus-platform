@@ -245,7 +245,7 @@ describe("RunsWorkspace", () => {
     render(<RunsWorkspace api={client} />);
 
     expect(await screen.findByText("Step 501")).toBeVisible();
-    expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(1, run.id, 0);
-    expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(2, run.id, 500);
+    expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(1, run.id, 0, 500);
+    expect(client.listLocalRunEvents).toHaveBeenNthCalledWith(2, run.id, 500, 500);
   });
 });

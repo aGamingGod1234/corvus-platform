@@ -91,7 +91,7 @@ export interface CorvusApi {
     outputPolicy: "report_only" | "prepare_changes" | "prepare_contribution";
   }): Promise<LocalRun>;
   getLocalRun(runId: string): Promise<LocalRun>;
-  listLocalRunEvents(runId: string, after?: number): Promise<LocalRunEvent[]>;
+  listLocalRunEvents(runId: string, after?: number, limit?: number): Promise<LocalRunEvent[]>;
   listLocalRunEvidence(runId: string): Promise<LocalRunEvidence[]>;
   cancelLocalRun(runId: string): Promise<LocalRun>;
   retryLocalRun(runId: string): Promise<LocalRun>;
@@ -205,6 +205,8 @@ export class ApiFailure extends Error {
   }
 }
 
+const LOCAL_PAGE_SIZE = 100;
+
 export function createCorvusApi(baseUrl = ""): CorvusApi {
   const client = createClient<paths>({ baseUrl, credentials: "include" });
   let csrfToken = "";
@@ -239,13 +241,12 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
   async function collectLocalPages<T>(
     load: (offset: number) => Promise<T[]>
   ): Promise<T[]> {
-    const pageSize = 100;
     const maxPages = 20;
     const collected: T[] = [];
     for (let page = 0; page < maxPages; page += 1) {
-      const items = await load(page * pageSize);
+      const items = await load(page * LOCAL_PAGE_SIZE);
       collected.push(...items);
-      if (items.length < pageSize) return collected;
+      if (items.length < LOCAL_PAGE_SIZE) return collected;
     }
     throw new ApiFailure(413, "local_collection_limit_exceeded");
   }
@@ -266,7 +267,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async listRepositories() {
       return collectLocalPages<LocalRepository>(async (offset) => requireData(
         await client.GET("/api/local/repositories", {
-          params: { query: { limit: 100, offset } }
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
         })
       ));
     },
@@ -335,7 +336,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async listLocalRuns() {
       return collectLocalPages<LocalRun>(async (offset) => requireData(
         await client.GET("/api/local/runs", {
-          params: { query: { limit: 100, offset } }
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
         })
       ));
     },
@@ -361,15 +362,15 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
         params: { path: { run_id: runId } }
       }));
     },
-    async listLocalRunEvents(runId, after = 0) {
+    async listLocalRunEvents(runId, after = 0, limit = 500) {
       return requireData(await client.GET("/api/local/runs/{run_id}/events", {
-        params: { path: { run_id: runId }, query: { after } }
+        params: { path: { run_id: runId }, query: { after, limit } }
       }));
     },
     async listLocalRunEvidence(runId) {
       return collectLocalPages<LocalRunEvidence>(async (offset) => requireData(
         await client.GET("/api/local/runs/{run_id}/evidence", {
-          params: { path: { run_id: runId }, query: { limit: 100, offset } }
+          params: { path: { run_id: runId }, query: { limit: LOCAL_PAGE_SIZE, offset } }
         })
       ));
     },
@@ -394,7 +395,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async listPortableSkills() {
       return collectLocalPages<PortableSkill>(async (offset) => requireData(
         await client.GET("/api/local/skills", {
-          params: { query: { limit: 100, offset } }
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
         })
       ));
     },
@@ -425,7 +426,7 @@ export function createCorvusApi(baseUrl = ""): CorvusApi {
     async listLocalSchedules() {
       return collectLocalPages<LocalSchedule>(async (offset) => requireData(
         await client.GET("/api/local/schedules", {
-          params: { query: { limit: 100, offset } }
+          params: { query: { limit: LOCAL_PAGE_SIZE, offset } }
         })
       ));
     },

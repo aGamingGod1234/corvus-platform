@@ -44,7 +44,13 @@ async def test_openai_api_chat_streams_each_text_delta_without_buffering() -> No
     )
     events = [event async for event in backend.events(handle)]
 
-    assert [event.type for event in events] == ["started", "message", "message", "usage", "completed"]
+    assert [event.type for event in events] == [
+        "started",
+        "message",
+        "message",
+        "usage",
+        "completed",
+    ]
     assert [event.payload.get("text") for event in events[1:3]] == ["Hello", " now"]
     assert events[3].payload == {
         "input_tokens": 12,
@@ -56,11 +62,13 @@ async def test_openai_api_chat_streams_each_text_delta_without_buffering() -> No
 
 @pytest.mark.asyncio
 async def test_api_chat_stops_an_unbounded_provider_stream_at_the_output_limit() -> None:
-    body = "\n\n".join((
-        'data: {"type":"response.output_text.delta","delta":"123"}',
-        'data: {"type":"response.output_text.delta","delta":"456"}',
-        'data: {"type":"response.completed"}',
-    ))
+    body = "\n\n".join(
+        (
+            'data: {"type":"response.output_text.delta","delta":"123"}',
+            'data: {"type":"response.output_text.delta","delta":"456"}',
+            'data: {"type":"response.completed"}',
+        )
+    )
     transport = httpx.MockTransport(lambda request: httpx.Response(200, text=body, request=request))
     backend = ApiChatBackend(
         provider="openai",
@@ -70,13 +78,48 @@ async def test_api_chat_stops_an_unbounded_provider_stream_at_the_output_limit()
         max_output_bytes=5,
     )
     handle = await backend.start(
-        run_id=uuid4(), prompt="Count", model="gpt-5.6-sol", effort="medium",
-        mode="chat", mcp_enabled=False, idempotency_key="api-output-limit",
+        run_id=uuid4(),
+        prompt="Count",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-output-limit",
     )
 
     events = [event async for event in backend.events(handle)]
 
     assert [event.type for event in events] == ["started", "message", "failed"]
+    assert events[-1].payload == {"reason_code": "provider_output_limit"}
+
+
+@pytest.mark.asyncio
+async def test_api_chat_rejects_an_oversized_event_before_json_parsing() -> None:
+    oversized_delta = "x" * 70_000
+    body = f'data: {{"type":"response.output_text.delta","delta":"{oversized_delta}"}}\n\n'
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=body.encode(), request=request)
+    )
+    backend = ApiChatBackend(
+        provider="openai",
+        credential="sk-test-never-log",
+        clock=lambda: NOW,
+        http_client_factory=lambda: httpx.AsyncClient(transport=transport),
+        max_output_bytes=5,
+    )
+    handle = await backend.start(
+        run_id=uuid4(),
+        prompt="Bound the provider frame",
+        model="gpt-5.6-sol",
+        effort="medium",
+        mode="chat",
+        mcp_enabled=False,
+        idempotency_key="api-frame-limit",
+    )
+
+    events = [event async for event in backend.events(handle)]
+
+    assert [event.type for event in events] == ["started", "failed"]
     assert events[-1].payload == {"reason_code": "provider_output_limit"}
 
 
@@ -324,11 +367,12 @@ async def test_api_chat_cancel_closes_a_stalled_provider_stream() -> None:
         def raise_for_status(self) -> None:
             return None
 
-        async def aiter_lines(self):
+        async def aiter_bytes(self, *, chunk_size: int | None = None):
+            del chunk_size
             self.started.set()
             await self.closed.wait()
             if False:
-                yield ""
+                yield b""
 
         async def aclose(self) -> None:
             self.closed.set()

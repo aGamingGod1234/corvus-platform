@@ -221,7 +221,9 @@ async def test_run_pump_failure_cancels_provider_before_marking_failed(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_run_pump_task_cancellation_propagates_after_stopping_provider(tmp_path: Path) -> None:
+async def test_run_pump_task_cancellation_propagates_after_stopping_provider(
+    tmp_path: Path,
+) -> None:
     backend = FakeBackend(gated=True)
     coordinator, repository, runs = _coordinator(tmp_path, backend)
     started = await coordinator.start("local", _request(repository.id))  # type: ignore[attr-defined]

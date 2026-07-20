@@ -256,9 +256,7 @@ class WorktreeManager:
                 if (
                     target != expected
                     or not self._valid_sha(base_sha)
-                    or not hmac.compare_digest(
-                        str(row["ownership_digest"]), expected_digest
-                    )
+                    or not hmac.compare_digest(str(row["ownership_digest"]), expected_digest)
                     or path_is_link_or_reparse(target)
                 ):
                     continue

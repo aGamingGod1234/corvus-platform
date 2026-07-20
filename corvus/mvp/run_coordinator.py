@@ -123,9 +123,7 @@ class RunCoordinator:
             f"{preview.label} policy locked before Codex started",
             preview.policy_digest,
         )
-        base_summary = (
-            f"Pinned {repository.display_name} at {repository.snapshot.head_sha[:12]}"
-        )
+        base_summary = f"Pinned {repository.display_name} at {repository.snapshot.head_sha[:12]}"
         self.runs.add_evidence(
             run_id,
             "repository_base",

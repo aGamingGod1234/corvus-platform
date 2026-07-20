@@ -74,11 +74,7 @@ def build_provider_catalog(
                 if codex_was_detected
                 else "Not installed"
             ),
-            models=(
-                _codex_models(codex_models, codex_effective_model)
-                if codex_available
-                else ()
-            ),
+            models=(_codex_models(codex_models, codex_effective_model) if codex_available else ()),
             thinking_levels=("low", "medium", "high", "xhigh") if codex_available else (),
             supports_mcp=True,
         ),
@@ -97,7 +93,9 @@ def build_provider_catalog(
             models=(
                 ProviderModel("sonnet", "Claude Sonnet", recommended=True),
                 ProviderModel("opus", "Claude Opus"),
-            ) if claude_available else (),
+            )
+            if claude_available
+            else (),
             thinking_levels=("low", "medium", "high", "xhigh", "max") if claude_available else (),
             supports_mcp=False,
         ),

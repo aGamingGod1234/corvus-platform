@@ -140,9 +140,7 @@ class RunStore:
             raise RunStoreNotFound("run_not_found")
         return self._record(row)
 
-    def for_occurrence(
-        self, tenant_id: str, schedule_id: str, occurrence_key: str
-    ) -> RunRecord:
+    def for_occurrence(self, tenant_id: str, schedule_id: str, occurrence_key: str) -> RunRecord:
         with self.store.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM mvp_runs WHERE tenant_id = ? AND schedule_id = ? "
@@ -153,9 +151,7 @@ class RunStore:
             raise RunStoreNotFound("run_occurrence_not_found")
         return self._record(row)
 
-    def list(
-        self, tenant_id: str, *, limit: int = 1000, offset: int = 0
-    ) -> tuple[RunRecord, ...]:
+    def list(self, tenant_id: str, *, limit: int = 1000, offset: int = 0) -> tuple[RunRecord, ...]:
         with self.store.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM mvp_runs WHERE tenant_id = ? "

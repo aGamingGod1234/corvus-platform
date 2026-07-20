@@ -70,9 +70,7 @@ def test_event_pages_are_bounded_and_resume_after_the_last_sequence(tmp_path: Pa
         runs.append_event(created.id, "provider.output", {"index": index})
 
     first_page = runs.events("tenant-a", created.id, limit=5)
-    second_page = runs.events(
-        "tenant-a", created.id, after=first_page[-1].sequence, limit=5
-    )
+    second_page = runs.events("tenant-a", created.id, after=first_page[-1].sequence, limit=5)
 
     assert [event.sequence for event in first_page] == [1, 2, 3, 4, 5]
     assert [event.sequence for event in second_page] == [6, 7, 8, 9, 10]
@@ -102,9 +100,7 @@ def test_accepts_sha256_base_object_id(tmp_path: Path) -> None:
     store = SqliteStore(tmp_path / "corvus.sqlite3")
     repository_id = _repository(store)
 
-    created = RunStore(store).create(
-        "tenant-a", _request(repository_id), base_sha="c" * 64
-    )
+    created = RunStore(store).create("tenant-a", _request(repository_id), base_sha="c" * 64)
 
     assert created.base_sha == "c" * 64
 
