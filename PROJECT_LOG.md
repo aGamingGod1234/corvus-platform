@@ -2175,3 +2175,27 @@
 
 ### Suggested Next Steps
 - Let the human/code-owner review the verified PR head and merge it when approved.
+
+## 2026-07-20 - Prepare the v0.2.0 beta installer release
+
+### What Was Implemented
+- Bumped the Windows, macOS, and Linux desktop package manifests from `0.2.0-alpha.2` to `0.2.0-beta.1`.
+- Updated the protected tag workflow to label its native-runner artifacts and published GitHub prerelease as an unsigned beta rather than an alpha.
+- Updated release documentation with the exact x64 installer names, non-draft prerelease behavior, checksum verification, and unsigned/notarization disclosures.
+
+### Files Modified
+- `apps/desktop/package.json`, `apps/desktop/src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}` - synchronized beta package versions.
+- `.github/workflows/desktop-release.yml` - beta artifact labels and truthful published-release metadata.
+- `README.md`, `apps/desktop/README.md`, `HACKATHON_STATUS.md` - beta installation and release-status guidance.
+- `PROJECT_LOG.md` - this release-preparation record.
+
+### Assumptions Made (flag these for review)
+- `v0.2.0-beta.1` is a published GitHub prerelease (`draft=false`, `prerelease=true`) for x64 Windows, macOS, and Linux.
+- The beta remains intentionally unsigned because production signing and Apple notarization credentials are not configured.
+
+### Known Issues / Deferred
+- ARM64 installers, production signing, Apple notarization, and stable auto-update channels remain deferred.
+- The public release must not be created until this version commit is reviewed, merged to protected `main`, and tagged there.
+
+### Suggested Next Steps
+- Validate the synchronized manifests and release workflow, obtain code-owner approval, tag the merged commit, and verify every uploaded installer against `SHA256SUMS.txt`.

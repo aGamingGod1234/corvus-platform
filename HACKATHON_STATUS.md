@@ -199,6 +199,6 @@ pnpm --dir apps/web build
 - The deterministic local effect adapter returns digest-bound results and does not perform privileged host writes or real provider calls.
 - No production cloud, PostgreSQL server, external OAuth registration, notarization, production signing, or multi-OS installer certification was attempted.
 - The container definition is authored but not locally exercised because no container engine is installed.
-- The unsigned alpha installers are not production signed, notarized, or certified. macOS and Linux artifacts are built and verified through GitHub Actions rather than this Windows workstation.
+- The unsigned beta installers are not production signed, notarized, or certified. macOS and Linux artifacts are built and verified through GitHub Actions rather than this Windows workstation.
 - Local Codex and Claude are selectable when their native CLIs are detected; each provider verifies its own sign-in when a run starts. Gemini and xAI/Grok remain Preview; Cursor is unavailable; API-key and Cloud provider execution remain deferred.
 - Durable current-state repositories for agent provider bindings, autonomy grants, credential proofs, runtime budgets, kill switches, and post-effect audit reconciliation require a later explicitly authorized persistence milestone.

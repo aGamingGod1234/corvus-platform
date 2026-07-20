@@ -109,17 +109,17 @@ pnpm --dir apps/desktop tauri build --no-bundle
 & apps\desktop\src-tauri\target\release\corvus-desktop.exe
 ```
 
-## Alpha installers and web deployment
+## Beta installers and web deployment
 
-Unsigned alpha desktop installers are built by `.github/workflows/desktop-release.yml` for:
+Unsigned beta desktop installers are built by `.github/workflows/desktop-release.yml` for:
 
-- Windows x64 NSIS: `Corvus_0.2.0-alpha.1_x64-setup.exe`
-- macOS x64 DMG
-- Linux x64 AppImage and `.deb`
+- Windows x64 NSIS: `Corvus_0.2.0-beta.1_x64-setup.exe`
+- macOS x64 DMG: `Corvus_0.2.0-beta.1_x64.dmg`
+- Linux x64: `Corvus_0.2.0-beta.1_amd64.AppImage` and `Corvus_0.2.0-beta.1_amd64.deb`
 
-The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A GitHub prerelease with `SHA256SUMS.txt` is created only when a reviewed `v0.2.0-alpha.1` tag points to a commit already on `main`.
+The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A published, non-draft GitHub prerelease with `SHA256SUMS.txt` is created only when the reviewed `v0.2.0-beta.1` tag points to a commit already on `main`.
 
-These installers are intentionally unsigned alpha artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and release channels remain later work.
+These installers are intentionally unsigned beta artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and stable release channels remain later work.
 
 The web app is linked to Vercel project `corvus-platform`, connected to `aGamingGod1234/corvus-platform`, with Git root `apps/web` so `main` updates produce production deployments and pull requests produce previews. Current deployment: <https://corvus-platform-tau.vercel.app>. The hosted app keeps Local mode honest: it hands off to the same-machine local runtime and does not receive local pairing secrets or session cookies.
 

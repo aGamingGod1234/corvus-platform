@@ -36,4 +36,4 @@ Copy-Item dist/corvus-mvp.exe apps/desktop/src-tauri/binaries/corvus-mvp
 pnpm --dir apps/desktop tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
 ```
 
-The local installer is an unsigned alpha artifact. It bundles the standalone `corvus-mvp` sidecar and no longer requires `CORVUS_SIDECAR_EXECUTABLE` for packaged runs. Production signing, notarization, and update-channel signing remain later work.
+The local installer is an unsigned beta artifact. It bundles the standalone `corvus-mvp` sidecar and no longer requires `CORVUS_SIDECAR_EXECUTABLE` for packaged runs. Production signing, notarization, and update-channel signing remain later work.
