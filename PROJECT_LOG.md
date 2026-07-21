@@ -2512,3 +2512,24 @@
 
 ### Suggested Next Steps
 - Resolve the addressed PR thread after the focused and certification checks pass.
+
+## 2026-07-21 — Windows demo runtime reliability
+### What Was Implemented
+- Limited Windows sandbox traverse grants to Corvus-managed worktree directories and serialized ACL updates to prevent startup stalls on large user-profile trees.
+- Extended build-mode Codex sessions to a ten-minute ceiling while retaining the existing two-minute ceiling for chat sessions.
+- Added focused regression coverage for both runtime boundaries.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — narrows and serializes Windows ACL work and applies the build-specific timeout.
+- `tests/contract/providers/test_codex_adapter.py` — verifies managed-root ACL boundaries, serialized grants, and build timeout behavior.
+- `PROJECT_LOG.md` — records the demo-readiness repair.
+
+### Assumptions Made (flag these for review)
+- A ten-minute build ceiling is sufficient for the hackathon MVP while the durable run deadline remains the stricter request-specific boundary.
+- Granting traverse access only through Corvus-managed directories is sufficient because the sandbox account receives its workspace path from the already-running parent process.
+
+### Known Issues / Deferred
+- The unsigned beta release remains appropriate for the current alpha-stage distribution policy.
+
+### Suggested Next Steps
+- Review and merge the runtime repair before cutting the next installer release.

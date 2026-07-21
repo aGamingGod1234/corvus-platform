@@ -65,7 +65,7 @@ def test_workspace_traverse_boundaries_cover_the_complete_managed_path(
     )
 
 
-def test_workspace_traverse_boundaries_reach_the_user_profile(
+def test_workspace_traverse_boundaries_stop_at_the_managed_root(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -77,9 +77,6 @@ def test_workspace_traverse_boundaries_reach_the_user_profile(
         workspace.parent,
         workspace.parent.parent,
         managed_root,
-        managed_root.parent,
-        managed_root.parent.parent,
-        home,
     )
 
 
@@ -100,9 +97,6 @@ def test_workspace_traverse_boundaries_ignore_desktop_profile_redirection(
         workspace.parent,
         workspace.parent.parent,
         managed_root,
-        managed_root.parent,
-        managed_root.parent.parent,
-        home,
     )
 
 
@@ -122,10 +116,21 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     granted: list[tuple[Path, str]] = []
     modified: list[tuple[Path, str]] = []
     operations: list[tuple[str, Path, str]] = []
+    active_grants = 0
+    max_active_grants = 0
+    grant_lock = threading.Lock()
+    grant_delay = threading.Event()
 
     def grant_traverse(directory: Path, sid: str) -> None:
-        granted.append((directory, sid))
-        operations.append(("traverse", directory, sid))
+        nonlocal active_grants, max_active_grants
+        with grant_lock:
+            active_grants += 1
+            max_active_grants = max(max_active_grants, active_grants)
+        grant_delay.wait(0.01)
+        with grant_lock:
+            granted.append((directory, sid))
+            operations.append(("traverse", directory, sid))
+            active_grants -= 1
 
     def grant_modify(directory: Path, sid: str) -> None:
         modified.append((directory, sid))
@@ -156,6 +161,7 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     }
     assert modified == [(workspace, user_sid)]
     assert operations[0] == ("modify", workspace, user_sid)
+    assert max_active_grants == 1
 
 
 @pytest.mark.asyncio
@@ -491,6 +497,7 @@ async def test_codex_adapter_uses_only_an_explicit_approved_managed_workspace(
     assert starter.invocation is not None
     assert starter.invocation.cwd == workspace.resolve()
     assert starter.invocation.approved_roots == (workspace.resolve(),)
+    assert starter.invocation.limits.timeout_seconds == 600.0
 
 
 @pytest.mark.asyncio

@@ -72,6 +72,7 @@ _WINDOWS_LOCAL_DATA_DIRECTORY = "Local"
 _WINDOWS_DESKTOP_DATA_DIRECTORY = "app.corvus.desktop"
 _MAX_GIT_POINTER_BYTES = 4_096
 _MAX_TIMEOUT_SECONDS = 120.0
+_MAX_BUILD_TIMEOUT_SECONDS = 600.0
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
 _MAX_FRAMES = 10_000
@@ -234,14 +235,7 @@ def _workspace_traverse_boundaries(
             resolved_home = app_data.parent.resolve(strict=True)
     if not resolved_workspace.is_relative_to(resolved_home):
         raise TrustedProcessError("Codex workspace is outside the user profile")
-    boundaries: list[Path] = []
-    ancestor = repository_worktrees
-    while True:
-        boundaries.append(ancestor)
-        if ancestor == resolved_home:
-            break
-        ancestor = ancestor.parent
-    return tuple(boundaries)
+    return (repository_worktrees, worktrees_root, managed_root)
 
 
 def _linked_git_access_paths(workspace: Path) -> tuple[Path, Path] | None:
@@ -365,12 +359,8 @@ async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
     if logon_sid is None or user_sid is None:
         raise TrustedProcessError("Windows sandbox identity is unavailable")
     await asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid)
-    await asyncio.gather(
-        *(
-            asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
-            for directory in (workspace, *_workspace_traverse_boundaries(workspace))
-        )
-    )
+    for directory in (workspace, *_workspace_traverse_boundaries(workspace)):
+        await asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
 
 
 class _RunSession:
@@ -596,6 +586,9 @@ class CodexCliAdapter(AgentRuntimePort):
         if len(prompt_bytes) > _MAX_STDIN_BYTES:
             raise CodexAdapterError("codex_prompt_too_large")
         arguments.append("-")
+        timeout_ceiling = (
+            _MAX_BUILD_TIMEOUT_SECONDS if mode == "build" else _MAX_TIMEOUT_SECONDS
+        )
         limits = ProcessSessionLimits(
             max_stdin_bytes=_MAX_STDIN_BYTES,
             max_stdout_bytes=max_output_bytes,
@@ -604,7 +597,7 @@ class CodexCliAdapter(AgentRuntimePort):
             max_frames=_MAX_FRAMES,
             max_events=_MAX_FRAMES + 1,
             timeout_seconds=min(
-                _MAX_TIMEOUT_SECONDS,
+                timeout_ceiling,
                 max(1.0, (deadline - self._clock()).total_seconds()),
             ),
         )
