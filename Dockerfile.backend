@@ -10,9 +10,9 @@ FROM python:3.12.10-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 RUN useradd --system --uid 10001 --home-dir /app --create-home corvus
-COPY --from=wheel-builder /wheel/*.whl /tmp/corvus.whl
-RUN python -m pip install --no-cache-dir /tmp/corvus.whl \
-    && rm /tmp/corvus.whl
+COPY --from=wheel-builder /wheel/*.whl /tmp/
+RUN python -m pip install --no-cache-dir /tmp/corvus-*.whl \
+    && rm /tmp/corvus-*.whl
 USER corvus
 WORKDIR /app
 EXPOSE 8080
