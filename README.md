@@ -107,9 +107,9 @@ Local Codex and Claude run through native CLIs detected on the device; the provi
 
 ## Codex Usage
 
-OpenAI Codex was used as the primary engineering agent for planning, implementation, code review remediation, security hardening, cross-platform CI repair, and end-to-end verification. **GPT-5.6 Sol powered the final product iteration and recorded Build Week demo path.** Corvus also integrates the user's installed Codex CLI as a local runtime: the user can select recommended GPT-5.6 models and thinking levels, stream safe progress, opt into MCP tools, and run a coding task inside the bounded Build workspace before downloading the result.
+OpenAI Codex was used as the primary engineering agent for planning, implementation, code review remediation, security hardening, cross-platform CI repair, and end-to-end verification. **GPT-5.6 Sol powered the final product iteration; the Build Week demo records that path as evidence.** Corvus also integrates the user's installed Codex CLI as a local runtime: the user can select recommended GPT-5.6 models and thinking levels, stream safe progress, opt into MCP tools, and run a coding task inside the bounded Build workspace before downloading the result.
 
-Build Week evidence includes Codex `/feedback` session `019f604f-3063-7673-a08d-a638fb856361` and a 2:57 demo that shows the local Codex provider, GPT-5.6 Sol, thinking controls, MCP consent, Protected Build, and the finished-project handoff.
+Build Week evidence includes a Codex `/feedback` session ID supplied to judges through Devpost and a 2:57 demo that shows the local Codex provider, GPT-5.6 Sol, thinking controls, MCP consent, Protected Build, and the finished-project handoff.
 
 Key Codex-assisted safeguards include fixed-argument process invocation, provider-bound model validation, explicit MCP consent, plugin/app/hook isolation, secret-screened artifact packaging, signed cursors, reconnect-safe event replay, and fail-closed provider discovery.
 
