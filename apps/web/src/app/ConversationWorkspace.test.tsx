@@ -180,6 +180,22 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
   });
 
+  it("keeps Run options usable after a run fails to start", async () => {
+    const api = conversationApi(new FakeRunStream());
+    vi.mocked(api.startRun).mockRejectedValue(new Error("Codex sandbox preflight failed."));
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-failed-run-options" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Codex sandbox preflight failed.");
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "Run options panel" })).toBeVisible();
+  });
+
   it("closes an open composer menu when keyboard focus leaves it", async () => {
     const user = userEvent.setup();
     render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}

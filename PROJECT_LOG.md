@@ -2550,3 +2550,30 @@
 
 ### Suggested Next Steps
 - Confirm the Windows certification matrix is green on the updated PR commit.
+
+## 2026-07-21 — Demo Build-mode recovery and chat polish
+### What Was Implemented
+- Extended the Windows sandbox boundary check to the explicitly approved `.corvus-local-chat/codex/<run>` workspace without permitting arbitrary project paths.
+- Omitted credential-bearing files from isolated project copies and changed artifact screening to inspect/package only files produced or modified by the agent.
+- Kept Run options accessible after a failed start and visually hid transcript/composer scrollbars while preserving wheel, keyboard, and touchpad scrolling.
+- Verified a real local Codex Build-mode run reached `completed`, wrote the requested file, and produced a screened ZIP artifact.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — supports the approved local-chat sandbox and baseline-aware change artifacts.
+- `corvus/mvp/local_chat.py` — prevents sensitive source files from entering copied sandboxes.
+- `tests/contract/providers/test_codex_adapter.py` — covers local-chat boundaries and changed-file artifact packaging.
+- `tests/mvp/test_local_chat_api.py` — covers sensitive-file omission during project copy.
+- `apps/web/src/app/ConversationWorkspace.tsx` — explicitly associates the Run options trigger and panel.
+- `apps/web/src/app/ConversationWorkspace.test.tsx` — verifies Run options remain usable after startup failure.
+- `apps/web/src/styles/product-workspace.css` — hides chat scrollbars without disabling scrolling.
+- `PROJECT_LOG.md` — records the demo-critical repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- Build artifacts should be bounded change bundles rather than duplicate the complete pre-existing repository; this keeps downloads useful and secret screening focused on agent output.
+- “Remove the scrollbar” means visually hiding it while preserving all scrolling behavior.
+
+### Known Issues / Deferred
+- Installers remain unsigned for the approved beta distribution policy.
+
+### Suggested Next Steps
+- Merge PR #16 after review, then promote the verified Windows installer for the recorded demo.

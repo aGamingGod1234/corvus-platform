@@ -61,6 +61,7 @@ _PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
         ".next",
         ".pytest_cache",
         ".ruff_cache",
+        ".ssh",
         ".svn",
         ".turbo",
         ".venv",
@@ -70,6 +71,21 @@ _PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
         "node_modules",
         "target",
         "venv",
+    }
+)
+_PROJECT_COPY_SENSITIVE_FILE_NAMES = frozenset(
+    {".env", ".git-credentials", ".netrc", ".npmrc", ".pypirc", "credentials.json", "secrets.json"}
+)
+_PROJECT_COPY_SENSITIVE_FILE_SUFFIXES = frozenset({".key", ".pem"})
+_PROJECT_COPY_SENSITIVE_PATHS = frozenset(
+    {
+        (".aws", "credentials"),
+        (".azure", "accesstokens.json"),
+        (".config", "gcloud", "application_default_credentials.json"),
+        (".config", "gcloud", "credentials.db"),
+        (".docker", "config.json"),
+        (".kube", "config"),
+        (".terraform.d", "credentials.tfrc.json"),
     }
 )
 _WINDOWS_CODEX_TARGETS = {
@@ -1397,6 +1413,20 @@ def _request_digest(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _project_file_is_sensitive(relative: Path) -> bool:
+    parts = tuple(part.casefold() for part in relative.parts)
+    name = relative.name.casefold()
+    return (
+        name in _PROJECT_COPY_SENSITIVE_FILE_NAMES
+        or name.startswith(".env.")
+        or relative.suffix.casefold() in _PROJECT_COPY_SENSITIVE_FILE_SUFFIXES
+        or any(
+            len(parts) >= len(sensitive_path) and parts[-len(sensitive_path) :] == sensitive_path
+            for sensitive_path in _PROJECT_COPY_SENSITIVE_PATHS
+        )
+    )
+
+
 def _copy_project(source_directory: Path, destination: Path) -> None:
     try:
         source = source_directory.resolve(strict=True)
@@ -1426,8 +1456,11 @@ def _copy_project(source_directory: Path, destination: Path) -> None:
             directories[:] = retained_directories
             for name in files:
                 source_file = root_path / name
+                relative_file = relative_root / name
                 if path_is_link_or_reparse(source_file):
                     raise LocalChatError("local_chat_project_links_forbidden")
+                if _project_file_is_sensitive(relative_file):
+                    continue
                 try:
                     size = source_file.stat().st_size
                 except OSError as error:
@@ -1435,7 +1468,7 @@ def _copy_project(source_directory: Path, destination: Path) -> None:
                 if not source_file.is_file():
                     raise LocalChatError("local_chat_project_unavailable")
                 total_bytes += size
-                files_to_copy.append((source_file, relative_root / name, size))
+                files_to_copy.append((source_file, relative_file, size))
                 if (
                     len(files_to_copy) > _PROJECT_COPY_MAX_FILES
                     or len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES

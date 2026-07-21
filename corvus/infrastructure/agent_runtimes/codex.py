@@ -70,6 +70,8 @@ _WINDOWS_SHGFP_TYPE_CURRENT = 0
 _WINDOWS_APP_DATA_DIRECTORY = "AppData"
 _WINDOWS_LOCAL_DATA_DIRECTORY = "Local"
 _WINDOWS_DESKTOP_DATA_DIRECTORY = "app.corvus.desktop"
+_LOCAL_CHAT_SANDBOX_DIRECTORY = ".corvus-local-chat"
+_LOCAL_CHAT_CODEX_DIRECTORY = "codex"
 _MAX_GIT_POINTER_BYTES = 4_096
 _MAX_TIMEOUT_SECONDS = 120.0
 _MAX_BUILD_TIMEOUT_SECONDS = 600.0
@@ -215,14 +217,28 @@ def _windows_profile_directory() -> Path:
 def _workspace_traverse_boundaries(
     workspace: Path,
     *,
+    approved_root: Path | None = None,
     home: Path | None = None,
 ) -> tuple[Path, ...]:
     resolved_workspace = workspace.resolve(strict=True)
     repository_worktrees = resolved_workspace.parent
     worktrees_root = repository_worktrees.parent
-    if worktrees_root.name != ".corvus-worktrees":
-        raise TrustedProcessError("Codex workspace is outside the managed worktree root")
-    managed_root = worktrees_root.parent
+    if worktrees_root.name == ".corvus-worktrees":
+        managed_root = worktrees_root.parent
+        boundaries = (repository_worktrees, worktrees_root, managed_root)
+    else:
+        if approved_root is None:
+            raise TrustedProcessError("Codex workspace is outside the managed worktree root")
+        resolved_approved_root = approved_root.resolve(strict=True)
+        local_chat_root = resolved_approved_root.parent
+        if (
+            resolved_workspace.parent != resolved_approved_root
+            or resolved_approved_root.name != _LOCAL_CHAT_CODEX_DIRECTORY
+            or local_chat_root.name != _LOCAL_CHAT_SANDBOX_DIRECTORY
+        ):
+            raise TrustedProcessError("Codex workspace is outside the managed sandbox root")
+        managed_root = local_chat_root.parent
+        boundaries = (resolved_approved_root, local_chat_root, managed_root)
     resolved_home = (home or _windows_profile_directory()).resolve(strict=True)
     if home is None:
         local_data = managed_root.parent
@@ -235,7 +251,7 @@ def _workspace_traverse_boundaries(
             resolved_home = app_data.parent.resolve(strict=True)
     if not resolved_workspace.is_relative_to(resolved_home):
         raise TrustedProcessError("Codex workspace is outside the user profile")
-    return (repository_worktrees, worktrees_root, managed_root)
+    return boundaries
 
 
 def _linked_git_access_paths(workspace: Path) -> tuple[Path, Path] | None:
@@ -302,6 +318,8 @@ async def _grant_windows_workspace_access(
     workspace: Path,
     baseline_sids: frozenset[str],
     linked_git_access_paths: tuple[Path, Path] | None = None,
+    *,
+    approved_root: Path | None = None,
 ) -> None:
     sandbox_sids: frozenset[str] = frozenset()
     for _attempt in range(_WINDOWS_ACL_POLL_ATTEMPTS):
@@ -319,7 +337,10 @@ async def _grant_windows_workspace_access(
             sandbox_sids,
             grant_windows_sid_traverse,
         )
-        for ancestor in _workspace_traverse_boundaries(workspace)
+        for ancestor in _workspace_traverse_boundaries(
+            workspace,
+            approved_root=approved_root,
+        )
     ]
     if linked_git_access_paths is not None:
         source_repository, common_git_directory = linked_git_access_paths
@@ -351,7 +372,11 @@ def _grant_windows_sids_sequentially(
         grant(directory, sid)
 
 
-async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
+async def _grant_windows_sandbox_preflight(
+    workspace: Path,
+    *,
+    approved_root: Path | None = None,
+) -> None:
     logon_sid, user_sid = await asyncio.gather(
         asyncio.to_thread(windows_current_logon_sid),
         asyncio.to_thread(windows_current_user_sid),
@@ -359,7 +384,10 @@ async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
     if logon_sid is None or user_sid is None:
         raise TrustedProcessError("Windows sandbox identity is unavailable")
     await asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid)
-    for directory in (workspace, *_workspace_traverse_boundaries(workspace)):
+    for directory in (
+        workspace,
+        *_workspace_traverse_boundaries(workspace, approved_root=approved_root),
+    ):
         await asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
 
 
@@ -371,6 +399,7 @@ class _RunSession:
         scratch: Path,
         mode: Literal["chat", "inspect", "build"],
         package_artifact: bool,
+        baseline_digests: Mapping[str, str] | None = None,
         workspace_access_task: asyncio.Task[None] | None = None,
     ) -> None:
         self.process = process
@@ -382,6 +411,7 @@ class _RunSession:
         self.scratch = scratch
         self.mode = mode
         self.package_artifact = package_artifact
+        self.baseline_digests = dict(baseline_digests or {})
         self.workspace_access_task = workspace_access_task
         self.artifact: LocalBuildArtifact | None = None
         self.provider_completed = False
@@ -529,20 +559,25 @@ class CodexCliAdapter(AgentRuntimePort):
             raise CodexAdapterError("codex_prompt_invalid")
         if model is not None and _MODEL_PATTERN.fullmatch(model) is None:
             raise CodexAdapterError("codex_model_invalid")
+        approved_workspace_root: Path | None = None
         if workspace is None:
             scratch = self._scratch_root / str(run_id)
             scratch.mkdir(parents=True, exist_ok=False)
         else:
             try:
                 scratch = workspace.resolve(strict=True)
+                resolved_approved_roots = tuple(
+                    root.resolve(strict=True) for root in self._approved_workspace_roots
+                )
             except OSError as exc:
                 raise CodexAdapterError("codex_workspace_unavailable") from exc
             if not scratch.is_dir() or path_is_link_or_reparse(scratch):
                 raise CodexAdapterError("codex_workspace_unavailable")
-            if not any(
-                scratch.is_relative_to(root.resolve(strict=True))
-                for root in self._approved_workspace_roots
-            ):
+            approved_workspace_root = next(
+                (root for root in resolved_approved_roots if scratch.is_relative_to(root)),
+                None,
+            )
+            if approved_workspace_root is None:
                 raise CodexAdapterError("codex_workspace_unapproved")
         sandbox = "workspace-write" if mode == "build" else "read-only"
         arguments = [
@@ -619,11 +654,19 @@ class CodexCliAdapter(AgentRuntimePort):
         )
         if prepare_windows_access:
             try:
-                await _grant_windows_sandbox_preflight(scratch)
+                await _grant_windows_sandbox_preflight(
+                    scratch,
+                    approved_root=approved_workspace_root,
+                )
             except TrustedProcessError as error:
                 raise CodexAdapterError("codex_sandbox_preflight_failed") from error
         baseline_sids = (
             windows_directory_acl_sids(scratch) if prepare_windows_access else frozenset()
+        )
+        baseline_digests = (
+            _snapshot_workspace(scratch)
+            if mode == "build" and package_artifact and workspace is not None
+            else {}
         )
         try:
             process = await self._session_starter(invocation)
@@ -635,6 +678,7 @@ class CodexCliAdapter(AgentRuntimePort):
                     scratch,
                     baseline_sids,
                     linked_git_access_paths,
+                    approved_root=approved_workspace_root,
                 )
             )
             if prepare_windows_access
@@ -651,6 +695,7 @@ class CodexCliAdapter(AgentRuntimePort):
             scratch=scratch,
             mode=mode,
             package_artifact=package_artifact,
+            baseline_digests=baseline_digests,
             workspace_access_task=workspace_access_task,
         )
         self._sessions[handle.id] = run_session
@@ -905,7 +950,11 @@ class CodexCliAdapter(AgentRuntimePort):
                     continue
                 if session.mode == "build" and session.package_artifact:
                     try:
-                        session.artifact = _package_workspace(session.scratch, handle.run_id)
+                        session.artifact = _package_workspace(
+                            session.scratch,
+                            handle.run_id,
+                            baseline_digests=session.baseline_digests,
+                        )
                     except CodexAdapterError as error:
                         yield event(
                             AgentRunEventType.FAILED,
@@ -1038,8 +1087,32 @@ def _is_placeholder_secret(value: bytes | str) -> bool:
     return _PLACEHOLDER_SECRET_PATTERN.match(encoded) is not None
 
 
-def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
+def _snapshot_workspace(scratch: Path) -> dict[str, str]:
     root = scratch.resolve(strict=True)
+    digests: dict[str, str] = {}
+    for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path_is_link_or_reparse(candidate):
+            raise CodexAdapterError("codex_build_link_rejected")
+        if candidate.is_dir():
+            continue
+        relative = candidate.relative_to(root)
+        if any(part in _BUILD_EXCLUDED_PARTS for part in relative.parts):
+            continue
+        canonical = candidate.resolve(strict=True)
+        if not canonical.is_relative_to(root):
+            raise CodexAdapterError("codex_build_path_escape")
+        digests[relative.as_posix()] = _sha256_file(canonical)
+    return digests
+
+
+def _package_workspace(
+    scratch: Path,
+    run_id: UUID,
+    *,
+    baseline_digests: Mapping[str, str] | None = None,
+) -> LocalBuildArtifact:
+    root = scratch.resolve(strict=True)
+    baseline = baseline_digests or {}
     files: list[tuple[Path, str, bytes]] = []
     total_bytes = 0
     for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
@@ -1059,6 +1132,8 @@ def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
         if not canonical.is_relative_to(root):
             raise CodexAdapterError("codex_build_path_escape")
         content = canonical.read_bytes()
+        if baseline.get(relative.as_posix()) == hashlib.sha256(content).hexdigest():
+            continue
         if len(content) > _MAX_BUILD_FILE_BYTES:
             raise CodexAdapterError("codex_build_file_too_large")
         if _contains_sensitive_build_content(content):

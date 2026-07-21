@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import zipfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -26,6 +27,8 @@ from corvus.infrastructure.agent_runtimes.codex import (
     _grant_windows_sandbox_preflight,
     _grant_windows_workspace_access,
     _linked_git_access_paths,
+    _package_workspace,
+    _snapshot_workspace,
     _windows_profile_directory,
     _workspace_traverse_boundaries,
 )
@@ -39,6 +42,23 @@ from corvus.safe_process import TrustedProcessError
 
 NOW = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
 WORKSPACE_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+
+def test_build_artifact_packages_only_files_changed_after_the_baseline(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "existing.py").write_text(
+        'EXAMPLE = "ghp_12345678901234567890"\n',
+        encoding="utf-8",
+    )
+    baseline = _snapshot_workspace(workspace)
+    (workspace / "result.txt").write_text("sandbox ok", encoding="utf-8")
+
+    artifact = _package_workspace(workspace, uuid4(), baseline_digests=baseline)
+
+    with zipfile.ZipFile(artifact.path) as package:
+        assert "result.txt" in package.namelist()
+        assert "existing.py" not in package.namelist()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows known-folder semantics")
@@ -76,6 +96,26 @@ def test_workspace_traverse_boundaries_stop_at_the_managed_root(
     assert _workspace_traverse_boundaries(workspace, home=home) == (
         workspace.parent,
         workspace.parent.parent,
+        managed_root,
+    )
+
+
+def test_workspace_traverse_boundaries_accept_local_chat_codex_sandbox(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    managed_root = home / "AppData" / "Local" / "app.corvus.desktop"
+    approved_root = managed_root / ".corvus-local-chat" / "codex"
+    workspace = approved_root / "run"
+    workspace.mkdir(parents=True)
+
+    assert _workspace_traverse_boundaries(
+        workspace,
+        approved_root=approved_root,
+        home=home,
+    ) == (
+        approved_root,
+        approved_root.parent,
         managed_root,
     )
 

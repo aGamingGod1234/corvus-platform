@@ -253,6 +253,19 @@ def test_project_copy_skips_dependency_and_vcs_directories(tmp_path: Path) -> No
     assert not (destination / ".git").exists()
 
 
+def test_project_copy_omits_sensitive_files_from_the_sandbox(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    (source / "tests" / "fixtures").mkdir(parents=True)
+    (source / "tests" / "fixtures" / ".env").write_text("TOKEN=fake", encoding="utf-8")
+    (source / "README.md").write_text("safe", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-sensitive"
+
+    local_chat_module._copy_project(source, destination)
+
+    assert (destination / "README.md").is_file()
+    assert not (destination / "tests" / "fixtures" / ".env").exists()
+
+
 def test_project_copy_rejects_sources_over_the_size_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

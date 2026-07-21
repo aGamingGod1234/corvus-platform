@@ -265,7 +265,8 @@
 .thread-list__items strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-list__items span { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: .7rem; }
 
-.message-transcript { width: min(100%, 52rem); min-height: 0; flex: 1 1 auto; overflow-y: auto; margin: 0 auto; padding: clamp(1rem, 3vw, 2.5rem) clamp(1rem, 3vw, 2rem); }
+.message-transcript { width: min(100%, 52rem); min-height: 0; flex: 1 1 auto; overflow-y: auto; margin: 0 auto; padding: clamp(1rem, 3vw, 2.5rem) clamp(1rem, 3vw, 2rem); scrollbar-width: none; -ms-overflow-style: none; }
+.message-transcript::-webkit-scrollbar, .composer textarea::-webkit-scrollbar { display: none; }
 .conversation-empty { display: grid; max-width: 36rem; min-height: 100%; align-content: center; justify-items: center; margin: auto; padding: 1rem 0 5rem; text-align: center; }
 .conversation-mark { width: 3rem; height: 3rem; margin-bottom: .9rem; color: var(--ink); }
 .conversation-empty h2 { margin: 0; font-family: inherit; font-size: clamp(1.45rem, 3vw, 2rem); font-weight: 660; letter-spacing: -.035em; }
@@ -329,11 +330,11 @@
 .conversation-error { width: min(calc(100% - 2rem), 50rem); margin: 0 auto .55rem; color: var(--danger); font-size: .8rem; }
 
 .composer { width: min(calc(100% - 2rem), 54rem); min-width: 0; flex: 0 0 auto; margin: 0 auto 1rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
-.composer textarea { width: 100%; min-height: 3.4rem; max-height: 10rem; resize: vertical; border: 0; padding: .9rem .95rem .55rem; color: var(--ink); background: transparent; line-height: 1.5; }
+.composer textarea { width: 100%; min-height: 3.4rem; max-height: 10rem; resize: vertical; border: 0; padding: .9rem .95rem .55rem; color: var(--ink); background: transparent; line-height: 1.5; scrollbar-width: none; -ms-overflow-style: none; }
 .composer textarea:focus { outline: 0; }
 .composer:focus-within { border-color: color-mix(in oklch, var(--signal) 55%, var(--line)); outline: 2px solid color-mix(in oklch, var(--signal) 18%, transparent); outline-offset: 0; }
 .composer__controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: .25rem; align-items: center; min-width: 0; padding: .45rem; }
-.composer__advanced { display: grid; grid-template-columns: auto minmax(6rem, .75fr) auto minmax(8rem, 1fr) auto minmax(6rem, .75fr) auto; min-width: 0; gap: .25rem .4rem; align-items: center; border-top: 1px solid var(--line); padding: .45rem; background: var(--paper); }
+.composer__advanced { position: relative; z-index: 2; display: grid; grid-template-columns: auto minmax(6rem, .75fr) auto minmax(8rem, 1fr) auto minmax(6rem, .75fr) auto; min-width: 0; gap: .25rem .4rem; align-items: center; border-top: 1px solid var(--line); padding: .45rem; background: var(--paper); }
 .composer-project { position: relative; min-width: 0; flex: 0 1 auto; }
 .composer-project__trigger { display: block; width: 100%; max-width: 16rem; min-height: 2rem; overflow: hidden; border: 0; border-radius: var(--radius-sm); padding: 0 .5rem; color: var(--muted); background: transparent; cursor: pointer; font-size: .68rem; font-weight: 650; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .composer-project__trigger:hover, .composer-project__trigger[aria-expanded="true"] { color: var(--ink); background: color-mix(in oklch, var(--ink) 6%, transparent); }
