@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import subprocess  # nosec B404
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from ctypes import wintypes
@@ -556,7 +557,7 @@ def windows_directory_acl_sids(directory: Path) -> frozenset[str]:
 def windows_current_logon_sid() -> str | None:
     """Return the current Windows logon SID shared by normal and restricted checks."""
 
-    if os.name != "nt":
+    if sys.platform != "win32":
         return None
 
     class _SidAndAttributes(ctypes.Structure):
@@ -646,7 +647,7 @@ def windows_current_logon_sid() -> str | None:
 def windows_current_user_sid() -> str | None:
     """Return the SID of the Windows user represented by the current process token."""
 
-    if os.name != "nt":
+    if sys.platform != "win32":
         return None
 
     class _SidAndAttributes(ctypes.Structure):
@@ -755,7 +756,7 @@ def _grant_windows_sid_access(
 ) -> None:
     """Grant a bounded access mask to one validated SID on a trusted directory."""
 
-    if os.name != "nt":
+    if sys.platform != "win32":
         return
     if _WINDOWS_SID_PATTERN.fullmatch(sid) is None:
         raise TrustedProcessError("trusted ACL SID is invalid")

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -190,7 +191,7 @@ async def _start_process_session(invocation: ProcessInvocation) -> _ProcessSessi
 
 
 def _windows_profile_directory() -> Path:
-    if os.name != "nt":
+    if sys.platform != "win32":
         return Path.home().resolve(strict=True)
     import ctypes
 
