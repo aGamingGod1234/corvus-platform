@@ -2455,3 +2455,22 @@
 
 ### Suggested Next Steps
 - Verify Railway readiness and the Vercel-to-Google OAuth redirect end to end.
+
+## 2026-07-21 — PostgreSQL migration revision capacity
+### What Was Implemented
+- Widened Alembic's PostgreSQL revision column before Corvus reaches its first revision identifier longer than 32 characters.
+- Added offline PostgreSQL DDL coverage for the widening operation.
+
+### Files Modified
+- `corvus/infrastructure/migrations/versions/m1_008_non_circular_root_manifest.py` — portable PostgreSQL revision capacity fix.
+- `tests/unit/platform/test_config.py` — verifies the generated PostgreSQL migration SQL.
+- `PROJECT_LOG.md` — records the production migration repair.
+
+### Assumptions Made (flag these for review)
+- Retaining the widened migration metadata column on downgrade is intentional because it is backward-compatible and avoids shrinking while a long revision value is active.
+
+### Known Issues / Deferred
+- None for this migration repair.
+
+### Suggested Next Steps
+- Redeploy Railway, confirm the migration reaches head, and exercise Google OAuth through Vercel.
