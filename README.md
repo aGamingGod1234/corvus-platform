@@ -10,6 +10,8 @@
   <a href="https://github.com/aGamingGod1234/corvus-platform/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/aGamingGod1234/corvus-platform?include_prereleases" /></a>
 </p>
 
+> **Built with OpenAI Codex + GPT-5.6 Sol.** Codex was Corvus's primary engineering collaborator for the final product iteration and is also a first-class local coding runtime inside the product. See [Codex Usage](#codex-usage) for the implementation and verification details.
+
 **Corvus is a local-first, proof-carrying AI agent workspace.** It lets an agent complete real coding work inside an isolated project workspace, then returns the diff, test evidence, safety receipt, and screened artifact for human review.
 
 One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Shipped local paths reuse the same authorization, credential-reference, audit, and sandbox services; durable budget and kill-switch repositories remain explicit roadmap work.
@@ -105,9 +107,9 @@ Local Codex and Claude run through native CLIs detected on the device; the provi
 
 ## Codex Usage
 
-OpenAI Codex was used as the primary engineering agent for planning, implementation, code review remediation, security hardening, cross-platform CI repair, and end-to-end verification. Corvus also integrates the user's installed Codex CLI as a local runtime: the user can select recommended GPT-5.6 models and thinking levels, stream safe progress, opt into MCP tools, and run a coding task inside the bounded Build workspace before downloading the result.
+OpenAI Codex was used as the primary engineering agent for planning, implementation, code review remediation, security hardening, cross-platform CI repair, and end-to-end verification. **GPT-5.6 Sol powered the final product iteration; the Build Week demo records that path as evidence.** Corvus also integrates the user's installed Codex CLI as a local runtime: the user can select recommended GPT-5.6 models and thinking levels, stream safe progress, opt into MCP tools, and run a coding task inside the bounded Build workspace before downloading the result.
 
-The final Devpost recording should capture the Codex `/feedback` session ID alongside the sub-three-minute demo. That ID is intentionally not fabricated or committed in advance.
+Build Week evidence includes a Codex `/feedback` session ID supplied to judges through Devpost and a 2:57 demo that shows the local Codex provider, GPT-5.6 Sol, thinking controls, MCP consent, Protected Build, and the finished-project handoff.
 
 Key Codex-assisted safeguards include fixed-argument process invocation, provider-bound model validation, explicit MCP consent, plugin/app/hook isolation, secret-screened artifact packaging, signed cursors, reconnect-safe event replay, and fail-closed provider discovery.
 

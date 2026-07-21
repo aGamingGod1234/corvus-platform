@@ -2782,3 +2782,23 @@
 
 ### Suggested Next Steps
 - Push the correction, re-request security-owner approval, merge after approval, and publish the reviewed release tag.
+
+## 2026-07-22 — Highlight Codex and GPT-5.6 Build Week usage
+
+### What Was Implemented
+- Added a prominent README callout identifying OpenAI Codex and GPT-5.6 Sol as central to the submitted Corvus build.
+- Updated the Codex Usage section with the exact final-demo model path and noted that `/feedback` session evidence was supplied privately through Devpost.
+
+### Files Modified
+- `README.md` — makes Codex and GPT-5.6 usage immediately visible to judges and automated reviewers.
+- `PROJECT_LOG.md` — records this documentation-only post-release clarification.
+
+### Assumptions Made (flag these for review)
+- The existing Build Week release tag remains immutable; this documentation clarification lands on `main` without moving or replacing the frozen release.
+- The submitted feedback session ID remains available to judges through Devpost and is not duplicated in the public README.
+
+### Known Issues / Deferred
+- The frozen `v0.2.0-build-week.1` release continues to contain the README from its tagged commit.
+
+### Suggested Next Steps
+- Keep future post-hackathon feature work clearly separated from the frozen judging snapshot.
