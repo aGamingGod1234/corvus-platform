@@ -2436,3 +2436,22 @@
 
 ### Suggested Next Steps
 - Verify the Railway `/ready` endpoint and the Vercel-to-Railway Google authorization redirect before merging the existing PR.
+## 2026-07-21 — Hosted OAuth runtime entry point
+### What Was Implemented
+- Added a dedicated ASGI factory for the externally bound Railway service while retaining the local CLI's loopback-only invariant.
+- Updated the backend container command to start that factory with the configured hosted identity and origin environment.
+
+### Files Modified
+- `corvus/mvp/hosted.py` — hosted-only application factory.
+- `tests/mvp/test_hosted.py` — verifies hosted startup delegates without changing local binding policy.
+- `Dockerfile.backend` — starts the hosted ASGI factory.
+- `PROJECT_LOG.md` — records this deployment repair.
+
+### Assumptions Made (flag these for review)
+- The hackathon backend may keep transient MVP workspace state in `/tmp`; shared OAuth identity continues to use the configured PostgreSQL URL.
+
+### Known Issues / Deferred
+- Hosted workspace persistence beyond identity continuity remains deferred to the cloud-runtime milestone.
+
+### Suggested Next Steps
+- Verify Railway readiness and the Vercel-to-Google OAuth redirect end to end.
