@@ -10,8 +10,6 @@
   <a href="https://github.com/aGamingGod1234/corvus-platform/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/aGamingGod1234/corvus-platform?include_prereleases" /></a>
 </p>
 
-> **Official Build Week 2026 submission:** [`v0.2.0-build-week.1`](https://github.com/aGamingGod1234/corvus-platform/releases/tag/v0.2.0-build-week.1), produced from the reviewed merge of [PR #16](https://github.com/aGamingGod1234/corvus-platform/pull/16). The tag, release assets, and checksums form the immutable judging snapshot; later development is not part of this submission.
-
 **Corvus is a local-first, proof-carrying AI agent workspace.** It lets an agent complete real coding work inside an isolated project workspace, then returns the diff, test evidence, safety receipt, and screened artifact for human review.
 
 One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Shipped local paths reuse the same authorization, credential-reference, audit, and sandbox services; durable budget and kill-switch repositories remain explicit roadmap work.
@@ -157,7 +155,7 @@ pnpm --dir apps/desktop tauri build --no-bundle
 
 ## Hackathon release installers and web deployment
 
-The official [`v0.2.0-build-week.1` release](https://github.com/aGamingGod1234/corvus-platform/releases/tag/v0.2.0-build-week.1) contains unsigned x64 desktop installers built from one reviewed commit by `.github/workflows/desktop-release.yml`:
+The release workflow produces unsigned x64 desktop installers from one reviewed commit. Published artifacts appear on the [GitHub Releases page](https://github.com/aGamingGod1234/corvus-platform/releases) only after the corresponding version tag points to a commit on `main`:
 
 - Windows x64: NSIS installer
 - macOS Intel x64: DMG

@@ -2764,3 +2764,21 @@
 
 ### Suggested Next Steps
 - Run final local verification, push PR #16, obtain the required approval, merge, and tag the resulting `main` commit.
+
+## 2026-07-21 — Remove premature submission release reference
+### What Was Implemented
+- Removed the README link and immutable-snapshot wording for a release that had not yet been published.
+- Kept the installer documentation truthful by linking only to the existing Releases index and describing the reviewed-main tag gate.
+
+### Files Modified
+- `README.md` — no longer presents a future tag or release URL as live.
+- `PROJECT_LOG.md` — records the review-blocking documentation correction.
+
+### Assumptions Made (flag these for review)
+- The exact submission tag can be documented after GitHub has published the corresponding release.
+
+### Known Issues / Deferred
+- The submission-specific release link remains intentionally absent until the protected tag workflow succeeds.
+
+### Suggested Next Steps
+- Push the correction, re-request security-owner approval, merge after approval, and publish the reviewed release tag.
