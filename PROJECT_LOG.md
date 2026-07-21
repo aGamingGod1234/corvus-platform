@@ -2448,7 +2448,7 @@
 - `PROJECT_LOG.md` — records this deployment repair.
 
 ### Assumptions Made (flag these for review)
-- The hackathon backend may keep transient MVP workspace state in `/tmp`; shared OAuth identity continues to use the configured PostgreSQL URL.
+- The hackathon backend may keep transient MVP workspace state in the container user's writable working directory; shared OAuth identity continues to use the configured PostgreSQL URL.
 
 ### Known Issues / Deferred
 - Hosted workspace persistence beyond identity continuity remains deferred to the cloud-runtime milestone.

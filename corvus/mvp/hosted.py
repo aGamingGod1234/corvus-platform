@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from corvus.mvp.cli import build_server_app
 
 BOOTSTRAP_TOKEN_REFERENCE = "env://CORVUS_BOOTSTRAP_TOKEN"  # noqa: S105
-DEFAULT_HOSTED_DATABASE = "/tmp/corvus.sqlite3"  # noqa: S108 - ephemeral MVP state
+DEFAULT_HOSTED_DATABASE = "corvus.sqlite3"
 HOSTED_DATABASE_ENV = "CORVUS_HOSTED_DATABASE_PATH"
 PUBLIC_ORIGIN_ENV = "CORVUS_PUBLIC_ORIGIN"
 SESSION_SECRET_REFERENCE = "env://CORVUS_SESSION_SECRET"  # noqa: S105

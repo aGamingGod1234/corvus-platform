@@ -15,7 +15,7 @@ def test_hosted_factory_preserves_local_server_boundary(monkeypatch) -> None:
 
     assert actual is expected
     build.assert_called_once_with(
-        database=Path("/tmp/corvus.sqlite3"),  # noqa: S108
+        database=Path("corvus.sqlite3"),
         pairing_ref="env://CORVUS_BOOTSTRAP_TOKEN",
         signing_ref="env://CORVUS_SESSION_SECRET",
         allowed_origins=frozenset({"https://corvus.example"}),
