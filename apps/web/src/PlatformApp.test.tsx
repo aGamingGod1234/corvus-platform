@@ -133,7 +133,7 @@ describe("PlatformApp composition", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "New thread" })).toBeVisible();
-    expect(screen.queryByRole("complementary", { name: "Local workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Local workspace" })).toBeVisible();
     await userEvent.setup().click(screen.getByRole("button", { name: "Run options" }));
     expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Local launch control/ })).not.toBeInTheDocument();
@@ -163,7 +163,7 @@ describe("PlatformApp composition", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "What can Corvus help you finish?" })).toBeVisible();
-    expect(screen.queryByRole("complementary", { name: "Local workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Local workspace" })).toBeVisible();
     expect(screen.getByRole("button", { name: "New conversation" })).toBeVisible();
   });
 

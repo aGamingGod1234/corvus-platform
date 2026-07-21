@@ -1060,7 +1060,7 @@ function LocalRuntimeShell({
     <>
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <div className="local-shell" data-inspector={inspectorOpen ? "open" : "closed"} data-route={activeRoute}>
-        {activeRoute !== "settings" && activeRoute !== "threads" ? <aside aria-label="Local workspace" className="local-sidebar">
+        {activeRoute !== "settings" ? <aside aria-label="Local workspace" className="local-sidebar">
           <BrandLockup className="local-sidebar__wordmark" />
           <div className="local-sidebar__identity"><span>{session.username}</span><strong>{profile.label}</strong></div>
           <nav aria-label="Local runtime navigation" className="local-sidebar__navigation">

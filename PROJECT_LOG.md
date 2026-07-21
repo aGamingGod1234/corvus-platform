@@ -2623,3 +2623,23 @@
 
 ### Suggested Next Steps
 - Exercise the rebuilt Windows application with a long prompt and confirm the preferred model survives an application restart.
+
+## 2026-07-21 — Restore Threads Navigation and Preserve Hidden Scrollbar
+### What Was Implemented
+- Restored the primary left application navigation while viewing Threads.
+- Kept the Threads transcript scrollable without displaying its native vertical scrollbar.
+- Restored the compact bottom navigation behavior for Threads on narrow screens.
+
+### Files Modified
+- `apps/web/src/App.tsx` — renders the application navigation on Threads.
+- `apps/web/src/styles.css` — removes the Threads-only shell collapse that hid navigation.
+- `apps/web/src/PlatformApp.test.tsx` — verifies Threads retains application navigation.
+
+### Assumptions Made (flag these for review)
+- The requested right-side removal refers to the native transcript scrollbar, not a functional inspector panel.
+
+### Known Issues / Deferred
+- None for this focused correction.
+
+### Suggested Next Steps
+- Rebuild and install the Windows package, then confirm the installed runtime health endpoints.

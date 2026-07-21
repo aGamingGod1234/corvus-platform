@@ -265,8 +265,8 @@
 .thread-list__items strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-list__items span { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: .7rem; }
 
-.message-transcript { width: min(100%, 52rem); min-height: 0; flex: 1 1 auto; overflow-y: auto; margin: 0 auto; padding: clamp(1rem, 3vw, 2.5rem) clamp(1rem, 3vw, 2rem); scrollbar-width: none; -ms-overflow-style: none; }
-.message-transcript::-webkit-scrollbar, .composer textarea::-webkit-scrollbar { display: none; }
+.message-transcript { width: min(100%, 52rem); min-height: 0; flex: 1 1 auto; overflow-y: auto; margin: 0 auto; padding: clamp(1rem, 3vw, 2.5rem) clamp(1rem, 3vw, 2rem); scrollbar-width: none; scrollbar-color: transparent transparent; -ms-overflow-style: none; }
+.message-transcript::-webkit-scrollbar, .composer textarea::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
 .conversation-empty { display: grid; max-width: 36rem; min-height: 100%; align-content: center; justify-items: center; margin: auto; padding: 1rem 0 5rem; text-align: center; }
 .conversation-mark { width: 3rem; height: 3rem; margin-bottom: .9rem; color: var(--ink); }
 .conversation-empty h2 { margin: 0; font-family: inherit; font-size: clamp(1.45rem, 3vw, 2rem); font-weight: 660; letter-spacing: -.035em; }
