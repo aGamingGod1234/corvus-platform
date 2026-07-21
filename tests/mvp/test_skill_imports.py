@@ -72,6 +72,38 @@ def test_preview_import_and_activate_are_digest_bound_and_immutable(tmp_path: Pa
         service.instructions("local", active.id)
 
 
+def test_imports_modern_text_sources_and_reports_omitted_binary_assets(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    package = _skill(home / ".codex" / "skills", "screenshot")
+    package.joinpath("scripts").mkdir()
+    package.joinpath("assets").mkdir()
+    package.joinpath("scripts", "capture.swift").write_text('print("capture")\n', encoding="utf-8")
+    package.joinpath("assets", "icon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"/>\n', encoding="utf-8"
+    )
+    package.joinpath("assets", "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    service = SkillImportService(
+        SqliteStore(tmp_path / "db.sqlite3"), library_root=tmp_path / "library", home=home
+    )
+    candidate = service.discover()[0]
+
+    preview = service.preview("local", candidate.id)
+    imported = service.import_draft("local", candidate.id, preview.digest)
+    imported_root = Path(imported.package_path)
+
+    assert preview.compatibility == "needs_review"
+    assert "scripts/capture.swift" in preview.files
+    assert "assets/icon.svg" in preview.files
+    assert "assets/preview.png" not in preview.files
+    assert any(
+        finding.code == "binary_asset_omitted" and finding.location == "assets/preview.png"
+        for finding in preview.findings
+    )
+    assert imported_root.joinpath("scripts", "capture.swift").is_file()
+    assert imported_root.joinpath("assets", "icon.svg").is_file()
+    assert not imported_root.joinpath("assets", "preview.png").exists()
+
+
 def test_changed_candidate_and_blocked_command_cannot_import(tmp_path: Path) -> None:
     home = tmp_path / "home"
     package = _skill(home / ".hermes" / "skills", "unsafe-skill")

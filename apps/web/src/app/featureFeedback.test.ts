@@ -24,6 +24,14 @@ describe("featureFailure", () => {
       .toBe("Repository refresh failed.");
   });
 
+  it("preserves string errors returned by native desktop commands", () => {
+    expect(featureFailure("browser_launch_failed", "settings")).toEqual({
+      code: "browser_launch_failed",
+      correlationId: null,
+      message: "Corvus could not open your browser. Open Corvus Web and sign in there instead."
+    });
+  });
+
   it("explains lifecycle gates as user actions instead of internal state codes", () => {
     expect(featureFailure(new Error("schedule_run_already_active"), "schedule").message)
       .toMatch(/already has work in progress/i);

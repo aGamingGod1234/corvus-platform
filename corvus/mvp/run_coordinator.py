@@ -290,11 +290,18 @@ class RunCoordinator:
                         ),
                         changes.digest,
                     )
-                    target = (
-                        RunStatus.REVIEW_REQUIRED
-                        if run.mode == "build" and bool(changes.files)
-                        else RunStatus.COMPLETED
-                    )
+                    if run.mode == "build" and not changes.files:
+                        self.runs.add_evidence(
+                            run.id,
+                            "runtime_validation",
+                            "Build run completed without producing any reviewable file changes",
+                            hashlib.sha256(b"build_completed_without_changes").hexdigest(),
+                        )
+                        target = RunStatus.FAILED
+                    elif run.mode == "build":
+                        target = RunStatus.REVIEW_REQUIRED
+                    else:
+                        target = RunStatus.COMPLETED
                     await self._terminalize(tenant_id, run.id, target)
                 elif provider_event.event_type == "provider.failed":
                     saw_terminal = True
@@ -423,7 +430,7 @@ class CodexWorkspaceBackend:
                 deadline=datetime.now(UTC) + timedelta(minutes=20),
                 model=request.model,
                 effort=request.effort,
-                mode=request.mode,
+                mode="inspect" if request.mode == "chat" else request.mode,
                 mcp_enabled=False,
                 max_output_bytes=1_000_000,
                 workspace=cwd,

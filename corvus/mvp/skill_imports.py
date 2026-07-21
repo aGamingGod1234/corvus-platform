@@ -33,10 +33,13 @@ _ALLOWED_SUFFIXES = {
     ".py",
     ".js",
     ".ts",
+    ".swift",
     ".sh",
     ".ps1",
+    ".svg",
 }
-_EXECUTABLE_SUFFIXES = {".py", ".js", ".ts", ".sh", ".ps1"}
+_EXECUTABLE_SUFFIXES = {".py", ".js", ".ts", ".swift", ".sh", ".ps1"}
+_IGNORED_ASSET_SUFFIXES = {".gif", ".ico", ".jpeg", ".jpg", ".png", ".webp"}
 
 
 class SkillImportError(RuntimeError):
@@ -452,7 +455,16 @@ class SkillImportService:
                 )
             )
         else:
-            files = self._read_package(candidate.path)
+            files, ignored_assets = self._read_package_snapshot(candidate.path)
+            findings.extend(
+                SkillFinding(
+                    code="binary_asset_omitted",
+                    severity="info",
+                    location=relative,
+                    message="Binary asset was omitted from the executable skill copy.",
+                )
+                for relative in ignored_assets
+            )
             skill_content = dict(files).get("SKILL.md")
             if skill_content is None:
                 raise SkillImportError("skill_manifest_missing")
@@ -544,10 +556,19 @@ class SkillImportService:
         )
 
     def _read_package(self, root: Path) -> tuple[tuple[str, str], ...]:
+        files, _ignored_assets = self._read_package_snapshot(root)
+        return files
+
+    def _read_package_snapshot(
+        self,
+        root: Path,
+    ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
         if not self._safe_directory(root):
             raise SkillImportError("skill_package_unsafe")
         values: list[tuple[str, str]] = []
+        ignored_assets: list[str] = []
         total = 0
+        file_count = 0
         for path in sorted(root.rglob("*")):
             if path.is_dir():
                 if path_is_link_or_reparse(path):
@@ -558,16 +579,21 @@ class SkillImportService:
             relative = path.relative_to(root).as_posix()
             if PurePosixPath(relative).is_absolute() or ".." in PurePosixPath(relative).parts:
                 raise SkillImportError("skill_package_path_escape")
-            if path.suffix.lower() not in _ALLOWED_SUFFIXES:
-                raise SkillImportError("skill_package_file_type_unsupported")
+            file_count += 1
             size = path.stat().st_size
             if size > _MAX_FILE_BYTES:
                 raise SkillImportError("skill_package_file_too_large")
             total += size
-            if total > _MAX_PACKAGE_BYTES or len(values) >= _MAX_FILES:
+            if total > _MAX_PACKAGE_BYTES or file_count > _MAX_FILES:
                 raise SkillImportError("skill_package_too_large")
+            suffix = path.suffix.lower()
+            if suffix in _IGNORED_ASSET_SUFFIXES:
+                ignored_assets.append(relative)
+                continue
+            if suffix not in _ALLOWED_SUFFIXES:
+                raise SkillImportError("skill_package_file_type_unsupported")
             values.append((relative, self._read_file(path)))
-        return tuple(values)
+        return tuple(values), tuple(ignored_assets)
 
     @staticmethod
     def _read_file(path: Path) -> str:

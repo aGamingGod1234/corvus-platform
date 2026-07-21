@@ -7,6 +7,12 @@
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
   },
   "permissions": [
+    "allow-open-external-url",
+    "allow-select-repository-directory",
+    "allow-set-background-mode",
+    "allow-get-background-mode",
+    "allow-load-desktop-preferences",
+    "allow-save-desktop-preferences",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",

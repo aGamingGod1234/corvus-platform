@@ -195,6 +195,33 @@ describe("SettingsPanel", () => {
     expect(listMcpServers).toHaveBeenCalledTimes(2);
   });
 
+  it("requires a credential-free HTTPS URL before enabling a remote MCP server", async () => {
+    const addMcpServer = vi.fn();
+    const api = {
+      ...settingsApi(),
+      addMcpServer,
+      listMcpServers: vi.fn().mockResolvedValue([])
+    };
+    const user = userEvent.setup();
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-mcp-url" workspaceKind="individual" />);
+
+    await user.click(screen.getByRole("button", { name: "MCP" }));
+    await user.type(screen.getByLabelText("Name"), "remote-tools");
+    await user.type(screen.getByLabelText("Server URL"), "http://example.test/mcp");
+
+    expect(screen.getByRole("button", { name: "Add MCP server" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/https url without embedded credentials/i);
+
+    await user.clear(screen.getByLabelText("Server URL"));
+    await user.type(screen.getByLabelText("Server URL"), "https://user:secret@example.test/mcp");
+    expect(screen.getByRole("button", { name: "Add MCP server" })).toBeDisabled();
+
+    await user.clear(screen.getByLabelText("Server URL"));
+    await user.type(screen.getByLabelText("Server URL"), "https://example.test/mcp");
+    expect(screen.getByRole("button", { name: "Add MCP server" })).toBeEnabled();
+  });
+
   it("applies explicit background, login, and notification settings to desktop", async () => {
     const storage = new MemoryStorage();
     const api = settingsApi();
@@ -287,8 +314,30 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("Web / Preview")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /Sign in with Google/i }));
     expect(onGoogleSignIn).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: /Sign in with GitHub/i }));
+    await user.click(await screen.findByRole("button", { name: /Sign in with GitHub/i }));
     expect(connectionsApi.authenticateGitHub).toHaveBeenCalledOnce();
+  });
+
+  it("does not offer GitHub sign-in until the existing authorization check finishes", async () => {
+    let resolveStatus: ((value: { authenticated: boolean; hostname: string }) => void) | undefined;
+    const status = new Promise<{ authenticated: boolean; hostname: string }>((resolve) => {
+      resolveStatus = resolve;
+    });
+    const connectionsApi = {
+      authenticateGitHub: vi.fn(),
+      getGitHubAuthStatus: vi.fn().mockReturnValue(status)
+    };
+    const user = userEvent.setup();
+    render(<SettingsPanel connectionsApi={connectionsApi} experience="developer"
+      onExperienceChange={vi.fn()} storage={new MemoryStorage()}
+      workspaceId="workspace-github-loading" workspaceKind="individual" />);
+
+    await user.click(screen.getByRole("button", { name: "Account" }));
+    expect(screen.getByRole("button", { name: /Checking GitHub/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Sign in with GitHub/i })).not.toBeInTheDocument();
+
+    resolveStatus?.({ authenticated: false, hostname: "github.com" });
+    expect(await screen.findByRole("button", { name: /Sign in with GitHub/i })).toBeEnabled();
   });
 
   it("disables API credential entry without a local credential runtime", async () => {

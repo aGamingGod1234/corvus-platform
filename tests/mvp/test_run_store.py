@@ -96,6 +96,31 @@ def test_run_and_evidence_pages_are_bounded(tmp_path: Path) -> None:
     assert len(second_evidence_page) == 1
 
 
+def test_evidence_pages_use_durable_id_for_equal_timestamp_ties(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path / "corvus.sqlite3")
+    repository_id = _repository(store)
+    runs = RunStore(store)
+    created = runs.create("tenant-a", _request(repository_id), base_sha="b" * 40)
+    created_at = "2026-07-21T00:00:00+00:00"
+    with store.transaction() as connection:
+        connection.executemany(
+            "INSERT INTO mvp_run_evidence "
+            "(id, run_id, kind, summary, digest, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ("evidence-b", created.id, "test", "Evidence B", "b" * 64, created_at),
+                ("evidence-a", created.id, "test", "Evidence A", "a" * 64, created_at),
+            ),
+        )
+
+    first_page = runs.evidence("tenant-a", created.id, limit=1, offset=0)
+    second_page = runs.evidence("tenant-a", created.id, limit=1, offset=1)
+
+    assert [evidence.id for evidence in (*first_page, *second_page)] == [
+        "evidence-a",
+        "evidence-b",
+    ]
+
+
 @pytest.mark.parametrize(
     ("limit", "offset"),
     ((0, 0), (1_001, 0), (-1, 0), (1, -1)),

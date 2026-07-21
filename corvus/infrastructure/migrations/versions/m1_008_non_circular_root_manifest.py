@@ -33,6 +33,7 @@ _DERIVED_POST_COMMIT_FAMILIES = {
     "audit_anchor_recovery_checkpoints",
     "audit_result_bindings",
 }
+_ALEMBIC_REVISION_LENGTH = 64
 
 
 def _immutable(table_name: str, label: str) -> None:
@@ -41,6 +42,14 @@ def _immutable(table_name: str, label: str) -> None:
 
 def upgrade() -> None:
     bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=_ALEMBIC_REVISION_LENGTH),
+            existing_nullable=False,
+        )
     if op.get_context().as_sql:
         prior_rows = [(name, *family_proof_metadata(name)) for name in M1_007_FAMILY_NAMES]
     else:

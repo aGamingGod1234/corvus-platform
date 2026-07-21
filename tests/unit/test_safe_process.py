@@ -38,6 +38,54 @@ def test_trusted_process_rejects_path_lookup_and_missing_working_directory(tmp_p
         run_trusted_argv([sys.executable, "-V"], cwd=tmp_path / "missing")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows trusted tool path semantics")
+def test_clean_windows_environment_includes_only_existing_admin_git_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    windows_directory = tmp_path / "Windows"
+    system_directory = windows_directory / "System32"
+    git_directory = tmp_path / "Program Files" / "Git" / "cmd"
+    executable = tmp_path / "provider" / "provider.exe"
+    system_directory.mkdir(parents=True)
+    git_directory.mkdir(parents=True)
+    executable.parent.mkdir()
+    executable.write_bytes(b"provider")
+    monkeypatch.setattr(safe_process_module, "windows_system_directory", lambda: system_directory)
+
+    environment = build_clean_process_environment(executable, {})
+
+    path_entries = environment["PATH"].split(os.pathsep)
+    assert str(git_directory.resolve()) in path_entries
+    assert str(tmp_path / "untrusted") not in path_entries
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ACL command semantics")
+def test_codex_sandbox_traverse_targets_only_validated_sid(
+    tmp_path: Path,
+) -> None:
+    sandbox_sid = "S-1-5-21-100-200-300-400"
+    safe_process_module.grant_windows_sid_traverse(tmp_path, sandbox_sid)
+
+    assert sandbox_sid in safe_process_module.windows_directory_acl_sids(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows token semantics")
+def test_current_logon_sid_is_session_scoped() -> None:
+    logon_sid = safe_process_module.windows_current_logon_sid()
+
+    assert logon_sid is not None
+    assert logon_sid.startswith("S-1-5-5-")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows token semantics")
+def test_current_user_sid_matches_process_identity() -> None:
+    user_sid = safe_process_module.windows_current_user_sid()
+
+    assert user_sid is not None
+    assert user_sid.startswith("S-1-5-")
+
+
 def test_trusted_process_stops_reading_when_combined_output_exceeds_limit(
     tmp_path: Path,
 ) -> None:

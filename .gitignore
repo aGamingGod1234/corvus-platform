@@ -31,3 +31,4 @@ apps/desktop/src-tauri/binaries/
 /.antigravity/
 /.claude/
 /.runtime-*/
+.vercel

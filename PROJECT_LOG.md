@@ -2279,3 +2279,236 @@
 
 ### Automated Review Follow-up
 - Removed redundant Promise wrappers from the async rewrite-edge early returns without changing validation, status codes, response bodies, or forwarding behavior.
+
+## 2026-07-20 — Second Beta Desktop Release
+### What Was Implemented
+- Prepared the reviewed application state for the unsigned `v0.2.0-beta.2` desktop release.
+- Aligned the Windows, Linux, and macOS package versions and documented installer filenames.
+- Kept the existing protected release workflow responsible for native packaging, checksums, and the published GitHub prerelease.
+- Rebuilt the Windows sidecar and NSIS package locally; the 35,295,869-byte installer reports version `0.2.0-beta.2`, is intentionally unsigned, and has SHA-256 `B3C8E464BB600A5D921D6F5A0D60FABFB581841187C6288C6A62391655A7AA51`.
+
+### Files Modified
+- `apps/desktop/package.json` — desktop package version.
+- `apps/desktop/src-tauri/Cargo.toml` — Rust desktop package version.
+- `apps/desktop/src-tauri/Cargo.lock` — locked local package version.
+- `apps/desktop/src-tauri/tauri.conf.json` — Tauri bundle version.
+- `README.md` — current beta installer names and tag contract.
+- `HACKATHON_STATUS.md` — current unsigned Windows artifact status.
+- `PROJECT_LOG.md` — release preparation and verification record.
+
+### Assumptions Made (flag these for review)
+- “Second beta” maps to version `0.2.0-beta.2` and tag `v0.2.0-beta.2`.
+- The previously approved unsigned x64 release posture remains appropriate for this beta.
+
+### Known Issues / Deferred
+- Windows and macOS packages are unsigned; macOS is also unnotarized.
+- Linux and macOS artifacts require their native GitHub-hosted runners and cannot be reproduced natively on this Windows workstation.
+
+### Suggested Next Steps
+- Build and hash the Windows installer locally, merge the protected release-prep PR, push the reviewed tag, then verify every published release asset and checksum.
+
+## 2026-07-20 — Desktop Account Sign-In Repair
+### What Was Implemented
+- Stopped the in-progress beta packaging workflow before changing authentication behavior.
+- Kept GitHub credentials isolated until an explicit user click, then authorized the existing host GitHub CLI session or launched the normal web login when no host session exists.
+- Added a Windows browser-launch fallback through the trusted system Explorer executable while retaining the exact external URL allowlist.
+- Preserved native command error codes so the Account page reports actionable browser/authentication failures instead of the generic `Settings request failed` message.
+
+### Files Modified
+- `.gitignore` — keep local Vercel project metadata untracked.
+- `apps/desktop/src-tauri/src/lib.rs` — reliable allowlisted Windows external-browser launch.
+- `apps/web/src/app/featureFeedback.ts` — native string-error normalization and trusted-URL messages.
+- `apps/web/src/app/featureFeedback.test.ts` — native rejection regression coverage.
+- `corvus/mvp/api.py` — separate isolated and explicit host-authorization GitHub CLI runners.
+- `corvus/mvp/github_cli.py` — consent-gated host session adoption and browser-login fallback.
+- `tests/mvp/test_github_cli.py` — isolated-before-click and host-authorization coverage.
+- `tests/mvp/test_github_projects_api.py` — dual-runner construction and isolation coverage.
+- `PROJECT_LOG.md` — incident diagnosis, verification, and deployment boundary.
+
+### Assumptions Made (flag these for review)
+- Clicking `Sign in with GitHub` is explicit consent for this running Corvus process to use the host GitHub CLI session; no host credential is consulted before that click.
+- The existing exact Google sign-in URL remains the only externally launchable desktop authentication URL.
+
+### Known Issues / Deferred
+- The deployed Google endpoint currently returns `503 platform_proxy_unavailable`: the Vercel project has no `CORVUS_RAILWAY_ORIGIN`, no Corvus Railway service exists in the connected account, and no Google OAuth client ID or secret is configured locally or in Vercel. Code cannot securely manufacture those credentials; Google account continuity remains deployment-blocked even though browser launching is repaired.
+- GitHub authorization is intentionally process-local; restarting Corvus requires explicit authorization again rather than silently inheriting the host account.
+
+### Suggested Next Steps
+- Provision the Railway hosted identity service and Google OAuth client, then configure `CORVUS_RAILWAY_ORIGIN` plus the documented Google settings before presenting Google sign-in as production-ready.
+
+## 2026-07-21 — Desktop end-to-end interaction hardening
+### What Was Implemented
+- Repaired Windows restricted-token sandbox startup so supervised local runs retain the existing authority boundary while inheriting only the filesystem access required for the selected project.
+- Hardened Codex execution and scheduled report-only runs, including streamed output parsing, cancellation, model/thinking selection, and review-required completion behavior.
+- Made skill imports handle modern text and binary skill assets without failing the whole import, while continuing to reject unsafe paths and duplicate or blocked content.
+- Added persisted desktop preferences for launch, notifications, close behavior, theme, and composer send behavior through narrow native commands and generated Tauri permissions.
+- Restricted native external-browser launches to the approved Google OAuth route and documented the GitHub flow truthfully: explicit consent adopts an existing local CLI session or opens GitHub web login when needed.
+- Added a loading gate to GitHub account status so the interface never briefly advertises an incorrect sign-in state.
+- Required credential-free HTTPS URLs before remote MCP servers can be added, with inline accessible validation feedback.
+- Built, installed, and exercised the current Windows desktop application across onboarding, conversations, projects, activity, schedules, skills, settings, streaming, Markdown, safety receipts, provider/model/thinking controls, and keyboard send modes.
+
+### Files Modified
+- `apps/desktop/src-tauri/build.rs`, `apps/desktop/src-tauri/capabilities/default.json`, `apps/desktop/src-tauri/permissions/`, `apps/desktop/src-tauri/src/lib.rs` — native preferences, trusted browser launch, generated command permissions, and Windows sandbox integration.
+- `apps/web/src/app/SettingsPanel.tsx`, `apps/web/src/app/SettingsPanel.test.tsx` — truthful account state, MCP URL validation, and regression coverage.
+- `apps/web/src/app/desktopPreferences.ts`, `apps/web/src/app/desktopPreferences.test.ts`, `apps/web/src/main.tsx` — typed persisted desktop preferences and bootstrap wiring.
+- `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/mvp/run_coordinator.py` — Codex streaming, scheduling, cancellation, and report-only coordination.
+- `corvus/mvp/skill_imports.py` — robust skill asset import behavior.
+- `corvus/safe_process.py` — restricted Windows process construction and sandbox filesystem access preparation.
+- `tests/contract/providers/test_codex_adapter.py`, `tests/mvp/test_run_coordinator.py`, `tests/mvp/test_skill_imports.py`, `tests/unit/test_safe_process.py` — focused runtime, scheduler, skill, and sandbox regression coverage.
+
+### Assumptions Made (flag these for review)
+- An explicit click on GitHub sign-in authorizes Corvus to use an already authenticated host GitHub CLI session for the current process; it does not silently inherit that identity before the click.
+- Remote MCP transport is limited to credential-free HTTPS URLs in this milestone; secrets remain managed by the existing settings/backend credential flow.
+- A fast provider may finish before a live Stop click is processed; automated cancellation coverage remains the authoritative check for the cancellation race.
+
+### Known Issues / Deferred
+- Google account continuity remains deployment-blocked until the external Railway identity service and Google OAuth credentials are configured; the desktop now launches only the approved route and reports failures accurately.
+- The full unrestricted Python suite exceeded the five-minute execution window without emitting a failure. The 86 directly affected backend/security tests passed with one expected POSIX-only skip, all 276 web tests passed, lint passed, and the production desktop bundle compiled successfully.
+- The Windows beta installer is unsigned, as explicitly accepted for the alpha/beta release phase.
+
+### Suggested Next Steps
+- Have reviewers inspect PR #12 and provision the documented hosted identity dependencies separately from this local desktop hardening milestone.
+
+## 2026-07-21 — PR #12 cross-platform certification repair
+### What Was Implemented
+- Updated the beta.2 branch from the latest `main`, incorporating the hardened managed-profile boundary logic without conflicts.
+- Replaced an order-sensitive ACL preflight assertion with an exact-set assertion so the test verifies granted authority rather than nondeterministic thread scheduling.
+- Registered the background-mode getter in the explicit Tauri command manifest and capability allowlist.
+- Bounded desktop preference reads before allocation and made writes durable and atomic through a same-directory temporary file plus rename.
+- Serialized multiple SID updates per directory while retaining concurrency across distinct directories, preventing Windows DACL lost-update races.
+- Switched ACL persistence to `SetNamedSecurityInfoW` so inheritable grants propagate through existing managed descendants.
+- Converted unexpected background workspace-access failures into one redacted terminal failure event instead of aborting the event stream.
+
+### Files Modified
+- `tests/contract/providers/test_codex_adapter.py` — made the concurrent ACL-grant regression test platform-stable while preserving the exact security invariant.
+- `apps/desktop/src-tauri/build.rs`, `apps/desktop/src-tauri/capabilities/default.json` — exposed the registered background-mode getter through narrowly generated IPC permission.
+- `apps/desktop/src-tauri/src/lib.rs` — bounded preference reads, atomic replacement, and regression coverage.
+- `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/safe_process.py` — safe ACL sequencing, failure terminalization, and inherited Windows DACL propagation.
+- `PROJECT_LOG.md` — recorded the CI failure diagnosis and repair evidence.
+
+### Assumptions Made (flag these for review)
+- ACL grants executed concurrently have no required ordering; only the exact directory/SID permission set is security-relevant.
+
+### Known Issues / Deferred
+- GitHub's first rerun exposed a second test-only portability issue: the concurrency fixture required more simultaneous worker threads than low-core hosted runners provide, and Windows used a synthetic workspace without a matching synthetic profile root. Both fixtures are now bounded and explicit; the next matrix run must confirm the repair.
+- Existing Python files from the beta.2 work do not currently satisfy `ruff format --check`; this repository's certification workflow uses `ruff check`, which passes. No unrelated bulk formatting was performed.
+
+### Suggested Next Steps
+- Push the repair, wait for required checks and CODEOWNER review, then merge without bypassing branch protection.
+
+## 2026-07-21 — Hosted-runner ACL test portability
+### What Was Implemented
+- Made the ACL concurrency regression prove overlap across two distinct directories without requiring every managed boundary to occupy a worker thread simultaneously.
+- Bound synthetic Windows workspaces to their synthetic profile root so production profile containment remains strict while the contract test is runner-independent.
+- Used platform-aware Windows ctypes guards so Linux and macOS type stubs can certify the guarded Win32-only calls without changing Windows runtime behavior.
+- Preserved evidence insertion order when adjacent SQLite records share a coarse Windows timestamp, preventing audit entries from being reordered by random UUIDs.
+
+### Files Modified
+- `tests/contract/providers/test_codex_adapter.py` — removed the hosted-runner thread-pool deadlock and made the Windows profile fixture explicit.
+- `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/safe_process.py` — made Win32-only ctypes access statically portable across the CI matrix.
+- `corvus/mvp/run_store.py` — made audit-evidence ordering deterministic on Windows.
+- `PROJECT_LOG.md` — recorded the failure evidence and bounded repair.
+
+### Assumptions Made (flag these for review)
+- Two simultaneously blocked directory grants are sufficient to prove that distinct directories can execute concurrently; the exact result assertions continue to prove that both SIDs reach every required directory.
+
+### Known Issues / Deferred
+- The complete GitHub certification matrix remains the final cross-platform verification gate.
+
+### Suggested Next Steps
+- Push the fixture repair and merge only after the protected checks and current-head CODEOWNER approval pass.
+
+## 2026-07-21 — Add focused Railway backend image
+
+### What Was Implemented
+- Added a deployment-only Python image so Railway can run the hosted identity API without compiling or serving the Vercel-owned frontend.
+- Preserved the existing full desktop/web image and selected the focused image only through Railway's server-side Dockerfile-path setting.
+
+### Files Modified
+- `Dockerfile.backend` — builds and runs the Corvus FastAPI backend with the existing non-root user and readiness probe.
+- `PROJECT_LOG.md` — records the bounded deployment repair.
+
+### Assumptions Made (flag these for review)
+- The hosted web frontend remains authoritative on Vercel, so the Railway service needs only the API and does not need bundled static assets.
+
+### Known Issues / Deferred
+- Production OAuth remains restricted to Google test users until the consent application is published or verified.
+
+### Suggested Next Steps
+- Verify the Railway `/ready` endpoint and the Vercel-to-Railway Google authorization redirect before merging the existing PR.
+## 2026-07-21 — Hosted OAuth runtime entry point
+### What Was Implemented
+- Added a dedicated ASGI factory for the externally bound Railway service while retaining the local CLI's loopback-only invariant.
+- Updated the backend container command to start that factory with the configured hosted identity and origin environment.
+
+### Files Modified
+- `corvus/mvp/hosted.py` — hosted-only application factory.
+- `tests/mvp/test_hosted.py` — verifies hosted startup delegates without changing local binding policy.
+- `Dockerfile.backend` — starts the hosted ASGI factory.
+- `PROJECT_LOG.md` — records this deployment repair.
+
+### Assumptions Made (flag these for review)
+- The hackathon backend may keep transient MVP workspace state in the container user's writable working directory; shared OAuth identity continues to use the configured PostgreSQL URL.
+
+### Known Issues / Deferred
+- Hosted workspace persistence beyond identity continuity remains deferred to the cloud-runtime milestone.
+
+### Suggested Next Steps
+- Verify Railway readiness and the Vercel-to-Google OAuth redirect end to end.
+
+## 2026-07-21 — PostgreSQL migration revision capacity
+### What Was Implemented
+- Widened Alembic's PostgreSQL revision column before Corvus reaches its first revision identifier longer than 32 characters.
+- Added offline PostgreSQL DDL coverage for the widening operation.
+
+### Files Modified
+- `corvus/infrastructure/migrations/versions/m1_008_non_circular_root_manifest.py` — portable PostgreSQL revision capacity fix.
+- `tests/unit/platform/test_config.py` — verifies the generated PostgreSQL migration SQL.
+- `PROJECT_LOG.md` — records the production migration repair.
+
+### Assumptions Made (flag these for review)
+- Retaining the widened migration metadata column on downgrade is intentional because it is backward-compatible and avoids shrinking while a long revision value is active.
+
+### Known Issues / Deferred
+- None for this migration repair.
+
+### Suggested Next Steps
+- Redeploy Railway, confirm the migration reaches head, and exercise Google OAuth through Vercel.
+
+## 2026-07-21 — Production OAuth and hosted-runtime verification
+### What Was Implemented
+- Configured the Corvus Google OAuth web client for the production Vercel callback without committing credential values.
+- Configured the Railway backend environment and PostgreSQL pre-deploy migration, then verified `/ready` returns HTTP 200.
+- Deployed the Vercel production app and verified the Google OAuth start, consent, callback, and onboarding path with the approved account.
+- Confirmed GitHub authentication continues to use the desktop's local GitHub CLI session rather than an unused hosted OAuth client.
+
+### Files Modified
+- `PROJECT_LOG.md` — records the external deployment and OAuth verification evidence without secrets.
+
+### Assumptions Made (flag these for review)
+- OAuth credentials remain provider-managed configuration in Google Cloud and Railway; repository documentation intentionally records names and outcomes only.
+
+### Known Issues / Deferred
+- PR #12 certification checks must finish successfully before merge.
+
+### Suggested Next Steps
+- Review the final PR #12 checks and merge after required review approval.
+
+## 2026-07-21 — Deterministic run-evidence pagination
+### What Was Implemented
+- Replaced SQLite `rowid` pagination tie-breaking with the durable run-evidence `id`.
+- Added regression coverage proving equal-timestamp evidence remains stable across LIMIT/OFFSET pages.
+
+### Files Modified
+- `corvus/mvp/run_store.py` — orders evidence by `created_at, id`.
+- `tests/mvp/test_run_store.py` — covers durable equal-timestamp pagination.
+- `PROJECT_LOG.md` — records the review repair.
+
+### Assumptions Made (flag these for review)
+- Evidence IDs are the durable deterministic tie-breaker required by the existing schema and reviewer guidance.
+
+### Known Issues / Deferred
+- None for this review finding.
+
+### Suggested Next Steps
+- Resolve the addressed PR thread after the focused and certification checks pass.

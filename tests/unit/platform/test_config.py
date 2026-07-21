@@ -226,6 +226,7 @@ def test_postgres_alembic_upgrade_renders_offline_without_connecting() -> None:
 
     rendered = output.getvalue()
     assert "CREATE TABLE projects" in rendered
+    assert "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)" in rendered
     assert "CREATE FUNCTION authorization_decision_snapshots_no_update_fn" in rendered
     assert "m1_009_audit_external_proofs" in rendered
     assert "CREATE TABLE accounts" in rendered

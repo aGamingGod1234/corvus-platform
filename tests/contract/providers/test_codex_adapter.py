@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -22,6 +23,11 @@ from corvus.infrastructure.agent_runtimes.codex import (
     CodexAdapterError,
     CodexCliAdapter,
     LocalCodexTextRequest,
+    _grant_windows_sandbox_preflight,
+    _grant_windows_workspace_access,
+    _linked_git_access_paths,
+    _windows_profile_directory,
+    _workspace_traverse_boundaries,
 )
 from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessInvocation,
@@ -29,9 +35,217 @@ from corvus.infrastructure.agent_runtimes.process_session import (
     ProcessSessionEvent,
     ProcessSessionEventKind,
 )
+from corvus.safe_process import TrustedProcessError
 
 NOW = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
 WORKSPACE_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows known-folder semantics")
+def test_windows_profile_directory_ignores_environment_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_profile = _windows_profile_directory()
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    assert _windows_profile_directory() == expected_profile
+
+
+def test_workspace_traverse_boundaries_cover_the_complete_managed_path(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+
+    assert _workspace_traverse_boundaries(workspace, home=tmp_path) == (
+        workspace.parent,
+        workspace.parent.parent,
+        tmp_path,
+    )
+
+
+def test_workspace_traverse_boundaries_reach_the_user_profile(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    managed_root = home / "AppData" / "Local" / "app.corvus.desktop"
+    workspace = managed_root / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+
+    assert _workspace_traverse_boundaries(workspace, home=home) == (
+        workspace.parent,
+        workspace.parent.parent,
+        managed_root,
+        managed_root.parent,
+        managed_root.parent.parent,
+        home,
+    )
+
+
+def test_workspace_traverse_boundaries_ignore_desktop_profile_redirection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    managed_root = home / "AppData" / "Local" / "app.corvus.desktop"
+    workspace = managed_root / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._windows_profile_directory",
+        lambda: managed_root,
+    )
+
+    assert _workspace_traverse_boundaries(workspace) == (
+        workspace.parent,
+        workspace.parent.parent,
+        managed_root,
+        managed_root.parent,
+        managed_root.parent.parent,
+        home,
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandbox_preflight_grants_only_directory_entry_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._windows_profile_directory",
+        lambda: tmp_path,
+    )
+    logon_sid = "S-1-5-5-100-500"
+    user_sid = "S-1-5-21-100-200-300-501"
+    granted: list[tuple[Path, str]] = []
+    modified: list[tuple[Path, str]] = []
+    operations: list[tuple[str, Path, str]] = []
+
+    def grant_traverse(directory: Path, sid: str) -> None:
+        granted.append((directory, sid))
+        operations.append(("traverse", directory, sid))
+
+    def grant_modify(directory: Path, sid: str) -> None:
+        modified.append((directory, sid))
+        operations.append(("modify", directory, sid))
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.windows_current_logon_sid",
+        lambda: logon_sid,
+    )
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.windows_current_user_sid",
+        lambda: user_sid,
+    )
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_traverse",
+        grant_traverse,
+    )
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_modify",
+        grant_modify,
+    )
+
+    await _grant_windows_sandbox_preflight(workspace)
+
+    assert set(granted) == {
+        (workspace, logon_sid),
+        *((directory, logon_sid) for directory in _workspace_traverse_boundaries(workspace)),
+    }
+    assert modified == [(workspace, user_sid)]
+    assert operations[0] == ("modify", workspace, user_sid)
+
+
+@pytest.mark.asyncio
+async def test_workspace_access_grants_managed_boundaries_concurrently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._windows_profile_directory",
+        lambda: tmp_path,
+    )
+    sandbox_sid = "S-1-5-21-100-200-300-400"
+    second_sandbox_sid = "S-1-5-21-100-200-300-401"
+    sandbox_sids = frozenset({sandbox_sid, second_sandbox_sid})
+    source_repository = tmp_path / "source"
+    common_git_directory = source_repository / ".git"
+    common_git_directory.mkdir(parents=True)
+    expected_boundaries = _workspace_traverse_boundaries(workspace)
+    concurrent_boundaries = frozenset(expected_boundaries[:2])
+    barrier = threading.Barrier(len(concurrent_boundaries))
+    granted: list[tuple[Path, str]] = []
+    readable: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.windows_directory_acl_sids",
+        lambda _workspace: sandbox_sids,
+    )
+
+    def grant(directory: Path, sid: str) -> None:
+        granted.append((directory, sid))
+        if directory in concurrent_boundaries and sid == min(sandbox_sids):
+            barrier.wait(timeout=5)
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_traverse",
+        grant,
+    )
+
+    def grant_read(directory: Path, sid: str) -> None:
+        readable.append((directory, sid))
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex.grant_windows_sid_read",
+        grant_read,
+    )
+
+    await _grant_windows_workspace_access(
+        workspace,
+        frozenset(),
+        (source_repository, common_git_directory),
+    )
+
+    assert set(granted) == {
+        *((boundary, sid) for boundary in expected_boundaries for sid in sandbox_sids),
+        *((source_repository, sid) for sid in sandbox_sids),
+    }
+    assert set(readable) == {(common_git_directory, sid) for sid in sandbox_sids}
+
+
+def test_linked_git_access_paths_validate_bidirectional_metadata(tmp_path: Path) -> None:
+    workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+    source_repository = tmp_path / "source"
+    git_directory = source_repository / ".git" / "worktrees" / workspace.name
+    git_directory.mkdir(parents=True)
+    git_pointer = workspace / ".git"
+    git_pointer.write_text(f"gitdir: {git_directory}\n", encoding="utf-8")
+    (git_directory / "gitdir").write_text(f"{git_pointer}\n", encoding="utf-8")
+    (git_directory / "commondir").write_text("../..\n", encoding="utf-8")
+
+    assert _linked_git_access_paths(workspace) == (
+        source_repository.resolve(),
+        (source_repository / ".git").resolve(),
+    )
+
+
+def test_linked_git_access_paths_reject_mismatched_reverse_pointer(tmp_path: Path) -> None:
+    workspace = tmp_path / ".corvus-worktrees" / "repository" / "run"
+    workspace.mkdir(parents=True)
+    source_repository = tmp_path / "source"
+    git_directory = source_repository / ".git" / "worktrees" / workspace.name
+    git_directory.mkdir(parents=True)
+    (workspace / ".git").write_text(f"gitdir: {git_directory}\n", encoding="utf-8")
+    (git_directory / "gitdir").write_text(f"{tmp_path / 'other'}\n", encoding="utf-8")
+    (git_directory / "commondir").write_text("../..\n", encoding="utf-8")
+
+    with pytest.raises(TrustedProcessError, match="metadata is unavailable"):
+        _linked_git_access_paths(workspace)
 
 
 class _Session:
@@ -371,6 +585,8 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
         "--skip-git-repo-check",
     )
     assert starter.invocation.arguments[-1] == "-"
+    cd_index = starter.invocation.arguments.index("--cd")
+    assert Path(starter.invocation.arguments[cd_index + 1]) == starter.invocation.cwd
     assert request.prompt not in starter.invocation.arguments
     assert starter.invocation.stdin == request.prompt.encode("utf-8")
     assert starter.invocation.cwd.parent == tmp_path / "runs"
@@ -660,6 +876,79 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
     assert artifact.path.is_file()
     assert artifact.download_name.endswith(".zip")
     assert artifact.secret_screening == "passed"  # noqa: S105
+
+
+@pytest.mark.asyncio
+async def test_codex_inspect_mode_allows_redacted_read_only_tool_progress(
+    tmp_path: Path,
+) -> None:
+    adapter, starter = _adapter(
+        tmp_path,
+        (
+            ProcessSessionEvent(
+                sequence=1,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "thread.started", "thread_id": "inspect-thread"},
+            ),
+            ProcessSessionEvent(
+                sequence=2,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.started",
+                    "item": {
+                        "id": "tool-1",
+                        "type": "command_execution",
+                        "command": "do-not-expose-this-command",
+                    },
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=3,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={
+                    "type": "item.completed",
+                    "item": {"id": "tool-1", "type": "command_execution"},
+                },
+            ),
+            ProcessSessionEvent(
+                sequence=4,
+                kind=ProcessSessionEventKind.FRAME,
+                frame={"type": "turn.completed", "usage": {"output_tokens": 1}},
+            ),
+            ProcessSessionEvent(sequence=5, kind=ProcessSessionEventKind.EXITED, return_code=0),
+        ),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Inspect the repository without changing files.",
+            idempotency_key="local-inspect",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="inspect",
+        ),
+    )
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert starter.invocation is not None
+    assert "read-only" in starter.invocation.arguments
+    assert [event.event_type for event in events] == [
+        AgentRunEventType.STARTED,
+        AgentRunEventType.CHECKPOINT,
+        AgentRunEventType.CHECKPOINT,
+        AgentRunEventType.USAGE,
+        AgentRunEventType.COMPLETED,
+    ]
+    assert events[1].redacted_payload == {
+        "activity": "command",
+        "label": "Run command",
+        "status": "started",
+        "tool_id": "tool-1",
+    }
+    assert starter.session.cancel_calls == 0
+    assert "do-not-expose-this-command" not in repr(events)
 
 
 @pytest.mark.asyncio

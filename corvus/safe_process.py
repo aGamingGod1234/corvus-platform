@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import os
+import re
 import signal
 import subprocess  # nosec B404
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
@@ -26,6 +29,24 @@ class TrustedProcessResult:
 
 type _ThreadOutcome = tuple[TrustedProcessResult | None, BaseException | None]
 _POSIX_SIGKILL_NUMBER = 9
+_WINDOWS_TRUSTED_TOOL_PATHS = (
+    ("Program Files", "Git", "cmd"),
+    ("Program Files (x86)", "Git", "cmd"),
+)
+_WINDOWS_SID_PATTERN = re.compile(r"S-\d-(?:\d+-){1,14}\d+")
+_WINDOWS_SE_FILE_OBJECT = 1
+_WINDOWS_DACL_SECURITY_INFORMATION = 0x00000004
+_WINDOWS_FILE_TRAVERSE = 0x00000020
+_WINDOWS_FILE_GENERIC_EXECUTE = 0x001200A0
+_WINDOWS_FILE_GENERIC_READ = 0x00120089
+_WINDOWS_FILE_GENERIC_MODIFY = 0x001301BF
+_WINDOWS_GRANT_ACCESS = 1
+_WINDOWS_NO_INHERITANCE = 0
+_WINDOWS_CONTAINER_AND_OBJECT_INHERIT = 0x00000003
+_WINDOWS_TOKEN_QUERY = 0x0008
+_WINDOWS_TOKEN_USER = 1
+_WINDOWS_TOKEN_GROUPS = 2
+_WINDOWS_SE_GROUP_LOGON_ID = 0xC0000000
 
 
 def path_is_link_or_reparse(path: Path) -> bool:
@@ -39,6 +60,21 @@ def path_is_link_or_reparse(path: Path) -> bool:
         return True
     reparse_flag = getattr(metadata, "st_file_attributes", 0) & 0x400
     return bool(reparse_flag)
+
+
+def _canonical_trusted_directory(candidate: Path) -> Path | None:
+    try:
+        canonical = candidate.resolve(strict=True)
+    except OSError:
+        return None
+    if not canonical.is_absolute() or not canonical.is_dir():
+        return None
+    current = Path(canonical.anchor)
+    for part in canonical.parts[1:]:
+        current /= part
+        if path_is_link_or_reparse(current):
+            return None
+    return canonical
 
 
 def windows_system_directory() -> Path:
@@ -76,6 +112,13 @@ def build_clean_process_environment(
         system_directory = windows_system_directory()
         windows_directory = system_directory.parent
         path_entries.extend((system_directory, windows_directory))
+        installation_root = windows_directory.parent
+        for components in _WINDOWS_TRUSTED_TOOL_PATHS:
+            trusted_directory = _canonical_trusted_directory(
+                installation_root.joinpath(*components)
+            )
+            if trusted_directory is not None:
+                path_entries.append(trusted_directory)
         environment.update(
             {
                 "ComSpec": os.fspath(system_directory / "cmd.exe"),
@@ -487,4 +530,389 @@ def run_trusted_argv(
         timeout_seconds=timeout_seconds,
         env=env,
         max_output_bytes=max_output_bytes,
+    )
+
+
+def windows_directory_acl_sids(directory: Path) -> frozenset[str]:
+    """Return explicit unresolved SIDs on a Windows directory ACL."""
+
+    if os.name != "nt":
+        return frozenset()
+    canonical = _canonical_trusted_directory(directory)
+    if canonical is None:
+        raise TrustedProcessError("trusted ACL directory is unavailable")
+    icacls = windows_system_directory() / "icacls.exe"
+    result = run_trusted_argv(
+        (os.fspath(icacls), os.fspath(canonical)),
+        cwd=canonical.parent,
+        timeout_seconds=10,
+        max_output_bytes=65_536,
+    )
+    if result.returncode != 0:
+        raise TrustedProcessError("trusted ACL inspection failed")
+    output = result.stdout.decode("utf-8", errors="replace")
+    return frozenset(_WINDOWS_SID_PATTERN.findall(output))
+
+
+def windows_current_logon_sid() -> str | None:
+    """Return the current Windows logon SID shared by normal and restricted checks."""
+
+    if sys.platform != "win32":
+        return None
+
+    class _SidAndAttributes(ctypes.Structure):
+        _fields_ = (("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD))
+
+    class _TokenGroups(ctypes.Structure):
+        _fields_ = (("group_count", wintypes.DWORD), ("groups", _SidAndAttributes * 1))
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process_token = advapi32.OpenProcessToken
+    open_process_token.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    open_process_token.restype = wintypes.BOOL
+    get_token_information = advapi32.GetTokenInformation
+    get_token_information.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    get_token_information.restype = wintypes.BOOL
+    convert_sid = advapi32.ConvertSidToStringSidW
+    convert_sid.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
+    convert_sid.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = ()
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    token = wintypes.HANDLE()
+    if not open_process_token(
+        kernel32.GetCurrentProcess(),
+        _WINDOWS_TOKEN_QUERY,
+        ctypes.byref(token),
+    ):
+        return None
+    try:
+        token_information_size = wintypes.DWORD()
+        get_token_information(
+            token,
+            _WINDOWS_TOKEN_GROUPS,
+            None,
+            0,
+            ctypes.byref(token_information_size),
+        )
+        if token_information_size.value == 0:
+            return None
+        token_information = ctypes.create_string_buffer(token_information_size.value)
+        if not get_token_information(
+            token,
+            _WINDOWS_TOKEN_GROUPS,
+            token_information,
+            token_information_size.value,
+            ctypes.byref(token_information_size),
+        ):
+            return None
+        token_groups = ctypes.cast(
+            token_information,
+            ctypes.POINTER(_TokenGroups),
+        ).contents
+        groups = ctypes.cast(token_groups.groups, ctypes.POINTER(_SidAndAttributes))
+        for index in range(token_groups.group_count):
+            group = groups[index]
+            if group.attributes & _WINDOWS_SE_GROUP_LOGON_ID != _WINDOWS_SE_GROUP_LOGON_ID:
+                continue
+            sid_string_pointer = ctypes.c_void_p()
+            try:
+                if not convert_sid(group.sid, ctypes.byref(sid_string_pointer)):
+                    return None
+                sid_string = ctypes.wstring_at(sid_string_pointer)
+                return sid_string if _WINDOWS_SID_PATTERN.fullmatch(sid_string) else None
+            finally:
+                if sid_string_pointer.value:
+                    kernel32.LocalFree(sid_string_pointer)
+        return None
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def windows_current_user_sid() -> str | None:
+    """Return the SID of the Windows user represented by the current process token."""
+
+    if sys.platform != "win32":
+        return None
+
+    class _SidAndAttributes(ctypes.Structure):
+        _fields_ = (("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD))
+
+    class _TokenUser(ctypes.Structure):
+        _fields_ = (("user", _SidAndAttributes),)
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process_token = advapi32.OpenProcessToken
+    open_process_token.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    open_process_token.restype = wintypes.BOOL
+    get_token_information = advapi32.GetTokenInformation
+    get_token_information.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    get_token_information.restype = wintypes.BOOL
+    convert_sid = advapi32.ConvertSidToStringSidW
+    convert_sid.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
+    convert_sid.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = ()
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    token = wintypes.HANDLE()
+    if not open_process_token(
+        kernel32.GetCurrentProcess(),
+        _WINDOWS_TOKEN_QUERY,
+        ctypes.byref(token),
+    ):
+        return None
+    try:
+        token_information_size = wintypes.DWORD()
+        get_token_information(
+            token,
+            _WINDOWS_TOKEN_USER,
+            None,
+            0,
+            ctypes.byref(token_information_size),
+        )
+        if token_information_size.value == 0:
+            return None
+        token_information = ctypes.create_string_buffer(token_information_size.value)
+        if not get_token_information(
+            token,
+            _WINDOWS_TOKEN_USER,
+            token_information,
+            token_information_size.value,
+            ctypes.byref(token_information_size),
+        ):
+            return None
+        token_user = ctypes.cast(token_information, ctypes.POINTER(_TokenUser)).contents
+        sid_string_pointer = ctypes.c_void_p()
+        try:
+            if not convert_sid(token_user.user.sid, ctypes.byref(sid_string_pointer)):
+                return None
+            sid_string = ctypes.wstring_at(sid_string_pointer)
+            return sid_string if _WINDOWS_SID_PATTERN.fullmatch(sid_string) else None
+        finally:
+            if sid_string_pointer.value:
+                kernel32.LocalFree(sid_string_pointer)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def grant_windows_sid_traverse(directory: Path, sid: str) -> None:
+    """Grant one validated SID the minimum access needed to enter a directory."""
+
+    _grant_windows_sid_access(
+        directory,
+        sid,
+        access_permissions=_WINDOWS_FILE_GENERIC_EXECUTE,
+        inheritance=_WINDOWS_NO_INHERITANCE,
+    )
+
+
+def grant_windows_sid_read(directory: Path, sid: str) -> None:
+    """Grant one validated Windows SID inherited read access to a directory tree."""
+
+    _grant_windows_sid_access(
+        directory,
+        sid,
+        access_permissions=_WINDOWS_FILE_GENERIC_READ | _WINDOWS_FILE_TRAVERSE,
+        inheritance=_WINDOWS_CONTAINER_AND_OBJECT_INHERIT,
+    )
+
+
+def _grant_windows_sid_access(
+    directory: Path,
+    sid: str,
+    *,
+    access_permissions: int,
+    inheritance: int,
+) -> None:
+    """Grant a bounded access mask to one validated SID on a trusted directory."""
+
+    if sys.platform != "win32":
+        return
+    if _WINDOWS_SID_PATTERN.fullmatch(sid) is None:
+        raise TrustedProcessError("trusted ACL SID is invalid")
+    canonical = _canonical_trusted_directory(directory)
+    if canonical is None:
+        raise TrustedProcessError("trusted ACL directory is unavailable")
+
+    class _TrusteeW(ctypes.Structure):
+        _fields_ = (
+            ("multiple_trustee", ctypes.c_void_p),
+            ("multiple_trustee_operation", ctypes.c_uint),
+            ("trustee_form", ctypes.c_uint),
+            ("trustee_type", ctypes.c_uint),
+            ("name", ctypes.c_void_p),
+        )
+
+    class _ExplicitAccessW(ctypes.Structure):
+        _fields_ = (
+            ("access_permissions", wintypes.DWORD),
+            ("access_mode", ctypes.c_uint),
+            ("inheritance", wintypes.DWORD),
+            ("trustee", _TrusteeW),
+        )
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    convert_sid = advapi32.ConvertStringSidToSidW
+    convert_sid.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p))
+    convert_sid.restype = wintypes.BOOL
+    get_security = advapi32.GetNamedSecurityInfoW
+    get_security.argtypes = (
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    get_security.restype = wintypes.DWORD
+    build_security = advapi32.BuildSecurityDescriptorW
+    build_security.argtypes = (
+        ctypes.POINTER(_TrusteeW),
+        ctypes.POINTER(_TrusteeW),
+        wintypes.ULONG,
+        ctypes.POINTER(_ExplicitAccessW),
+        wintypes.ULONG,
+        ctypes.POINTER(_ExplicitAccessW),
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.ULONG),
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    build_security.restype = wintypes.DWORD
+    get_security_descriptor_dacl = advapi32.GetSecurityDescriptorDacl
+    get_security_descriptor_dacl.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.BOOL),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.BOOL),
+    )
+    get_security_descriptor_dacl.restype = wintypes.BOOL
+    set_named_security = advapi32.SetNamedSecurityInfoW
+    set_named_security.argtypes = (
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    )
+    set_named_security.restype = wintypes.DWORD
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    sid_pointer = ctypes.c_void_p()
+    security_descriptor = ctypes.c_void_p()
+    updated_security_descriptor = ctypes.c_void_p()
+    updated_dacl = ctypes.c_void_p()
+    dacl_present = wintypes.BOOL()
+    dacl_defaulted = wintypes.BOOL()
+    try:
+        if not convert_sid(sid, ctypes.byref(sid_pointer)):
+            raise TrustedProcessError("trusted ACL SID conversion failed")
+        path_buffer = ctypes.create_unicode_buffer(os.fspath(canonical))
+        result = get_security(
+            path_buffer,
+            _WINDOWS_SE_FILE_OBJECT,
+            _WINDOWS_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            None,
+            None,
+            ctypes.byref(security_descriptor),
+        )
+        if result != 0:
+            raise TrustedProcessError("trusted ACL inspection failed")
+        entry = _ExplicitAccessW(
+            access_permissions=access_permissions,
+            access_mode=_WINDOWS_GRANT_ACCESS,
+            inheritance=inheritance,
+            trustee=_TrusteeW(
+                multiple_trustee=None,
+                multiple_trustee_operation=0,
+                trustee_form=0,
+                trustee_type=0,
+                name=sid_pointer,
+            ),
+        )
+        updated_security_descriptor_size = wintypes.ULONG()
+        result = build_security(
+            None,
+            None,
+            1,
+            ctypes.byref(entry),
+            0,
+            None,
+            security_descriptor,
+            ctypes.byref(updated_security_descriptor_size),
+            ctypes.byref(updated_security_descriptor),
+        )
+        if result != 0:
+            raise TrustedProcessError("trusted ACL update failed")
+        if not get_security_descriptor_dacl(
+            updated_security_descriptor,
+            ctypes.byref(dacl_present),
+            ctypes.byref(updated_dacl),
+            ctypes.byref(dacl_defaulted),
+        ):
+            raise TrustedProcessError("trusted ACL update failed")
+        if not dacl_present.value or not updated_dacl.value:
+            raise TrustedProcessError("trusted ACL update failed")
+        result = set_named_security(
+            path_buffer,
+            _WINDOWS_SE_FILE_OBJECT,
+            _WINDOWS_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            updated_dacl,
+            None,
+        )
+        if result != 0:
+            raise TrustedProcessError("trusted ACL access grant failed")
+    finally:
+        for pointer in (updated_security_descriptor, security_descriptor, sid_pointer):
+            if pointer.value:
+                kernel32.LocalFree(pointer)
+
+
+def grant_windows_sid_modify(directory: Path, sid: str) -> None:
+    """Grant one validated Windows SID inherited modify access to a directory tree."""
+
+    _grant_windows_sid_access(
+        directory,
+        sid,
+        access_permissions=_WINDOWS_FILE_GENERIC_MODIFY,
+        inheritance=_WINDOWS_CONTAINER_AND_OBJECT_INHERIT,
     )
