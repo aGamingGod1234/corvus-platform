@@ -1480,6 +1480,13 @@
             "title": "Mcp Enabled",
             "type": "boolean"
           },
+          "model_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Model Labels",
+            "type": "object"
+          },
           "response_tone": {
             "enum": [
               "concise",
@@ -1510,6 +1517,7 @@
           "version",
           "default_provider",
           "default_model",
+          "model_labels",
           "default_effort",
           "default_mode",
           "mcp_enabled",
@@ -1577,6 +1585,14 @@
           "mcp_enabled": {
             "title": "Mcp Enabled",
             "type": "boolean"
+          },
+          "model_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 100,
+            "title": "Model Labels",
+            "type": "object"
           },
           "response_tone": {
             "enum": [

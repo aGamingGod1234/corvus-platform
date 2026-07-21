@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -30,6 +30,9 @@ type ModelUsage = { inputTokens?: number; cachedInputTokens?: number; outputToke
 type AssistantChunkKind = "block" | "continuation";
 type ComposerOption<T extends string> = { value: T; label: string; description?: string; disabled?: boolean };
 const TITLE_MAX = 72;
+const COMPOSER_MIN_ROWS = 2;
+const COMPOSER_MAX_ROWS = 8;
+const COMPOSER_FALLBACK_LINE_HEIGHT_PX = 24;
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
   low: "Low",
   medium: "Medium",
@@ -40,6 +43,44 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
 
 function MarkdownMessage({ children }: { children: string }) {
   return <div className="message-markdown"><ReactMarkdown rehypePlugins={[rehypeSanitize]} remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown></div>;
+}
+
+function resizeComposer(textarea: HTMLTextAreaElement): void {
+  const styles = window.getComputedStyle(textarea);
+  const parsedLineHeight = Number.parseFloat(styles.lineHeight);
+  const lineHeight = Number.isFinite(parsedLineHeight)
+    ? parsedLineHeight
+    : COMPOSER_FALLBACK_LINE_HEIGHT_PX;
+  const verticalChrome = Number.parseFloat(styles.paddingTop || "0")
+    + Number.parseFloat(styles.paddingBottom || "0")
+    + Number.parseFloat(styles.borderTopWidth || "0")
+    + Number.parseFloat(styles.borderBottomWidth || "0");
+  const minimumHeight = lineHeight * COMPOSER_MIN_ROWS + verticalChrome;
+  const maximumHeight = lineHeight * COMPOSER_MAX_ROWS + verticalChrome;
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minimumHeight), maximumHeight)}px`;
+  textarea.style.overflowY = textarea.scrollHeight > maximumHeight ? "auto" : "hidden";
+}
+
+function applyModelLabels(
+  provider: ProviderCatalogEntry,
+  labels: Record<string, string>
+): ProviderCatalogEntry {
+  const prefix = `${provider.id}:`;
+  const discoveredIds = new Set(provider.models.map((model) => model.id));
+  const configuredModels = Object.entries(labels)
+    .filter(([key]) => key.startsWith(prefix) && !discoveredIds.has(key.slice(prefix.length)))
+    .map(([key, label]) => ({ id: key.slice(prefix.length), label, recommended: false }));
+  return {
+    ...provider,
+    models: [
+      ...provider.models.map((model) => ({
+        ...model,
+        label: labels[`${prefix}${model.id}`] ?? model.label
+      })),
+      ...configuredModels
+    ]
+  };
 }
 
 function ComposerSelect<T extends string>({
@@ -205,6 +246,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   workingDirectory?: string;
 }) {
   const streamRef = useRef<RunEventStream | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [threads, setThreads] = useState<DeviceThread[]>(() => loadDeviceThreads(storage, storageScope));
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => threads[0]?.id ?? null);
   const activeThreadIdRef = useRef<string | null>(selectedThreadId);
@@ -238,6 +280,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsage | null>(null);
   const [artifactReady, setArtifactReady] = useState(false);
+
+  useLayoutEffect(() => {
+    if (composerRef.current !== null) resizeComposer(composerRef.current);
+  }, [composer]);
   const [safetyPreview, setSafetyPreview] = useState<SafetyPreview | null>(null);
   const [safetyLoading, setSafetyLoading] = useState(true);
   const [safetyError, setSafetyError] = useState("");
@@ -323,9 +369,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         setProviderError("No configured agents are ready. Configure a local CLI or API key in Settings, then retry.");
         return;
       }
+      const preferences = preferencesResult.status === "fulfilled" ? preferencesResult.value : null;
       const runnableCatalog = readyCatalog.filter((entry) =>
         (entry.models?.length ?? 0) > 0 && (entry.thinking_levels?.length ?? 0) > 0
-      );
+      ).map((entry) => applyModelLabels(entry, preferences?.model_labels ?? {}));
       if (runnableCatalog.length === 0) {
         setProviders(FALLBACK_PROVIDERS);
         setProviderError("A local agent was verified, but discovery returned no supported models or thinking levels. Retry discovery before starting a run.");
@@ -333,7 +380,6 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       }
       setProviders(runnableCatalog);
       setProviderError("");
-      const preferences = preferencesResult.status === "fulfilled" ? preferencesResult.value : null;
       setPreferenceError(preferences === null
         ? "Saved model preferences are unavailable. Corvus is using verified provider defaults for this conversation."
         : "");
@@ -754,7 +800,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         {safetyError ? <p className="conversation-error" role="alert">{safetyError} <button aria-label="Retry safety policy" className="text-button" onClick={() => setSafetyRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
         {error ? <p className="conversation-error" role="alert">{error}</p> : null}
         <form className="composer" onSubmit={(event) => void send(event)}>
-          <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />
+          <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} ref={composerRef} rows={COMPOSER_MIN_ROWS} value={composer} />
           <div className="composer__controls">
             <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" disabled={runStatus === "working"} onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
             <ComposerSelect<RunMode> ariaLabel="Run mode" onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />

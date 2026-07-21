@@ -1209,6 +1209,7 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "version": 0,
         "default_provider": "codex",
         "default_model": None,
+        "model_labels": {},
         "default_effort": "medium",
         "default_mode": "chat",
         "mcp_enabled": False,
@@ -1220,6 +1221,7 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "expected_version": 0,
         "default_provider": "codex",
         "default_model": "gpt-5.6-sol",
+        "model_labels": {"codex:gpt-5.6-sol": "My Sol model"},
         "default_effort": "high",
         "default_mode": "build",
         "mcp_enabled": True,
@@ -1227,6 +1229,14 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "custom_rules": "Always end with a verification result.",
     }
     assert client.put("/api/local-chat/preferences", json=update).status_code == 403
+    invalid_labels = {
+        **update,
+        "model_labels": {"openai:gpt-5.6-sol": "Unsupported provider"},
+    }
+    assert (
+        client.put("/api/local-chat/preferences", json=invalid_labels, headers=headers).status_code
+        == 422
+    )
     saved = client.put("/api/local-chat/preferences", json=update, headers=headers)
     assert saved.status_code == 200
     assert saved.json()["version"] == 1

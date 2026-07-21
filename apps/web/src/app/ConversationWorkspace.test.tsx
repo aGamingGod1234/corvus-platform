@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -49,6 +49,7 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
       version: 0,
       default_provider: "codex",
       default_model: null,
+      model_labels: {},
       default_effort: "medium",
       default_mode: "chat",
       mcp_enabled: false,
@@ -178,6 +179,48 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Agent model" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
+  });
+
+  it("uses saved display names and manually configured models in the chat selector", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 3, default_provider: "codex", default_model: "custom-codex-model",
+      model_labels: {
+        "codex:gpt-5.6-sol": "Fast Sol",
+        "codex:custom-codex-model": "My custom model"
+      },
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: "2026-07-21T00:00:00Z"
+    });
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-model-labels" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    const model = await screen.findByRole("combobox", { name: "Agent model" });
+    expect(model).toHaveTextContent("My custom model");
+    await user.click(model);
+    expect(screen.getByRole("option", { name: "Fast Sol" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "My custom model" })).toBeVisible();
+  });
+
+  it("expands and contracts the composer between two and eight lines", () => {
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-growing-composer" experience="developer" />);
+    const composer = screen.getByRole("textbox", { name: "Message Corvus" });
+    let scrollHeight = 120;
+    Object.defineProperty(composer, "scrollHeight", { configurable: true, get: () => scrollHeight });
+
+    fireEvent.input(composer, { target: { value: "one\ntwo\nthree\nfour" } });
+    expect(composer).toHaveStyle({ height: "120px", overflowY: "hidden" });
+
+    scrollHeight = 300;
+    fireEvent.input(composer, { target: { value: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine" } });
+    expect(composer).toHaveStyle({ height: "198px", overflowY: "auto" });
+
+    scrollHeight = 60;
+    fireEvent.input(composer, { target: { value: "short again" } });
+    expect(composer).toHaveStyle({ height: "60px", overflowY: "hidden" });
   });
 
   it("keeps Run options usable after a run fails to start", async () => {

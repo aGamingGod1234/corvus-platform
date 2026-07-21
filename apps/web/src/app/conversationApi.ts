@@ -144,6 +144,7 @@ export interface RuntimePreferences {
   version: number;
   default_provider: "codex" | "claude";
   default_model: string | null;
+  model_labels?: Record<string, string>;
   default_effort: ThinkingLevel;
   default_mode: RunMode;
   mcp_enabled: boolean;

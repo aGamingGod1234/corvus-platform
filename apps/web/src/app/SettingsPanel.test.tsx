@@ -13,6 +13,7 @@ function settingsApi(): Pick<ConversationApi, "getPreferences" | "listProviders"
       version: 2,
       default_provider: "codex",
       default_model: "gpt-5.6-sol",
+      model_labels: {},
       default_effort: "high",
       default_mode: "build",
       mcp_enabled: false,
@@ -28,7 +29,10 @@ function settingsApi(): Pick<ConversationApi, "getPreferences" | "listProviders"
       status_label: "Detected on this device",
       thinking_levels: ["low", "medium", "high", "xhigh"],
       supports_mcp: true,
-      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true }]
+      models: [
+        { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", recommended: true },
+        { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", recommended: false }
+      ]
     }]),
     updatePreferences: vi.fn().mockImplementation(async (preferences) => ({
       ...preferences,
@@ -136,7 +140,7 @@ describe("SettingsPanel", () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
-  it("uses editable model identifiers and category-specific headings", async () => {
+  it("shows every provider model, edits labels, and chooses an explicit default", async () => {
     const api = settingsApi();
     render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
       storage={new MemoryStorage()} workspaceId="workspace-model-text" workspaceKind="individual" />);
@@ -148,17 +152,39 @@ describe("SettingsPanel", () => {
     expect(screen.getByRole("button", { name: "Defaults" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByLabelText("OpenAI API key")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Providers" }));
-    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
-    const claudeModel = screen.getByRole("textbox", { name: "Claude default model" });
-    await user.clear(claudeModel);
-    await user.type(claudeModel, "claude-custom-model");
+    const solLabel = await screen.findByRole("textbox", { name: "Codex gpt-5.6-sol display name" });
+    expect(solLabel).toHaveValue("GPT-5.6 Sol");
+    expect(screen.getByRole("textbox", { name: "Codex gpt-5.6-terra display name" })).toHaveValue("GPT-5.6 Terra");
+    await user.clear(solLabel);
+    await user.type(solLabel, "My Sol model");
+    await user.click(screen.getByRole("radio", { name: "Use GPT-5.6 Terra by default" }));
     expect(screen.getByText("You have unsaved changes")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(api.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
-      default_provider: "claude",
-      default_model: "claude-custom-model"
+      default_provider: "codex",
+      default_model: "gpt-5.6-terra",
+      model_labels: { "codex:gpt-5.6-sol": "My Sol model" }
     })));
-    expect(screen.queryByText(/ready on this device|recommended/i)).not.toBeInTheDocument();
+  });
+
+  it("adds and removes a manually configured provider model", async () => {
+    const api = settingsApi();
+    const user = userEvent.setup();
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-manual-model" workspaceKind="individual" />);
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    await user.type(screen.getByLabelText("Add model ID", { selector: "#new-provider-model-codex" }), "custom-codex-model");
+    await user.click(screen.getAllByRole("button", { name: "Add model" })[0]);
+    expect(screen.getByRole("textbox", { name: "Codex custom-codex-model display name" })).toHaveValue("custom-codex-model");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
+      model_labels: { "codex:custom-codex-model": "custom-codex-model" }
+    })));
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByRole("textbox", { name: "Codex custom-codex-model display name" })).not.toBeInTheDocument();
   });
 
   it("does not carry an Agent save error into MCP settings", async () => {
@@ -380,8 +406,8 @@ describe("SettingsPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(screen.getByRole("button", { name: "Providers" }));
-    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
-    expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Codex gpt-5.6-sol display name" })).toHaveValue("GPT-5.6 Sol");
+    expect(screen.getByText("Detected · Recommended")).toBeVisible();
   });
 
   it("does not present failed discovery as verified and allows retry", async () => {
@@ -401,7 +427,7 @@ describe("SettingsPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Models" }));
     await user.click(screen.getByRole("button", { name: "Providers" }));
-    expect(await screen.findByRole("textbox", { name: "Codex default model" })).toHaveValue("gpt-5.6-sol");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/catalog unavailable/i);
     await user.click(screen.getByRole("button", { name: "Defaults" }));
     expect(screen.getByText(/thinking options unavailable until provider discovery succeeds/i)).toBeVisible();
     expect(screen.queryByRole("radio", { name: "Low" })).not.toBeInTheDocument();
@@ -527,7 +553,7 @@ describe("SettingsPanel", () => {
     expect(screen.queryByDisplayValue("sk-test-never-render-again")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Verify OpenAI" }));
-    expect(await screen.findByText("gpt-5.6-sol")).toBeVisible();
+    expect((await screen.findAllByText("gpt-5.6-sol")).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Remove OpenAI" }));
     expect(api.removeProviderCredential).toHaveBeenCalledWith("openai");
   });

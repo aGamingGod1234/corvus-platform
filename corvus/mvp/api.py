@@ -116,6 +116,11 @@ from corvus.platform.api import IdentityApiDependencies, create_platform_router
 from corvus.platform.api.dependencies import build_hosted_identity_dependencies_from_env
 from corvus.safe_process import path_is_link_or_reparse
 
+_MODEL_LABEL_MAX_ITEMS = 100
+_MODEL_LABEL_MAX_LENGTH = 100
+_MODEL_LABEL_KEY_PATTERN = re.compile(
+    r"^(codex|claude):[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
+)
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
 _INSTANCE_CHALLENGE_HEADER = "X-Corvus-Challenge"
@@ -330,6 +335,7 @@ class LocalPreferencesResponse(ApiModel):
     version: int = Field(ge=0)
     default_provider: Literal["codex", "claude"]
     default_model: str | None
+    model_labels: dict[str, str]
     default_effort: Literal["low", "medium", "high", "xhigh", "max"]
     default_mode: Literal["chat", "build"]
     mcp_enabled: bool
@@ -380,6 +386,10 @@ class LocalPreferencesUpdate(ApiModel):
         min_length=1,
         max_length=100,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$",
+    )
+    model_labels: dict[str, str] = Field(
+        default_factory=dict,
+        max_length=_MODEL_LABEL_MAX_ITEMS,
     )
     default_effort: Literal["low", "medium", "high", "xhigh", "max"]
     default_mode: Literal["chat", "build"]
@@ -1819,12 +1829,23 @@ def create_app(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="provider_effort_unavailable",
             )
+        if any(
+            _MODEL_LABEL_KEY_PATTERN.fullmatch(key) is None
+            or len(label) > _MODEL_LABEL_MAX_LENGTH
+            or not label.strip()
+            for key, label in body.model_labels.items()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="model_label_invalid",
+            )
         try:
             return local_preferences.update(
                 user_id=principal.user_id,
                 expected_version=body.expected_version,
                 default_provider=body.default_provider,
                 default_model=body.default_model,
+                model_labels={key: label.strip() for key, label in body.model_labels.items()},
                 default_effort=body.default_effort,
                 default_mode=body.default_mode,
                 mcp_enabled=body.mcp_enabled,

@@ -2599,3 +2599,27 @@
 
 ### Suggested Next Steps
 - Verify the rebuilt installed Windows application with the same confirmation-gated demo prompt.
+## [2026-07-21] — Adaptive composer and complete model registry
+### What Was Implemented
+- Made the conversation composer grow and shrink with its content from two to eight lines, switching to internal scrolling only beyond the maximum.
+- Replaced single default-model text fields with a complete per-provider model registry showing every discovered and manually configured model.
+- Added editable display names, explicit default selection, manual model add/remove, and durable owner-scoped label persistence.
+- Applied saved model names and manually configured models to the live conversation selector.
+
+### Files Modified
+- `apps/web/src/app/ConversationWorkspace.tsx` and tests — bounded automatic textarea sizing and runtime model-label application.
+- `apps/web/src/app/SettingsPanel.tsx` and tests — complete provider model registry and management controls.
+- `apps/web/src/styles/product-workspace.css` — responsive model rows and composer sizing behavior.
+- `corvus/mvp/preferences.py`, `corvus/mvp/api.py`, and `corvus/mvp/store.py` — validated model-label persistence and schema migration 16.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` — regenerated preference contract.
+- `tests/mvp/test_local_chat_api.py` — verifies model labels are owner-scoped and versioned with runtime preferences.
+
+### Assumptions Made (flag these for review)
+- Detected provider model IDs remain immutable; users edit only display names. Manually configured model IDs can be added or removed.
+- The composer uses two visible lines minimum and eight lines maximum.
+
+### Known Issues / Deferred
+- API-key provider models remain visible in their credential verification area until those providers support the same default-runtime contract as local Codex and Claude.
+
+### Suggested Next Steps
+- Exercise the rebuilt Windows application with a long prompt and confirm the preferred model survives an application restart.
