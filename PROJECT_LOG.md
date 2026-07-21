@@ -2557,6 +2557,7 @@
 - Omitted credential-bearing files from isolated project copies and changed artifact screening to inspect/package only files produced or modified by the agent.
 - Kept Run options accessible after a failed start and visually hid transcript/composer scrollbars while preserving wheel, keyboard, and touchpad scrolling.
 - Verified a real local Codex Build-mode run reached `completed`, wrote the requested file, and produced a screened ZIP artifact.
+- Rebuilt the Windows Python sidecar with PyInstaller, packaged it through `tauri.release.conf.json`, and verified the installed sidecar hash matches the newly compiled binary.
 
 ### Files Modified
 - `corvus/infrastructure/agent_runtimes/codex.py` — supports the approved local-chat sandbox and baseline-aware change artifacts.
