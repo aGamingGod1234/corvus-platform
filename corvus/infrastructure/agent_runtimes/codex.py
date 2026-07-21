@@ -586,9 +586,7 @@ class CodexCliAdapter(AgentRuntimePort):
         if len(prompt_bytes) > _MAX_STDIN_BYTES:
             raise CodexAdapterError("codex_prompt_too_large")
         arguments.append("-")
-        timeout_ceiling = (
-            _MAX_BUILD_TIMEOUT_SECONDS if mode == "build" else _MAX_TIMEOUT_SECONDS
-        )
+        timeout_ceiling = _MAX_BUILD_TIMEOUT_SECONDS if mode == "build" else _MAX_TIMEOUT_SECONDS
         limits = ProcessSessionLimits(
             max_stdin_bytes=_MAX_STDIN_BYTES,
             max_stdout_bytes=max_output_bytes,
