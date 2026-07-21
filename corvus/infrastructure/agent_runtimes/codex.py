@@ -675,7 +675,7 @@ class CodexCliAdapter(AgentRuntimePort):
             windows_directory_acl_sids(scratch) if prepare_windows_access else frozenset()
         )
         baseline_digests = (
-            _snapshot_workspace(scratch)
+            await asyncio.to_thread(_snapshot_workspace, scratch)
             if mode == "build" and package_artifact and workspace is not None
             else {}
         )

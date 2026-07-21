@@ -12,7 +12,7 @@
 
 **Corvus is a local-first, proof-carrying AI agent workspace.** It lets an agent complete real coding work inside an isolated project workspace, then returns the diff, test evidence, safety receipt, and screened artifact for human review.
 
-One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Approvals, credentials, budgets, audit, sandbox boundaries, and kill switches therefore follow the same rules on every surface.
+One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Shipped local paths reuse the same authorization, credential-reference, audit, and sandbox services; durable budget and kill-switch repositories remain explicit roadmap work.
 
 ## Evaluate Corvus in 90 seconds
 

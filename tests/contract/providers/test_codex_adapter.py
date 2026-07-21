@@ -550,6 +550,54 @@ async def test_codex_adapter_uses_only_an_explicit_approved_managed_workspace(
 
 
 @pytest.mark.asyncio
+async def test_codex_adapter_snapshots_build_workspace_off_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    workspace = managed_root / "run-1"
+    workspace.mkdir(parents=True)
+    snapshot_threads: list[int] = []
+
+    def snapshot_workspace(_: Path) -> dict[str, str]:
+        snapshot_threads.append(threading.get_ident())
+        return {}
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._snapshot_workspace",
+        snapshot_workspace,
+    )
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=_Starter(_Session(())),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    event_loop_thread = threading.get_ident()
+
+    await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Change the repository.",
+            idempotency_key="threaded-snapshot",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            workspace=workspace,
+            package_artifact=True,
+        ),
+    )
+
+    assert snapshot_threads
+    assert snapshot_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
 async def test_codex_adapter_refuses_explicit_workspace_outside_approved_roots(
     tmp_path: Path,
 ) -> None:

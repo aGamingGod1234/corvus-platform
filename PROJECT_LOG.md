@@ -2712,3 +2712,30 @@
 
 ### Suggested Next Steps
 - Capture one polished desktop screenshot and a short demo GIF after the final release build, then add both near the README evaluation path.
+
+## 2026-07-21 — Clear PR #16 release blockers
+### What Was Implemented
+- Moved baseline workspace hashing off the async provider event loop and added regression coverage that proves the snapshot runs on a worker thread.
+- Made the cross-platform run-coordinator assertion independent of valid evidence insertion order while still requiring every expected evidence record exactly once.
+- Validated blank model display names before any settings request and exposed the invalid field accessibly.
+- Removed the conflicting CSS textarea height cap so the JavaScript-managed composer can reach its configured row limit without clipping.
+- Passed artifact bytes to Tauri as a typed array instead of expanding a potentially large download into a memory-heavy JavaScript number array.
+- Narrowed the README governance claim to the controls and persistence guarantees implemented by the current local paths.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` and `tests/contract/providers/test_codex_adapter.py` — keep workspace hashing responsive and verify thread dispatch.
+- `tests/mvp/test_run_coordinator.py` — preserve the evidence contract without platform-sensitive ordering.
+- `apps/web/src/app/SettingsPanel.tsx` and `SettingsPanel.test.tsx` — reject blank model labels with a specific accessible error.
+- `apps/web/src/app/artifactDownload.ts` and `artifactDownload.test.ts` — preserve typed artifact bytes through native IPC.
+- `apps/web/src/styles/product-workspace.css` — remove the competing composer height ceiling.
+- `README.md` — align the cross-surface claim with shipped durability.
+
+### Assumptions Made (flag these for review)
+- Evidence record presence, uniqueness, and content are contractual; relative ordering between independently persisted completion evidence is not.
+- Tauri v2 serializes `Uint8Array` directly into the Rust `Vec<u8>` command argument.
+
+### Known Issues / Deferred
+- The release remains unsigned under the approved hackathon beta policy.
+
+### Suggested Next Steps
+- Push these fixes, resolve the corresponding review threads, and require a green certification matrix before creating the submission tag.

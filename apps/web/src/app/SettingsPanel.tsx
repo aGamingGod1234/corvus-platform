@@ -395,6 +395,14 @@ export function SettingsPanel({
   }
 
   async function saveSettings(): Promise<boolean> {
+    const invalidModelLabel = Object.entries(runtime.model_labels ?? {})
+      .find(([, label]) => label.trim() === "");
+    if (invalidModelLabel !== undefined) {
+      const [, modelId] = invalidModelLabel[0].split(":", 2);
+      setError(`Display name for ${modelId ?? "this model"} cannot be blank.`);
+      setStatus("");
+      return false;
+    }
     setBusy(true);
     setError("");
     setStatus("");
@@ -738,7 +746,7 @@ export function SettingsPanel({
                     const displayLabel = (runtime.model_labels ?? {})[key] ?? model.label;
                     return <article className="provider-model-row" key={model.id}>
                       <label className="provider-model-default"><input aria-label={`Use ${model.label} by default`} checked={runtime.default_provider === providerId && runtime.default_model === model.id} disabled={busy || entry.status !== "ready"} name="default-model" onChange={() => updateProviderModel(providerId, model.id)} type="radio" /><span>Default</span></label>
-                      <label><span>Display name</span><input aria-label={`${entry.label} ${model.id} display name`} disabled={busy} maxLength={100} onChange={(event) => updateModelLabel(providerId, model.id, model.manual ? null : model.label, event.target.value)} value={displayLabel} /></label>
+                      <label><span>Display name</span><input aria-invalid={displayLabel.trim() === ""} aria-label={`${entry.label} ${model.id} display name`} disabled={busy} maxLength={100} onChange={(event) => updateModelLabel(providerId, model.id, model.manual ? null : model.label, event.target.value)} value={displayLabel} /></label>
                       <div className="provider-model-id"><code>{model.id}</code><small>{model.manual ? "Manually configured" : model.recommended ? "Detected · Recommended" : "Detected"}</small></div>
                       {model.manual ? <button className="text-button" disabled={busy} onClick={() => removeManualModel(providerId, model.id)} type="button">Remove</button> : null}
                     </article>;

@@ -167,6 +167,25 @@ describe("SettingsPanel", () => {
     })));
   });
 
+  it("identifies a blank model display name before saving any settings", async () => {
+    const api = settingsApi();
+    render(<SettingsPanel api={api} experience="developer" onExperienceChange={vi.fn()}
+      storage={new MemoryStorage()} workspaceId="workspace-model-validation" workspaceKind="individual" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    const solLabel = await screen.findByRole("textbox", { name: "Codex gpt-5.6-sol display name" });
+    await user.clear(solLabel);
+    expect(solLabel).toHaveAttribute("aria-invalid", "true");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Display name for gpt-5.6-sol cannot be blank."
+    );
+    expect(api.updatePreferences).not.toHaveBeenCalled();
+  });
+
   it("adds and removes a manually configured provider model", async () => {
     const api = settingsApi();
     const user = userEvent.setup();

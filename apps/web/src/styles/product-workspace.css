@@ -341,7 +341,7 @@
 .conversation-error { width: min(calc(100% - 2rem), 50rem); margin: 0 auto .55rem; color: var(--danger); font-size: .8rem; }
 
 .composer { width: min(calc(100% - 2rem), 54rem); min-width: 0; flex: 0 0 auto; margin: 0 auto 1rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
-.composer textarea { width: 100%; min-height: 3.4rem; max-height: 12rem; resize: none; overflow-y: hidden; border: 0; padding: .9rem .95rem .55rem; color: var(--ink); background: transparent; line-height: 1.5; scrollbar-width: none; -ms-overflow-style: none; }
+.composer textarea { width: 100%; min-height: 3.4rem; resize: none; overflow-y: hidden; border: 0; padding: .9rem .95rem .55rem; color: var(--ink); background: transparent; line-height: 1.5; scrollbar-width: none; -ms-overflow-style: none; }
 .composer textarea:focus { outline: 0; }
 .composer:focus-within { border-color: color-mix(in oklch, var(--signal) 55%, var(--line)); outline: 2px solid color-mix(in oklch, var(--signal) 18%, transparent); outline-offset: 0; }
 .composer__controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: .25rem; align-items: center; min-width: 0; padding: .45rem; }

@@ -30,7 +30,7 @@ describe("downloadArtifact", () => {
     });
     expect(tauri.invoke).toHaveBeenCalledWith("save_artifact_file", {
       suggestedName: "corvus-project.zip",
-      contents: [80, 75, 3, 4]
+      contents: new Uint8Array([80, 75, 3, 4])
     });
   });
 

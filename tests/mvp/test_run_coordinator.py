@@ -152,13 +152,15 @@ async def test_run_uses_exact_worktree_and_persists_events_before_notification(
         "provider.completed",
     ]
     evidence = runs.evidence("local", started.id)
-    assert [item.kind for item in evidence] == [
+    assert len(evidence) == 4
+    assert {item.kind for item in evidence} == {
         "safety_policy",
         "repository_base",
         "provider_completion",
         "change_set",
-    ]
-    assert evidence[-1].summary == "Observed 1 changed file in the isolated worktree"
+    }
+    change_set = next(item for item in evidence if item.kind == "change_set")
+    assert change_set.summary == "Observed 1 changed file in the isolated worktree"
 
 
 @pytest.mark.asyncio

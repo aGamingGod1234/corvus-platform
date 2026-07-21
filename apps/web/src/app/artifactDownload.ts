@@ -24,8 +24,10 @@ export async function downloadArtifact(url: string, suggestedName: string): Prom
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_DESKTOP_ARTIFACT_BYTES) {
       throw new Error("artifact_download_size_invalid");
     }
-    const contents = Array.from(bytes);
-    return await invoke<string | null>("save_artifact_file", { suggestedName: downloadName, contents });
+    return await invoke<string | null>("save_artifact_file", {
+      suggestedName: downloadName,
+      contents: bytes
+    });
   }
 
   const anchor = document.createElement("a");
