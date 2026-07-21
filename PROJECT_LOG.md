@@ -2474,3 +2474,22 @@
 
 ### Suggested Next Steps
 - Redeploy Railway, confirm the migration reaches head, and exercise Google OAuth through Vercel.
+
+## 2026-07-21 — Production OAuth and hosted-runtime verification
+### What Was Implemented
+- Configured the Corvus Google OAuth web client for the production Vercel callback without committing credential values.
+- Configured the Railway backend environment and PostgreSQL pre-deploy migration, then verified `/ready` returns HTTP 200.
+- Deployed the Vercel production app and verified the Google OAuth start, consent, callback, and onboarding path with the approved account.
+- Confirmed GitHub authentication continues to use the desktop's local GitHub CLI session rather than an unused hosted OAuth client.
+
+### Files Modified
+- `PROJECT_LOG.md` — records the external deployment and OAuth verification evidence without secrets.
+
+### Assumptions Made (flag these for review)
+- OAuth credentials remain provider-managed configuration in Google Cloud and Railway; repository documentation intentionally records names and outcomes only.
+
+### Known Issues / Deferred
+- PR #12 certification checks must finish successfully before merge.
+
+### Suggested Next Steps
+- Review the final PR #12 checks and merge after required review approval.
