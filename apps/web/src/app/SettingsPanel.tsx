@@ -30,6 +30,7 @@ import { featureErrorMessage } from "./featureFeedback";
 
 type SettingsCategory = "general" | "models" | "agent" | "mcp" | "safety" | "appearance" | "account";
 type ModelsView = "defaults" | "providers";
+type LocalProviderId = "codex" | "claude";
 type SettingsApi = Pick<ConversationApi, "getPreferences" | "listProviders" | "updatePreferences" | "listProviderCredentials" | "connectProviderCredential" | "verifyProviderCredential" | "removeProviderCredential" | "listMcpServers" | "addMcpServer" | "removeMcpServer" | "loginMcpServer">;
 type AccountConnectionsApi = {
   authenticateGitHub(): Promise<GitHubAuthStatus>;
@@ -57,6 +58,7 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
   xhigh: "Extra high",
   max: "Max"
 };
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
 
 const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; label: string }> = [
   { id: "general", label: "General" },
@@ -82,6 +84,7 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   version: 0,
   default_provider: "codex",
   default_model: null,
+  model_labels: {},
   default_effort: "medium",
   default_mode: "chat",
   mcp_enabled: false,
@@ -89,6 +92,10 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   custom_rules: "",
   updated_at: null
 };
+
+function modelPreferenceKey(providerId: LocalProviderId, modelId: string): string {
+  return `${providerId}:${modelId}`;
+}
 
 function title(value: string): string {
   return value[0].toUpperCase() + value.slice(1);
@@ -166,6 +173,10 @@ export function SettingsPanel({
   const [providerModelDrafts, setProviderModelDrafts] = useState<Record<"codex" | "claude", string>>({
     codex: FALLBACK_PROVIDERS.find((provider) => provider.id === "codex")?.models[0]?.id ?? "",
     claude: FALLBACK_PROVIDERS.find((provider) => provider.id === "claude")?.models[0]?.id ?? ""
+  });
+  const [newModelDrafts, setNewModelDrafts] = useState<Record<LocalProviderId, string>>({
+    codex: "",
+    claude: ""
   });
   const [providerDiscoveryError, setProviderDiscoveryError] = useState("");
   const [providerRefresh, setProviderRefresh] = useState(0);
@@ -296,7 +307,7 @@ export function SettingsPanel({
       .then(([preferencesResult, catalogResult]) => {
         if (!current) return;
         const preferences = preferencesResult.status === "fulfilled"
-          ? preferencesResult.value
+          ? { ...preferencesResult.value, model_labels: preferencesResult.value.model_labels ?? {} }
           : { ...DEFAULT_RUNTIME_PREFERENCES, response_tone: device.responseTone, custom_rules: device.customRules };
         const catalog = catalogResult.status === "fulfilled" ? catalogResult.value : [];
         const knownProviderIds = new Set(FALLBACK_PROVIDERS.map((provider) => provider.id));
@@ -384,6 +395,14 @@ export function SettingsPanel({
   }
 
   async function saveSettings(): Promise<boolean> {
+    const invalidModelLabel = Object.entries(runtime.model_labels ?? {})
+      .find(([, label]) => label.trim() === "");
+    if (invalidModelLabel !== undefined) {
+      const [, modelId] = invalidModelLabel[0].split(":", 2);
+      setError(`Display name for ${modelId ?? "this model"} cannot be blank.`);
+      setStatus("");
+      return false;
+    }
     setBusy(true);
     setError("");
     setStatus("");
@@ -410,13 +429,15 @@ export function SettingsPanel({
         || runtime.default_mode !== savedRuntime.default_mode
         || runtime.mcp_enabled !== savedRuntime.mcp_enabled
         || runtime.response_tone !== savedRuntime.response_tone
-        || runtime.custom_rules !== savedRuntime.custom_rules;
+        || runtime.custom_rules !== savedRuntime.custom_rules
+        || JSON.stringify(runtime.model_labels ?? {}) !== JSON.stringify(savedRuntime.model_labels ?? {});
       let persistedRuntime: RuntimePreferences | null = null;
       if (api !== undefined && runtimeChanged) {
         persistedRuntime = await api.updatePreferences({
           expected_version: runtime.version,
           default_provider: runtime.default_provider,
           default_model: runtime.default_model,
+          model_labels: runtime.model_labels ?? {},
           default_effort: runtime.default_effort,
           default_mode: runtime.default_mode,
           mcp_enabled: runtime.mcp_enabled,
@@ -477,6 +498,7 @@ export function SettingsPanel({
     runtime.default_mode !== savedRuntime.default_mode ? `Default mode: ${title(savedRuntime.default_mode)} → ${title(runtime.default_mode)}` : null,
     runtime.response_tone !== savedRuntime.response_tone ? `Response style: ${title(savedRuntime.response_tone)} → ${title(runtime.response_tone)}` : null,
     runtime.custom_rules !== savedRuntime.custom_rules ? "Custom rules edited" : null,
+    JSON.stringify(runtime.model_labels ?? {}) !== JSON.stringify(savedRuntime.model_labels ?? {}) ? "Model names edited" : null,
     theme !== savedDevice.theme ? `Theme: ${title(savedDevice.theme)} → ${title(theme)}` : null,
     sendKeyMode !== savedDevice.sendKeyMode ? "Message send keys changed" : null,
     safetyGuidance !== savedDevice.safetyGuidance ? "Safety guidance changed" : null,
@@ -512,6 +534,54 @@ export function SettingsPanel({
     setDirty(true);
     setStatus("");
     setError("");
+    setUnsavedBarDismissed(false);
+  }
+
+  function updateModelLabel(
+    providerId: LocalProviderId,
+    modelId: string,
+    discoveredLabel: string | null,
+    value: string
+  ): void {
+    const key = modelPreferenceKey(providerId, modelId);
+    setRuntime((current) => {
+      const modelLabels = { ...(current.model_labels ?? {}) };
+      if (discoveredLabel !== null && value === discoveredLabel) delete modelLabels[key];
+      else modelLabels[key] = value;
+      return { ...current, model_labels: modelLabels };
+    });
+    setDirty(true);
+    setStatus("");
+    setError("");
+    setUnsavedBarDismissed(false);
+  }
+
+  function addManualModel(providerId: LocalProviderId): void {
+    const modelId = newModelDrafts[providerId].trim();
+    if (!MODEL_ID_PATTERN.test(modelId)) {
+      setError("Use a valid model ID with letters, numbers, dots, underscores, colons, or hyphens.");
+      return;
+    }
+    updateModelLabel(providerId, modelId, null, modelId);
+    setNewModelDrafts((current) => ({ ...current, [providerId]: "" }));
+  }
+
+  function removeManualModel(providerId: LocalProviderId, modelId: string): void {
+    const key = modelPreferenceKey(providerId, modelId);
+    setRuntime((current) => {
+      const modelLabels = { ...(current.model_labels ?? {}) };
+      delete modelLabels[key];
+      const provider = providers.find((entry) => entry.id === providerId);
+      const replacement = provider?.models[0]?.id ?? null;
+      return {
+        ...current,
+        default_model: current.default_provider === providerId && current.default_model === modelId
+          ? replacement
+          : current.default_model,
+        model_labels: modelLabels
+      };
+    });
+    setDirty(true);
     setUnsavedBarDismissed(false);
   }
 
@@ -659,7 +729,31 @@ export function SettingsPanel({
               <div className="settings-field"><span className="settings-field__label">Default thinking</span><p>Options appear only after the selected provider is verified.</p>{selectedThinkingLevels.length > 0 ? <div className="segmented-choice" role="radiogroup" aria-label="Default thinking">{selectedThinkingLevels.map((effort) => <label key={effort}><input checked={runtime.default_effort === effort} name="default-thinking" onChange={() => updateRuntime("default_effort", effort)} type="radio" />{THINKING_LABELS[effort]}</label>)}</div> : <p className="settings-callout">Thinking options unavailable until provider discovery succeeds.</p>}</div>
               <div className="settings-field"><span className="settings-field__label">Default mode</span><p>Chat is read-only. Build uses a fresh writable sandbox and returns an artifact.</p><div className="segmented-choice" role="radiogroup" aria-label="Default mode"><label><input checked={runtime.default_mode === "chat"} name="default-mode" onChange={() => { updateRuntime("default_mode", "chat"); updateRuntime("mcp_enabled", false); }} type="radio" />Chat</label><label><input checked={runtime.default_mode === "build"} disabled={runtime.default_provider !== "codex"} name="default-mode" onChange={() => updateRuntime("default_mode", "build")} type="radio" />Build</label></div></div>
             </> : <>
-              <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => <section className="provider-model-settings__provider" data-status={entry.status} key={entry.id}><div><h2>{entry.label}</h2><p>{entry.status === "ready" ? entry.status_label : `${entry.status_label}. Saved model text remains editable, but Corvus will not run it until verification succeeds.`}</p>{entry.status === "ready" && entry.models.length > 0 ? <small>Verified models: {entry.models.map((model) => model.label).join(", ")}</small> : null}</div><label htmlFor={`provider-model-${entry.id}`}>Default model</label><input aria-label={`${entry.label} default model`} disabled={busy} id={`provider-model-${entry.id}`} onChange={(event) => updateProviderModel(entry.id as "codex" | "claude", event.target.value)} placeholder="Provider model ID" value={providerModelDrafts[entry.id as "codex" | "claude"]} /></section>)}</div>
+              <div className="provider-model-settings">{providers.filter((entry) => entry.id === "codex" || entry.id === "claude").map((entry) => {
+                const providerId = entry.id as LocalProviderId;
+                const discoveredIds = new Set(entry.models.map((model) => model.id));
+                const manualModels = Object.entries(runtime.model_labels ?? {})
+                  .filter(([key]) => key.startsWith(`${providerId}:`) && !discoveredIds.has(key.slice(providerId.length + 1)))
+                  .map(([key, label]) => ({ id: key.slice(providerId.length + 1), label, recommended: false, manual: true }));
+                const models = [
+                  ...entry.models.map((model) => ({ ...model, manual: false })),
+                  ...manualModels
+                ];
+                return <section className="provider-model-settings__provider" data-status={entry.status} key={entry.id}>
+                  <header><div><h2>{entry.label}</h2><p>{entry.status === "ready" ? entry.status_label : `${entry.status_label}. Models remain visible, but Corvus will not run them until verification succeeds.`}</p></div><span>{models.length} {models.length === 1 ? "model" : "models"}</span></header>
+                  <div className="provider-model-list">{models.length === 0 ? <p className="settings-callout">No models discovered. Add a model ID below if this provider supports one on your device.</p> : models.map((model) => {
+                    const key = modelPreferenceKey(providerId, model.id);
+                    const displayLabel = (runtime.model_labels ?? {})[key] ?? model.label;
+                    return <article className="provider-model-row" key={model.id}>
+                      <label className="provider-model-default"><input aria-label={`Use ${model.label} by default`} checked={runtime.default_provider === providerId && runtime.default_model === model.id} disabled={busy || entry.status !== "ready"} name="default-model" onChange={() => updateProviderModel(providerId, model.id)} type="radio" /><span>Default</span></label>
+                      <label><span>Display name</span><input aria-invalid={displayLabel.trim() === ""} aria-label={`${entry.label} ${model.id} display name`} disabled={busy} maxLength={100} onChange={(event) => updateModelLabel(providerId, model.id, model.manual ? null : model.label, event.target.value)} value={displayLabel} /></label>
+                      <div className="provider-model-id"><code>{model.id}</code><small>{model.manual ? "Manually configured" : model.recommended ? "Detected · Recommended" : "Detected"}</small></div>
+                      {model.manual ? <button className="text-button" disabled={busy} onClick={() => removeManualModel(providerId, model.id)} type="button">Remove</button> : null}
+                    </article>;
+                  })}</div>
+                  <div className="provider-model-add"><label htmlFor={`new-provider-model-${providerId}`}>Add model ID</label><input id={`new-provider-model-${providerId}`} maxLength={100} onChange={(event) => setNewModelDrafts((current) => ({ ...current, [providerId]: event.target.value }))} placeholder="provider-model-id" value={newModelDrafts[providerId]} /><button className="button" disabled={busy || !MODEL_ID_PATTERN.test(newModelDrafts[providerId].trim())} onClick={() => addManualModel(providerId)} type="button">Add model</button></div>
+                </section>;
+              })}</div>
               <div className="provider-connections"><div className="settings-section__subheading"><h3>API providers</h3><p>Keys are write-only and remain in your operating system keyring. API providers are Chat-only until a verified sandbox adapter exists.</p>{credentialControlsAvailable ? null : <p className="settings-callout">Open Corvus desktop to manage API credentials through the verified local runtime.</p>}</div>{API_PROVIDERS.map((provider) => { const credentialStatus = credentials.find((entry) => entry.provider === provider.id); const configured = credentialStatus?.configured ?? false; return <section className="provider-connection" key={provider.id}><div><strong>{provider.label}</strong><span>{configured ? `Connected via ${credentialStatus?.source}` : `Not connected, or set ${provider.environment}`}</span>{(verifiedModels[provider.id]?.length ?? 0) > 0 ? <small>{verifiedModels[provider.id]?.join(", ")}</small> : null}</div><label className="sr-only" htmlFor={`provider-key-${provider.id}`}>{provider.label} API key</label><input autoComplete="off" disabled={!credentialControlsAvailable} id={`provider-key-${provider.id}`} onChange={(event) => setCredentialDrafts((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder={configured ? "Paste a replacement key" : "Paste API key"} type="password" value={credentialDrafts[provider.id] ?? ""} /><div className="provider-connection__actions"><button disabled={!credentialControlsAvailable || busy || (credentialDrafts[provider.id]?.trim() ?? "") === ""} onClick={() => void connectCredential(provider.id)} type="button">{configured ? `Replace ${provider.label}` : `Connect ${provider.label}`}</button>{configured ? <><button disabled={busy} onClick={() => void verifyCredential(provider.id)} type="button">Verify {provider.label}</button><button disabled={busy || credentialStatus?.source === "environment"} onClick={() => void removeCredential(provider.id)} title={credentialStatus?.source === "environment" ? `Remove ${provider.environment} from the environment` : undefined} type="button">Remove {provider.label}</button></> : null}</div></section>; })}</div>
             </>}
           </> : null}

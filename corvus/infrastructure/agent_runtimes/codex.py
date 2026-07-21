@@ -70,8 +70,18 @@ _WINDOWS_SHGFP_TYPE_CURRENT = 0
 _WINDOWS_APP_DATA_DIRECTORY = "AppData"
 _WINDOWS_LOCAL_DATA_DIRECTORY = "Local"
 _WINDOWS_DESKTOP_DATA_DIRECTORY = "app.corvus.desktop"
+_LOCAL_CHAT_SANDBOX_DIRECTORY = ".corvus-local-chat"
+_LOCAL_CHAT_CODEX_DIRECTORY = "codex"
 _MAX_GIT_POINTER_BYTES = 4_096
 _MAX_TIMEOUT_SECONDS = 120.0
+_MAX_BUILD_TIMEOUT_SECONDS = 600.0
+_WINDOWS_BUILD_EDITING_GUIDANCE = (
+    "Native Windows sandbox compatibility: Do not use `apply_patch`, internal file-change "
+    "tools, or patch wrappers. Use sandboxed PowerShell commands or project-native tools to "
+    "create and edit files. Keep every write inside the current isolated workspace. If an "
+    "internal file-change tool is attempted and fails, do not retry it; continue with the "
+    "sandboxed command path. "
+)
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
 _MAX_FRAMES = 10_000
@@ -214,14 +224,28 @@ def _windows_profile_directory() -> Path:
 def _workspace_traverse_boundaries(
     workspace: Path,
     *,
+    approved_root: Path | None = None,
     home: Path | None = None,
 ) -> tuple[Path, ...]:
     resolved_workspace = workspace.resolve(strict=True)
     repository_worktrees = resolved_workspace.parent
     worktrees_root = repository_worktrees.parent
-    if worktrees_root.name != ".corvus-worktrees":
-        raise TrustedProcessError("Codex workspace is outside the managed worktree root")
-    managed_root = worktrees_root.parent
+    if worktrees_root.name == ".corvus-worktrees":
+        managed_root = worktrees_root.parent
+        boundaries = (repository_worktrees, worktrees_root, managed_root)
+    else:
+        if approved_root is None:
+            raise TrustedProcessError("Codex workspace is outside the managed worktree root")
+        resolved_approved_root = approved_root.resolve(strict=True)
+        local_chat_root = resolved_approved_root.parent
+        if (
+            resolved_workspace.parent != resolved_approved_root
+            or resolved_approved_root.name != _LOCAL_CHAT_CODEX_DIRECTORY
+            or local_chat_root.name != _LOCAL_CHAT_SANDBOX_DIRECTORY
+        ):
+            raise TrustedProcessError("Codex workspace is outside the managed sandbox root")
+        managed_root = local_chat_root.parent
+        boundaries = (resolved_approved_root, local_chat_root, managed_root)
     resolved_home = (home or _windows_profile_directory()).resolve(strict=True)
     if home is None:
         local_data = managed_root.parent
@@ -234,14 +258,7 @@ def _workspace_traverse_boundaries(
             resolved_home = app_data.parent.resolve(strict=True)
     if not resolved_workspace.is_relative_to(resolved_home):
         raise TrustedProcessError("Codex workspace is outside the user profile")
-    boundaries: list[Path] = []
-    ancestor = repository_worktrees
-    while True:
-        boundaries.append(ancestor)
-        if ancestor == resolved_home:
-            break
-        ancestor = ancestor.parent
-    return tuple(boundaries)
+    return boundaries
 
 
 def _linked_git_access_paths(workspace: Path) -> tuple[Path, Path] | None:
@@ -308,6 +325,8 @@ async def _grant_windows_workspace_access(
     workspace: Path,
     baseline_sids: frozenset[str],
     linked_git_access_paths: tuple[Path, Path] | None = None,
+    *,
+    approved_root: Path | None = None,
 ) -> None:
     sandbox_sids: frozenset[str] = frozenset()
     for _attempt in range(_WINDOWS_ACL_POLL_ATTEMPTS):
@@ -325,7 +344,10 @@ async def _grant_windows_workspace_access(
             sandbox_sids,
             grant_windows_sid_traverse,
         )
-        for ancestor in _workspace_traverse_boundaries(workspace)
+        for ancestor in _workspace_traverse_boundaries(
+            workspace,
+            approved_root=approved_root,
+        )
     ]
     if linked_git_access_paths is not None:
         source_repository, common_git_directory = linked_git_access_paths
@@ -357,7 +379,11 @@ def _grant_windows_sids_sequentially(
         grant(directory, sid)
 
 
-async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
+async def _grant_windows_sandbox_preflight(
+    workspace: Path,
+    *,
+    approved_root: Path | None = None,
+) -> None:
     logon_sid, user_sid = await asyncio.gather(
         asyncio.to_thread(windows_current_logon_sid),
         asyncio.to_thread(windows_current_user_sid),
@@ -365,12 +391,11 @@ async def _grant_windows_sandbox_preflight(workspace: Path) -> None:
     if logon_sid is None or user_sid is None:
         raise TrustedProcessError("Windows sandbox identity is unavailable")
     await asyncio.to_thread(grant_windows_sid_modify, workspace, user_sid)
-    await asyncio.gather(
-        *(
-            asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
-            for directory in (workspace, *_workspace_traverse_boundaries(workspace))
-        )
-    )
+    for directory in (
+        workspace,
+        *_workspace_traverse_boundaries(workspace, approved_root=approved_root),
+    ):
+        await asyncio.to_thread(grant_windows_sid_traverse, directory, logon_sid)
 
 
 class _RunSession:
@@ -381,6 +406,7 @@ class _RunSession:
         scratch: Path,
         mode: Literal["chat", "inspect", "build"],
         package_artifact: bool,
+        baseline_digests: Mapping[str, str] | None = None,
         workspace_access_task: asyncio.Task[None] | None = None,
     ) -> None:
         self.process = process
@@ -392,6 +418,7 @@ class _RunSession:
         self.scratch = scratch
         self.mode = mode
         self.package_artifact = package_artifact
+        self.baseline_digests = dict(baseline_digests or {})
         self.workspace_access_task = workspace_access_task
         self.artifact: LocalBuildArtifact | None = None
         self.provider_completed = False
@@ -539,20 +566,25 @@ class CodexCliAdapter(AgentRuntimePort):
             raise CodexAdapterError("codex_prompt_invalid")
         if model is not None and _MODEL_PATTERN.fullmatch(model) is None:
             raise CodexAdapterError("codex_model_invalid")
+        approved_workspace_root: Path | None = None
         if workspace is None:
             scratch = self._scratch_root / str(run_id)
             scratch.mkdir(parents=True, exist_ok=False)
         else:
             try:
                 scratch = workspace.resolve(strict=True)
+                resolved_approved_roots = tuple(
+                    root.resolve(strict=True) for root in self._approved_workspace_roots
+                )
             except OSError as exc:
                 raise CodexAdapterError("codex_workspace_unavailable") from exc
             if not scratch.is_dir() or path_is_link_or_reparse(scratch):
                 raise CodexAdapterError("codex_workspace_unavailable")
-            if not any(
-                scratch.is_relative_to(root.resolve(strict=True))
-                for root in self._approved_workspace_roots
-            ):
+            approved_workspace_root = next(
+                (root for root in resolved_approved_roots if scratch.is_relative_to(root)),
+                None,
+            )
+            if approved_workspace_root is None:
                 raise CodexAdapterError("codex_workspace_unapproved")
         sandbox = "workspace-write" if mode == "build" else "read-only"
         arguments = [
@@ -588,7 +620,11 @@ class CodexCliAdapter(AgentRuntimePort):
         if model is not None:
             arguments.extend(("--model", model))
         arguments.extend(("--config", f'model_reasoning_effort="{effort}"'))
-        effective_prompt = _build_prompt(prompt) if mode == "build" else prompt
+        effective_prompt = (
+            _build_prompt(prompt, windows_shell_edits=os.name == "nt")
+            if mode == "build"
+            else prompt
+        )
         try:
             prompt_bytes = effective_prompt.encode("utf-8")
         except UnicodeEncodeError as exc:
@@ -596,6 +632,7 @@ class CodexCliAdapter(AgentRuntimePort):
         if len(prompt_bytes) > _MAX_STDIN_BYTES:
             raise CodexAdapterError("codex_prompt_too_large")
         arguments.append("-")
+        timeout_ceiling = _MAX_BUILD_TIMEOUT_SECONDS if mode == "build" else _MAX_TIMEOUT_SECONDS
         limits = ProcessSessionLimits(
             max_stdin_bytes=_MAX_STDIN_BYTES,
             max_stdout_bytes=max_output_bytes,
@@ -604,7 +641,7 @@ class CodexCliAdapter(AgentRuntimePort):
             max_frames=_MAX_FRAMES,
             max_events=_MAX_FRAMES + 1,
             timeout_seconds=min(
-                _MAX_TIMEOUT_SECONDS,
+                timeout_ceiling,
                 max(1.0, (deadline - self._clock()).total_seconds()),
             ),
         )
@@ -628,11 +665,19 @@ class CodexCliAdapter(AgentRuntimePort):
         )
         if prepare_windows_access:
             try:
-                await _grant_windows_sandbox_preflight(scratch)
+                await _grant_windows_sandbox_preflight(
+                    scratch,
+                    approved_root=approved_workspace_root,
+                )
             except TrustedProcessError as error:
                 raise CodexAdapterError("codex_sandbox_preflight_failed") from error
         baseline_sids = (
             windows_directory_acl_sids(scratch) if prepare_windows_access else frozenset()
+        )
+        baseline_digests = (
+            await asyncio.to_thread(_snapshot_workspace, scratch)
+            if mode == "build" and package_artifact and workspace is not None
+            else {}
         )
         try:
             process = await self._session_starter(invocation)
@@ -644,6 +689,7 @@ class CodexCliAdapter(AgentRuntimePort):
                     scratch,
                     baseline_sids,
                     linked_git_access_paths,
+                    approved_root=approved_workspace_root,
                 )
             )
             if prepare_windows_access
@@ -660,6 +706,7 @@ class CodexCliAdapter(AgentRuntimePort):
             scratch=scratch,
             mode=mode,
             package_artifact=package_artifact,
+            baseline_digests=baseline_digests,
             workspace_access_task=workspace_access_task,
         )
         self._sessions[handle.id] = run_session
@@ -841,7 +888,7 @@ class CodexCliAdapter(AgentRuntimePort):
                             AgentRunEventType.CHECKPOINT,
                             {
                                 "activity": _safe_activity(item_type),
-                                "label": _safe_tool_label(item_type),
+                                "label": _safe_tool_label(item),
                                 "status": "started"
                                 if frame_type == "item.started"
                                 else "completed",
@@ -914,8 +961,23 @@ class CodexCliAdapter(AgentRuntimePort):
                     continue
                 if session.mode == "build" and session.package_artifact:
                     try:
-                        session.artifact = _package_workspace(session.scratch, handle.run_id)
+                        session.artifact = _package_workspace(
+                            session.scratch,
+                            handle.run_id,
+                            baseline_digests=session.baseline_digests,
+                        )
                     except CodexAdapterError as error:
+                        if error.reason_code == "codex_build_empty":
+                            yield event(
+                                AgentRunEventType.COMPLETED,
+                                {
+                                    "reason_code": error.reason_code,
+                                    "status": "needs_input",
+                                },
+                            )
+                            session.terminal_state = AgentRunState.COMPLETED
+                            terminal = True
+                            continue
                         yield event(
                             AgentRunEventType.FAILED,
                             {"reason_code": error.reason_code},
@@ -951,11 +1013,13 @@ def _normalize_effort(value: str) -> Literal["low", "medium", "high", "xhigh"]:
     raise CodexAdapterError("codex_effort_invalid")
 
 
-def _build_prompt(prompt: str) -> str:
+def _build_prompt(prompt: str, *, windows_shell_edits: bool = False) -> str:
+    editing_guidance = _WINDOWS_BUILD_EDITING_GUIDANCE if windows_shell_edits else ""
     return (
         "Build the complete requested project inside the current isolated workspace. "
         "Work autonomously, create all required files, run appropriate checks, and do not stop at "
         "a plan or partial scaffold. Do not read or modify files outside the current workspace. "
+        f"{editing_guidance}"
         "When the project is complete, summarize what was built and the checks you ran.\n\n"
         f"User request:\n{prompt}"
     )
@@ -972,15 +1036,47 @@ def _safe_activity(item_type: object) -> str:
     return mapping.get(str(item_type), "tool")
 
 
-def _safe_tool_label(item_type: object) -> str:
+def _safe_tool_label(item: Mapping[str, object]) -> str:
+    item_type = item.get("type")
+    command = item.get("command")
+    if item_type == "command_execution" and isinstance(command, str):
+        return _safe_command_label(command)
     mapping = {
-        "command_execution": "Run command",
+        "command_execution": "Run a sandboxed command",
         "file_change": "Update files",
         "mcp_tool_call": "Use MCP tool",
         "tool_call": "Use tool",
         "web_search": "Search the web",
     }
     return mapping.get(str(item_type), "Use tool")
+
+
+def _safe_command_label(command: str) -> str:
+    normalized = " ".join(command.casefold().split())
+    if "python" in normalized or "pytest" in normalized:
+        if "unittest" in normalized:
+            return "Run Python unit tests"
+        if "pytest" in normalized or " test" in normalized:
+            return "Run Python tests"
+        return "Run a Python workspace command"
+    if "cargo test" in normalized:
+        return "Run Rust tests"
+    if any(token in normalized for token in ("pnpm test", "npm test", "yarn test", "bun test")):
+        return "Run web tests"
+    if any(
+        token in normalized
+        for token in ("pnpm build", "npm run build", "yarn build", "bun run build")
+    ):
+        return "Build the web project"
+    if "git status" in normalized or "git diff" in normalized:
+        return "Inspect project changes"
+    if "set-content" in normalized or "out-file" in normalized:
+        return "Write project files with PowerShell"
+    if "rg " in normalized or "ripgrep" in normalized:
+        return "Search project files"
+    if "powershell" in normalized or "pwsh" in normalized:
+        return "Run a PowerShell workspace command"
+    return "Run a sandboxed command"
 
 
 def _safe_tool_identity(item: Mapping[str, object]) -> dict[str, JsonValue]:
@@ -1047,8 +1143,32 @@ def _is_placeholder_secret(value: bytes | str) -> bool:
     return _PLACEHOLDER_SECRET_PATTERN.match(encoded) is not None
 
 
-def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
+def _snapshot_workspace(scratch: Path) -> dict[str, str]:
     root = scratch.resolve(strict=True)
+    digests: dict[str, str] = {}
+    for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path_is_link_or_reparse(candidate):
+            raise CodexAdapterError("codex_build_link_rejected")
+        if candidate.is_dir():
+            continue
+        relative = candidate.relative_to(root)
+        if any(part in _BUILD_EXCLUDED_PARTS for part in relative.parts):
+            continue
+        canonical = candidate.resolve(strict=True)
+        if not canonical.is_relative_to(root):
+            raise CodexAdapterError("codex_build_path_escape")
+        digests[relative.as_posix()] = _sha256_file(canonical)
+    return digests
+
+
+def _package_workspace(
+    scratch: Path,
+    run_id: UUID,
+    *,
+    baseline_digests: Mapping[str, str] | None = None,
+) -> LocalBuildArtifact:
+    root = scratch.resolve(strict=True)
+    baseline = baseline_digests or {}
     files: list[tuple[Path, str, bytes]] = []
     total_bytes = 0
     for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
@@ -1068,6 +1188,8 @@ def _package_workspace(scratch: Path, run_id: UUID) -> LocalBuildArtifact:
         if not canonical.is_relative_to(root):
             raise CodexAdapterError("codex_build_path_escape")
         content = canonical.read_bytes()
+        if baseline.get(relative.as_posix()) == hashlib.sha256(content).hexdigest():
+            continue
         if len(content) > _MAX_BUILD_FILE_BYTES:
             raise CodexAdapterError("codex_build_file_too_large")
         if _contains_sensitive_build_content(content):

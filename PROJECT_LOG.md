@@ -2512,3 +2512,273 @@
 
 ### Suggested Next Steps
 - Resolve the addressed PR thread after the focused and certification checks pass.
+
+## 2026-07-21 — Windows demo runtime reliability
+### What Was Implemented
+- Limited Windows sandbox traverse grants to Corvus-managed worktree directories and serialized ACL updates to prevent startup stalls on large user-profile trees.
+- Extended build-mode Codex sessions to a ten-minute ceiling while retaining the existing two-minute ceiling for chat sessions.
+- Added focused regression coverage for both runtime boundaries.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — narrows and serializes Windows ACL work and applies the build-specific timeout.
+- `tests/contract/providers/test_codex_adapter.py` — verifies managed-root ACL boundaries, serialized grants, and build timeout behavior.
+- `PROJECT_LOG.md` — records the demo-readiness repair.
+
+### Assumptions Made (flag these for review)
+- A ten-minute build ceiling is sufficient for the hackathon MVP while the durable run deadline remains the stricter request-specific boundary.
+- Granting traverse access only through Corvus-managed directories is sufficient because the sandbox account receives its workspace path from the already-running parent process.
+
+### Known Issues / Deferred
+- The unsigned beta release remains appropriate for the current alpha-stage distribution policy.
+
+### Suggested Next Steps
+- Review and merge the runtime repair before cutting the next installer release.
+
+## 2026-07-21 — Cross-platform evidence assertion
+### What Was Implemented
+- Removed an ordering assumption from the no-change build evidence regression test while retaining checks for both required evidence records and the runtime-validation message.
+
+### Files Modified
+- `tests/mvp/test_run_coordinator.py` — validates evidence by durable kind rather than platform-sensitive insertion order.
+- `PROJECT_LOG.md` — records the CI repair.
+
+### Assumptions Made (flag these for review)
+- Evidence presence and content are contractual; ordering between independently persisted evidence records is not.
+
+### Known Issues / Deferred
+- None for this CI repair.
+
+### Suggested Next Steps
+- Confirm the Windows certification matrix is green on the updated PR commit.
+
+## 2026-07-21 — Demo Build-mode recovery and chat polish
+### What Was Implemented
+- Extended the Windows sandbox boundary check to the explicitly approved `.corvus-local-chat/codex/<run>` workspace without permitting arbitrary project paths.
+- Omitted credential-bearing files from isolated project copies and changed artifact screening to inspect/package only files produced or modified by the agent.
+- Kept Run options accessible after a failed start and visually hid transcript/composer scrollbars while preserving wheel, keyboard, and touchpad scrolling.
+- Verified a real local Codex Build-mode run reached `completed`, wrote the requested file, and produced a screened ZIP artifact.
+- Rebuilt the Windows Python sidecar with PyInstaller, packaged it through `tauri.release.conf.json`, and verified the installed sidecar hash matches the newly compiled binary.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — supports the approved local-chat sandbox and baseline-aware change artifacts.
+- `corvus/mvp/local_chat.py` — prevents sensitive source files from entering copied sandboxes.
+- `tests/contract/providers/test_codex_adapter.py` — covers local-chat boundaries and changed-file artifact packaging.
+- `tests/mvp/test_local_chat_api.py` — covers sensitive-file omission during project copy.
+- `apps/web/src/app/ConversationWorkspace.tsx` — explicitly associates the Run options trigger and panel.
+- `apps/web/src/app/ConversationWorkspace.test.tsx` — verifies Run options remain usable after startup failure.
+- `apps/web/src/styles/product-workspace.css` — hides chat scrollbars without disabling scrolling.
+- `PROJECT_LOG.md` — records the demo-critical repair and verification evidence.
+
+### Assumptions Made (flag these for review)
+- Build artifacts should be bounded change bundles rather than duplicate the complete pre-existing repository; this keeps downloads useful and secret screening focused on agent output.
+- “Remove the scrollbar” means visually hiding it while preserving all scrolling behavior.
+
+### Known Issues / Deferred
+- Installers remain unsigned for the approved beta distribution policy.
+
+### Suggested Next Steps
+- Merge PR #16 after review, then promote the verified Windows installer for the recorded demo.
+## [2026-07-21] — Correct false Build failures and simplify active Threads
+### What Was Implemented
+- Reclassified a successful Codex Build turn with no changed files as `Needs input` instead of a failed run, preserving the model response and prompting the user to continue.
+- Removed the global workspace sidebar from the Threads route so conversations use the full application width.
+- Kept Run mode, provider, model, thinking, and MCP controls editable during an active run; changes explicitly apply to the next message.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — emits a truthful completed `needs_input` terminal event for empty Build output after a completed provider turn.
+- `corvus/mvp/local_chat.py` — exposes approval-required runtime events as `needs_input` when supplied by a provider.
+- `apps/web/src/App.tsx` and `apps/web/src/styles.css` — remove the desktop/mobile sidebar and reserved navigation space on Threads.
+- `apps/web/src/app/ConversationWorkspace.tsx` and `apps/web/src/styles/product-workspace.css` — render the new state and unlock next-message run controls.
+- Focused adapter and UI tests — cover the corrected terminal state, active-run controls, and sidebar-free Threads shell.
+
+### Assumptions Made (flag these for review)
+- Run-option edits made while a run is active apply only to the next message and never mutate the already-started process.
+
+### Known Issues / Deferred
+- A request that produces no files for reasons other than needing confirmation is still presented as `Needs input`; the preserved model response explains the next action.
+
+### Suggested Next Steps
+- Verify the rebuilt installed Windows application with the same confirmation-gated demo prompt.
+## [2026-07-21] — Adaptive composer and complete model registry
+### What Was Implemented
+- Made the conversation composer grow and shrink with its content from two to eight lines, switching to internal scrolling only beyond the maximum.
+- Replaced single default-model text fields with a complete per-provider model registry showing every discovered and manually configured model.
+- Added editable display names, explicit default selection, manual model add/remove, and durable owner-scoped label persistence.
+- Applied saved model names and manually configured models to the live conversation selector.
+
+### Files Modified
+- `apps/web/src/app/ConversationWorkspace.tsx` and tests — bounded automatic textarea sizing and runtime model-label application.
+- `apps/web/src/app/SettingsPanel.tsx` and tests — complete provider model registry and management controls.
+- `apps/web/src/styles/product-workspace.css` — responsive model rows and composer sizing behavior.
+- `corvus/mvp/preferences.py`, `corvus/mvp/api.py`, and `corvus/mvp/store.py` — validated model-label persistence and schema migration 16.
+- `openapi/corvus-mvp.json` and `apps/web/src/generated/api.ts` — regenerated preference contract.
+- `tests/mvp/test_local_chat_api.py` — verifies model labels are owner-scoped and versioned with runtime preferences.
+
+### Assumptions Made (flag these for review)
+- Detected provider model IDs remain immutable; users edit only display names. Manually configured model IDs can be added or removed.
+- The composer uses two visible lines minimum and eight lines maximum.
+
+### Known Issues / Deferred
+- API-key provider models remain visible in their credential verification area until those providers support the same default-runtime contract as local Codex and Claude.
+
+### Suggested Next Steps
+- Exercise the rebuilt Windows application with a long prompt and confirm the preferred model survives an application restart.
+
+## 2026-07-21 — Restore Threads Navigation and Preserve Hidden Scrollbar
+### What Was Implemented
+- Restored the primary left application navigation while viewing Threads.
+- Kept the Threads transcript scrollable without displaying its native vertical scrollbar.
+- Restored the compact bottom navigation behavior for Threads on narrow screens.
+
+### Files Modified
+- `apps/web/src/App.tsx` — renders the application navigation on Threads.
+- `apps/web/src/styles.css` — removes the Threads-only shell collapse that hid navigation.
+- `apps/web/src/PlatformApp.test.tsx` — verifies Threads retains application navigation.
+
+### Assumptions Made (flag these for review)
+- The requested right-side removal refers to the native transcript scrollbar, not a functional inspector panel.
+
+### Known Issues / Deferred
+- None for this focused correction.
+
+### Suggested Next Steps
+- Rebuild and install the Windows package, then confirm the installed runtime health endpoints.
+## 2026-07-21 — Make Windows Protected Builds Reliably Writable
+### What Was Implemented
+- Routed native Windows Build edits through sandboxed PowerShell or project-native commands instead of Codex CLI's failing internal `apply_patch` launcher.
+- Preserved the protected workspace boundary: commands remain sandboxed and writes stay inside the Corvus-owned scratch copy.
+- Raised the local Codex Build deadline from two minutes to the adapter's existing ten-minute ceiling while leaving Chat runs at two minutes.
+- Proved the production adapter end to end with a real protected Build run: the model created and verified `result.txt`, emitted an artifact, completed successfully, and left the source project untouched.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — adds Windows Build editing guidance without weakening sandbox policy.
+- `corvus/mvp/local_chat.py` — applies a mode-specific deadline for Build runs.
+- `tests/contract/providers/test_codex_adapter.py` — verifies the Windows editing route is present.
+- `tests/mvp/test_local_chat_api.py` — verifies Build receives the extended deadline.
+
+### Assumptions Made (flag these for review)
+- Native Windows Codex CLI `apply_patch` remains unreliable in workspace-write mode; direct sandboxed command writes are the supported compatibility route.
+
+### Known Issues / Deferred
+- The upstream Codex CLI patch-launch defect remains outside Corvus; Corvus avoids that path for Windows Build runs.
+
+### Suggested Next Steps
+- Re-run the same small Build task from the freshly installed desktop UI for the demo recording.
+
+## 2026-07-21 — Improve Build Export and Safety Evidence UX
+### What Was Implemented
+- Replaced the desktop artifact link with a native Save As flow that lets the user choose the finished ZIP destination.
+- Corrected GitHub-flavored Markdown checklist alignment in streamed and durable agent messages.
+- Expanded the safety receipt with execution, filesystem, network, MCP, approval, output, artifact screening, size, hashes, and run identity evidence.
+- Replaced generic command activity with allowlisted purpose summaries while preserving command and secret redaction.
+- Rebuilt and installed the unsigned Windows beta; the installed sidecar hash matches the freshly packaged runtime and both health probes pass.
+
+### Files Modified
+- `apps/desktop/src-tauri/src/lib.rs` — validates and writes the user-selected artifact through the native dialog.
+- `apps/desktop/src-tauri/capabilities/default.json` and `permissions/autogenerated/save_artifact_file.toml` — narrowly authorize the artifact-save command.
+- `apps/web/src/app/artifactDownload.ts` and `conversationApi.ts` — fetch authenticated artifacts and invoke the desktop save flow.
+- `apps/web/src/app/ConversationWorkspace.tsx` — adds export feedback, durable activity summaries, and detailed safety evidence.
+- `apps/web/src/styles/product-workspace.css` — aligns task lists and lays out responsive safety evidence.
+- `tests/contract/providers/test_codex_adapter.py`, `apps/web/src/app/artifactDownload.test.ts`, `apps/web/src/app/ConversationWorkspace.test.tsx`, and Rust unit tests — cover redaction, native export, checklist rendering, and receipt details.
+
+### Assumptions Made (flag these for review)
+- The confirmed “Windows File Explorer” behavior means a native Save As dialog for the screened ZIP artifact.
+- Detailed command activity must remain purpose-only; raw commands and arguments remain unavailable to the UI.
+
+### Known Issues / Deferred
+- Hosted web builds use the browser's standard download behavior because native filesystem dialogs are available only in the desktop shell.
+
+### Suggested Next Steps
+- Use a completed Build run in the installed Windows app to demonstrate the native save destination and expanded safety evidence.
+
+## 2026-07-21 — AI-first submission README and public roadmap
+### What Was Implemented
+- Reworked the README opening into a machine- and human-scannable evaluation path with CI/release badges, product differentiation, a capability-status matrix, and an architecture diagram.
+- Linked every Preview or future-facing claim to explicit status language and public follow-up issues.
+- Created four post-hackathon GitHub issues for E2B Cloud execution, durable cross-device continuity, governed team collaboration, and signed cross-platform updates.
+- Removed an unrelated stray line from the README status section.
+
+### Files Modified
+- `README.md` — presents the working MVP, evidence path, boundaries, and roadmap clearly for automated and human judges.
+- `PROJECT_LOG.md` — records the documentation and public-roadmap work.
+
+### Assumptions Made (flag these for review)
+- Automated reviewers benefit most from explicit status labels, short evidence paths, stable repository links, and architecture expressed as text-backed Mermaid.
+- Four issues satisfy the requested “few” while keeping each future milestone independently reviewable.
+
+### Known Issues / Deferred
+- No product screenshot is committed to the repository, so the README uses existing brand artwork and a renderable architecture diagram rather than inventing visual evidence.
+- The roadmap issues intentionally do not claim that Preview capabilities are part of the current MVP.
+
+### Suggested Next Steps
+- Capture one polished desktop screenshot and a short demo GIF after the final release build, then add both near the README evaluation path.
+
+## 2026-07-21 — Clear PR #16 release blockers
+### What Was Implemented
+- Moved baseline workspace hashing off the async provider event loop and added regression coverage that proves the snapshot runs on a worker thread.
+- Made the cross-platform run-coordinator assertion independent of valid evidence insertion order while still requiring every expected evidence record exactly once.
+- Validated blank model display names before any settings request and exposed the invalid field accessibly.
+- Removed the conflicting CSS textarea height cap so the JavaScript-managed composer can reach its configured row limit without clipping.
+- Passed artifact bytes to Tauri as a typed array instead of expanding a potentially large download into a memory-heavy JavaScript number array.
+- Narrowed the README governance claim to the controls and persistence guarantees implemented by the current local paths.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` and `tests/contract/providers/test_codex_adapter.py` — keep workspace hashing responsive and verify thread dispatch.
+- `tests/mvp/test_run_coordinator.py` — preserve the evidence contract without platform-sensitive ordering.
+- `apps/web/src/app/SettingsPanel.tsx` and `SettingsPanel.test.tsx` — reject blank model labels with a specific accessible error.
+- `apps/web/src/app/artifactDownload.ts` and `artifactDownload.test.ts` — preserve typed artifact bytes through native IPC.
+- `apps/web/src/styles/product-workspace.css` — remove the competing composer height ceiling.
+- `README.md` — align the cross-surface claim with shipped durability.
+
+### Assumptions Made (flag these for review)
+- Evidence record presence, uniqueness, and content are contractual; relative ordering between independently persisted completion evidence is not.
+- Tauri v2 serializes `Uint8Array` directly into the Rust `Vec<u8>` command argument.
+
+### Known Issues / Deferred
+- The release remains unsigned under the approved hackathon beta policy.
+
+### Suggested Next Steps
+- Push these fixes, resolve the corresponding review threads, and require a green certification matrix before creating the submission tag.
+
+## 2026-07-21 — Prepare immutable Build Week 2026 release
+### What Was Implemented
+- Set the desktop and bundled web application version to `0.2.0-build-week.1` across Tauri, Cargo, and package metadata.
+- Added an immutable submission callout and x64 installer matrix to the README.
+- Made the protected tag workflow publish the exact release title **Corvus Build Week 2026 Hackathon Submission** for Build Week tags.
+- Recorded the reviewed-main ancestry gate, checksum policy, unsigned status, and post-deadline freeze boundary in the hackathon status.
+- Verified the web production build, Tauri release compile, Rust formatting, and Rust test suite locally at the frozen version.
+
+### Files Modified
+- Desktop/web package manifests, Tauri configuration, and Cargo metadata — align the packaged version with the submission tag.
+- `.github/workflows/desktop-release.yml` — publishes the submission-specific release title and notes without weakening the existing main-ancestry gate.
+- `README.md` and `HACKATHON_STATUS.md` — identify the permanent release, PR, formats, checksums, and judging boundary.
+- `PROJECT_LOG.md` — records the release-freeze milestone.
+
+### Assumptions Made (flag these for review)
+- The deadline release remains a published prerelease because all installers are intentionally unsigned.
+- macOS Intel x64 is the confirmed hackathon target; Apple Silicon packaging is deferred.
+
+### Known Issues / Deferred
+- Windows SmartScreen and macOS Gatekeeper may warn because production signing and notarization are not configured.
+- The release URL becomes live only after PR #16 is merged and the tag workflow completes.
+
+### Suggested Next Steps
+- Run final local verification, push PR #16, obtain the required approval, merge, and tag the resulting `main` commit.
+
+## 2026-07-21 — Remove premature submission release reference
+### What Was Implemented
+- Removed the README link and immutable-snapshot wording for a release that had not yet been published.
+- Kept the installer documentation truthful by linking only to the existing Releases index and describing the reviewed-main tag gate.
+
+### Files Modified
+- `README.md` — no longer presents a future tag or release URL as live.
+- `PROJECT_LOG.md` — records the review-blocking documentation correction.
+
+### Assumptions Made (flag these for review)
+- The exact submission tag can be documented after GitHub has published the corresponding release.
+
+### Known Issues / Deferred
+- The submission-specific release link remains intentionally absent until the protected tag workflow succeeds.
+
+### Suggested Next Steps
+- Push the correction, re-request security-owner approval, merge after approval, and publish the reviewed release tag.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import zipfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,9 +24,12 @@ from corvus.infrastructure.agent_runtimes.codex import (
     CodexAdapterError,
     CodexCliAdapter,
     LocalCodexTextRequest,
+    _build_prompt,
     _grant_windows_sandbox_preflight,
     _grant_windows_workspace_access,
     _linked_git_access_paths,
+    _package_workspace,
+    _snapshot_workspace,
     _windows_profile_directory,
     _workspace_traverse_boundaries,
 )
@@ -39,6 +43,31 @@ from corvus.safe_process import TrustedProcessError
 
 NOW = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
 WORKSPACE_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+
+def test_windows_build_prompt_uses_sandboxed_shell_edits() -> None:
+    prompt = _build_prompt("Create the requested files.", windows_shell_edits=True)
+
+    assert "Do not use `apply_patch`" in prompt
+    assert "sandboxed PowerShell" in prompt
+    assert prompt.endswith("User request:\nCreate the requested files.")
+
+
+def test_build_artifact_packages_only_files_changed_after_the_baseline(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "existing.py").write_text(
+        'EXAMPLE = "ghp_12345678901234567890"\n',
+        encoding="utf-8",
+    )
+    baseline = _snapshot_workspace(workspace)
+    (workspace / "result.txt").write_text("sandbox ok", encoding="utf-8")
+
+    artifact = _package_workspace(workspace, uuid4(), baseline_digests=baseline)
+
+    with zipfile.ZipFile(artifact.path) as package:
+        assert "result.txt" in package.namelist()
+        assert "existing.py" not in package.namelist()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows known-folder semantics")
@@ -65,7 +94,7 @@ def test_workspace_traverse_boundaries_cover_the_complete_managed_path(
     )
 
 
-def test_workspace_traverse_boundaries_reach_the_user_profile(
+def test_workspace_traverse_boundaries_stop_at_the_managed_root(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -77,9 +106,26 @@ def test_workspace_traverse_boundaries_reach_the_user_profile(
         workspace.parent,
         workspace.parent.parent,
         managed_root,
-        managed_root.parent,
-        managed_root.parent.parent,
-        home,
+    )
+
+
+def test_workspace_traverse_boundaries_accept_local_chat_codex_sandbox(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    managed_root = home / "AppData" / "Local" / "app.corvus.desktop"
+    approved_root = managed_root / ".corvus-local-chat" / "codex"
+    workspace = approved_root / "run"
+    workspace.mkdir(parents=True)
+
+    assert _workspace_traverse_boundaries(
+        workspace,
+        approved_root=approved_root,
+        home=home,
+    ) == (
+        approved_root,
+        approved_root.parent,
+        managed_root,
     )
 
 
@@ -100,9 +146,6 @@ def test_workspace_traverse_boundaries_ignore_desktop_profile_redirection(
         workspace.parent,
         workspace.parent.parent,
         managed_root,
-        managed_root.parent,
-        managed_root.parent.parent,
-        home,
     )
 
 
@@ -122,10 +165,21 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     granted: list[tuple[Path, str]] = []
     modified: list[tuple[Path, str]] = []
     operations: list[tuple[str, Path, str]] = []
+    active_grants = 0
+    max_active_grants = 0
+    grant_lock = threading.Lock()
+    grant_delay = threading.Event()
 
     def grant_traverse(directory: Path, sid: str) -> None:
-        granted.append((directory, sid))
-        operations.append(("traverse", directory, sid))
+        nonlocal active_grants, max_active_grants
+        with grant_lock:
+            active_grants += 1
+            max_active_grants = max(max_active_grants, active_grants)
+        grant_delay.wait(0.01)
+        with grant_lock:
+            granted.append((directory, sid))
+            operations.append(("traverse", directory, sid))
+            active_grants -= 1
 
     def grant_modify(directory: Path, sid: str) -> None:
         modified.append((directory, sid))
@@ -156,6 +210,7 @@ async def test_sandbox_preflight_grants_only_directory_entry_access(
     }
     assert modified == [(workspace, user_sid)]
     assert operations[0] == ("modify", workspace, user_sid)
+    assert max_active_grants == 1
 
 
 @pytest.mark.asyncio
@@ -491,6 +546,55 @@ async def test_codex_adapter_uses_only_an_explicit_approved_managed_workspace(
     assert starter.invocation is not None
     assert starter.invocation.cwd == workspace.resolve()
     assert starter.invocation.approved_roots == (workspace.resolve(),)
+    assert starter.invocation.limits.timeout_seconds == 600.0
+
+
+@pytest.mark.asyncio
+async def test_codex_adapter_snapshots_build_workspace_off_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    workspace = managed_root / "run-1"
+    workspace.mkdir(parents=True)
+    snapshot_threads: list[int] = []
+
+    def snapshot_workspace(_: Path) -> dict[str, str]:
+        snapshot_threads.append(threading.get_ident())
+        return {}
+
+    monkeypatch.setattr(
+        "corvus.infrastructure.agent_runtimes.codex._snapshot_workspace",
+        snapshot_workspace,
+    )
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=_Starter(_Session(())),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    event_loop_thread = threading.get_ident()
+
+    await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Change the repository.",
+            idempotency_key="threaded-snapshot",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            workspace=workspace,
+            package_artifact=True,
+        ),
+    )
+
+    assert snapshot_threads
+    assert snapshot_threads[0] != event_loop_thread
 
 
 @pytest.mark.asyncio
@@ -599,6 +703,72 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
     ]
     assert events[1].redacted_payload == {"text": "hello"}
     assert start.handle.state is AgentRunState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_codex_build_waiting_for_input_is_not_reported_as_failed(
+    tmp_path: Path,
+) -> None:
+    process_events = (
+        ProcessSessionEvent(
+            sequence=1,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={"type": "thread.started", "thread_id": "thread-needs-input"},
+        ),
+        ProcessSessionEvent(
+            sequence=2,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={
+                "type": "item.completed",
+                "item": {
+                    "id": "item-1",
+                    "type": "agent_message",
+                    "text": "Please confirm before I make changes.",
+                },
+            },
+        ),
+        ProcessSessionEvent(
+            sequence=3,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={"type": "turn.completed", "usage": {"output_tokens": 8}},
+        ),
+        ProcessSessionEvent(sequence=4, kind=ProcessSessionEventKind.EXITED, return_code=0),
+    )
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    workspace = managed_root / "run"
+    workspace.mkdir(parents=True)
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=_Starter(_Session(process_events)),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Make a change after confirmation.",
+            idempotency_key="needs-input-run",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            workspace=workspace,
+            package_artifact=True,
+        ),
+    )
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-1].event_type is AgentRunEventType.COMPLETED
+    assert AgentRunEventType.FAILED not in {event.event_type for event in events}
+    assert events[-1].redacted_payload == {
+        "reason_code": "codex_build_empty",
+        "status": "needs_input",
+    }
 
 
 @pytest.mark.asyncio
@@ -804,7 +974,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
                     "item": {
                         "id": "tool-1",
                         "type": "command_execution",
-                        "command": "do-not-expose-this-command",
+                        "command": "python -m unittest -v --token do-not-expose-this-command",
                     },
                 },
             ),
@@ -865,7 +1035,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
     ]
     assert events[1].redacted_payload == {
         "activity": "command",
-        "label": "Run command",
+        "label": "Run Python unit tests",
         "status": "started",
         "tool_id": "tool-1",
     }
@@ -943,7 +1113,7 @@ async def test_codex_inspect_mode_allows_redacted_read_only_tool_progress(
     ]
     assert events[1].redacted_payload == {
         "activity": "command",
-        "label": "Run command",
+        "label": "Run a sandboxed command",
         "status": "started",
         "tool_id": "tool-1",
     }

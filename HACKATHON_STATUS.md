@@ -202,3 +202,13 @@ pnpm --dir apps/web build
 - The unsigned beta installers are not production signed, notarized, or certified. macOS and Linux artifacts are built and verified through GitHub Actions rather than this Windows workstation.
 - Local Codex and Claude are selectable when their native CLIs are detected; each provider verifies its own sign-in when a run starts. Gemini and xAI/Grok remain Preview; Cursor is unavailable; API-key and Cloud provider execution remain deferred.
 - Durable current-state repositories for agent provider bindings, autonomy grants, credential proofs, runtime budgets, kill switches, and post-effect audit reconciliation require a later explicitly authorized persistence milestone.
+
+## Build Week 2026 submission snapshot
+
+- Release version and immutable tag: `v0.2.0-build-week.1`.
+- Release title: **Corvus Build Week 2026 Hackathon Submission**.
+- Source review: PR #16 into `main`; the release workflow rejects tags whose commit is not contained in `main`.
+- Packaged platforms: Windows x64 NSIS, macOS Intel x64 DMG, Linux x64 AppImage and Debian package.
+- Integrity evidence: one `SHA256SUMS.txt` generated from every published installer.
+- Distribution policy: published, non-draft prerelease; unsigned and explicitly labeled as such.
+- Freeze boundary: this tag and its assets are the judging snapshot. Later branches, commits, deployments, and releases are post-hackathon work.

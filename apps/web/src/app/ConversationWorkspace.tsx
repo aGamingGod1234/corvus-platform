@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -24,12 +24,15 @@ import { featureErrorMessage } from "./featureFeedback";
 import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
 type Experience = "developer" | "everyday";
-type RunStatus = "idle" | "working" | "completed" | "cancelled" | "failed";
+type RunStatus = "idle" | "working" | "needs_input" | "completed" | "cancelled" | "failed";
 type ToolActivity = { id: string; label: string; status: "started" | "completed" };
 type ModelUsage = { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number };
 type AssistantChunkKind = "block" | "continuation";
 type ComposerOption<T extends string> = { value: T; label: string; description?: string; disabled?: boolean };
 const TITLE_MAX = 72;
+const COMPOSER_MIN_ROWS = 2;
+const COMPOSER_MAX_ROWS = 8;
+const COMPOSER_FALLBACK_LINE_HEIGHT_PX = 24;
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
   low: "Low",
   medium: "Medium",
@@ -40,6 +43,44 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
 
 function MarkdownMessage({ children }: { children: string }) {
   return <div className="message-markdown"><ReactMarkdown rehypePlugins={[rehypeSanitize]} remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown></div>;
+}
+
+function resizeComposer(textarea: HTMLTextAreaElement): void {
+  const styles = window.getComputedStyle(textarea);
+  const parsedLineHeight = Number.parseFloat(styles.lineHeight);
+  const lineHeight = Number.isFinite(parsedLineHeight)
+    ? parsedLineHeight
+    : COMPOSER_FALLBACK_LINE_HEIGHT_PX;
+  const verticalChrome = Number.parseFloat(styles.paddingTop || "0")
+    + Number.parseFloat(styles.paddingBottom || "0")
+    + Number.parseFloat(styles.borderTopWidth || "0")
+    + Number.parseFloat(styles.borderBottomWidth || "0");
+  const minimumHeight = lineHeight * COMPOSER_MIN_ROWS + verticalChrome;
+  const maximumHeight = lineHeight * COMPOSER_MAX_ROWS + verticalChrome;
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minimumHeight), maximumHeight)}px`;
+  textarea.style.overflowY = textarea.scrollHeight > maximumHeight ? "auto" : "hidden";
+}
+
+function applyModelLabels(
+  provider: ProviderCatalogEntry,
+  labels: Record<string, string>
+): ProviderCatalogEntry {
+  const prefix = `${provider.id}:`;
+  const discoveredIds = new Set(provider.models.map((model) => model.id));
+  const configuredModels = Object.entries(labels)
+    .filter(([key]) => key.startsWith(prefix) && !discoveredIds.has(key.slice(prefix.length)))
+    .map(([key, label]) => ({ id: key.slice(prefix.length), label, recommended: false }));
+  return {
+    ...provider,
+    models: [
+      ...provider.models.map((model) => ({
+        ...model,
+        label: labels[`${prefix}${model.id}`] ?? model.label
+      })),
+      ...configuredModels
+    ]
+  };
 }
 
 function ComposerSelect<T extends string>({
@@ -174,6 +215,17 @@ function activityLabel(activity: unknown): string {
   return typeof activity === "string" ? labels[activity] ?? "Working" : "Working";
 }
 
+function preserveSpecificActivityLabel(current: ToolActivity | undefined, nextLabel: string): string {
+  const genericLabels = new Set(["Run command", "Run a sandboxed command", "Use tool"]);
+  return current !== undefined && genericLabels.has(nextLabel) ? current.label : nextLabel;
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} bytes`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function safeMessage(reason: unknown): string {
   return featureErrorMessage(reason, "run");
 }
@@ -205,6 +257,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   workingDirectory?: string;
 }) {
   const streamRef = useRef<RunEventStream | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [threads, setThreads] = useState<DeviceThread[]>(() => loadDeviceThreads(storage, storageScope));
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => threads[0]?.id ?? null);
   const activeThreadIdRef = useRef<string | null>(selectedThreadId);
@@ -212,7 +265,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const assistantTargetRef = useRef("");
   const assistantQueueRef = useRef<string[]>([]);
   const assistantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const completedRunRef = useRef<{ runId: string } | null>(null);
+  const completedRunRef = useRef<{ runId: string; status: "completed" | "needs_input" } | null>(null);
   const activePromptRef = useRef("");
   const confirmationDialogRef = useRef<HTMLDivElement | null>(null);
   const confirmationTriggerRef = useRef<HTMLElement | null>(null);
@@ -238,6 +291,12 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsage | null>(null);
   const [artifactReady, setArtifactReady] = useState(false);
+  const [artifactName, setArtifactName] = useState("corvus-finished-project.zip");
+  const [artifactDownloading, setArtifactDownloading] = useState(false);
+
+  useLayoutEffect(() => {
+    if (composerRef.current !== null) resizeComposer(composerRef.current);
+  }, [composer]);
   const [safetyPreview, setSafetyPreview] = useState<SafetyPreview | null>(null);
   const [safetyLoading, setSafetyLoading] = useState(true);
   const [safetyError, setSafetyError] = useState("");
@@ -323,9 +382,10 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         setProviderError("No configured agents are ready. Configure a local CLI or API key in Settings, then retry.");
         return;
       }
+      const preferences = preferencesResult.status === "fulfilled" ? preferencesResult.value : null;
       const runnableCatalog = readyCatalog.filter((entry) =>
         (entry.models?.length ?? 0) > 0 && (entry.thinking_levels?.length ?? 0) > 0
-      );
+      ).map((entry) => applyModelLabels(entry, preferences?.model_labels ?? {}));
       if (runnableCatalog.length === 0) {
         setProviders(FALLBACK_PROVIDERS);
         setProviderError("A local agent was verified, but discovery returned no supported models or thinking levels. Retry discovery before starting a run.");
@@ -333,7 +393,6 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       }
       setProviders(runnableCatalog);
       setProviderError("");
-      const preferences = preferencesResult.status === "fulfilled" ? preferencesResult.value : null;
       setPreferenceError(preferences === null
         ? "Saved model preferences are unavailable. Corvus is using verified provider defaults for this conversation."
         : "");
@@ -460,7 +519,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       const completed = completedRunRef.current;
       if (completed !== null) {
         completedRunRef.current = null;
-        finishRun("completed", assistantTargetRef.current);
+        finishRun(completed.status, assistantTargetRef.current);
       }
     };
     assistantTimerRef.current = setTimeout(tick, 0);
@@ -532,8 +591,13 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           (payload.status === "started" || payload.status === "completed")
         ) {
           setToolActivities((current) => {
-            const next = { id: payload.tool_id as string, label: payload.label as string, status: payload.status as "started" | "completed" };
-            const existing = current.findIndex((activity) => activity.id === next.id);
+            const existing = current.findIndex((activity) => activity.id === payload.tool_id);
+            const previous = existing < 0 ? undefined : current[existing];
+            const next = {
+              id: payload.tool_id as string,
+              label: preserveSpecificActivityLabel(previous, payload.label as string),
+              status: payload.status as "started" | "completed"
+            };
             return existing < 0
               ? [...current, next]
               : current.map((activity, index) => index === existing ? next : activity);
@@ -541,13 +605,31 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         }
       } catch { setError("Corvus received an unreadable status event."); }
     });
-    stream.addEventListener("artifact", () => setArtifactReady(true));
-    stream.addEventListener("completed", () => {
+    stream.addEventListener("artifact", ({ data }) => {
+      setArtifactReady(true);
+      try {
+        const event = JSON.parse(data) as { payload?: { download_name?: unknown } } | null;
+        if (typeof event?.payload?.download_name === "string") setArtifactName(event.payload.download_name);
+      } catch { /* The artifact remains downloadable with the safe fallback filename. */ }
+    });
+    stream.addEventListener("needs_input", () => {
+      setError("");
+      setInterruption({
+        prompt: activePromptRef.current,
+        detail: "Corvus finished this step and is waiting for your confirmation. Reply in the composer to continue."
+      });
+    });
+    stream.addEventListener("completed", ({ data }) => {
+      let status: "completed" | "needs_input" = "completed";
+      try {
+        const event = JSON.parse(data) as { payload?: { status?: unknown } } | null;
+        if (event?.payload?.status === "needs_input") status = "needs_input";
+      } catch { setError("Corvus received an unreadable completion event."); }
       loadSafetyReceipt(activeRunId);
       if (assistantQueueRef.current.length > 0 || assistantTimerRef.current !== null) {
-        completedRunRef.current = { runId: activeRunId };
+        completedRunRef.current = { runId: activeRunId, status };
       } else {
-        finishRun("completed", assistantTargetRef.current);
+        finishRun(status, assistantTargetRef.current);
       }
     });
     stream.addEventListener("cancelled", () => {
@@ -616,6 +698,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     setToolActivities([]);
     setModelUsage(null);
     setArtifactReady(false);
+    setArtifactName("corvus-finished-project.zip");
     setReceipt(null);
     setInterruption(null);
     try {
@@ -706,6 +789,23 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     finally { setBusy(false); }
   }
 
+  async function saveFinishedProject(): Promise<void> {
+    if (runId === null || artifactDownloading) return;
+    setArtifactDownloading(true);
+    setError("");
+    try {
+      const savedPath = await api.downloadArtifact(
+        runId,
+        receipt?.artifact?.download_name ?? artifactName
+      );
+      if (savedPath !== null) setStorageNotice(`Finished project saved to ${savedPath}`);
+    } catch {
+      setError("Corvus could not save the finished project. Choose another location and try again.");
+    } finally {
+      setArtifactDownloading(false);
+    }
+  }
+
   return (
     <section className="conversation-workspace" aria-label="Corvus conversations">
       <div className="conversation-panel">
@@ -728,9 +828,35 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           {runStatus !== "working" && toolActivities.length > 0 ? <details aria-label="Tool activity" className="tool-activity" role="region"><summary>{`Activity · ${toolActivities.length} ${toolActivities.length === 1 ? "step" : "steps"}`}</summary><ol className="tool-activity__list">{toolActivities.map((activity) => <li key={activity.id}><span aria-hidden="true" className={`tool-activity__state tool-activity__state--${activity.status}`} /><span>{activity.label}</span><small>{activity.status === "completed" ? "Completed" : "Stopped"}</small></li>)}</ol></details> : null}
           {assistantText !== "" ? <article className="message message--assistant"><span>Corvus</span><MarkdownMessage>{assistantText}</MarkdownMessage></article> : null}
           {modelUsage ? <p aria-label="Model usage" className="model-usage" role="status">Model usage · {usageSummary(modelUsage)}</p> : null}
-          {artifactReady && runId !== null ? <a className="artifact-download" href={api.artifactUrl(runId)}><Icon name="download" />Download finished project</a> : null}
-          {receipt ? <section aria-label="Safety receipt" className="safety-receipt"><header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header><div className="safety-receipt__facts"><span>Original project unchanged</span><span>No blanket host access</span>{receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}</div>{receipt.activities.length > 0 ? <ul>{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}<details><summary>Verification details</summary><p>{receipt.approval}</p><code>{receipt.safety.policy_digest}</code></details></section> : null}
-          {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
+          {artifactReady && runId !== null ? <button className="artifact-download" disabled={artifactDownloading} onClick={() => void saveFinishedProject()} type="button"><Icon name="download" />{artifactDownloading ? "Choose where to save…" : "Download finished project"}</button> : null}
+          {receipt ? <section aria-label="Safety receipt" className="safety-receipt">
+            <header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header>
+            <div className="safety-receipt__facts">
+              <span>{receipt.original_project_modified ? "Original project changed" : "Original project unchanged"}</span>
+              <span>No blanket host access</span>
+              {receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}
+            </div>
+            {receipt.activities.length > 0 ? <ul className="safety-receipt__activity">{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}
+            <details>
+              <summary>Verification details</summary>
+              <dl className="safety-evidence">
+                <div><dt>Execution</dt><dd>{receipt.safety.execution}</dd></div>
+                <div><dt>Files</dt><dd>{receipt.safety.filesystem}</dd></div>
+                <div><dt>Network</dt><dd>{receipt.safety.network}</dd></div>
+                <div><dt>External tools</dt><dd>{receipt.mcp_used ? "An approved MCP tool was used during this run." : receipt.safety.mcp}</dd></div>
+                <div><dt>Approvals</dt><dd>{receipt.approval}</dd></div>
+                <div><dt>Output</dt><dd>{receipt.safety.output}</dd></div>
+                {receipt.artifact ? <>
+                  <div><dt>Artifact</dt><dd>{receipt.artifact.download_name} · {formatBytes(receipt.artifact.size_bytes)}</dd></div>
+                  <div><dt>Secret screening</dt><dd>{receipt.artifact.secret_screening === "passed" ? "Passed before export" : "Not scanned"}</dd></div>
+                  <div className="safety-evidence__wide"><dt>Artifact SHA-256</dt><dd><code>{receipt.artifact.sha256_digest}</code></dd></div>
+                </> : null}
+                <div className="safety-evidence__wide"><dt>Policy SHA-256</dt><dd><code>{receipt.safety.policy_digest}</code></dd></div>
+                <div className="safety-evidence__wide"><dt>Run ID</dt><dd><code>{receipt.run_id}</code></dd></div>
+              </dl>
+            </details>
+          </section> : null}
+          {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus === "needs_input" ? "Needs input" : runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
           {interruption ? <section aria-label="Run paused by safety settings" className="run-interruption">
             <div><Icon name="shield" /><div><strong>Corvus paused this run</strong><p>{interruption.detail}</p></div></div>
             <div className="run-interruption__actions"><button className="button button--primary" onClick={() => { setMode("build"); setMcpEnabled(false); setComposer(interruption.prompt); setInterruption(null); setError(""); }} type="button">Switch to Build</button><button className="button" onClick={() => { setInterruption(null); setError(""); }} type="button">Stop here</button></div>
@@ -742,17 +868,18 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         {safetyError ? <p className="conversation-error" role="alert">{safetyError} <button aria-label="Retry safety policy" className="text-button" onClick={() => setSafetyRefresh((value) => value + 1)} type="button">Retry</button></p> : null}
         {error ? <p className="conversation-error" role="alert">{error}</p> : null}
         <form className="composer" onSubmit={(event) => void send(event)}>
-          <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />
+          <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} ref={composerRef} rows={COMPOSER_MIN_ROWS} value={composer} />
           <div className="composer__controls">
             <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" disabled={runStatus === "working"} onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
-            <ComposerSelect<RunMode> ariaLabel="Run mode" disabled={runStatus === "working"} onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />
-            <button aria-expanded={optionsOpen} className="composer-options-trigger" disabled={runStatus === "working"} onClick={() => setOptionsOpen((open) => !open)} type="button">Run options</button>
+            <ComposerSelect<RunMode> ariaLabel="Run mode" onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />
+            <button aria-controls="composer-run-options" aria-expanded={optionsOpen} className="composer-options-trigger" onClick={() => setOptionsOpen((open) => !open)} type="button">Run options</button>
             <button aria-expanded={safetyDetailsOpen} aria-label="View safety details" className={`safety-chip safety-chip--${safetyPreview?.level ?? "loading"}`} disabled={safetyLoading} onClick={() => setSafetyDetailsOpen((open) => !open)} title="Click to see details" type="button"><Icon name="shield" /><span>{safetyLoading ? "Checking safety" : safetyPreview?.label ?? "Safety unavailable"}</span></button>
             {runStatus === "working" ? <button aria-label="Stop" className="composer-submit composer-submit--stop" disabled={busy} onClick={() => void stop()} type="button"><Icon name="stop" /></button> : <button aria-label={mode === "build" ? "Build project" : "Send message"} className="composer-submit" data-component-source="shadcn-button" disabled={busy || composer.trim() === "" || provider.status !== "ready" || safetyPreview === null || safetyLoading} type="submit"><Icon name="send" /></button>}
           </div>
-          {optionsOpen ? <section aria-label="Run options panel" className="composer__advanced">
+          {optionsOpen ? <section aria-label="Run options panel" className="composer__advanced" id="composer-run-options">
+            {runStatus === "working" ? <p className="composer-options-note">Changes apply to your next message.</p> : null}
             <span className="composer-option-label">Provider</span>
-            <ComposerSelect<ProviderId> ariaLabel="Agent provider" className="composer-select--provider" disabled={runStatus === "working"} onChange={(next) => {
+            <ComposerSelect<ProviderId> ariaLabel="Agent provider" className="composer-select--provider" onChange={(next) => {
               const nextProvider = providers.find((entry) => entry.id === next);
               if (nextProvider?.status !== "ready") return;
               setProviderId(next as RunnableProviderId);
@@ -762,8 +889,8 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
               setThinking(nextThinkingLevels.includes("medium") ? "medium" : nextThinkingLevels[0] ?? "medium");
               if (next !== "codex") { setMode("chat"); setMcpEnabled(false); }
             }} options={providers.filter((entry) => entry.status === "ready").map((entry) => ({ value: entry.id, label: entry.label, description: "Verified on this device" }))} value={providerId} />
-            <span className="composer-option-label">Model</span><ComposerSelect<string> ariaLabel="Agent model" className="composer-select--model" disabled={runStatus === "working" || (providerModels.length === 0 && modelId === "")} onChange={setModelId} options={[...(modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? [{ value: modelId, label: modelId, description: "Saved preference" }] : []), ...providerModels.map((entry) => ({ value: entry.id, label: entry.label, description: entry.recommended ? "Recommended" : "Available" }))]} value={modelId} />
-            <span className="composer-option-label">Thinking</span><ComposerSelect<ThinkingLevel> ariaLabel="Thinking level" disabled={runStatus === "working" || providerThinkingLevels.length === 0} onChange={setThinking} options={providerThinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level], description: level === "low" ? "Fastest" : level === "medium" ? "Balanced" : level === "high" ? "More reasoning" : "Deepest reasoning" }))} value={thinking} />
+            <span className="composer-option-label">Model</span><ComposerSelect<string> ariaLabel="Agent model" className="composer-select--model" disabled={providerModels.length === 0 && modelId === ""} onChange={setModelId} options={[...(modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? [{ value: modelId, label: modelId, description: "Saved preference" }] : []), ...providerModels.map((entry) => ({ value: entry.id, label: entry.label, description: entry.recommended ? "Recommended" : "Available" }))]} value={modelId} />
+            <span className="composer-option-label">Thinking</span><ComposerSelect<ThinkingLevel> ariaLabel="Thinking level" disabled={providerThinkingLevels.length === 0} onChange={setThinking} options={providerThinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level], description: level === "low" ? "Fastest" : level === "medium" ? "Balanced" : level === "high" ? "More reasoning" : "Deepest reasoning" }))} value={thinking} />
             {mode === "build" ? <label className="mcp-toggle"><input aria-label="Allow configured MCP servers" checked={mcpEnabled} onChange={(event) => setMcpEnabled(event.target.checked)} type="checkbox" /><span>MCP</span></label> : null}
           </section> : null}
           {safetyDetailsOpen && safetyPreview ? <section aria-label="Safety details" className="safety-details"><header><Icon name="shield" /><div><strong>{safetyPreview.label}</strong><span>{safetyPreview.summary}</span></div></header><dl><div><dt>Files</dt><dd>{safetyPreview.filesystem}</dd></div><div><dt>Network</dt><dd>{safetyPreview.network}</dd></div><div><dt>Tools</dt><dd>{safetyPreview.mcp}</dd></div><div><dt>Output</dt><dd>{safetyPreview.output}</dd></div></dl></section> : null}

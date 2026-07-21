@@ -2186,6 +2186,10 @@ export interface components {
             default_provider: "codex" | "claude";
             /** Mcp Enabled */
             mcp_enabled: boolean;
+            /** Model Labels */
+            model_labels: {
+                [key: string]: string;
+            };
             /**
              * Response Tone
              * @enum {string}
@@ -2221,6 +2225,10 @@ export interface components {
             expected_version: number;
             /** Mcp Enabled */
             mcp_enabled: boolean;
+            /** Model Labels */
+            model_labels?: {
+                [key: string]: string;
+            };
             /**
              * Response Tone
              * @enum {string}

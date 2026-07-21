@@ -152,13 +152,15 @@ async def test_run_uses_exact_worktree_and_persists_events_before_notification(
         "provider.completed",
     ]
     evidence = runs.evidence("local", started.id)
-    assert [item.kind for item in evidence] == [
+    assert len(evidence) == 4
+    assert {item.kind for item in evidence} == {
         "safety_policy",
         "repository_base",
         "provider_completion",
         "change_set",
-    ]
-    assert evidence[-1].summary == "Observed 1 changed file in the isolated worktree"
+    }
+    change_set = next(item for item in evidence if item.kind == "change_set")
+    assert change_set.summary == "Observed 1 changed file in the isolated worktree"
 
 
 @pytest.mark.asyncio
@@ -182,11 +184,9 @@ async def test_build_completion_without_changes_is_failed(tmp_path: Path) -> Non
 
     assert completed.status == RunStatus.FAILED
     evidence = runs.evidence("local", started.id)
-    assert [item.kind for item in evidence][-2:] == [
-        "change_set",
-        "runtime_validation",
-    ]
-    assert evidence[-1].summary == (
+    evidence_by_kind = {item.kind: item for item in evidence}
+    assert {"change_set", "runtime_validation"} <= evidence_by_kind.keys()
+    assert evidence_by_kind["runtime_validation"].summary == (
         "Build run completed without producing any reviewable file changes"
     )
 

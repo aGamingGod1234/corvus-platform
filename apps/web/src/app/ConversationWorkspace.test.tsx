@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -49,6 +49,7 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
       version: 0,
       default_provider: "codex",
       default_model: null,
+      model_labels: {},
       default_effort: "medium",
       default_mode: "chat",
       mcp_enabled: false,
@@ -80,7 +81,8 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
     startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "gpt-5.6-sol", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
     cancelRun: vi.fn().mockResolvedValue({ run_id: "run-1", state: "cancelled", accepted: true, reason_code: null }),
     openRunEvents: vi.fn().mockReturnValue(stream),
-    artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`)
+    artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`),
+    downloadArtifact: vi.fn().mockResolvedValue("C:\\Downloads\\corvus-project.zip")
   };
 }
 
@@ -178,6 +180,96 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Agent model" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Thinking level" })).toBeVisible();
+  });
+
+  it("uses saved display names and manually configured models in the chat selector", async () => {
+    const api = conversationApi(new FakeRunStream());
+    api.getPreferences = vi.fn().mockResolvedValue({
+      version: 3, default_provider: "codex", default_model: "custom-codex-model",
+      model_labels: {
+        "codex:gpt-5.6-sol": "Fast Sol",
+        "codex:custom-codex-model": "My custom model"
+      },
+      default_effort: "medium", default_mode: "chat", mcp_enabled: false,
+      response_tone: "balanced", custom_rules: "", updated_at: "2026-07-21T00:00:00Z"
+    });
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-model-labels" experience="developer" />);
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    const model = await screen.findByRole("combobox", { name: "Agent model" });
+    expect(model).toHaveTextContent("My custom model");
+    await user.click(model);
+    expect(screen.getByRole("option", { name: "Fast Sol" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "My custom model" })).toBeVisible();
+  });
+
+  it("expands and contracts the composer between two and eight lines", () => {
+    render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}
+      storageScope="workspace-growing-composer" experience="developer" />);
+    const composer = screen.getByRole("textbox", { name: "Message Corvus" });
+    let scrollHeight = 120;
+    Object.defineProperty(composer, "scrollHeight", { configurable: true, get: () => scrollHeight });
+
+    fireEvent.input(composer, { target: { value: "one\ntwo\nthree\nfour" } });
+    expect(composer).toHaveStyle({ height: "120px", overflowY: "hidden" });
+
+    scrollHeight = 300;
+    fireEvent.input(composer, { target: { value: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine" } });
+    expect(composer).toHaveStyle({ height: "198px", overflowY: "auto" });
+
+    scrollHeight = 60;
+    fireEvent.input(composer, { target: { value: "short again" } });
+    expect(composer).toHaveStyle({ height: "60px", overflowY: "hidden" });
+  });
+
+  it("keeps Run options usable after a run fails to start", async () => {
+    const api = conversationApi(new FakeRunStream());
+    vi.mocked(api.startRun).mockRejectedValue(new Error("Codex sandbox preflight failed."));
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={api} storage={new MemoryStorage()}
+      storageScope="workspace-failed-run-options" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Codex sandbox preflight failed.");
+
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "Run options panel" })).toBeVisible();
+  });
+
+  it("keeps Run options editable while a run is working", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-working-run-options" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Agent model" })).toBeEnabled();
+    expect(screen.getByText("Changes apply to your next message.")).toBeVisible();
+  });
+
+  it("shows a completed confirmation pause as Needs input instead of Failed", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-needs-input" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Prepare a change");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("needs_input", { payload: { status: "needs_input" } });
+    stream.emit("completed", { payload: { status: "needs_input" } });
+
+    expect(await screen.findByText("Needs input")).toBeVisible();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/waiting for your confirmation/i)).toBeVisible();
   });
 
   it("closes an open composer menu when keyboard focus leaves it", async () => {
@@ -347,11 +439,14 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Build project" }));
     await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     stream.emit("status", {
-      payload: { activity: "command", tool_id: "tool-1", label: "Run command", status: "started" }
+      payload: { activity: "command", tool_id: "tool-1", label: "Run Python unit tests", status: "started" }
+    });
+    stream.emit("status", {
+      payload: { activity: "command", tool_id: "tool-1", label: "Run a sandboxed command", status: "completed" }
     });
 
-    expect(await screen.findByRole("region", { name: "Tool activity" })).toHaveTextContent("Run command");
-    expect(screen.getByRole("region", { name: "Tool activity" })).toHaveTextContent("In progress");
+    expect(await screen.findByRole("region", { name: "Tool activity" })).toHaveTextContent("Run Python unit tests");
+    expect(screen.getByRole("region", { name: "Tool activity" })).toHaveTextContent("Completed");
   });
 
   it("binds a registered project to a new thread and sends its repository id", async () => {
@@ -523,10 +618,15 @@ describe("ConversationWorkspace", () => {
     expect((await screen.findAllByText("Updating files"))[0]).toBeVisible();
     stream.emit("artifact", { type: "artifact", payload: { download_name: "corvus-project.zip" } });
     stream.emit("completed", { type: "completed", payload: {} });
-    expect(await screen.findByRole("link", { name: "Download finished project" })).toHaveAttribute(
-      "href", "/api/local-chat/runs/run-1/artifact"
-    );
-    expect(await screen.findByRole("region", { name: "Safety receipt" })).toHaveTextContent(/screening passed/i);
+    await user.click(await screen.findByRole("button", { name: "Download finished project" }));
+    expect(api.downloadArtifact).toHaveBeenCalledWith("run-1", "corvus-project.zip");
+    expect(await screen.findByText(/finished project saved to C:\\Downloads/i)).toBeVisible();
+    const safetyReceipt = await screen.findByRole("region", { name: "Safety receipt" });
+    expect(safetyReceipt).toHaveTextContent(/screening passed/i);
+    await user.click(screen.getByText("Verification details"));
+    expect(safetyReceipt).toHaveTextContent(/Codex CLI runs ephemerally/i);
+    expect(safetyReceipt).toHaveTextContent(`Run IDrun-1`);
+    expect(safetyReceipt).toHaveTextContent("d".repeat(64));
   });
 
   it("shows the server-authored protection summary in the composer", async () => {
@@ -577,11 +677,16 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     stream.emit("message", {
       type: "message",
-      payload: { text: "**Done**\n\n- checked\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
+      payload: { text: "**Done**\n\n- checked\n\n- [x] verified\n- [ ] pending\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
     });
 
     expect(await screen.findByText("Done")).toHaveStyle({ fontWeight: "bold" });
     expect((await screen.findByText("checked")).closest("ul")).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(2));
+    const checklist = screen.getAllByRole("checkbox");
+    expect(checklist).toHaveLength(2);
+    expect(checklist[0]).toBeChecked();
+    expect(checklist[1]).not.toBeChecked();
     expect(await screen.findByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
     expect(document.querySelector("script")).toBeNull();
   });

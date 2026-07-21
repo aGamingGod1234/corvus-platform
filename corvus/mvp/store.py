@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-SCHEMA_VERSION: Final = 15
+SCHEMA_VERSION: Final = 16
 
 _MIGRATION_001 = """
 CREATE TABLE IF NOT EXISTS mvp_schema_migrations (
@@ -566,6 +566,11 @@ _MIGRATION_015 = """
 ALTER TABLE mvp_local_chat_runs ADD COLUMN artifact_json TEXT;
 """
 
+_MIGRATION_016 = """
+ALTER TABLE mvp_local_preferences
+    ADD COLUMN model_labels_json TEXT NOT NULL DEFAULT '{}';
+"""
+
 _MIGRATIONS = (
     _MIGRATION_001,
     _MIGRATION_002,
@@ -582,6 +587,7 @@ _MIGRATIONS = (
     _MIGRATION_013,
     _MIGRATION_014,
     _MIGRATION_015,
+    _MIGRATION_016,
 )
 
 

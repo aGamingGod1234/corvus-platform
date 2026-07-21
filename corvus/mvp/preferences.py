@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from sqlite3 import Row
 from typing import Final, Literal, TypedDict
@@ -21,6 +22,7 @@ class LocalPreferences(TypedDict):
     version: int
     default_provider: ProviderPreference
     default_model: str | None
+    model_labels: dict[str, str]
     default_effort: EffortPreference
     default_mode: ModePreference
     mcp_enabled: bool
@@ -40,6 +42,7 @@ def default_local_preferences() -> LocalPreferences:
         "version": 0,
         "default_provider": DEFAULT_PROVIDER,
         "default_model": None,
+        "model_labels": {},
         "default_effort": DEFAULT_EFFORT,
         "default_mode": DEFAULT_MODE,
         "mcp_enabled": False,
@@ -70,6 +73,7 @@ class LocalPreferencesService:
         expected_version: int,
         default_provider: ProviderPreference,
         default_model: str | None,
+        model_labels: dict[str, str],
         default_effort: EffortPreference,
         default_mode: ModePreference,
         mcp_enabled: bool,
@@ -90,6 +94,7 @@ class LocalPreferencesService:
                 version,
                 default_provider,
                 default_model,
+                json.dumps(model_labels, sort_keys=True, separators=(",", ":")),
                 default_effort,
                 default_mode,
                 int(mcp_enabled),
@@ -101,15 +106,16 @@ class LocalPreferencesService:
             if row is None:
                 connection.execute(
                     "INSERT INTO mvp_local_preferences "
-                    "(version, default_provider, default_model, default_effort, default_mode, "
-                    "mcp_enabled, response_tone, custom_rules, updated_at, user_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(version, default_provider, default_model, model_labels_json, default_effort, "
+                    "default_mode, mcp_enabled, response_tone, custom_rules, updated_at, user_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     values,
                 )
             else:
                 result = connection.execute(
                     "UPDATE mvp_local_preferences SET version = ?, default_provider = ?, "
-                    "default_model = ?, default_effort = ?, default_mode = ?, mcp_enabled = ?, "
+                    "default_model = ?, model_labels_json = ?, default_effort = ?, "
+                    "default_mode = ?, mcp_enabled = ?, "
                     "response_tone = ?, custom_rules = ?, updated_at = ? "
                     "WHERE user_id = ? AND version = ?",
                     (*values, expected_version),
@@ -126,6 +132,7 @@ class LocalPreferencesService:
             "version": version,
             "default_provider": default_provider,
             "default_model": default_model,
+            "model_labels": dict(model_labels),
             "default_effort": default_effort,
             "default_mode": default_mode,
             "mcp_enabled": mcp_enabled,
@@ -140,6 +147,7 @@ class LocalPreferencesService:
             "version": int(row["version"]),
             "default_provider": row["default_provider"],
             "default_model": row["default_model"],
+            "model_labels": json.loads(str(row["model_labels_json"])),
             "default_effort": row["default_effort"],
             "default_mode": row["default_mode"],
             "mcp_enabled": bool(row["mcp_enabled"]),

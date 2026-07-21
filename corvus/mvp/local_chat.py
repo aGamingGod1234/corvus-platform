@@ -46,6 +46,7 @@ from corvus.safe_process import path_is_link_or_reparse
 
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
+_BUILD_RUN_DEADLINE = timedelta(minutes=10)
 _MAX_OUTPUT_BYTES = 100_000
 _MAX_PERSISTED_RUNS_PER_OWNER = 200
 _READINESS_CACHE_TTL_SECONDS = 5.0
@@ -61,6 +62,7 @@ _PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
         ".next",
         ".pytest_cache",
         ".ruff_cache",
+        ".ssh",
         ".svn",
         ".turbo",
         ".venv",
@@ -70,6 +72,21 @@ _PROJECT_COPY_IGNORED_DIRECTORIES = frozenset(
         "node_modules",
         "target",
         "venv",
+    }
+)
+_PROJECT_COPY_SENSITIVE_FILE_NAMES = frozenset(
+    {".env", ".git-credentials", ".netrc", ".npmrc", ".pypirc", "credentials.json", "secrets.json"}
+)
+_PROJECT_COPY_SENSITIVE_FILE_SUFFIXES = frozenset({".key", ".pem"})
+_PROJECT_COPY_SENSITIVE_PATHS = frozenset(
+    {
+        (".aws", "credentials"),
+        (".azure", "accesstokens.json"),
+        (".config", "gcloud", "application_default_credentials.json"),
+        (".config", "gcloud", "credentials.db"),
+        (".docker", "config.json"),
+        (".kube", "config"),
+        (".terraform.d", "credentials.tfrc.json"),
     }
 )
 _WINDOWS_CODEX_TARGETS = {
@@ -1019,6 +1036,7 @@ class CodexLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
+        normalized_mode = _normalize_mode(mode)
         try:
             result = await self._adapter.start_local_text(
                 binding,
@@ -1027,10 +1045,11 @@ class CodexLocalChatBackend:
                     prompt=prompt,
                     model=model,
                     effort=_normalize_codex_effort(effort),
-                    mode=_normalize_mode(mode),
+                    mode=normalized_mode,
                     mcp_enabled=mcp_enabled,
                     idempotency_key=idempotency_key,
-                    deadline=self._clock() + _RUN_DEADLINE,
+                    deadline=self._clock()
+                    + (_BUILD_RUN_DEADLINE if normalized_mode == "build" else _RUN_DEADLINE),
                     max_output_bytes=_MAX_OUTPUT_BYTES,
                     workspace=workspace,
                 ),
@@ -1397,6 +1416,20 @@ def _request_digest(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _project_file_is_sensitive(relative: Path) -> bool:
+    parts = tuple(part.casefold() for part in relative.parts)
+    name = relative.name.casefold()
+    return (
+        name in _PROJECT_COPY_SENSITIVE_FILE_NAMES
+        or name.startswith(".env.")
+        or relative.suffix.casefold() in _PROJECT_COPY_SENSITIVE_FILE_SUFFIXES
+        or any(
+            len(parts) >= len(sensitive_path) and parts[-len(sensitive_path) :] == sensitive_path
+            for sensitive_path in _PROJECT_COPY_SENSITIVE_PATHS
+        )
+    )
+
+
 def _copy_project(source_directory: Path, destination: Path) -> None:
     try:
         source = source_directory.resolve(strict=True)
@@ -1426,8 +1459,11 @@ def _copy_project(source_directory: Path, destination: Path) -> None:
             directories[:] = retained_directories
             for name in files:
                 source_file = root_path / name
+                relative_file = relative_root / name
                 if path_is_link_or_reparse(source_file):
                     raise LocalChatError("local_chat_project_links_forbidden")
+                if _project_file_is_sensitive(relative_file):
+                    continue
                 try:
                     size = source_file.stat().st_size
                 except OSError as error:
@@ -1435,7 +1471,7 @@ def _copy_project(source_directory: Path, destination: Path) -> None:
                 if not source_file.is_file():
                     raise LocalChatError("local_chat_project_unavailable")
                 total_bytes += size
-                files_to_copy.append((source_file, relative_root / name, size))
+                files_to_copy.append((source_file, relative_file, size))
                 if (
                     len(files_to_copy) > _PROJECT_COPY_MAX_FILES
                     or len(directories_to_create) + len(files_to_copy) > _PROJECT_COPY_MAX_ENTRIES
@@ -1477,6 +1513,7 @@ def _event_name(event_type: AgentRunEventType) -> str:
             "status",
             "usage",
             "artifact",
+            "needs_input",
             "completed",
             "failed",
             "cancelled",
@@ -1488,6 +1525,7 @@ def _event_name(event_type: AgentRunEventType) -> str:
         AgentRunEventType.CHECKPOINT: "status",
         AgentRunEventType.USAGE: "usage",
         AgentRunEventType.ARTIFACT: "artifact",
+        AgentRunEventType.APPROVAL_REQUIRED: "needs_input",
         AgentRunEventType.COMPLETED: "completed",
         AgentRunEventType.FAILED: "failed",
         AgentRunEventType.CANCELLED: "cancelled",

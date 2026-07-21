@@ -6,14 +6,14 @@ import json
 import os
 import threading
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
+from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact, LocalCodexTextRequest
 from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
@@ -253,6 +253,19 @@ def test_project_copy_skips_dependency_and_vcs_directories(tmp_path: Path) -> No
     assert not (destination / ".git").exists()
 
 
+def test_project_copy_omits_sensitive_files_from_the_sandbox(tmp_path: Path) -> None:
+    source = tmp_path / "registered-project"
+    (source / "tests" / "fixtures").mkdir(parents=True)
+    (source / "tests" / "fixtures" / ".env").write_text("TOKEN=fake", encoding="utf-8")
+    (source / "README.md").write_text("safe", encoding="utf-8")
+    destination = tmp_path / "scratch" / "run-sensitive"
+
+    local_chat_module._copy_project(source, destination)
+
+    assert (destination / "README.md").is_file()
+    assert not (destination / "tests" / "fixtures" / ".env").exists()
+
+
 def test_project_copy_rejects_sources_over_the_size_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -317,6 +330,53 @@ async def test_codex_backend_removes_copied_workspace_when_start_fails(tmp_path:
         )
 
     assert not (scratch_root / str(run_id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_uses_extended_deadline_for_build_mode(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _CapturingAdapter:
+        request: LocalCodexTextRequest | None = None
+
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(
+            self,
+            binding: object,
+            request: LocalCodexTextRequest,
+        ) -> None:
+            del binding
+            self.request = request
+            raise local_chat_module.CodexAdapterError("codex_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    adapter = _CapturingAdapter()
+    backend = local_chat_module.CodexLocalChatBackend(
+        adapter,
+        lambda: NOW,
+        tmp_path / "scratch",
+    )
+
+    with pytest.raises(local_chat_module.CodexAdapterError, match="codex_start_failed"):
+        await backend.start_in_workspace(
+            run_id=uuid4(),
+            prompt="Build the project",
+            model=None,
+            effort="medium",
+            mode="build",
+            mcp_enabled=False,
+            idempotency_key="build-deadline",
+            source_directory=source,
+        )
+
+    assert adapter.request is not None
+    assert adapter.request.deadline == NOW + timedelta(minutes=10)
 
 
 @pytest.mark.asyncio
@@ -1196,6 +1256,7 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "version": 0,
         "default_provider": "codex",
         "default_model": None,
+        "model_labels": {},
         "default_effort": "medium",
         "default_mode": "chat",
         "mcp_enabled": False,
@@ -1207,6 +1268,7 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "expected_version": 0,
         "default_provider": "codex",
         "default_model": "gpt-5.6-sol",
+        "model_labels": {"codex:gpt-5.6-sol": "My Sol model"},
         "default_effort": "high",
         "default_mode": "build",
         "mcp_enabled": True,
@@ -1214,6 +1276,14 @@ def test_local_preferences_are_owner_scoped_versioned_and_applied_to_runs(
         "custom_rules": "Always end with a verification result.",
     }
     assert client.put("/api/local-chat/preferences", json=update).status_code == 403
+    invalid_labels = {
+        **update,
+        "model_labels": {"openai:gpt-5.6-sol": "Unsupported provider"},
+    }
+    assert (
+        client.put("/api/local-chat/preferences", json=invalid_labels, headers=headers).status_code
+        == 422
+    )
     saved = client.put("/api/local-chat/preferences", json=update, headers=headers)
     assert saved.status_code == 200
     assert saved.json()["version"] == 1
