@@ -2417,3 +2417,22 @@
 
 ### Suggested Next Steps
 - Push the fixture repair and merge only after the protected checks and current-head CODEOWNER approval pass.
+
+## 2026-07-21 — Add focused Railway backend image
+
+### What Was Implemented
+- Added a deployment-only Python image so Railway can run the hosted identity API without compiling or serving the Vercel-owned frontend.
+- Preserved the existing full desktop/web image and selected the focused image only through Railway's server-side Dockerfile-path setting.
+
+### Files Modified
+- `Dockerfile.backend` — builds and runs the Corvus FastAPI backend with the existing non-root user and readiness probe.
+- `PROJECT_LOG.md` — records the bounded deployment repair.
+
+### Assumptions Made (flag these for review)
+- The hosted web frontend remains authoritative on Vercel, so the Railway service needs only the API and does not need bundled static assets.
+
+### Known Issues / Deferred
+- Production OAuth remains restricted to Google test users until the consent application is published or verified.
+
+### Suggested Next Steps
+- Verify the Railway `/ready` endpoint and the Vercel-to-Railway Google authorization redirect before merging the existing PR.
