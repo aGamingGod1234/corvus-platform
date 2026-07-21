@@ -118,9 +118,7 @@ from corvus.safe_process import path_is_link_or_reparse
 
 _MODEL_LABEL_MAX_ITEMS = 100
 _MODEL_LABEL_MAX_LENGTH = 100
-_MODEL_LABEL_KEY_PATTERN = re.compile(
-    r"^(codex|claude):[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$"
-)
+_MODEL_LABEL_KEY_PATTERN = re.compile(r"^(codex|claude):[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
 _SESSION_COOKIE = "corvus_session"
 _SESSION_LIFETIME = timedelta(hours=12)
 _INSTANCE_CHALLENGE_HEADER = "X-Corvus-Challenge"

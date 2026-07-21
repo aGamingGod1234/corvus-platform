@@ -2648,6 +2648,7 @@
 - Routed native Windows Build edits through sandboxed PowerShell or project-native commands instead of Codex CLI's failing internal `apply_patch` launcher.
 - Preserved the protected workspace boundary: commands remain sandboxed and writes stay inside the Corvus-owned scratch copy.
 - Raised the local Codex Build deadline from two minutes to the adapter's existing ten-minute ceiling while leaving Chat runs at two minutes.
+- Proved the production adapter end to end with a real protected Build run: the model created and verified `result.txt`, emitted an artifact, completed successfully, and left the source project untouched.
 
 ### Files Modified
 - `corvus/infrastructure/agent_runtimes/codex.py` — adds Windows Build editing guidance without weakening sandbox policy.
@@ -2662,4 +2663,4 @@
 - The upstream Codex CLI patch-launch defect remains outside Corvus; Corvus avoids that path for Windows Build runs.
 
 ### Suggested Next Steps
-- Run an installed-app Build that creates a file, runs its tests, and produces a screened artifact without touching the source project.
+- Re-run the same small Build task from the freshly installed desktop UI for the demo recording.
