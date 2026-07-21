@@ -2690,3 +2690,25 @@
 
 ### Suggested Next Steps
 - Use a completed Build run in the installed Windows app to demonstrate the native save destination and expanded safety evidence.
+
+## 2026-07-21 — AI-first submission README and public roadmap
+### What Was Implemented
+- Reworked the README opening into a machine- and human-scannable evaluation path with CI/release badges, product differentiation, a capability-status matrix, and an architecture diagram.
+- Linked every Preview or future-facing claim to explicit status language and public follow-up issues.
+- Created four post-hackathon GitHub issues for E2B Cloud execution, durable cross-device continuity, governed team collaboration, and signed cross-platform updates.
+- Removed an unrelated stray line from the README status section.
+
+### Files Modified
+- `README.md` — presents the working MVP, evidence path, boundaries, and roadmap clearly for automated and human judges.
+- `PROJECT_LOG.md` — records the documentation and public-roadmap work.
+
+### Assumptions Made (flag these for review)
+- Automated reviewers benefit most from explicit status labels, short evidence paths, stable repository links, and architecture expressed as text-backed Mermaid.
+- Four issues satisfy the requested “few” while keeping each future milestone independently reviewable.
+
+### Known Issues / Deferred
+- No product screenshot is committed to the repository, so the README uses existing brand artwork and a renderable architecture diagram rather than inventing visual evidence.
+- The roadmap issues intentionally do not claim that Preview capabilities are part of the current MVP.
+
+### Suggested Next Steps
+- Capture one polished desktop screenshot and a short demo GIF after the final release build, then add both near the README evaluation path.

@@ -4,21 +4,65 @@
   <img src="apps/web/public/brand/corvus-lockup.svg" alt="Corvus" width="420" />
 </p>
 
-Corvus is a local-first AI workspace for turning outcomes into governed, auditable work. One authoritative Python core powers the CLI, API, web client, and Windows desktop shell so approvals, budgets, credentials, audit, and kill switches behave the same everywhere.
+<p align="center">
+  <a href="https://github.com/aGamingGod1234/corvus-platform/actions/workflows/certification.yml"><img alt="Certification" src="https://github.com/aGamingGod1234/corvus-platform/actions/workflows/certification.yml/badge.svg?branch=main" /></a>
+  <a href="https://github.com/aGamingGod1234/corvus-platform/actions/workflows/security-scan.yml"><img alt="Security scan" src="https://github.com/aGamingGod1234/corvus-platform/actions/workflows/security-scan.yml/badge.svg?branch=main" /></a>
+  <a href="https://github.com/aGamingGod1234/corvus-platform/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/aGamingGod1234/corvus-platform?include_prereleases" /></a>
+</p>
 
-## Hackathon pitch
+**Corvus is a local-first, proof-carrying AI agent workspace.** It lets an agent complete real coding work inside an isolated project workspace, then returns the diff, test evidence, safety receipt, and screened artifact for human review.
 
-Most AI agent products force everyone into the same developer-shaped interface and hide where work actually runs. Corvus gives everyday users, developers, individuals, and teams a familiar workspace while preserving one governed execution core underneath.
+One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Approvals, credentials, budgets, audit, sandbox boundaries, and kill switches therefore follow the same rules on every surface.
 
-The Build Week demo path is deliberately short:
+## Evaluate Corvus in 90 seconds
 
-1. Launch Corvus without a terminal and verify the locally authenticated Codex model catalog.
-2. Register a real GitHub-backed repository and import a reviewed skill from Codex, Claude Code, Hermes, or an Agent Skills folder.
-3. Run Codex in a Corvus-owned Git worktree pinned to the repository's exact base SHA.
-4. Review the real diff, tests, safety receipt, and completed secret scan.
-5. Explicitly publish a `corvus/*` branch and draft pull request, then schedule the same workflow to prepare future changes for review.
+1. Launch the desktop app and select a real project.
+2. Choose an authenticated local provider, model, thinking level, and **Build** mode.
+3. Ask Corvus to make a small change and watch safe progress stream in real time.
+4. Review the changed files, test result, activity summary, and detailed safety receipt.
+5. Export the screened ZIP or explicitly prepare a GitHub branch and pull request.
 
-Corvus never merges, force-pushes, transfers imported permissions, or lets a schedule publish code. Cloud, billing, and providers without real adapters remain visibly labeled Preview or unavailable. The exact sub-three-minute script is in [docs/demo/BUILD_WEEK_DEMO.md](docs/demo/BUILD_WEEK_DEMO.md).
+The rehearsable sub-three-minute journey is in [`docs/demo/BUILD_WEEK_DEMO.md`](docs/demo/BUILD_WEEK_DEMO.md). Verified commands and honest limitations are recorded in [`HACKATHON_STATUS.md`](HACKATHON_STATUS.md).
+
+## What makes Corvus different
+
+| Typical agent risk | Corvus approach |
+| --- | --- |
+| Work happens in an opaque environment | Every Build produces reviewable activity, evidence, and a terminal safety receipt |
+| The agent edits the original checkout | Coding runs use a Corvus-owned isolated workspace pinned to the selected project |
+| Permissions silently expand | Server-authored policy binds provider, model, filesystem, network, MCP, approval, and runtime choices |
+| A successful-looking message is treated as proof | Completion is tied to observed changes, verification evidence, artifact screening, and hashes |
+| One developer-shaped interface serves everyone | Everyday/Developer and Individual/Team profiles adapt language and navigation without changing authority |
+
+Corvus never merges, force-pushes, transfers imported permissions, or lets a schedule publish code. Unsupported Cloud, billing, and provider paths remain visibly labeled **Preview** or unavailable.
+
+## Capability status
+
+| Capability | Status |
+| --- | --- |
+| Local Codex/Claude Chat and protected Build runs | **Working** |
+| Streaming status, model controls, MCP consent, safety receipts, and artifact export | **Working** |
+| Local projects, GitHub-assisted review flow, reviewed skills, and supervised schedules | **Working** |
+| Everyday/Developer and Individual/Team-adapted application shell | **Working**; real multi-user Team authority is Preview |
+| Google-backed hosted identity and device-continuity foundation | **Preview**; deployment configuration and production persistence required |
+| E2B-backed Corvus Cloud execution | **Preview** — tracked in [#17](https://github.com/aGamingGod1234/corvus-platform/issues/17) |
+| Production cross-device sync and team collaboration | **Roadmap** — tracked in [#18](https://github.com/aGamingGod1234/corvus-platform/issues/18) and [#19](https://github.com/aGamingGod1234/corvus-platform/issues/19) |
+| Signed installers and secure automatic updates | **Roadmap** — tracked in [#20](https://github.com/aGamingGod1234/corvus-platform/issues/20) |
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    U["User"] --> C["React web or Tauri desktop"]
+    C --> A["Authenticated FastAPI boundary"]
+    A --> G["Authoritative governance core"]
+    G --> R["Verified provider adapter"]
+    R --> S["Isolated project workspace"]
+    S --> E["Diff, tests, screened artifact"]
+    G --> D["Durable events and audit receipts"]
+    E --> C
+    D --> C
+```
 
 ## A workspace that fits the user
 
@@ -153,7 +197,7 @@ This repository contains the preserved M0.5-M11 hackathon MVP foundation plus th
 See [HACKATHON_STATUS.md](HACKATHON_STATUS.md) for verified commands and limitations, [ROADMAP.md](ROADMAP.md) for the readable delivery outline, and [PLAN.md](PLAN.md) for the authoritative security specification.
 
 Changes target `main` through ready pull requests. Review findings are fixed on the feature branch before merge; new milestone work is not pushed directly to `main`.
-alexander ^^
+
 ## Attribution
 
 Corvus is developed by Lucas with AI-assisted engineering from **OpenAI Codex**. This is honest tool attribution, not a fabricated GitHub account or identity.
