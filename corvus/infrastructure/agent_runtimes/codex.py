@@ -956,6 +956,17 @@ class CodexCliAdapter(AgentRuntimePort):
                             baseline_digests=session.baseline_digests,
                         )
                     except CodexAdapterError as error:
+                        if error.reason_code == "codex_build_empty":
+                            yield event(
+                                AgentRunEventType.COMPLETED,
+                                {
+                                    "reason_code": error.reason_code,
+                                    "status": "needs_input",
+                                },
+                            )
+                            session.terminal_state = AgentRunState.COMPLETED
+                            terminal = True
+                            continue
                         yield event(
                             AgentRunEventType.FAILED,
                             {"reason_code": error.reason_code},

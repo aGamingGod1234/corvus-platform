@@ -649,6 +649,72 @@ async def test_codex_adapter_builds_bounded_non_shell_invocation_and_normalizes_
 
 
 @pytest.mark.asyncio
+async def test_codex_build_waiting_for_input_is_not_reported_as_failed(
+    tmp_path: Path,
+) -> None:
+    process_events = (
+        ProcessSessionEvent(
+            sequence=1,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={"type": "thread.started", "thread_id": "thread-needs-input"},
+        ),
+        ProcessSessionEvent(
+            sequence=2,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={
+                "type": "item.completed",
+                "item": {
+                    "id": "item-1",
+                    "type": "agent_message",
+                    "text": "Please confirm before I make changes.",
+                },
+            },
+        ),
+        ProcessSessionEvent(
+            sequence=3,
+            kind=ProcessSessionEventKind.FRAME,
+            frame={"type": "turn.completed", "usage": {"output_tokens": 8}},
+        ),
+        ProcessSessionEvent(sequence=4, kind=ProcessSessionEventKind.EXITED, return_code=0),
+    )
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"pinned-codex")
+    managed_root = tmp_path / "managed"
+    workspace = managed_root / "run"
+    workspace.mkdir(parents=True)
+    adapter = CodexCliAdapter(
+        executable=executable,
+        version="0.144.0",
+        scratch_root=tmp_path / "scratch",
+        approved_workspace_roots=(managed_root,),
+        clock=lambda: NOW,
+        session_starter=_Starter(_Session(process_events)),
+    )
+    binding = (await adapter.discover(ProviderDiscoveryQuery(workspace_id=WORKSPACE_ID)))[0]
+    start = await adapter.start_local_text(
+        binding.binding,
+        LocalCodexTextRequest(
+            run_id=uuid4(),
+            prompt="Make a change after confirmation.",
+            idempotency_key="needs-input-run",
+            deadline=datetime(2026, 7, 18, tzinfo=UTC),
+            mode="build",
+            workspace=workspace,
+            package_artifact=True,
+        ),
+    )
+
+    events = [event async for event in adapter.events(start.handle)]
+
+    assert events[-1].event_type is AgentRunEventType.COMPLETED
+    assert AgentRunEventType.FAILED not in {event.event_type for event in events}
+    assert events[-1].redacted_payload == {
+        "reason_code": "codex_build_empty",
+        "status": "needs_input",
+    }
+
+
+@pytest.mark.asyncio
 async def test_codex_adapter_keeps_large_prompts_out_of_windows_process_arguments(
     tmp_path: Path,
 ) -> None:

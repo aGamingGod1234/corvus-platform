@@ -2578,3 +2578,24 @@
 
 ### Suggested Next Steps
 - Merge PR #16 after review, then promote the verified Windows installer for the recorded demo.
+## [2026-07-21] — Correct false Build failures and simplify active Threads
+### What Was Implemented
+- Reclassified a successful Codex Build turn with no changed files as `Needs input` instead of a failed run, preserving the model response and prompting the user to continue.
+- Removed the global workspace sidebar from the Threads route so conversations use the full application width.
+- Kept Run mode, provider, model, thinking, and MCP controls editable during an active run; changes explicitly apply to the next message.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — emits a truthful completed `needs_input` terminal event for empty Build output after a completed provider turn.
+- `corvus/mvp/local_chat.py` — exposes approval-required runtime events as `needs_input` when supplied by a provider.
+- `apps/web/src/App.tsx` and `apps/web/src/styles.css` — remove the desktop/mobile sidebar and reserved navigation space on Threads.
+- `apps/web/src/app/ConversationWorkspace.tsx` and `apps/web/src/styles/product-workspace.css` — render the new state and unlock next-message run controls.
+- Focused adapter and UI tests — cover the corrected terminal state, active-run controls, and sidebar-free Threads shell.
+
+### Assumptions Made (flag these for review)
+- Run-option edits made while a run is active apply only to the next message and never mutate the already-started process.
+
+### Known Issues / Deferred
+- A request that produces no files for reasons other than needing confirmation is still presented as `Needs input`; the preserved model response explains the next action.
+
+### Suggested Next Steps
+- Verify the rebuilt installed Windows application with the same confirmation-gated demo prompt.

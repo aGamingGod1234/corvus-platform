@@ -196,6 +196,38 @@ describe("ConversationWorkspace", () => {
     expect(screen.getByRole("region", { name: "Run options panel" })).toBeVisible();
   });
 
+  it("keeps Run options editable while a run is working", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-working-run-options" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Inspect this repository");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(screen.getByRole("button", { name: "Run options" }));
+
+    expect(screen.getByRole("button", { name: "Run options" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("combobox", { name: "Agent provider" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Agent model" })).toBeEnabled();
+    expect(screen.getByText("Changes apply to your next message.")).toBeVisible();
+  });
+
+  it("shows a completed confirmation pause as Needs input instead of Failed", async () => {
+    const stream = new FakeRunStream();
+    const user = userEvent.setup();
+    render(<ConversationWorkspace api={conversationApi(stream)} storage={new MemoryStorage()}
+      storageScope="workspace-needs-input" experience="developer" />);
+
+    await user.type(screen.getByRole("textbox", { name: "Message Corvus" }), "Prepare a change");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    stream.emit("needs_input", { payload: { status: "needs_input" } });
+    stream.emit("completed", { payload: { status: "needs_input" } });
+
+    expect(await screen.findByText("Needs input")).toBeVisible();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/waiting for your confirmation/i)).toBeVisible();
+  });
+
   it("closes an open composer menu when keyboard focus leaves it", async () => {
     const user = userEvent.setup();
     render(<ConversationWorkspace api={conversationApi(new FakeRunStream())} storage={new MemoryStorage()}

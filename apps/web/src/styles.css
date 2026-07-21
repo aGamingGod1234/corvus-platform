@@ -210,9 +210,12 @@ h2 { font-size: 1.15rem; }
   background: var(--paper);
 }
 
-.local-shell[data-route="settings"] { grid-template-columns: 1fr; }
-.local-shell[data-route="settings"] .local-sidebar { display: none; }
-.local-shell[data-route="settings"] .local-main { grid-column: 1; }
+.local-shell[data-route="settings"],
+.local-shell[data-route="threads"] { grid-template-columns: 1fr; }
+.local-shell[data-route="settings"] .local-sidebar,
+.local-shell[data-route="threads"] .local-sidebar { display: none; }
+.local-shell[data-route="settings"] .local-main,
+.local-shell[data-route="threads"] .local-main { grid-column: 1; }
 
 .local-main__error {
   position: sticky;
@@ -459,6 +462,7 @@ textarea { min-height: 92px; resize: vertical; }
 
 @media (max-width: 720px) {
   .local-shell { grid-template-columns: 1fr; grid-template-rows: minmax(0, calc(100dvh - 70px)) 70px; min-height: 100dvh; }
+  .local-shell[data-route="threads"] { grid-template-rows: minmax(0, 1fr); }
   .local-sidebar {
     position: fixed;
     z-index: 20;

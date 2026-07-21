@@ -24,7 +24,7 @@ import { featureErrorMessage } from "./featureFeedback";
 import { FALLBACK_PROVIDERS } from "./providerDefaults";
 
 type Experience = "developer" | "everyday";
-type RunStatus = "idle" | "working" | "completed" | "cancelled" | "failed";
+type RunStatus = "idle" | "working" | "needs_input" | "completed" | "cancelled" | "failed";
 type ToolActivity = { id: string; label: string; status: "started" | "completed" };
 type ModelUsage = { inputTokens?: number; cachedInputTokens?: number; outputTokens?: number };
 type AssistantChunkKind = "block" | "continuation";
@@ -212,7 +212,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const assistantTargetRef = useRef("");
   const assistantQueueRef = useRef<string[]>([]);
   const assistantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const completedRunRef = useRef<{ runId: string } | null>(null);
+  const completedRunRef = useRef<{ runId: string; status: "completed" | "needs_input" } | null>(null);
   const activePromptRef = useRef("");
   const confirmationDialogRef = useRef<HTMLDivElement | null>(null);
   const confirmationTriggerRef = useRef<HTMLElement | null>(null);
@@ -460,7 +460,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       const completed = completedRunRef.current;
       if (completed !== null) {
         completedRunRef.current = null;
-        finishRun("completed", assistantTargetRef.current);
+        finishRun(completed.status, assistantTargetRef.current);
       }
     };
     assistantTimerRef.current = setTimeout(tick, 0);
@@ -542,12 +542,24 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
       } catch { setError("Corvus received an unreadable status event."); }
     });
     stream.addEventListener("artifact", () => setArtifactReady(true));
-    stream.addEventListener("completed", () => {
+    stream.addEventListener("needs_input", () => {
+      setError("");
+      setInterruption({
+        prompt: activePromptRef.current,
+        detail: "Corvus finished this step and is waiting for your confirmation. Reply in the composer to continue."
+      });
+    });
+    stream.addEventListener("completed", ({ data }) => {
+      let status: "completed" | "needs_input" = "completed";
+      try {
+        const event = JSON.parse(data) as { payload?: { status?: unknown } } | null;
+        if (event?.payload?.status === "needs_input") status = "needs_input";
+      } catch { setError("Corvus received an unreadable completion event."); }
       loadSafetyReceipt(activeRunId);
       if (assistantQueueRef.current.length > 0 || assistantTimerRef.current !== null) {
-        completedRunRef.current = { runId: activeRunId };
+        completedRunRef.current = { runId: activeRunId, status };
       } else {
-        finishRun("completed", assistantTargetRef.current);
+        finishRun(status, assistantTargetRef.current);
       }
     });
     stream.addEventListener("cancelled", () => {
@@ -730,7 +742,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           {modelUsage ? <p aria-label="Model usage" className="model-usage" role="status">Model usage · {usageSummary(modelUsage)}</p> : null}
           {artifactReady && runId !== null ? <a className="artifact-download" href={api.artifactUrl(runId)}><Icon name="download" />Download finished project</a> : null}
           {receipt ? <section aria-label="Safety receipt" className="safety-receipt"><header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header><div className="safety-receipt__facts"><span>Original project unchanged</span><span>No blanket host access</span>{receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}</div>{receipt.activities.length > 0 ? <ul>{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}<details><summary>Verification details</summary><p>{receipt.approval}</p><code>{receipt.safety.policy_digest}</code></details></section> : null}
-          {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
+          {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus === "needs_input" ? "Needs input" : runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
           {interruption ? <section aria-label="Run paused by safety settings" className="run-interruption">
             <div><Icon name="shield" /><div><strong>Corvus paused this run</strong><p>{interruption.detail}</p></div></div>
             <div className="run-interruption__actions"><button className="button button--primary" onClick={() => { setMode("build"); setMcpEnabled(false); setComposer(interruption.prompt); setInterruption(null); setError(""); }} type="button">Switch to Build</button><button className="button" onClick={() => { setInterruption(null); setError(""); }} type="button">Stop here</button></div>
@@ -745,14 +757,15 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           <label className="sr-only" htmlFor="corvus-composer">Message Corvus</label><textarea aria-label="Message Corvus" id="corvus-composer" onChange={(event) => setComposer(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder={experience === "developer" ? "Ask Corvus to work in this repository…" : "Describe what you want to get done…"} rows={2} value={composer} />
           <div className="composer__controls">
             <div className="composer-project"><button aria-expanded={projectMenuOpen} className="composer-project__trigger" disabled={runStatus === "working"} onClick={() => setProjectMenuOpen((open) => !open)} type="button">Project · {selected?.repositoryName ?? "Agent directory"}</button>{projectMenuOpen ? <section aria-label="Project context" className="composer-project__menu"><strong>Project context</strong><button aria-current={selected?.repositoryId === undefined ? "true" : undefined} onClick={() => selectRepository(null)} type="button"><span>Agent directory</span><small>A fresh Corvus workspace for this thread</small></button>{repositories.map((repository) => <button aria-current={selected?.repositoryId === repository.id ? "true" : undefined} key={repository.id} onClick={() => selectRepository(repository)} type="button"><span>{repository.display_name}</span><small>{repository.path}</small></button>)}<button onClick={() => { setProjectMenuOpen(false); onOpenProjects?.(); }} type="button"><span>Connect or create a project</span><small>GitHub repository, local folder, or new project</small></button></section> : null}</div>
-            <ComposerSelect<RunMode> ariaLabel="Run mode" disabled={runStatus === "working"} onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />
-            <button aria-controls="composer-run-options" aria-expanded={optionsOpen} className="composer-options-trigger" disabled={runStatus === "working"} onClick={() => setOptionsOpen((open) => !open)} type="button">Run options</button>
+            <ComposerSelect<RunMode> ariaLabel="Run mode" onChange={(next) => { setMode(next); if (next === "chat") setMcpEnabled(false); }} options={[{ value: "chat", label: "Chat", description: "Answer without changing files" }, { value: "build", label: "Build", description: "Work inside a protected sandbox", disabled: providerId !== "codex" }]} value={mode} />
+            <button aria-controls="composer-run-options" aria-expanded={optionsOpen} className="composer-options-trigger" onClick={() => setOptionsOpen((open) => !open)} type="button">Run options</button>
             <button aria-expanded={safetyDetailsOpen} aria-label="View safety details" className={`safety-chip safety-chip--${safetyPreview?.level ?? "loading"}`} disabled={safetyLoading} onClick={() => setSafetyDetailsOpen((open) => !open)} title="Click to see details" type="button"><Icon name="shield" /><span>{safetyLoading ? "Checking safety" : safetyPreview?.label ?? "Safety unavailable"}</span></button>
             {runStatus === "working" ? <button aria-label="Stop" className="composer-submit composer-submit--stop" disabled={busy} onClick={() => void stop()} type="button"><Icon name="stop" /></button> : <button aria-label={mode === "build" ? "Build project" : "Send message"} className="composer-submit" data-component-source="shadcn-button" disabled={busy || composer.trim() === "" || provider.status !== "ready" || safetyPreview === null || safetyLoading} type="submit"><Icon name="send" /></button>}
           </div>
           {optionsOpen ? <section aria-label="Run options panel" className="composer__advanced" id="composer-run-options">
+            {runStatus === "working" ? <p className="composer-options-note">Changes apply to your next message.</p> : null}
             <span className="composer-option-label">Provider</span>
-            <ComposerSelect<ProviderId> ariaLabel="Agent provider" className="composer-select--provider" disabled={runStatus === "working"} onChange={(next) => {
+            <ComposerSelect<ProviderId> ariaLabel="Agent provider" className="composer-select--provider" onChange={(next) => {
               const nextProvider = providers.find((entry) => entry.id === next);
               if (nextProvider?.status !== "ready") return;
               setProviderId(next as RunnableProviderId);
@@ -762,8 +775,8 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
               setThinking(nextThinkingLevels.includes("medium") ? "medium" : nextThinkingLevels[0] ?? "medium");
               if (next !== "codex") { setMode("chat"); setMcpEnabled(false); }
             }} options={providers.filter((entry) => entry.status === "ready").map((entry) => ({ value: entry.id, label: entry.label, description: "Verified on this device" }))} value={providerId} />
-            <span className="composer-option-label">Model</span><ComposerSelect<string> ariaLabel="Agent model" className="composer-select--model" disabled={runStatus === "working" || (providerModels.length === 0 && modelId === "")} onChange={setModelId} options={[...(modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? [{ value: modelId, label: modelId, description: "Saved preference" }] : []), ...providerModels.map((entry) => ({ value: entry.id, label: entry.label, description: entry.recommended ? "Recommended" : "Available" }))]} value={modelId} />
-            <span className="composer-option-label">Thinking</span><ComposerSelect<ThinkingLevel> ariaLabel="Thinking level" disabled={runStatus === "working" || providerThinkingLevels.length === 0} onChange={setThinking} options={providerThinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level], description: level === "low" ? "Fastest" : level === "medium" ? "Balanced" : level === "high" ? "More reasoning" : "Deepest reasoning" }))} value={thinking} />
+            <span className="composer-option-label">Model</span><ComposerSelect<string> ariaLabel="Agent model" className="composer-select--model" disabled={providerModels.length === 0 && modelId === ""} onChange={setModelId} options={[...(modelId !== "" && !providerModels.some((entry) => entry.id === modelId) ? [{ value: modelId, label: modelId, description: "Saved preference" }] : []), ...providerModels.map((entry) => ({ value: entry.id, label: entry.label, description: entry.recommended ? "Recommended" : "Available" }))]} value={modelId} />
+            <span className="composer-option-label">Thinking</span><ComposerSelect<ThinkingLevel> ariaLabel="Thinking level" disabled={providerThinkingLevels.length === 0} onChange={setThinking} options={providerThinkingLevels.map((level) => ({ value: level, label: THINKING_LABELS[level], description: level === "low" ? "Fastest" : level === "medium" ? "Balanced" : level === "high" ? "More reasoning" : "Deepest reasoning" }))} value={thinking} />
             {mode === "build" ? <label className="mcp-toggle"><input aria-label="Allow configured MCP servers" checked={mcpEnabled} onChange={(event) => setMcpEnabled(event.target.checked)} type="checkbox" /><span>MCP</span></label> : null}
           </section> : null}
           {safetyDetailsOpen && safetyPreview ? <section aria-label="Safety details" className="safety-details"><header><Icon name="shield" /><div><strong>{safetyPreview.label}</strong><span>{safetyPreview.summary}</span></div></header><dl><div><dt>Files</dt><dd>{safetyPreview.filesystem}</dd></div><div><dt>Network</dt><dd>{safetyPreview.network}</dd></div><div><dt>Tools</dt><dd>{safetyPreview.mcp}</dd></div><div><dt>Output</dt><dd>{safetyPreview.output}</dd></div></dl></section> : null}
