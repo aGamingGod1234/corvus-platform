@@ -295,9 +295,7 @@ class RunCoordinator:
                             run.id,
                             "runtime_validation",
                             "Build run completed without producing any reviewable file changes",
-                            hashlib.sha256(
-                                b"build_completed_without_changes"
-                            ).hexdigest(),
+                            hashlib.sha256(b"build_completed_without_changes").hexdigest(),
                         )
                         target = RunStatus.FAILED
                     elif run.mode == "build":

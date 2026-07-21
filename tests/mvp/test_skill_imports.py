@@ -77,9 +77,7 @@ def test_imports_modern_text_sources_and_reports_omitted_binary_assets(tmp_path:
     package = _skill(home / ".codex" / "skills", "screenshot")
     package.joinpath("scripts").mkdir()
     package.joinpath("assets").mkdir()
-    package.joinpath("scripts", "capture.swift").write_text(
-        'print("capture")\n', encoding="utf-8"
-    )
+    package.joinpath("scripts", "capture.swift").write_text('print("capture")\n', encoding="utf-8")
     package.joinpath("assets", "icon.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg"/>\n', encoding="utf-8"
     )
@@ -98,8 +96,7 @@ def test_imports_modern_text_sources_and_reports_omitted_binary_assets(tmp_path:
     assert "assets/icon.svg" in preview.files
     assert "assets/preview.png" not in preview.files
     assert any(
-        finding.code == "binary_asset_omitted"
-        and finding.location == "assets/preview.png"
+        finding.code == "binary_asset_omitted" and finding.location == "assets/preview.png"
         for finding in preview.findings
     )
     assert imported_root.joinpath("scripts", "capture.swift").is_file()
