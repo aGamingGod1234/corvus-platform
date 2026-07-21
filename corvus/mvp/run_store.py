@@ -296,7 +296,7 @@ class RunStore:
         with self.store.connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM mvp_run_evidence WHERE run_id = ? "
-                "ORDER BY created_at, rowid LIMIT ? OFFSET ?",
+                "ORDER BY created_at, id LIMIT ? OFFSET ?",
                 (run_id, limit, offset),
             ).fetchall()
         return tuple(

@@ -2493,3 +2493,22 @@
 
 ### Suggested Next Steps
 - Review the final PR #12 checks and merge after required review approval.
+
+## 2026-07-21 — Deterministic run-evidence pagination
+### What Was Implemented
+- Replaced SQLite `rowid` pagination tie-breaking with the durable run-evidence `id`.
+- Added regression coverage proving equal-timestamp evidence remains stable across LIMIT/OFFSET pages.
+
+### Files Modified
+- `corvus/mvp/run_store.py` — orders evidence by `created_at, id`.
+- `tests/mvp/test_run_store.py` — covers durable equal-timestamp pagination.
+- `PROJECT_LOG.md` — records the review repair.
+
+### Assumptions Made (flag these for review)
+- Evidence IDs are the durable deterministic tie-breaker required by the existing schema and reviewer guidance.
+
+### Known Issues / Deferred
+- None for this review finding.
+
+### Suggested Next Steps
+- Resolve the addressed PR thread after the focused and certification checks pass.
