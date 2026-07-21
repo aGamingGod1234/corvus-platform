@@ -2401,10 +2401,12 @@
 - Made the ACL concurrency regression prove overlap across two distinct directories without requiring every managed boundary to occupy a worker thread simultaneously.
 - Bound synthetic Windows workspaces to their synthetic profile root so production profile containment remains strict while the contract test is runner-independent.
 - Used platform-aware Windows ctypes guards so Linux and macOS type stubs can certify the guarded Win32-only calls without changing Windows runtime behavior.
+- Preserved evidence insertion order when adjacent SQLite records share a coarse Windows timestamp, preventing audit entries from being reordered by random UUIDs.
 
 ### Files Modified
 - `tests/contract/providers/test_codex_adapter.py` — removed the hosted-runner thread-pool deadlock and made the Windows profile fixture explicit.
 - `corvus/infrastructure/agent_runtimes/codex.py`, `corvus/safe_process.py` — made Win32-only ctypes access statically portable across the CI matrix.
+- `corvus/mvp/run_store.py` — made audit-evidence ordering deterministic on Windows.
 - `PROJECT_LOG.md` — recorded the failure evidence and bounded repair.
 
 ### Assumptions Made (flag these for review)
