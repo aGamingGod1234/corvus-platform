@@ -6,14 +6,14 @@ import json
 import os
 import threading
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact
+from corvus.infrastructure.agent_runtimes.codex import LocalBuildArtifact, LocalCodexTextRequest
 from corvus.mvp import api as api_module
 from corvus.mvp import local_chat as local_chat_module
 from corvus.mvp.api import create_app
@@ -330,6 +330,53 @@ async def test_codex_backend_removes_copied_workspace_when_start_fails(tmp_path:
         )
 
     assert not (scratch_root / str(run_id)).exists()
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_uses_extended_deadline_for_build_mode(tmp_path: Path) -> None:
+    class _Candidate:
+        binding = object()
+
+    class _CapturingAdapter:
+        request: LocalCodexTextRequest | None = None
+
+        async def discover(self, query: object) -> tuple[_Candidate, ...]:
+            del query
+            return (_Candidate(),)
+
+        async def start_local_text(
+            self,
+            binding: object,
+            request: LocalCodexTextRequest,
+        ) -> None:
+            del binding
+            self.request = request
+            raise local_chat_module.CodexAdapterError("codex_start_failed")
+
+    source = tmp_path / "registered-project"
+    source.mkdir()
+    (source / "README.md").write_text("project", encoding="utf-8")
+    adapter = _CapturingAdapter()
+    backend = local_chat_module.CodexLocalChatBackend(
+        adapter,
+        lambda: NOW,
+        tmp_path / "scratch",
+    )
+
+    with pytest.raises(local_chat_module.CodexAdapterError, match="codex_start_failed"):
+        await backend.start_in_workspace(
+            run_id=uuid4(),
+            prompt="Build the project",
+            model=None,
+            effort="medium",
+            mode="build",
+            mcp_enabled=False,
+            idempotency_key="build-deadline",
+            source_directory=source,
+        )
+
+    assert adapter.request is not None
+    assert adapter.request.deadline == NOW + timedelta(minutes=10)
 
 
 @pytest.mark.asyncio

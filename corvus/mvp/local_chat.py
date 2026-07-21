@@ -46,6 +46,7 @@ from corvus.safe_process import path_is_link_or_reparse
 
 _LOCAL_RUNTIME_SCOPE = UUID("39fef4c9-baf0-40c7-bada-9c2bd9165445")
 _RUN_DEADLINE = timedelta(seconds=120)
+_BUILD_RUN_DEADLINE = timedelta(minutes=10)
 _MAX_OUTPUT_BYTES = 100_000
 _MAX_PERSISTED_RUNS_PER_OWNER = 200
 _READINESS_CACHE_TTL_SECONDS = 5.0
@@ -1035,6 +1036,7 @@ class CodexLocalChatBackend:
         if source_directory is not None:
             workspace = self._scratch_root / str(run_id)
             _copy_project(source_directory, workspace)
+        normalized_mode = _normalize_mode(mode)
         try:
             result = await self._adapter.start_local_text(
                 binding,
@@ -1043,10 +1045,11 @@ class CodexLocalChatBackend:
                     prompt=prompt,
                     model=model,
                     effort=_normalize_codex_effort(effort),
-                    mode=_normalize_mode(mode),
+                    mode=normalized_mode,
                     mcp_enabled=mcp_enabled,
                     idempotency_key=idempotency_key,
-                    deadline=self._clock() + _RUN_DEADLINE,
+                    deadline=self._clock()
+                    + (_BUILD_RUN_DEADLINE if normalized_mode == "build" else _RUN_DEADLINE),
                     max_output_bytes=_MAX_OUTPUT_BYTES,
                     workspace=workspace,
                 ),

@@ -24,6 +24,7 @@ from corvus.infrastructure.agent_runtimes.codex import (
     CodexAdapterError,
     CodexCliAdapter,
     LocalCodexTextRequest,
+    _build_prompt,
     _grant_windows_sandbox_preflight,
     _grant_windows_workspace_access,
     _linked_git_access_paths,
@@ -42,6 +43,14 @@ from corvus.safe_process import TrustedProcessError
 
 NOW = datetime(2026, 7, 17, 1, 30, tzinfo=UTC)
 WORKSPACE_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+
+def test_windows_build_prompt_uses_sandboxed_shell_edits() -> None:
+    prompt = _build_prompt("Create the requested files.", windows_shell_edits=True)
+
+    assert "Do not use `apply_patch`" in prompt
+    assert "sandboxed PowerShell" in prompt
+    assert prompt.endswith("User request:\nCreate the requested files.")
 
 
 def test_build_artifact_packages_only_files_changed_after_the_baseline(tmp_path: Path) -> None:

@@ -2643,3 +2643,23 @@
 
 ### Suggested Next Steps
 - Rebuild and install the Windows package, then confirm the installed runtime health endpoints.
+## 2026-07-21 — Make Windows Protected Builds Reliably Writable
+### What Was Implemented
+- Routed native Windows Build edits through sandboxed PowerShell or project-native commands instead of Codex CLI's failing internal `apply_patch` launcher.
+- Preserved the protected workspace boundary: commands remain sandboxed and writes stay inside the Corvus-owned scratch copy.
+- Raised the local Codex Build deadline from two minutes to the adapter's existing ten-minute ceiling while leaving Chat runs at two minutes.
+
+### Files Modified
+- `corvus/infrastructure/agent_runtimes/codex.py` — adds Windows Build editing guidance without weakening sandbox policy.
+- `corvus/mvp/local_chat.py` — applies a mode-specific deadline for Build runs.
+- `tests/contract/providers/test_codex_adapter.py` — verifies the Windows editing route is present.
+- `tests/mvp/test_local_chat_api.py` — verifies Build receives the extended deadline.
+
+### Assumptions Made (flag these for review)
+- Native Windows Codex CLI `apply_patch` remains unreliable in workspace-write mode; direct sandboxed command writes are the supported compatibility route.
+
+### Known Issues / Deferred
+- The upstream Codex CLI patch-launch defect remains outside Corvus; Corvus avoids that path for Windows Build runs.
+
+### Suggested Next Steps
+- Run an installed-app Build that creates a file, runs its tests, and produces a screened artifact without touching the source project.

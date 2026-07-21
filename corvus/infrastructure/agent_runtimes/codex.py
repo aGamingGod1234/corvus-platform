@@ -75,6 +75,13 @@ _LOCAL_CHAT_CODEX_DIRECTORY = "codex"
 _MAX_GIT_POINTER_BYTES = 4_096
 _MAX_TIMEOUT_SECONDS = 120.0
 _MAX_BUILD_TIMEOUT_SECONDS = 600.0
+_WINDOWS_BUILD_EDITING_GUIDANCE = (
+    "Native Windows sandbox compatibility: Do not use `apply_patch`, internal file-change "
+    "tools, or patch wrappers. Use sandboxed PowerShell commands or project-native tools to "
+    "create and edit files. Keep every write inside the current isolated workspace. If an "
+    "internal file-change tool is attempted and fails, do not retry it; continue with the "
+    "sandboxed command path. "
+)
 _MAX_STDERR_BYTES = 64_000
 _MAX_FRAME_BYTES = 1_000_000
 _MAX_FRAMES = 10_000
@@ -613,7 +620,11 @@ class CodexCliAdapter(AgentRuntimePort):
         if model is not None:
             arguments.extend(("--model", model))
         arguments.extend(("--config", f'model_reasoning_effort="{effort}"'))
-        effective_prompt = _build_prompt(prompt) if mode == "build" else prompt
+        effective_prompt = (
+            _build_prompt(prompt, windows_shell_edits=os.name == "nt")
+            if mode == "build"
+            else prompt
+        )
         try:
             prompt_bytes = effective_prompt.encode("utf-8")
         except UnicodeEncodeError as exc:
@@ -1002,11 +1013,13 @@ def _normalize_effort(value: str) -> Literal["low", "medium", "high", "xhigh"]:
     raise CodexAdapterError("codex_effort_invalid")
 
 
-def _build_prompt(prompt: str) -> str:
+def _build_prompt(prompt: str, *, windows_shell_edits: bool = False) -> str:
+    editing_guidance = _WINDOWS_BUILD_EDITING_GUIDANCE if windows_shell_edits else ""
     return (
         "Build the complete requested project inside the current isolated workspace. "
         "Work autonomously, create all required files, run appropriate checks, and do not stop at "
         "a plan or partial scaffold. Do not read or modify files outside the current workspace. "
+        f"{editing_guidance}"
         "When the project is complete, summarize what was built and the checks you ran.\n\n"
         f"User request:\n{prompt}"
     )
