@@ -888,7 +888,7 @@ class CodexCliAdapter(AgentRuntimePort):
                             AgentRunEventType.CHECKPOINT,
                             {
                                 "activity": _safe_activity(item_type),
-                                "label": _safe_tool_label(item_type),
+                                "label": _safe_tool_label(item),
                                 "status": "started"
                                 if frame_type == "item.started"
                                 else "completed",
@@ -1036,15 +1036,47 @@ def _safe_activity(item_type: object) -> str:
     return mapping.get(str(item_type), "tool")
 
 
-def _safe_tool_label(item_type: object) -> str:
+def _safe_tool_label(item: Mapping[str, object]) -> str:
+    item_type = item.get("type")
+    command = item.get("command")
+    if item_type == "command_execution" and isinstance(command, str):
+        return _safe_command_label(command)
     mapping = {
-        "command_execution": "Run command",
+        "command_execution": "Run a sandboxed command",
         "file_change": "Update files",
         "mcp_tool_call": "Use MCP tool",
         "tool_call": "Use tool",
         "web_search": "Search the web",
     }
     return mapping.get(str(item_type), "Use tool")
+
+
+def _safe_command_label(command: str) -> str:
+    normalized = " ".join(command.casefold().split())
+    if "python" in normalized or "pytest" in normalized:
+        if "unittest" in normalized:
+            return "Run Python unit tests"
+        if "pytest" in normalized or " test" in normalized:
+            return "Run Python tests"
+        return "Run a Python workspace command"
+    if "cargo test" in normalized:
+        return "Run Rust tests"
+    if any(token in normalized for token in ("pnpm test", "npm test", "yarn test", "bun test")):
+        return "Run web tests"
+    if any(
+        token in normalized
+        for token in ("pnpm build", "npm run build", "yarn build", "bun run build")
+    ):
+        return "Build the web project"
+    if "git status" in normalized or "git diff" in normalized:
+        return "Inspect project changes"
+    if "set-content" in normalized or "out-file" in normalized:
+        return "Write project files with PowerShell"
+    if "rg " in normalized or "ripgrep" in normalized:
+        return "Search project files"
+    if "powershell" in normalized or "pwsh" in normalized:
+        return "Run a PowerShell workspace command"
+    return "Run a sandboxed command"
 
 
 def _safe_tool_identity(item: Mapping[str, object]) -> dict[str, JsonValue]:

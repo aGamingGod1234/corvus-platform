@@ -22,6 +22,7 @@ const LOOPBACK_HOST: &str = "127.0.0.1";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const DESKTOP_PREFERENCES_FILE: &str = "desktop-preferences.json";
 const MAX_DESKTOP_PREFERENCES_BYTES: usize = 1_048_576;
+const MAX_ARTIFACT_BYTES: usize = 256 * 1_048_576;
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_FAILED_HEALTH_CHECKS: u8 = 6;
@@ -391,6 +392,57 @@ fn select_repository_directory(app: tauri::AppHandle) -> Result<Option<String>, 
         .transpose()
 }
 
+fn validate_artifact_name(name: &str) -> Result<(), String> {
+    let valid_character =
+        |character: char| character.is_ascii_alphanumeric() || "._-".contains(character);
+    if name.is_empty()
+        || name.len() > 120
+        || !name.to_ascii_lowercase().ends_with(".zip")
+        || !name.chars().all(valid_character)
+        || Path::new(name).file_name().and_then(|value| value.to_str()) != Some(name)
+    {
+        return Err("artifact_name_invalid".to_owned());
+    }
+    Ok(())
+}
+
+fn write_artifact_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    if contents.is_empty() || contents.len() > MAX_ARTIFACT_BYTES {
+        return Err("artifact_size_invalid".to_owned());
+    }
+    fs::write(path, contents).map_err(|error| format!("artifact_write_failed:{error}"))
+}
+
+#[tauri::command]
+fn save_artifact_file(
+    app: tauri::AppHandle,
+    suggested_name: String,
+    contents: Vec<u8>,
+) -> Result<Option<String>, String> {
+    validate_artifact_name(&suggested_name)?;
+    if contents.is_empty() || contents.len() > MAX_ARTIFACT_BYTES {
+        return Err("artifact_size_invalid".to_owned());
+    }
+    let destination = app
+        .dialog()
+        .file()
+        .set_title("Save finished Corvus project")
+        .add_filter("ZIP archive", &["zip"])
+        .set_file_name(suggested_name)
+        .blocking_save_file();
+    let Some(destination) = destination else {
+        return Ok(None);
+    };
+    let FilePath::Path(path) = destination else {
+        return Err("artifact_destination_must_be_local".to_owned());
+    };
+    write_artifact_file(&path, &contents)?;
+    path.into_os_string()
+        .into_string()
+        .map(Some)
+        .map_err(|_| "artifact_destination_not_unicode".to_owned())
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     validate_external_url(&url)?;
@@ -588,6 +640,7 @@ pub fn run() -> Result<(), String> {
         }))
         .invoke_handler(tauri::generate_handler![
             select_repository_directory,
+            save_artifact_file,
             open_external_url,
             set_background_mode,
             get_background_mode,
@@ -969,7 +1022,7 @@ mod tests {
         capture_bounded_stderr, load_desktop_preferences_file, packaged_sidecar_candidates,
         readiness_probe, repository_directory_string, sanitize_diagnostics,
         save_desktop_preferences_file, select_packaged_sidecar, should_close_to_tray, tray_action,
-        validate_external_url,
+        validate_artifact_name, validate_external_url, write_artifact_file,
     };
     use tauri_plugin_dialog::FilePath;
 
@@ -1209,6 +1262,35 @@ mod tests {
             load_desktop_preferences_file(&path),
             Err("desktop_preferences_too_large".to_owned())
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn artifact_exports_accept_only_safe_zip_names() {
+        assert_eq!(validate_artifact_name("corvus-project.zip"), Ok(()));
+        assert_eq!(
+            validate_artifact_name("../outside.zip"),
+            Err("artifact_name_invalid".to_owned())
+        );
+        assert_eq!(
+            validate_artifact_name("project.exe"),
+            Err("artifact_name_invalid".to_owned())
+        );
+    }
+
+    #[test]
+    fn artifact_export_writes_the_selected_local_file() {
+        let path =
+            std::env::temp_dir().join(format!("corvus-artifact-export-{}.zip", std::process::id()));
+        let payload = b"PK\x03\x04corvus";
+
+        write_artifact_file(&path, payload).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+        assert_eq!(
+            write_artifact_file(&path, &[]),
+            Err("artifact_size_invalid".to_owned())
+        );
+
         std::fs::remove_file(path).unwrap();
     }
 }

@@ -215,6 +215,17 @@ function activityLabel(activity: unknown): string {
   return typeof activity === "string" ? labels[activity] ?? "Working" : "Working";
 }
 
+function preserveSpecificActivityLabel(current: ToolActivity | undefined, nextLabel: string): string {
+  const genericLabels = new Set(["Run command", "Run a sandboxed command", "Use tool"]);
+  return current !== undefined && genericLabels.has(nextLabel) ? current.label : nextLabel;
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} bytes`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function safeMessage(reason: unknown): string {
   return featureErrorMessage(reason, "run");
 }
@@ -280,6 +291,8 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsage | null>(null);
   const [artifactReady, setArtifactReady] = useState(false);
+  const [artifactName, setArtifactName] = useState("corvus-finished-project.zip");
+  const [artifactDownloading, setArtifactDownloading] = useState(false);
 
   useLayoutEffect(() => {
     if (composerRef.current !== null) resizeComposer(composerRef.current);
@@ -578,8 +591,13 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           (payload.status === "started" || payload.status === "completed")
         ) {
           setToolActivities((current) => {
-            const next = { id: payload.tool_id as string, label: payload.label as string, status: payload.status as "started" | "completed" };
-            const existing = current.findIndex((activity) => activity.id === next.id);
+            const existing = current.findIndex((activity) => activity.id === payload.tool_id);
+            const previous = existing < 0 ? undefined : current[existing];
+            const next = {
+              id: payload.tool_id as string,
+              label: preserveSpecificActivityLabel(previous, payload.label as string),
+              status: payload.status as "started" | "completed"
+            };
             return existing < 0
               ? [...current, next]
               : current.map((activity, index) => index === existing ? next : activity);
@@ -587,7 +605,13 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
         }
       } catch { setError("Corvus received an unreadable status event."); }
     });
-    stream.addEventListener("artifact", () => setArtifactReady(true));
+    stream.addEventListener("artifact", ({ data }) => {
+      setArtifactReady(true);
+      try {
+        const event = JSON.parse(data) as { payload?: { download_name?: unknown } } | null;
+        if (typeof event?.payload?.download_name === "string") setArtifactName(event.payload.download_name);
+      } catch { /* The artifact remains downloadable with the safe fallback filename. */ }
+    });
     stream.addEventListener("needs_input", () => {
       setError("");
       setInterruption({
@@ -674,6 +698,7 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     setToolActivities([]);
     setModelUsage(null);
     setArtifactReady(false);
+    setArtifactName("corvus-finished-project.zip");
     setReceipt(null);
     setInterruption(null);
     try {
@@ -764,6 +789,23 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
     finally { setBusy(false); }
   }
 
+  async function saveFinishedProject(): Promise<void> {
+    if (runId === null || artifactDownloading) return;
+    setArtifactDownloading(true);
+    setError("");
+    try {
+      const savedPath = await api.downloadArtifact(
+        runId,
+        receipt?.artifact?.download_name ?? artifactName
+      );
+      if (savedPath !== null) setStorageNotice(`Finished project saved to ${savedPath}`);
+    } catch {
+      setError("Corvus could not save the finished project. Choose another location and try again.");
+    } finally {
+      setArtifactDownloading(false);
+    }
+  }
+
   return (
     <section className="conversation-workspace" aria-label="Corvus conversations">
       <div className="conversation-panel">
@@ -786,8 +828,34 @@ export function ConversationWorkspace({ api, experience, newThreadSignal = 0, on
           {runStatus !== "working" && toolActivities.length > 0 ? <details aria-label="Tool activity" className="tool-activity" role="region"><summary>{`Activity · ${toolActivities.length} ${toolActivities.length === 1 ? "step" : "steps"}`}</summary><ol className="tool-activity__list">{toolActivities.map((activity) => <li key={activity.id}><span aria-hidden="true" className={`tool-activity__state tool-activity__state--${activity.status}`} /><span>{activity.label}</span><small>{activity.status === "completed" ? "Completed" : "Stopped"}</small></li>)}</ol></details> : null}
           {assistantText !== "" ? <article className="message message--assistant"><span>Corvus</span><MarkdownMessage>{assistantText}</MarkdownMessage></article> : null}
           {modelUsage ? <p aria-label="Model usage" className="model-usage" role="status">Model usage · {usageSummary(modelUsage)}</p> : null}
-          {artifactReady && runId !== null ? <a className="artifact-download" href={api.artifactUrl(runId)}><Icon name="download" />Download finished project</a> : null}
-          {receipt ? <section aria-label="Safety receipt" className="safety-receipt"><header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header><div className="safety-receipt__facts"><span>Original project unchanged</span><span>No blanket host access</span>{receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}</div>{receipt.activities.length > 0 ? <ul>{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}<details><summary>Verification details</summary><p>{receipt.approval}</p><code>{receipt.safety.policy_digest}</code></details></section> : null}
+          {artifactReady && runId !== null ? <button className="artifact-download" disabled={artifactDownloading} onClick={() => void saveFinishedProject()} type="button"><Icon name="download" />{artifactDownloading ? "Choose where to save…" : "Download finished project"}</button> : null}
+          {receipt ? <section aria-label="Safety receipt" className="safety-receipt">
+            <header><Icon name="shield" /><div><strong>Safety receipt</strong><span>{receipt.status === "completed" ? "Run completed inside its locked policy" : `Run ${receipt.status}`}</span></div></header>
+            <div className="safety-receipt__facts">
+              <span>{receipt.original_project_modified ? "Original project changed" : "Original project unchanged"}</span>
+              <span>No blanket host access</span>
+              {receipt.artifact?.secret_screening === "passed" ? <span>Artifact screening passed</span> : receipt.artifact ? <span>Artifact was not secret-screened</span> : null}
+            </div>
+            {receipt.activities.length > 0 ? <ul className="safety-receipt__activity">{receipt.activities.map((activity) => <li key={activity}>{activity}</li>)}</ul> : null}
+            <details>
+              <summary>Verification details</summary>
+              <dl className="safety-evidence">
+                <div><dt>Execution</dt><dd>{receipt.safety.execution}</dd></div>
+                <div><dt>Files</dt><dd>{receipt.safety.filesystem}</dd></div>
+                <div><dt>Network</dt><dd>{receipt.safety.network}</dd></div>
+                <div><dt>External tools</dt><dd>{receipt.mcp_used ? "An approved MCP tool was used during this run." : receipt.safety.mcp}</dd></div>
+                <div><dt>Approvals</dt><dd>{receipt.approval}</dd></div>
+                <div><dt>Output</dt><dd>{receipt.safety.output}</dd></div>
+                {receipt.artifact ? <>
+                  <div><dt>Artifact</dt><dd>{receipt.artifact.download_name} · {formatBytes(receipt.artifact.size_bytes)}</dd></div>
+                  <div><dt>Secret screening</dt><dd>{receipt.artifact.secret_screening === "passed" ? "Passed before export" : "Not scanned"}</dd></div>
+                  <div className="safety-evidence__wide"><dt>Artifact SHA-256</dt><dd><code>{receipt.artifact.sha256_digest}</code></dd></div>
+                </> : null}
+                <div className="safety-evidence__wide"><dt>Policy SHA-256</dt><dd><code>{receipt.safety.policy_digest}</code></dd></div>
+                <div className="safety-evidence__wide"><dt>Run ID</dt><dd><code>{receipt.run_id}</code></dd></div>
+              </dl>
+            </details>
+          </section> : null}
           {runStatus !== "idle" && runStatus !== "working" ? <p className="run-result-status" aria-label={`Run status: ${runStatus}`} data-status={runStatus}>{runStatus === "needs_input" ? "Needs input" : runStatus[0].toUpperCase() + runStatus.slice(1)}</p> : null}
           {interruption ? <section aria-label="Run paused by safety settings" className="run-interruption">
             <div><Icon name="shield" /><div><strong>Corvus paused this run</strong><p>{interruption.detail}</p></div></div>

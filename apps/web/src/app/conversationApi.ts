@@ -1,4 +1,5 @@
 import { isLoopbackRuntimeHost } from "../runtime/localRuntime";
+import { downloadArtifact } from "./artifactDownload";
 
 export interface LocalChatRun {
   run_id: string;
@@ -176,6 +177,7 @@ export interface ConversationApi {
   cancelRun(runId: string): Promise<LocalChatCancel>;
   openRunEvents(runId: string): RunEventStream;
   artifactUrl(runId: string): string;
+  downloadArtifact(runId: string, suggestedName: string): Promise<string | null>;
   listProviderCredentials?(): Promise<ProviderCredentialStatus[]>;
   connectProviderCredential?(provider: ProviderCredentialId, credential: string): Promise<ProviderCredentialStatus>;
   verifyProviderCredential?(provider: ProviderCredentialId): Promise<ProviderCredentialVerification>;
@@ -328,6 +330,10 @@ export function createConversationApi(csrfToken: string, baseUrl = ""): Conversa
       }));
     },
     artifactUrl: (runId) => runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/artifact`),
+    downloadArtifact: (runId, suggestedName) => downloadArtifact(
+      runtimeUrl(`/api/local-chat/runs/${encodeURIComponent(runId)}/artifact`),
+      suggestedName
+    ),
     listProviderCredentials: () => requestJson("/api/provider-credentials", {
       method: "GET",
       headers: { Accept: "application/json" }

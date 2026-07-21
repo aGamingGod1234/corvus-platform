@@ -81,7 +81,8 @@ function conversationApi(stream: FakeRunStream): ConversationApi {
     startRun: vi.fn().mockResolvedValue({ run_id: "run-1", handle_id: "handle-1", state: "running", provider: "codex", model: "gpt-5.6-sol", mode: "chat", storage: "this_device", created_at: "2026-07-17T02:00:02Z", safety: preview("chat", false) }),
     cancelRun: vi.fn().mockResolvedValue({ run_id: "run-1", state: "cancelled", accepted: true, reason_code: null }),
     openRunEvents: vi.fn().mockReturnValue(stream),
-    artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`)
+    artifactUrl: vi.fn((runId: string) => `/api/local-chat/runs/${runId}/artifact`),
+    downloadArtifact: vi.fn().mockResolvedValue("C:\\Downloads\\corvus-project.zip")
   };
 }
 
@@ -438,11 +439,14 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Build project" }));
     await user.click(screen.getByRole("button", { name: "Continue in sandbox" }));
     stream.emit("status", {
-      payload: { activity: "command", tool_id: "tool-1", label: "Run command", status: "started" }
+      payload: { activity: "command", tool_id: "tool-1", label: "Run Python unit tests", status: "started" }
+    });
+    stream.emit("status", {
+      payload: { activity: "command", tool_id: "tool-1", label: "Run a sandboxed command", status: "completed" }
     });
 
-    expect(await screen.findByRole("region", { name: "Tool activity" })).toHaveTextContent("Run command");
-    expect(screen.getByRole("region", { name: "Tool activity" })).toHaveTextContent("In progress");
+    expect(await screen.findByRole("region", { name: "Tool activity" })).toHaveTextContent("Run Python unit tests");
+    expect(screen.getByRole("region", { name: "Tool activity" })).toHaveTextContent("Completed");
   });
 
   it("binds a registered project to a new thread and sends its repository id", async () => {
@@ -614,10 +618,15 @@ describe("ConversationWorkspace", () => {
     expect((await screen.findAllByText("Updating files"))[0]).toBeVisible();
     stream.emit("artifact", { type: "artifact", payload: { download_name: "corvus-project.zip" } });
     stream.emit("completed", { type: "completed", payload: {} });
-    expect(await screen.findByRole("link", { name: "Download finished project" })).toHaveAttribute(
-      "href", "/api/local-chat/runs/run-1/artifact"
-    );
-    expect(await screen.findByRole("region", { name: "Safety receipt" })).toHaveTextContent(/screening passed/i);
+    await user.click(await screen.findByRole("button", { name: "Download finished project" }));
+    expect(api.downloadArtifact).toHaveBeenCalledWith("run-1", "corvus-project.zip");
+    expect(await screen.findByText(/finished project saved to C:\\Downloads/i)).toBeVisible();
+    const safetyReceipt = await screen.findByRole("region", { name: "Safety receipt" });
+    expect(safetyReceipt).toHaveTextContent(/screening passed/i);
+    await user.click(screen.getByText("Verification details"));
+    expect(safetyReceipt).toHaveTextContent(/Codex CLI runs ephemerally/i);
+    expect(safetyReceipt).toHaveTextContent(`Run IDrun-1`);
+    expect(safetyReceipt).toHaveTextContent("d".repeat(64));
   });
 
   it("shows the server-authored protection summary in the composer", async () => {
@@ -668,11 +677,16 @@ describe("ConversationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     stream.emit("message", {
       type: "message",
-      payload: { text: "**Done**\n\n- checked\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
+      payload: { text: "**Done**\n\n- checked\n\n- [x] verified\n- [ ] pending\n\n[Docs](https://example.com)\n\n<script>alert(1)</script>" }
     });
 
     expect(await screen.findByText("Done")).toHaveStyle({ fontWeight: "bold" });
     expect((await screen.findByText("checked")).closest("ul")).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(2));
+    const checklist = screen.getAllByRole("checkbox");
+    expect(checklist).toHaveLength(2);
+    expect(checklist[0]).toBeChecked();
+    expect(checklist[1]).not.toBeChecked();
     expect(await screen.findByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.com");
     expect(document.querySelector("script")).toBeNull();
   });

@@ -926,7 +926,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
                     "item": {
                         "id": "tool-1",
                         "type": "command_execution",
-                        "command": "do-not-expose-this-command",
+                        "command": "python -m unittest -v --token do-not-expose-this-command",
                     },
                 },
             ),
@@ -987,7 +987,7 @@ async def test_codex_build_mode_is_scratch_scoped_and_emits_safe_tool_progress(
     ]
     assert events[1].redacted_payload == {
         "activity": "command",
-        "label": "Run command",
+        "label": "Run Python unit tests",
         "status": "started",
         "tool_id": "tool-1",
     }
@@ -1065,7 +1065,7 @@ async def test_codex_inspect_mode_allows_redacted_read_only_tool_progress(
     ]
     assert events[1].redacted_payload == {
         "activity": "command",
-        "label": "Run command",
+        "label": "Run a sandboxed command",
         "status": "started",
         "tool_id": "tool-1",
     }
