@@ -628,6 +628,7 @@ def _build_github_cli(data_root: Path, git_executable: str | None) -> GitHubCli 
             Path(gh_executable),
             additional_path_entries=(Path(git_executable).parent,),
         )
+        # Explicit sign-in consent promotes the user's host gh identity for this process.
         return GitHubCli(
             managed_runner,
             cwd=data_root,
