@@ -2533,3 +2533,20 @@
 
 ### Suggested Next Steps
 - Review and merge the runtime repair before cutting the next installer release.
+
+## 2026-07-21 — Cross-platform evidence assertion
+### What Was Implemented
+- Removed an ordering assumption from the no-change build evidence regression test while retaining checks for both required evidence records and the runtime-validation message.
+
+### Files Modified
+- `tests/mvp/test_run_coordinator.py` — validates evidence by durable kind rather than platform-sensitive insertion order.
+- `PROJECT_LOG.md` — records the CI repair.
+
+### Assumptions Made (flag these for review)
+- Evidence presence and content are contractual; ordering between independently persisted evidence records is not.
+
+### Known Issues / Deferred
+- None for this CI repair.
+
+### Suggested Next Steps
+- Confirm the Windows certification matrix is green on the updated PR commit.

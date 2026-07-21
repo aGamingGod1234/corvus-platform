@@ -182,11 +182,9 @@ async def test_build_completion_without_changes_is_failed(tmp_path: Path) -> Non
 
     assert completed.status == RunStatus.FAILED
     evidence = runs.evidence("local", started.id)
-    assert [item.kind for item in evidence][-2:] == [
-        "change_set",
-        "runtime_validation",
-    ]
-    assert evidence[-1].summary == (
+    evidence_by_kind = {item.kind: item for item in evidence}
+    assert {"change_set", "runtime_validation"} <= evidence_by_kind.keys()
+    assert evidence_by_kind["runtime_validation"].summary == (
         "Build run completed without producing any reviewable file changes"
     )
 
