@@ -2739,3 +2739,28 @@
 
 ### Suggested Next Steps
 - Push these fixes, resolve the corresponding review threads, and require a green certification matrix before creating the submission tag.
+
+## 2026-07-21 — Prepare immutable Build Week 2026 release
+### What Was Implemented
+- Set the desktop and bundled web application version to `0.2.0-build-week.1` across Tauri, Cargo, and package metadata.
+- Added an immutable submission callout and x64 installer matrix to the README.
+- Made the protected tag workflow publish the exact release title **Corvus Build Week 2026 Hackathon Submission** for Build Week tags.
+- Recorded the reviewed-main ancestry gate, checksum policy, unsigned status, and post-deadline freeze boundary in the hackathon status.
+- Verified the web production build, Tauri release compile, Rust formatting, and Rust test suite locally at the frozen version.
+
+### Files Modified
+- Desktop/web package manifests, Tauri configuration, and Cargo metadata — align the packaged version with the submission tag.
+- `.github/workflows/desktop-release.yml` — publishes the submission-specific release title and notes without weakening the existing main-ancestry gate.
+- `README.md` and `HACKATHON_STATUS.md` — identify the permanent release, PR, formats, checksums, and judging boundary.
+- `PROJECT_LOG.md` — records the release-freeze milestone.
+
+### Assumptions Made (flag these for review)
+- The deadline release remains a published prerelease because all installers are intentionally unsigned.
+- macOS Intel x64 is the confirmed hackathon target; Apple Silicon packaging is deferred.
+
+### Known Issues / Deferred
+- Windows SmartScreen and macOS Gatekeeper may warn because production signing and notarization are not configured.
+- The release URL becomes live only after PR #16 is merged and the tag workflow completes.
+
+### Suggested Next Steps
+- Run final local verification, push PR #16, obtain the required approval, merge, and tag the resulting `main` commit.

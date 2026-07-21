@@ -10,6 +10,8 @@
   <a href="https://github.com/aGamingGod1234/corvus-platform/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/aGamingGod1234/corvus-platform?include_prereleases" /></a>
 </p>
 
+> **Official Build Week 2026 submission:** [`v0.2.0-build-week.1`](https://github.com/aGamingGod1234/corvus-platform/releases/tag/v0.2.0-build-week.1), produced from the reviewed merge of [PR #16](https://github.com/aGamingGod1234/corvus-platform/pull/16). The tag, release assets, and checksums form the immutable judging snapshot; later development is not part of this submission.
+
 **Corvus is a local-first, proof-carrying AI agent workspace.** It lets an agent complete real coding work inside an isolated project workspace, then returns the diff, test evidence, safety receipt, and screened artifact for human review.
 
 One authoritative Python core powers the CLI, FastAPI service, React client, and Tauri desktop shell. Shipped local paths reuse the same authorization, credential-reference, audit, and sandbox services; durable budget and kill-switch repositories remain explicit roadmap work.
@@ -153,15 +155,16 @@ pnpm --dir apps/desktop tauri build --no-bundle
 & apps\desktop\src-tauri\target\release\corvus-desktop.exe
 ```
 
-## Beta installers and web deployment
+## Hackathon release installers and web deployment
 
-Unsigned beta desktop installers are built by `.github/workflows/desktop-release.yml` for:
+The official [`v0.2.0-build-week.1` release](https://github.com/aGamingGod1234/corvus-platform/releases/tag/v0.2.0-build-week.1) contains unsigned x64 desktop installers built from one reviewed commit by `.github/workflows/desktop-release.yml`:
 
-- Windows x64 NSIS: `Corvus_0.2.0-beta.2_x64-setup.exe`
-- macOS x64 DMG: `Corvus_0.2.0-beta.2_x64.dmg`
-- Linux x64: `Corvus_0.2.0-beta.2_amd64.AppImage` and `Corvus_0.2.0-beta.2_amd64.deb`
+- Windows x64: NSIS installer
+- macOS Intel x64: DMG
+- Linux x64: AppImage and Debian package
+- Cross-platform verification: `SHA256SUMS.txt`
 
-The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A published, non-draft GitHub prerelease with `SHA256SUMS.txt` is created only when the reviewed `v0.2.0-beta.2` tag points to a commit already on `main`. Download the installers and `SHA256SUMS.txt` into the same directory, then run `sha256sum -c SHA256SUMS.txt`; the manifest uses portable filenames rather than workflow-internal paths.
+The workflow builds a standalone `corvus-mvp` sidecar with PyInstaller 6.21.0 and packages it with the Tauri shell only when manually dispatched or when a version tag is pushed. Pull requests do not execute release packaging. A published, non-draft GitHub prerelease is created only when the tag points to a commit already on `main`. Download the installers and `SHA256SUMS.txt` into the same directory, then run `sha256sum -c SHA256SUMS.txt`; the manifest uses portable filenames rather than workflow-internal paths.
 
 These installers are intentionally unsigned beta artifacts. Windows may show SmartScreen warnings, macOS Gatekeeper will treat the DMG as unnotarized, and Linux users may need to mark the AppImage executable. Production signing, notarization, auto-update signing, and stable release channels remain later work.
 

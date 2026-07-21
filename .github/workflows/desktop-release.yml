@@ -142,4 +142,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" $(find release-assets -maxdepth 2 -type f) SHA256SUMS.txt --prerelease --title "Corvus $GITHUB_REF_NAME unsigned beta" --notes "Unsigned beta installers for Windows x64, macOS x64, and Linux x64. These artifacts bundle the Corvus local sidecar for beta evaluation and are not notarized or code signed. Verify downloads with SHA256SUMS.txt."
+          title="Corvus $GITHUB_REF_NAME unsigned beta"
+          notes="Unsigned beta installers for Windows x64, macOS x64, and Linux x64. These artifacts bundle the Corvus local sidecar for beta evaluation and are not notarized or code signed. Verify downloads with SHA256SUMS.txt."
+          if [[ "$GITHUB_REF_NAME" == *"build-week"* ]]; then
+            title="Corvus Build Week 2026 Hackathon Submission"
+            notes="Official Build Week 2026 submission snapshot. Unsigned Windows x64, macOS x64, and Linux x64 installers are built from this immutable tag and bundle the Corvus local sidecar. Verify every download with SHA256SUMS.txt."
+          fi
+          gh release create "$GITHUB_REF_NAME" $(find release-assets -maxdepth 2 -type f) SHA256SUMS.txt --prerelease --title "$title" --notes "$notes"
