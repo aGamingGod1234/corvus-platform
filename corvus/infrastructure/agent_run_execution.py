@@ -13,8 +13,10 @@ from corvus.domain.agent_runtime import (
 )
 from corvus.domain.conversations import AgentRunRecord
 from corvus.domain.execution import (
+    AgentRunExecutionBinding,
     ExecutionRun,
     ExecutionRunState,
+    compute_agent_run_execution_binding_digest,
     compute_execution_run_digest,
 )
 from corvus.domain.request import RequestContext
@@ -36,6 +38,7 @@ _PERSISTENCE_UNAVAILABLE = "agent_run_persistence_unavailable"
 _CAS_CONFLICT_REASONS = frozenset(
     {
         "execution_idempotency_payload_mismatch",
+        "execution_run_binding_state_missing",
         "execution_run_version_conflict",
     }
 )
@@ -161,34 +164,37 @@ class RepositoryAgentRunExecutionPersistence:
         )
         if parent is None or not _start_parent_matches(parent, context, request):
             raise AgentRunExecutionPersistenceError(_PERSISTENCE_BINDING_MISMATCH)
-        latest = self._executions.get_latest_run_state(
-            request.workspace_id,
-            request.run_id,
-        )
-        if latest is not None:
-            return latest
         created_at = _utc_timestamp(parent.created_at)
         if updated_at < created_at:
             raise AgentRunExecutionPersistenceError(_PERSISTENCE_TIMESTAMP_INVALID)
-        payload = {
-            "id": request.run_id,
-            "workspace_id": request.workspace_id,
-            "state": ExecutionRunState.PENDING,
-            "version": 1,
-            "created_at": created_at,
-            "updated_at": updated_at,
-        }
-        return self._executions.record_run_state(
-            ExecutionRun(
-                id=request.run_id,
-                workspace_id=request.workspace_id,
-                state=ExecutionRunState.PENDING,
-                version=1,
+        states = self._executions.list_run_states(
+            request.workspace_id,
+            request.run_id,
+        )
+        initial_run = (
+            states[0]
+            if states
+            else _pending_execution_run(
+                request,
                 created_at=created_at,
                 updated_at=updated_at,
-                canonical_digest=compute_execution_run_digest(payload),
             )
         )
+        binding_payload = {
+            "workspace_id": request.workspace_id,
+            "run_id": request.run_id,
+            "immutable_request_digest": request.immutable_request_digest,
+            "created_at": created_at,
+        }
+        binding = AgentRunExecutionBinding(
+            workspace_id=request.workspace_id,
+            run_id=request.run_id,
+            immutable_request_digest=request.immutable_request_digest,
+            created_at=created_at,
+            canonical_digest=compute_agent_run_execution_binding_digest(binding_payload),
+        )
+        _, latest = self._executions.record_run_binding(binding, initial_run)
+        return latest
 
     def record_handle_state(
         self,
@@ -242,6 +248,18 @@ class RepositoryAgentRunExecutionPersistence:
         )
         if parent is None or not _common_parent_matches(parent, context, request):
             raise AgentRunExecutionPersistenceError(_PERSISTENCE_BINDING_MISMATCH)
+        durable_binding = self._executions.get_run_binding(
+            request.workspace_id,
+            request.run_id,
+        )
+        if (
+            durable_binding is None
+            or durable_binding.workspace_id != request.workspace_id
+            or durable_binding.run_id != request.run_id
+            or durable_binding.immutable_request_digest != request.immutable_request_digest
+            or durable_binding.created_at != _utc_timestamp(parent.created_at)
+        ):
+            raise AgentRunExecutionPersistenceError(_PERSISTENCE_BINDING_MISMATCH)
         current = self._executions.get_latest_run_state(
             request.workspace_id,
             request.run_id,
@@ -282,3 +300,28 @@ class RepositoryAgentRunExecutionPersistence:
             ),
             expected_prior_version=current.version,
         )
+
+
+def _pending_execution_run(
+    request: AgentRunRequest,
+    *,
+    created_at: datetime,
+    updated_at: datetime,
+) -> ExecutionRun:
+    payload = {
+        "id": request.run_id,
+        "workspace_id": request.workspace_id,
+        "state": ExecutionRunState.PENDING,
+        "version": 1,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+    return ExecutionRun(
+        id=request.run_id,
+        workspace_id=request.workspace_id,
+        state=ExecutionRunState.PENDING,
+        version=1,
+        created_at=created_at,
+        updated_at=updated_at,
+        canonical_digest=compute_execution_run_digest(payload),
+    )

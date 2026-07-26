@@ -338,6 +338,7 @@ class _RecordingExecutionPersistence:
         self.fail_on_phase = fail_on_phase
         self.runs: dict[UUID, ExecutionRun] = {}
         self.operations: list[AgentRunOperation] = []
+        self.observed_at_by_operation: list[tuple[AgentRunOperation, datetime]] = []
 
     def ensure_start_intent(
         self,
@@ -373,6 +374,7 @@ class _RecordingExecutionPersistence:
     ) -> ExecutionRun:
         self.order.append("persistence:record_handle_state")
         self.operations.append(operation)
+        self.observed_at_by_operation.append((operation, observed_at))
         if self.fail_on_phase == "record_handle_state":
             raise AgentRunExecutionPersistenceError("agent_run_persistence_pending")
         state = ExecutionRunState(handle.state.value)
@@ -665,8 +667,75 @@ async def test_started_handle_with_pending_persistence_is_audited_and_returned(
     assert result.handle is not None
     assert result.primary_reason_code == "agent_run_started"
     assert result.primary_outcome == "success"
+    assert result.persistence_pending
+    assert result.persistence_reason_code == "agent_run_persistence_pending"
     assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
-    assert [event.outcome for event in audit.events] == ["allow", "success"]
+    assert [event.outcome for event in audit.events] == ["allow", "failure"]
+    assert audit.events[-1].reason_code == "agent_run_persistence_pending"
+
+
+@pytest.mark.asyncio
+async def test_start_records_runtime_state_at_trusted_post_runtime_time(
+    tmp_path: Path,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    provider_timestamp = _NOW - timedelta(hours=1)
+    order: list[str] = []
+    execution = _RecordingExecutionPersistence(order)
+    clock_values = iter(_NOW + timedelta(minutes=index) for index in range(5))
+    coordinator = AgentRuntimeCoordinator(
+        runtime=_RecordingRuntime(
+            SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+            order,
+            start_handle_updates={"created_at": provider_timestamp},
+        ),
+        authorization=_Authorizer(order),
+        audit=_AuditSink(order),
+        execution=execution,
+        clock=lambda: next(clock_values),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert result.ok
+    assert result.handle is not None
+    assert result.handle.created_at == provider_timestamp
+    assert execution.observed_at_by_operation == [
+        (AgentRunOperation.START, _NOW + timedelta(minutes=3))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_preserves_audit_and_persistence_obligations_when_both_fail(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    coordinator, _, _ = _coordinator(
+        runtime=_RecordingRuntime(
+            SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+            order,
+        ),
+        order=order,
+        execution=_RecordingExecutionPersistence(
+            order,
+            fail_on_phase="record_handle_state",
+        ),
+        audit=_AuditSink(order, fail_on_phase="outcome"),
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_reconciliation_pending"
+    assert result.audit_pending
+    assert result.persistence_pending
+    assert result.persistence_reason_code == "agent_run_persistence_pending"
+    assert result.primary_reason_code == "agent_run_started"
+    assert result.primary_outcome == "success"
 
 
 @pytest.mark.parametrize(
@@ -1771,8 +1840,11 @@ async def test_resumed_handle_with_pending_persistence_is_audited_and_returned(
     assert result.handle == handle
     assert result.primary_reason_code == "agent_run_resumed"
     assert result.primary_outcome == "success"
+    assert result.persistence_pending
+    assert result.persistence_reason_code == "agent_run_persistence_pending"
     assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
-    assert [event.outcome for event in audit.events] == ["allow", "success"]
+    assert [event.outcome for event in audit.events] == ["allow", "failure"]
+    assert audit.events[-1].reason_code == "agent_run_persistence_pending"
 
 
 @pytest.mark.asyncio
@@ -1871,8 +1943,11 @@ async def test_terminal_cancellation_with_pending_persistence_is_audited_and_ret
     assert result.handle.state is AgentRunState.CANCELLED
     assert result.primary_reason_code == "agent_run_cancelled"
     assert result.primary_outcome == "success"
+    assert result.persistence_pending
+    assert result.persistence_reason_code == "agent_run_persistence_pending"
     assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
-    assert [event.outcome for event in audit.events] == ["allow", "success"]
+    assert [event.outcome for event in audit.events] == ["allow", "failure"]
+    assert audit.events[-1].reason_code == "agent_run_persistence_pending"
 
 
 @pytest.mark.asyncio

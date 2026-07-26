@@ -229,6 +229,35 @@ class _ExecutionContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
 
 
+class AgentRunExecutionBinding(_ExecutionContractModel):
+    workspace_id: UUID
+    run_id: UUID
+    immutable_request_digest: str = Field(pattern=_SHA256_PATTERN)
+    created_at: datetime
+    canonical_digest: str = Field(pattern=_SHA256_PATTERN)
+
+    @field_validator("created_at")
+    @classmethod
+    def validate_created_at(cls, value: datetime) -> datetime:
+        return _require_aware(value)
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> AgentRunExecutionBinding:
+        if self.canonical_digest != compute_agent_run_execution_binding_digest(self):
+            _execution_error("agent_run_execution_binding_digest_mismatch")
+        return self
+
+
+def compute_agent_run_execution_binding_digest(
+    value: AgentRunExecutionBinding | Mapping[str, object],
+) -> str:
+    return _compute_contract_digest(
+        "agent_run_execution_binding",
+        value,
+        AgentRunExecutionBinding,
+    )
+
+
 class ExecutionRun(_ExecutionContractModel):
     id: UUID
     workspace_id: UUID

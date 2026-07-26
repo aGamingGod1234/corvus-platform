@@ -24,6 +24,40 @@ def _signed(
     return {**payload, "canonical_digest": digest(payload)}
 
 
+def test_execution_binding_authenticates_immutable_request_and_rejects_tampering() -> None:
+    payload: dict[str, object] = {
+        "workspace_id": WORKSPACE_ID,
+        "run_id": RUN_ID,
+        "immutable_request_digest": "a" * 64,
+        "created_at": NOW,
+    }
+    binding = execution.AgentRunExecutionBinding(
+        **_signed(payload, execution.compute_agent_run_execution_binding_digest)  # type: ignore[arg-type]
+    )
+
+    assert binding.immutable_request_digest == "a" * 64
+    with pytest.raises(
+        ValidationError,
+        match="agent_run_execution_binding_digest_mismatch",
+    ):
+        execution.AgentRunExecutionBinding(
+            **{
+                **binding.model_dump(mode="python"),
+                "immutable_request_digest": "b" * 64,
+            }
+        )
+    with pytest.raises(
+        ValidationError,
+        match="execution_timestamp_must_be_timezone_aware",
+    ):
+        execution.AgentRunExecutionBinding(
+            **{
+                **binding.model_dump(mode="python"),
+                "created_at": datetime(2026, 7, 26, 12, 0),
+            }
+        )
+
+
 def test_execution_run_and_step_bind_workspace_run_and_fence() -> None:
     run_payload: dict[str, object] = {
         "id": RUN_ID,

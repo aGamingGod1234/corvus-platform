@@ -43,6 +43,7 @@ _REASON_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _INVALID_CANCELLATION_REASON = "agent_run_cancellation_reason_invalid"
 _MISSING_CANCELLATION_HANDLE = "agent_run_cancellation_handle_missing"
 _CAPABILITY_UNAVAILABLE_REASON = "agent_run_capability_unavailable"
+_PERSISTENCE_PENDING_REASON = "agent_run_persistence_pending"
 _EFFECT_CAPABILITY_PREFIXES = (
     ("mcp", "mcp"),
     ("repository.read", "repository_read"),
@@ -124,6 +125,12 @@ class AgentRunOperationResult(BaseModel):
     cancellation_result: CancellationResult | None = None
     identical_start_replayed: bool = False
     audit_pending: bool = False
+    persistence_pending: bool = False
+    persistence_reason_code: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        max_length=200,
+    )
     primary_reason_code: str | None = Field(
         default=None,
         pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
@@ -224,14 +231,16 @@ class AgentRuntimeCoordinator:
                 AgentRunOperation.START,
                 request,
                 handle,
-                observed_at=handle.created_at,
+                observed_at=self._clock(),
             )
         except Exception:
             persistence_pending = True
         if not self._record_outcome(
             authorization,
-            outcome="success",
-            reason_code="agent_run_started",
+            outcome="failure" if persistence_pending else "success",
+            reason_code=(
+                _PERSISTENCE_PENDING_REASON if persistence_pending else "agent_run_started"
+            ),
             handle=handle,
         ):
             return self._audit_pending(
@@ -239,6 +248,10 @@ class AgentRuntimeCoordinator:
                 AgentRunOperation.START,
                 handle=handle,
                 identical_start_replayed=start_result.replayed,
+                persistence_pending=persistence_pending,
+                persistence_reason_code=(
+                    _PERSISTENCE_PENDING_REASON if persistence_pending else None
+                ),
                 primary_reason_code="agent_run_started",
                 primary_outcome="success",
             )
@@ -247,9 +260,11 @@ class AgentRuntimeCoordinator:
                 request_context_id=context.id,
                 operation=AgentRunOperation.START,
                 ok=False,
-                reason_code="agent_run_persistence_pending",
+                reason_code=_PERSISTENCE_PENDING_REASON,
                 handle=handle,
                 identical_start_replayed=start_result.replayed,
+                persistence_pending=True,
+                persistence_reason_code=_PERSISTENCE_PENDING_REASON,
                 primary_reason_code="agent_run_started",
                 primary_outcome="success",
             )
@@ -332,14 +347,20 @@ class AgentRuntimeCoordinator:
             persistence_pending = True
         if not self._record_outcome(
             authorization,
-            outcome="success",
-            reason_code="agent_run_resumed",
+            outcome="failure" if persistence_pending else "success",
+            reason_code=(
+                _PERSISTENCE_PENDING_REASON if persistence_pending else "agent_run_resumed"
+            ),
             handle=resumed_handle,
         ):
             return self._audit_pending(
                 context,
                 AgentRunOperation.RESUME,
                 handle=resumed_handle,
+                persistence_pending=persistence_pending,
+                persistence_reason_code=(
+                    _PERSISTENCE_PENDING_REASON if persistence_pending else None
+                ),
                 primary_reason_code="agent_run_resumed",
                 primary_outcome="success",
             )
@@ -348,8 +369,10 @@ class AgentRuntimeCoordinator:
                 request_context_id=context.id,
                 operation=AgentRunOperation.RESUME,
                 ok=False,
-                reason_code="agent_run_persistence_pending",
+                reason_code=_PERSISTENCE_PENDING_REASON,
                 handle=resumed_handle,
+                persistence_pending=True,
+                persistence_reason_code=_PERSISTENCE_PENDING_REASON,
                 primary_reason_code="agent_run_resumed",
                 primary_outcome="success",
             )
@@ -460,8 +483,12 @@ class AgentRuntimeCoordinator:
                 persistence_pending = True
         if not self._record_outcome(
             authorization,
-            outcome="success",
-            reason_code=cancellation_result.reason_code,
+            outcome="failure" if persistence_pending else "success",
+            reason_code=(
+                _PERSISTENCE_PENDING_REASON
+                if persistence_pending
+                else cancellation_result.reason_code
+            ),
             handle=result_handle,
         ):
             return self._audit_pending(
@@ -469,6 +496,10 @@ class AgentRuntimeCoordinator:
                 AgentRunOperation.CANCEL,
                 handle=result_handle,
                 cancellation_result=cancellation_result,
+                persistence_pending=persistence_pending,
+                persistence_reason_code=(
+                    _PERSISTENCE_PENDING_REASON if persistence_pending else None
+                ),
                 primary_reason_code=cancellation_result.reason_code,
                 primary_outcome="success",
             )
@@ -477,9 +508,11 @@ class AgentRuntimeCoordinator:
                 request_context_id=context.id,
                 operation=AgentRunOperation.CANCEL,
                 ok=False,
-                reason_code="agent_run_persistence_pending",
+                reason_code=_PERSISTENCE_PENDING_REASON,
                 handle=result_handle,
                 cancellation_result=cancellation_result,
+                persistence_pending=True,
+                persistence_reason_code=_PERSISTENCE_PENDING_REASON,
                 primary_reason_code=cancellation_result.reason_code,
                 primary_outcome="success",
             )
@@ -810,6 +843,8 @@ class AgentRuntimeCoordinator:
         handle: AgentRunHandle | None = None,
         cancellation_result: CancellationResult | None = None,
         identical_start_replayed: bool = False,
+        persistence_pending: bool = False,
+        persistence_reason_code: str | None = None,
         primary_reason_code: str,
         primary_outcome: Literal["success", "failure"],
     ) -> AgentRunOperationResult:
@@ -817,11 +852,17 @@ class AgentRuntimeCoordinator:
             request_context_id=context.id,
             operation=operation,
             ok=False,
-            reason_code="agent_run_audit_pending",
+            reason_code=(
+                "agent_run_reconciliation_pending"
+                if persistence_pending
+                else "agent_run_audit_pending"
+            ),
             handle=handle,
             cancellation_result=cancellation_result,
             identical_start_replayed=identical_start_replayed,
             audit_pending=True,
+            persistence_pending=persistence_pending,
+            persistence_reason_code=persistence_reason_code,
             primary_reason_code=primary_reason_code,
             primary_outcome=primary_outcome,
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
@@ -27,7 +28,13 @@ from corvus.domain.conversations import (
     ThreadStatus,
     compute_content_digest,
 )
-from corvus.domain.execution import ExecutionRun, ExecutionRunState
+from corvus.domain.execution import (
+    AgentRunExecutionBinding,
+    ExecutionRun,
+    ExecutionRunState,
+    compute_agent_run_execution_binding_digest,
+    compute_execution_run_digest,
+)
 from corvus.domain.identity import Principal, PrincipalKind, Workspace, WorkspaceMembership
 from corvus.domain.request import RequestContext
 from corvus.infrastructure.agent_run_execution import (
@@ -61,6 +68,13 @@ class _SynchronizedExecutionRepository(ExecutionRepository):
         self._barrier.wait(timeout=5)
         return current
 
+    def get_run_binding(
+        self,
+        workspace_id: UUID,
+        run_id: UUID,
+    ) -> AgentRunExecutionBinding | None:
+        return self._delegate.get_run_binding(workspace_id, run_id)
+
     def append_run_state(
         self,
         run: ExecutionRun,
@@ -71,6 +85,26 @@ class _SynchronizedExecutionRepository(ExecutionRepository):
             run,
             expected_prior_version=expected_prior_version,
         )
+
+
+def _pending_execution(request: AgentRunRequest) -> ExecutionRun:
+    payload: dict[str, object] = {
+        "id": request.run_id,
+        "workspace_id": request.workspace_id,
+        "state": ExecutionRunState.PENDING,
+        "version": 1,
+        "created_at": NOW,
+        "updated_at": OBSERVED.astimezone(UTC),
+    }
+    return ExecutionRun(
+        id=request.run_id,
+        workspace_id=request.workspace_id,
+        state=ExecutionRunState.PENDING,
+        version=1,
+        created_at=NOW,
+        updated_at=OBSERVED.astimezone(UTC),
+        canonical_digest=compute_execution_run_digest(payload),
+    )
 
 
 def _database(tmp_path: Path) -> Path:
@@ -269,11 +303,16 @@ def test_start_intent_persists_bound_pending_run_and_survives_reopen(
     assert pending.updated_at == OBSERVED.astimezone(UTC)
     assert pending.updated_at.utcoffset() == timedelta(0)
     assert executions.get_latest_run_state(workspace.id, request.run_id) == pending
+    durable_binding = executions.get_run_binding(workspace.id, request.run_id)
+    assert durable_binding is not None
+    assert durable_binding.immutable_request_digest == request.immutable_request_digest
+    assert durable_binding.created_at == NOW
     executions.close()
     conversations.close()
 
     reopened = ExecutionRepository(database)
     assert reopened.get_latest_run_state(workspace.id, request.run_id) == pending
+    assert reopened.get_run_binding(workspace.id, request.run_id) == durable_binding
     reopened.close()
 
 
@@ -439,6 +478,10 @@ def test_observed_state_accepts_refreshed_proof_but_rejects_common_substitution(
     )
     substitutions = (
         (
+            request.model_copy(update={"prompt": "Substituted immutable request."}),
+            context,
+        ),
+        (
             request.model_copy(
                 update={
                     "provider_binding_version": 2,
@@ -500,6 +543,149 @@ def test_observed_state_accepts_refreshed_proof_but_rejects_common_substitution(
 
     assert persisted.state is ExecutionRunState.RUNNING
     assert persisted.version == 2
+    executions.close()
+    conversations.close()
+
+
+def test_start_replay_bootstraps_legacy_binding_without_rewriting_history(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database)
+    request = _request(
+        workspace.id,
+        run_id=uuid4(),
+        provider_binding_id=uuid4(),
+        provider_binding_digest="f" * 64,
+    )
+    context = _context(request, principal.id)
+    conversations = ConversationRepository(database)
+    _create_parent_run(conversations, workspace, principal, request)
+    executions = ExecutionRepository(database)
+    pending = _pending_execution(request)
+    executions.record_run_state(pending)
+    persistence = RepositoryAgentRunExecutionPersistence(
+        conversations=conversations,
+        executions=executions,
+    )
+
+    replay = persistence.ensure_start_intent(
+        context,
+        request,
+        observed_at=OBSERVED + timedelta(minutes=1),
+    )
+
+    assert replay == pending
+    durable_binding = executions.get_run_binding(workspace.id, request.run_id)
+    assert durable_binding is not None
+    assert durable_binding.immutable_request_digest == request.immutable_request_digest
+    assert executions.list_run_states(workspace.id, request.run_id) == (pending,)
+    executions.close()
+    conversations.close()
+
+
+def test_observed_state_fails_closed_when_durable_binding_is_missing(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database)
+    request = _request(
+        workspace.id,
+        run_id=uuid4(),
+        provider_binding_id=uuid4(),
+        provider_binding_digest="f" * 64,
+    )
+    context = _context(request, principal.id)
+    conversations = ConversationRepository(database)
+    _create_parent_run(conversations, workspace, principal, request)
+    executions = ExecutionRepository(database)
+    pending = _pending_execution(request)
+    executions.record_run_state(pending)
+    persistence = RepositoryAgentRunExecutionPersistence(
+        conversations=conversations,
+        executions=executions,
+    )
+    running = AgentRunHandle(
+        run_id=request.run_id,
+        provider_binding_id=request.provider_binding_id,
+        created_at=OBSERVED,
+        state=AgentRunState.RUNNING,
+    )
+
+    with pytest.raises(
+        AgentRunExecutionPersistenceError,
+        match="agent_run_persistence_binding_mismatch",
+    ):
+        persistence.record_handle_state(
+            context,
+            AgentRunOperation.RESUME,
+            request,
+            running,
+            observed_at=OBSERVED + timedelta(minutes=1),
+        )
+
+    assert executions.list_run_states(workspace.id, request.run_id) == (pending,)
+    executions.close()
+    conversations.close()
+
+
+def test_binding_without_initial_state_maps_to_stable_state_conflict(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database)
+    request = _request(
+        workspace.id,
+        run_id=uuid4(),
+        provider_binding_id=uuid4(),
+        provider_binding_digest="f" * 64,
+    )
+    context = _context(request, principal.id)
+    conversations = ConversationRepository(database)
+    _create_parent_run(conversations, workspace, principal, request)
+    binding_payload: dict[str, object] = {
+        "workspace_id": workspace.id,
+        "run_id": request.run_id,
+        "immutable_request_digest": request.immutable_request_digest,
+        "created_at": NOW,
+    }
+    binding = AgentRunExecutionBinding(
+        workspace_id=workspace.id,
+        run_id=request.run_id,
+        immutable_request_digest=request.immutable_request_digest,
+        created_at=NOW,
+        canonical_digest=compute_agent_run_execution_binding_digest(binding_payload),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_execution_bindings "
+            "(workspace_id, run_id, immutable_request_digest, created_at, "
+            "canonical_digest) VALUES (?, ?, ?, ?, ?)",
+            (
+                str(binding.workspace_id),
+                str(binding.run_id),
+                binding.immutable_request_digest,
+                binding.created_at.isoformat(),
+                binding.canonical_digest,
+            ),
+        )
+    executions = ExecutionRepository(database)
+    persistence = RepositoryAgentRunExecutionPersistence(
+        conversations=conversations,
+        executions=executions,
+    )
+
+    with pytest.raises(
+        AgentRunExecutionPersistenceError,
+        match="agent_run_persistence_state_conflict",
+    ):
+        persistence.ensure_start_intent(
+            context,
+            request,
+            observed_at=OBSERVED,
+        )
+
+    assert executions.get_latest_run_state(workspace.id, request.run_id) is None
     executions.close()
     conversations.close()
 

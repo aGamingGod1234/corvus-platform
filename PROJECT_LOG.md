@@ -2808,23 +2808,27 @@
 ### What Was Implemented
 - Added a required application persistence port with stable failure reason codes for agent-run execution state.
 - Persisted a bound `PENDING` intent before runtime START and recorded validated START, RESUME, and terminal CANCEL observations before outcome audit.
-- Added a repository adapter over the conversation and execution repositories with UTC normalization, immutable parent binding checks, refreshed-proof validation, idempotent replay, terminal-state protection, and optimistic-concurrency conflict mapping.
-- Added coordinator unit coverage and migrated-SQLite integration coverage for ordering, degraded outcomes, restart durability, proof substitution, replay, terminal conflicts, and concurrent writers.
+- Added a repository adapter over the conversation and execution repositories with trusted coordinator timestamps, UTC normalization, durable immutable-request binding checks, refreshed-proof validation, idempotent replay, terminal-state protection, and optimistic-concurrency conflict mapping.
+- Audited post-runtime persistence anomalies as failures while preserving the validated runtime outcome, and retained both audit and persistence recovery obligations through an explicit reconciliation-pending result.
+- Added coordinator unit coverage and migrated-SQLite integration coverage for ordering, degraded outcomes, restart durability, legacy binding bootstrap, proof substitution, replay, terminal conflicts, concurrent writers, and corrupt-history rejection.
 
 ### Files Modified
 - `corvus/application/ports.py` — defines the required persistence contract and stable application error.
 - `corvus/application/agent_runtime.py` — integrates intent and observed-state persistence into lifecycle ordering.
+- `corvus/domain/execution.py` — defines the immutable execution-binding contract and canonical digest.
 - `corvus/infrastructure/agent_run_execution.py` — implements repository-backed persistence and binding invariants.
+- `corvus/infrastructure/repositories/execution.py` — atomically establishes bindings with initial state and safely bootstraps coherent legacy histories.
 - `tests/unit/application/test_agent_runtime_coordinator.py` — verifies coordinator ordering and persistence-degraded outcomes.
-- `tests/integration/test_agent_run_execution_persistence.py` — verifies real SQLite durability, invariants, replay, terminal safety, and CAS behavior.
+- `tests/unit/domain/test_execution.py`, `tests/integration/test_execution_repository.py`, and `tests/integration/test_agent_run_execution_persistence.py` — verify contract integrity, atomic storage, real SQLite durability, substitution resistance, replay, terminal safety, and CAS behavior.
 - `PROJECT_LOG.md` — records this execution-persistence slice.
 
 ### Assumptions Made (flag these for review)
-- A refreshed RESUME or CANCEL authorization proof replaces the original START proof for current-operation validation but does not replace immutable run, requester, workspace, provider, or idempotency bindings.
-- If both observed-state persistence and outcome auditing fail after the runtime succeeds, the existing audit-pending result remains authoritative while retaining the validated handle and primary runtime outcome metadata.
+- A refreshed RESUME or CANCEL authorization proof replaces the original START proof for current-operation validation, while the durable `immutable_request_digest` remains authoritative for immutable request content.
+- If both observed-state persistence and outcome auditing fail after the runtime succeeds, `agent_run_reconciliation_pending` exposes both recovery obligations while `primary_*` retains the validated runtime outcome.
+- Legacy state history may receive a binding only through exact START replay after the immutable conversation parent is re-proved; missing or incoherent binding state fails closed.
 
 ### Known Issues / Deferred
-- Step, lease, event, checkpoint, effect, API, UI, and migration work remain outside this slice.
+- Step, lease, event, checkpoint, effect, API, UI, and provider work remain outside this slice; the m2_005 binding schema is supplied by the companion migration commit.
 
 ### Suggested Next Steps
 - Compose this adapter in the application bootstrap when the next authorized wiring phase begins.

@@ -30,12 +30,14 @@ from corvus.domain.conversations import (
     compute_lineage_digest,
 )
 from corvus.domain.execution import (
+    AgentRunExecutionBinding,
     ExecutionCheckpoint,
     ExecutionNextTransition,
     ExecutionRun,
     ExecutionRunState,
     ExecutionStep,
     ExecutionStepState,
+    compute_agent_run_execution_binding_digest,
     compute_execution_checkpoint_digest,
     compute_execution_run_digest,
     compute_execution_step_digest,
@@ -188,6 +190,26 @@ def _execution_run(workspace_id: UUID, run_id: UUID) -> ExecutionRun:
     }
     return ExecutionRun(
         **{**payload, "canonical_digest": compute_execution_run_digest(payload)}  # type: ignore[arg-type]
+    )
+
+
+def _execution_binding(
+    workspace_id: UUID,
+    run_id: UUID,
+    *,
+    immutable_request_digest: str = "d" * 64,
+) -> AgentRunExecutionBinding:
+    payload: dict[str, object] = {
+        "workspace_id": workspace_id,
+        "run_id": run_id,
+        "immutable_request_digest": immutable_request_digest,
+        "created_at": NOW,
+    }
+    return AgentRunExecutionBinding(
+        **{
+            **payload,
+            "canonical_digest": compute_agent_run_execution_binding_digest(payload),
+        }  # type: ignore[arg-type]
     )
 
 
@@ -429,6 +451,157 @@ def _seed_authorization_snapshot(
             ),
         )
     return request_context_id, snapshot_id
+
+
+def test_run_binding_and_initial_pending_state_are_atomic_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="binding")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    binding = _execution_binding(workspace.id, agent_run.id)
+    pending = _execution_run(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+
+    first = repository.record_run_binding(binding, pending)
+    replay = repository.record_run_binding(binding, pending)
+
+    assert first == replay == (binding, pending)
+    assert repository.get_run_binding(workspace.id, agent_run.id) == binding
+    assert repository.get_latest_run_state(workspace.id, agent_run.id) == pending
+    with pytest.raises(
+        ExecutionRepositoryError,
+        match="execution_idempotency_payload_mismatch",
+    ):
+        repository.record_run_binding(
+            _execution_binding(
+                workspace.id,
+                agent_run.id,
+                immutable_request_digest="e" * 64,
+            ),
+            pending,
+        )
+    assert repository.get_run_binding(workspace.id, agent_run.id) == binding
+    repository.close()
+
+
+def test_run_binding_bootstraps_coherent_legacy_history_without_rewriting_it(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="legacy-binding")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    pending = _execution_run(workspace.id, agent_run.id)
+    running_payload: dict[str, object] = {
+        "id": agent_run.id,
+        "workspace_id": workspace.id,
+        "state": ExecutionRunState.RUNNING,
+        "version": 2,
+        "created_at": NOW,
+        "updated_at": NOW + timedelta(minutes=1),
+    }
+    running = ExecutionRun(
+        **{
+            **running_payload,
+            "canonical_digest": compute_execution_run_digest(running_payload),
+        }  # type: ignore[arg-type]
+    )
+    binding = _execution_binding(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+    repository.record_run_state(pending)
+    repository.append_run_state(running, expected_prior_version=1)
+
+    established = repository.record_run_binding(binding, pending)
+
+    assert established == (binding, running)
+    assert repository.list_run_states(workspace.id, agent_run.id) == (
+        pending,
+        running,
+    )
+    repository.close()
+
+
+def test_run_binding_without_state_fails_closed_and_new_failure_is_atomic(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="binding-corruption")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    binding = _execution_binding(workspace.id, agent_run.id)
+    pending = _execution_run(workspace.id, agent_run.id)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_execution_bindings "
+            "(workspace_id, run_id, immutable_request_digest, created_at, "
+            "canonical_digest) VALUES (?, ?, ?, ?, ?)",
+            (
+                str(binding.workspace_id),
+                str(binding.run_id),
+                binding.immutable_request_digest,
+                binding.created_at.isoformat(),
+                binding.canonical_digest,
+            ),
+        )
+    repository = ExecutionRepository(database)
+
+    with pytest.raises(
+        ExecutionRepositoryError,
+        match="execution_run_binding_state_missing",
+    ):
+        repository.record_run_binding(binding, pending)
+
+    assert repository.get_latest_run_state(workspace.id, agent_run.id) is None
+    repository.close()
+
+
+def test_run_binding_rejects_incoherent_legacy_history_without_residue(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="binding-gap")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    pending = _execution_run(workspace.id, agent_run.id)
+    gap_payload: dict[str, object] = {
+        "id": agent_run.id,
+        "workspace_id": workspace.id,
+        "state": ExecutionRunState.RUNNING,
+        "version": 3,
+        "created_at": NOW,
+        "updated_at": NOW + timedelta(minutes=1),
+    }
+    gap = ExecutionRun(
+        **{
+            **gap_payload,
+            "canonical_digest": compute_execution_run_digest(gap_payload),
+        }  # type: ignore[arg-type]
+    )
+    repository = ExecutionRepository(database)
+    repository.record_run_state(pending)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_state_versions "
+            "(workspace_id, run_id, version, state, created_at, updated_at, "
+            "canonical_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(gap.workspace_id),
+                str(gap.id),
+                gap.version,
+                gap.state.value,
+                gap.created_at.isoformat(),
+                gap.updated_at.isoformat(),
+                gap.canonical_digest,
+            ),
+        )
+    binding = _execution_binding(workspace.id, agent_run.id)
+
+    with pytest.raises(
+        ExecutionRepositoryError,
+        match="execution_run_history_invalid",
+    ):
+        repository.record_run_binding(binding, pending)
+
+    assert repository.get_run_binding(workspace.id, agent_run.id) is None
+    repository.close()
 
 
 def test_run_step_checkpoint_survive_reopen_and_are_workspace_scoped(

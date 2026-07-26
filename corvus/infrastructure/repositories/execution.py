@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from corvus.database import DatabaseState, classify_database
 from corvus.domain.execution import (
+    AgentRunExecutionBinding,
     ExecutionCheckpoint,
     ExecutionNextTransition,
     ExecutionRun,
@@ -27,11 +28,15 @@ from corvus.domain.execution import (
     ExecutionStepState,
     compute_execution_step_digest,
 )
-from corvus.infrastructure.db import M2_DURABLE_EXECUTION_REVISION, current_revision
+from corvus.infrastructure.db import M1_CURRENT_REVISION, current_revision
 
 _RUN_SQL = (
     "SELECT * FROM agent_run_state_versions WHERE workspace_id = :workspace_id "
     "AND run_id = :run_id ORDER BY version DESC LIMIT 1"
+)
+_RUN_BINDING_SQL = (
+    "SELECT * FROM agent_run_execution_bindings "
+    "WHERE workspace_id = :workspace_id AND run_id = :run_id"
 )
 _AGENT_RUN_SQL = (
     "SELECT * FROM agent_runs WHERE workspace_id = :workspace_id AND id = :id"
@@ -54,6 +59,13 @@ _CHECKPOINT_SQL = (
 _DEFAULT_PAGE_LIMIT = 100
 _MAX_PAGE_LIMIT = 100
 _RECOVERY_CURSOR_VERSION = 1
+_TERMINAL_RUN_STATES = frozenset(
+    {
+        ExecutionRunState.COMPLETED,
+        ExecutionRunState.FAILED,
+        ExecutionRunState.CANCELLED,
+    }
+)
 _SQLITE_UTC_ISO_FUNCTION = "corvus_utc_iso"
 _SQLITE_EXPIRED_LEASE_DISCOVERY_SQL = (
     "SELECT * FROM run_step_leases "
@@ -210,7 +222,7 @@ class ExecutionRepository:
         self._owns_engine = isinstance(database, Path)
         if isinstance(database, Path):
             revision = current_revision(database)
-            if revision != M2_DURABLE_EXECUTION_REVISION:
+            if revision != M1_CURRENT_REVISION:
                 raise ExecutionRepositoryError(
                     f"database_revision_mismatch:{revision or 'unstamped'}"
                 )
@@ -227,7 +239,7 @@ class ExecutionRepository:
             self.engine = database
             with self.engine.connect() as connection:
                 revision = MigrationContext.configure(connection).get_current_revision()
-            if revision != M2_DURABLE_EXECUTION_REVISION:
+            if revision != M1_CURRENT_REVISION:
                 raise ExecutionRepositoryError(
                     f"database_revision_mismatch:{revision or 'unstamped'}"
                 )
@@ -353,6 +365,38 @@ class ExecutionRepository:
             )
         except (ValidationError, TypeError, ValueError) as exc:
             raise ExecutionRepositoryError("execution_run_integrity_invalid") from exc
+
+    @staticmethod
+    def _run_binding_from_row(row: RowMapping) -> AgentRunExecutionBinding:
+        try:
+            return AgentRunExecutionBinding(
+                workspace_id=UUID(row["workspace_id"]),
+                run_id=UUID(row["run_id"]),
+                immutable_request_digest=row["immutable_request_digest"],
+                created_at=_utc_datetime(row["created_at"]),
+                canonical_digest=row["canonical_digest"],
+            )
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ExecutionRepositoryError("execution_run_binding_integrity_invalid") from exc
+
+    @staticmethod
+    def _validate_run_binding_history(
+        rows: Sequence[RowMapping],
+        binding: AgentRunExecutionBinding,
+    ) -> tuple[ExecutionRun, ...]:
+        runs = tuple(ExecutionRepository._run_from_row(row) for row in rows)
+        expected_versions = tuple(range(1, len(runs) + 1))
+        if tuple(run.version for run in runs) != expected_versions:
+            raise ExecutionRepositoryError("execution_run_history_invalid")
+        for index, run in enumerate(runs):
+            if run.created_at != binding.created_at:
+                raise ExecutionRepositoryError("execution_run_history_invalid")
+            if index == 0:
+                continue
+            previous = runs[index - 1]
+            if run.updated_at < previous.updated_at or previous.state in _TERMINAL_RUN_STATES:
+                raise ExecutionRepositoryError("execution_run_history_invalid")
+        return runs
 
     @staticmethod
     def _step_from_row(row: RowMapping) -> ExecutionStep:
@@ -510,6 +554,113 @@ class ExecutionRepository:
             except IntegrityError as exc:
                 raise ExecutionRepositoryError("execution_run_binding_invalid") from exc
             return run
+
+    def record_run_binding(
+        self,
+        binding: AgentRunExecutionBinding,
+        initial_run: ExecutionRun,
+    ) -> tuple[AgentRunExecutionBinding, ExecutionRun]:
+        if (
+            initial_run.id != binding.run_id
+            or initial_run.workspace_id != binding.workspace_id
+            or initial_run.version != 1
+            or initial_run.state is not ExecutionRunState.PENDING
+            or initial_run.created_at != binding.created_at
+        ):
+            raise ExecutionRepositoryError("execution_run_binding_invalid")
+        with self._transaction() as connection:
+            parent = self._lock_agent_run(
+                connection,
+                binding.workspace_id,
+                binding.run_id,
+            )
+            if parent is None:
+                raise ExecutionRepositoryError("execution_run_not_found")
+            if _utc_datetime(parent["created_at"]) != binding.created_at:
+                raise ExecutionRepositoryError("execution_run_binding_invalid")
+            existing_binding_row = (
+                connection.execute(
+                    text(self._locked(_RUN_BINDING_SQL, connection)),
+                    {
+                        "workspace_id": str(binding.workspace_id),
+                        "run_id": str(binding.run_id),
+                    },
+                )
+                .mappings()
+                .first()
+            )
+            state_rows = (
+                connection.execute(
+                    text(
+                        self._locked(
+                            "SELECT * FROM agent_run_state_versions "
+                            "WHERE workspace_id = :workspace_id AND run_id = :run_id "
+                            "ORDER BY version",
+                            connection,
+                        )
+                    ),
+                    {
+                        "workspace_id": str(binding.workspace_id),
+                        "run_id": str(binding.run_id),
+                    },
+                )
+                .mappings()
+                .all()
+            )
+            state_history = self._validate_run_binding_history(
+                state_rows,
+                binding,
+            )
+            if existing_binding_row is not None:
+                stored_binding = self._run_binding_from_row(existing_binding_row)
+                if stored_binding != binding:
+                    raise ExecutionRepositoryError("execution_idempotency_payload_mismatch")
+                if not state_history:
+                    raise ExecutionRepositoryError("execution_run_binding_state_missing")
+                first_run = state_history[0]
+                if first_run != initial_run:
+                    raise ExecutionRepositoryError("execution_idempotency_payload_mismatch")
+                return stored_binding, state_history[-1]
+            if state_history and state_history[0] != initial_run:
+                raise ExecutionRepositoryError("execution_idempotency_payload_mismatch")
+            try:
+                connection.execute(
+                    text(
+                        "INSERT INTO agent_run_execution_bindings "
+                        "(workspace_id, run_id, immutable_request_digest, created_at, "
+                        "canonical_digest) VALUES (:workspace_id, :run_id, "
+                        ":immutable_request_digest, :created_at, :canonical_digest)"
+                    ),
+                    {
+                        "workspace_id": str(binding.workspace_id),
+                        "run_id": str(binding.run_id),
+                        "immutable_request_digest": binding.immutable_request_digest,
+                        "created_at": _utc_iso(binding.created_at),
+                        "canonical_digest": binding.canonical_digest,
+                    },
+                )
+                if not state_history:
+                    connection.execute(
+                        text(
+                            "INSERT INTO agent_run_state_versions "
+                            "(workspace_id, run_id, version, state, created_at, "
+                            "updated_at, canonical_digest) VALUES (:workspace_id, "
+                            ":run_id, :version, :state, :created_at, :updated_at, "
+                            ":canonical_digest)"
+                        ),
+                        {
+                            "workspace_id": str(initial_run.workspace_id),
+                            "run_id": str(initial_run.id),
+                            "version": initial_run.version,
+                            "state": initial_run.state.value,
+                            "created_at": _utc_iso(initial_run.created_at),
+                            "updated_at": _utc_iso(initial_run.updated_at),
+                            "canonical_digest": initial_run.canonical_digest,
+                        },
+                    )
+            except IntegrityError as exc:
+                raise ExecutionRepositoryError("execution_run_binding_invalid") from exc
+            return binding, (state_history[-1] if state_history else initial_run)
 
     def create_step(
         self,
@@ -1624,6 +1775,25 @@ class ExecutionRepository:
             ),
             has_more=has_more,
         )
+
+    def get_run_binding(
+        self,
+        workspace_id: UUID,
+        run_id: UUID,
+    ) -> AgentRunExecutionBinding | None:
+        with self._connection() as connection:
+            row = (
+                connection.execute(
+                    text(_RUN_BINDING_SQL),
+                    {
+                        "workspace_id": str(workspace_id),
+                        "run_id": str(run_id),
+                    },
+                )
+                .mappings()
+                .first()
+            )
+            return None if row is None else self._run_binding_from_row(row)
 
     def get_latest_run_state(
         self,
