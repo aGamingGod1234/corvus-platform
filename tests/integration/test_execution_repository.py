@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import event as sqlalchemy_event
+from sqlalchemy import text
 
 from corvus.domain.agent_runtime import (
     AgentRunEvent,
@@ -43,8 +44,11 @@ from corvus.domain.identity import Principal, PrincipalKind, Workspace, Workspac
 from corvus.infrastructure.db import M1_CURRENT_REVISION, upgrade_database
 from corvus.infrastructure.repositories.conversations import ConversationRepository
 from corvus.infrastructure.repositories.execution import (
+    ExecutionLeaseRecoveryCursor,
     ExecutionRepository,
     ExecutionRepositoryError,
+    ExecutionRunRecoveryCursor,
+    ExecutionStepRecoveryCursor,
 )
 from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
 from corvus.store import TraceStore
@@ -1587,6 +1591,42 @@ def test_recovery_pages_do_not_skip_unseen_latest_state_after_timestamp_regressi
     repository.close()
 
 
+def test_recovery_cursors_are_versioned_immutable_identity_contracts(
+    tmp_path: Path,
+) -> None:
+    run_id = uuid4()
+    step_id = uuid4()
+    run_cursor = ExecutionRunRecoveryCursor(run_id=run_id)
+    step_cursor = ExecutionStepRecoveryCursor(run_id=run_id, step_id=step_id)
+    lease_cursor = ExecutionLeaseRecoveryCursor(
+        run_id=run_id,
+        step_id=step_id,
+        fence=3,
+    )
+    assert run_cursor.cursor_version == 1
+    assert step_cursor.cursor_version == 1
+    assert lease_cursor.cursor_version == 1
+    assert not hasattr(run_cursor, "updated_at")
+    assert not hasattr(step_cursor, "updated_at")
+    assert not hasattr(lease_cursor, "expires_at")
+
+    database = _database(tmp_path)
+    workspace, _ = _identity(database, suffix="cursor-version")
+    repository = ExecutionRepository(database)
+    with pytest.raises(
+        ExecutionRepositoryError,
+        match="execution_recovery_cursor_version_unsupported",
+    ):
+        repository.discover_recoverable_runs(
+            workspace.id,
+            after=ExecutionRunRecoveryCursor(
+                run_id=run_id,
+                cursor_version=2,
+            ),
+        )
+    repository.close()
+
+
 def test_expired_lease_discovery_compares_legacy_offset_timestamps_as_instants(
     tmp_path: Path,
 ) -> None:
@@ -1649,8 +1689,17 @@ def test_expired_lease_discovery_compares_legacy_offset_timestamps_as_instants(
         as_of=NOW + timedelta(minutes=11),
         limit=1,
     )
+    expected_leases = tuple(
+        sorted(
+            (
+                (step.id, NOW + timedelta(minutes=5)),
+                (second_step.id, NOW + timedelta(minutes=10)),
+            ),
+            key=lambda candidate: candidate[0],
+        )
+    )
     assert len(page.items) == 1
-    assert page.items[0].expires_at == NOW + timedelta(minutes=5)
+    assert (page.items[0].step_id, page.items[0].expires_at) == expected_leases[0]
     assert page.has_more is True
     assert page.next_cursor is not None
     second_page = repository.discover_expired_leases(
@@ -1660,18 +1709,43 @@ def test_expired_lease_discovery_compares_legacy_offset_timestamps_as_instants(
         limit=1,
     )
     assert len(second_page.items) == 1
-    assert second_page.items[0].expires_at == NOW + timedelta(minutes=10)
+    assert (
+        second_page.items[0].step_id,
+        second_page.items[0].expires_at,
+    ) == expected_leases[1]
     assert second_page.has_more is False
     repository.close()
 
 
-def test_expired_lease_query_uses_instant_aware_sql_for_supported_dialects() -> None:
-    sqlite_sql = ExecutionRepository._expired_lease_discovery_sql("sqlite")
-    postgres_sql = ExecutionRepository._expired_lease_discovery_sql("postgresql")
-    assert "corvus_utc_iso(expires_at)" in sqlite_sql
-    assert "CAST(expires_at AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
-    assert "CAST(:as_of AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
-    assert "CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
+def test_expired_lease_query_keeps_indexed_utc_hot_path_and_legacy_fallback(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    repository = ExecutionRepository(database)
+    sqlite_sql = repository._expired_lease_discovery_sql("sqlite")
+    postgres_sql = repository._expired_lease_discovery_sql("postgresql")
+    postgres_legacy_sql = repository._legacy_expired_lease_discovery_sql(
+        "postgresql"
+    )
+    with repository._connection() as connection:
+        plan_rows = connection.execute(
+            text(f"EXPLAIN QUERY PLAN {sqlite_sql}"),
+            {
+                "workspace_id": str(uuid4()),
+                "as_of": (NOW + timedelta(minutes=1)).isoformat(),
+                "fetch_limit": 2,
+                "after_run_id": None,
+                "after_step_id": None,
+                "after_fence": None,
+            },
+        ).all()
+    plan = " ".join(str(row) for row in plan_rows).casefold()
+    assert "ix_run_step_leases_recovery" in plan
+    assert "expires_at<?" in plan.replace(" ", "")
+    assert "expires_at <= :as_of" in postgres_sql
+    assert "CAST(expires_at AS TIMESTAMP WITH TIME ZONE)" not in postgres_sql
+    assert "CAST(expires_at AS TIMESTAMP WITH TIME ZONE)" in postgres_legacy_sql
+    repository.close()
 
 
 def test_complete_history_lists_return_more_than_default_page_limit(
@@ -1771,26 +1845,63 @@ def test_complete_history_lists_return_more_than_default_page_limit(
                     stored_checkpoint.canonical_digest,
                 ),
             )
-    assert tuple(
-        state.version
-        for state in repository.list_run_states(workspace.id, agent_run.id)
-    ) == tuple(range(1, 102))
-    assert tuple(
-        state.version
-        for state in repository.list_step_states(
-            workspace.id,
-            agent_run.id,
-            step.id,
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    sqlalchemy_event.listen(
+        repository.engine,
+        "before_cursor_execute",
+        capture_statement,
+    )
+    try:
+        assert tuple(
+            state.version
+            for state in repository.list_run_states(workspace.id, agent_run.id)
+        ) == tuple(range(1, 102))
+        assert tuple(
+            state.version
+            for state in repository.list_step_states(
+                workspace.id,
+                agent_run.id,
+                step.id,
+            )
+        ) == tuple(range(1, 102))
+        assert tuple(
+            checkpoint.checkpoint_version
+            for checkpoint in repository.list_checkpoints(
+                workspace.id,
+                agent_run.id,
+                step.id,
+            )
+        ) == tuple(range(1, 102))
+    finally:
+        sqlalchemy_event.remove(
+            repository.engine,
+            "before_cursor_execute",
+            capture_statement,
         )
-    ) == tuple(range(1, 102))
-    assert tuple(
-        checkpoint.checkpoint_version
-        for checkpoint in repository.list_checkpoints(
-            workspace.id,
-            agent_run.id,
-            step.id,
+    history_queries = tuple(
+        statement
+        for statement in statements
+        if statement.startswith(
+            (
+                "SELECT * FROM agent_run_state_versions ",
+                "SELECT * FROM run_step_versions ",
+                "SELECT * FROM run_checkpoints ",
+            )
         )
-    ) == tuple(range(1, 102))
+    )
+    assert len(history_queries) == 3
+    assert all(" LIMIT " not in statement for statement in history_queries)
     repository.close()
 
 

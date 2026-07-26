@@ -53,40 +53,57 @@ _CHECKPOINT_SQL = (
 )
 _DEFAULT_PAGE_LIMIT = 100
 _MAX_PAGE_LIMIT = 100
+_RECOVERY_CURSOR_VERSION = 1
 _SQLITE_UTC_ISO_FUNCTION = "corvus_utc_iso"
 _SQLITE_EXPIRED_LEASE_DISCOVERY_SQL = (
     "SELECT * FROM run_step_leases "
     "WHERE workspace_id = :workspace_id "
-    "AND released_at IS NULL AND corvus_utc_iso(expires_at) <= :as_of "
-    "AND (:after_expires_at IS NULL "
-    "OR corvus_utc_iso(expires_at) > :after_expires_at "
-    "OR (corvus_utc_iso(expires_at) = :after_expires_at "
-    "AND (run_id > :after_run_id "
+    "AND released_at IS NULL AND substr(expires_at, -6) = '+00:00' "
+    "AND expires_at <= :as_of "
+    "AND (:after_run_id IS NULL OR run_id > :after_run_id "
     "OR (run_id = :after_run_id "
     "AND (step_id > :after_step_id "
     "OR (step_id = :after_step_id "
-    "AND fence > :after_fence)))))) "
-    "ORDER BY corvus_utc_iso(expires_at), run_id, step_id, fence "
+    "AND fence > :after_fence)))) "
+    "ORDER BY run_id, step_id, fence "
     "LIMIT :fetch_limit"
 )
 _POSTGRES_EXPIRED_LEASE_DISCOVERY_SQL = (
     "SELECT * FROM run_step_leases "
     "WHERE workspace_id = :workspace_id "
-    "AND released_at IS NULL "
-    "AND CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
-    "<= CAST(:as_of AS TIMESTAMP WITH TIME ZONE) "
-    "AND (:after_expires_at IS NULL "
-    "OR CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
-    "> CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE) "
-    "OR (CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
-    "= CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE) "
-    "AND (run_id > :after_run_id "
+    "AND released_at IS NULL AND RIGHT(expires_at, 6) = '+00:00' "
+    "AND expires_at <= :as_of "
+    "AND (:after_run_id IS NULL OR run_id > :after_run_id "
     "OR (run_id = :after_run_id "
     "AND (step_id > :after_step_id "
     "OR (step_id = :after_step_id "
-    "AND fence > :after_fence)))))) "
-    "ORDER BY CAST(expires_at AS TIMESTAMP WITH TIME ZONE), "
-    "run_id, step_id, fence LIMIT :fetch_limit"
+    "AND fence > :after_fence)))) "
+    "ORDER BY run_id, step_id, fence LIMIT :fetch_limit"
+)
+_SQLITE_LEGACY_EXPIRED_LEASE_DISCOVERY_SQL = (
+    "SELECT * FROM run_step_leases "
+    "WHERE workspace_id = :workspace_id "
+    "AND released_at IS NULL AND substr(expires_at, -6) <> '+00:00' "
+    "AND corvus_utc_iso(expires_at) <= :as_of "
+    "AND (:after_run_id IS NULL OR run_id > :after_run_id "
+    "OR (run_id = :after_run_id "
+    "AND (step_id > :after_step_id "
+    "OR (step_id = :after_step_id "
+    "AND fence > :after_fence)))) "
+    "ORDER BY run_id, step_id, fence LIMIT :fetch_limit"
+)
+_POSTGRES_LEGACY_EXPIRED_LEASE_DISCOVERY_SQL = (
+    "SELECT * FROM run_step_leases "
+    "WHERE workspace_id = :workspace_id "
+    "AND released_at IS NULL AND RIGHT(expires_at, 6) <> '+00:00' "
+    "AND CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "<= CAST(:as_of AS TIMESTAMP WITH TIME ZONE) "
+    "AND (:after_run_id IS NULL OR run_id > :after_run_id "
+    "OR (run_id = :after_run_id "
+    "AND (step_id > :after_step_id "
+    "OR (step_id = :after_step_id "
+    "AND fence > :after_fence)))) "
+    "ORDER BY run_id, step_id, fence LIMIT :fetch_limit"
 )
 
 
@@ -97,23 +114,23 @@ class ExecutionHistoryCursor:
 
 @dataclass(frozen=True)
 class ExecutionRunRecoveryCursor:
-    updated_at: datetime
     run_id: UUID
+    cursor_version: int = _RECOVERY_CURSOR_VERSION
 
 
 @dataclass(frozen=True)
 class ExecutionStepRecoveryCursor:
-    updated_at: datetime
     run_id: UUID
     step_id: UUID
+    cursor_version: int = _RECOVERY_CURSOR_VERSION
 
 
 @dataclass(frozen=True)
 class ExecutionLeaseRecoveryCursor:
-    expires_at: datetime
     run_id: UUID
     step_id: UUID
     fence: int
+    cursor_version: int = _RECOVERY_CURSOR_VERSION
 
 
 @dataclass(frozen=True)
@@ -280,6 +297,31 @@ class ExecutionRepository:
             if dialect_name == "sqlite"
             else _POSTGRES_EXPIRED_LEASE_DISCOVERY_SQL
         )
+
+    @staticmethod
+    def _legacy_expired_lease_discovery_sql(dialect_name: str) -> str:
+        return (
+            _SQLITE_LEGACY_EXPIRED_LEASE_DISCOVERY_SQL
+            if dialect_name == "sqlite"
+            else _POSTGRES_LEGACY_EXPIRED_LEASE_DISCOVERY_SQL
+        )
+
+    @staticmethod
+    def _validate_recovery_cursor_version(
+        cursor: (
+            ExecutionRunRecoveryCursor
+            | ExecutionStepRecoveryCursor
+            | ExecutionLeaseRecoveryCursor
+            | None
+        ),
+    ) -> None:
+        if (
+            cursor is not None
+            and cursor.cursor_version != _RECOVERY_CURSOR_VERSION
+        ):
+            raise ExecutionRepositoryError(
+                "execution_recovery_cursor_version_unsupported"
+            )
 
     @classmethod
     def _lock_agent_run(
@@ -1283,6 +1325,7 @@ class ExecutionRepository:
         limit: int = _DEFAULT_PAGE_LIMIT,
     ) -> ExecutionRunRecoveryPage:
         self._validate_page_limit(limit)
+        self._validate_recovery_cursor_version(after)
         parameters: dict[str, object] = {
             "workspace_id": str(workspace_id),
             "fetch_limit": limit + 1,
@@ -1312,7 +1355,6 @@ class ExecutionRepository:
         items = tuple(self._run_from_row(row) for row in rows[:limit])
         next_cursor = (
             ExecutionRunRecoveryCursor(
-                updated_at=items[-1].updated_at,
                 run_id=items[-1].id,
             )
             if has_more and items
@@ -1332,6 +1374,7 @@ class ExecutionRepository:
         limit: int = _DEFAULT_PAGE_LIMIT,
     ) -> ExecutionStepRecoveryPage:
         self._validate_page_limit(limit)
+        self._validate_recovery_cursor_version(after)
         parameters: dict[str, object] = {
             "workspace_id": str(workspace_id),
             "fetch_limit": limit + 1,
@@ -1366,7 +1409,6 @@ class ExecutionRepository:
         items = tuple(self._step_from_row(row) for row in rows[:limit])
         next_cursor = (
             ExecutionStepRecoveryCursor(
-                updated_at=items[-1].updated_at,
                 run_id=items[-1].run_id,
                 step_id=items[-1].id,
             )
@@ -1388,19 +1430,17 @@ class ExecutionRepository:
         limit: int = _DEFAULT_PAGE_LIMIT,
     ) -> ExecutionLeaseRecoveryPage:
         self._validate_page_limit(limit)
+        self._validate_recovery_cursor_version(after)
         parameters: dict[str, object] = {
             "workspace_id": str(workspace_id),
             "as_of": _utc_iso(as_of),
             "fetch_limit": limit + 1,
-            "after_expires_at": (
-                _utc_iso(after.expires_at) if after is not None else None
-            ),
             "after_run_id": str(after.run_id) if after is not None else None,
             "after_step_id": str(after.step_id) if after is not None else None,
             "after_fence": after.fence if after is not None else None,
         }
         with self._connection() as connection:
-            rows = (
+            canonical_rows = (
                 connection.execute(
                     text(
                         self._expired_lease_discovery_sql(
@@ -1412,11 +1452,33 @@ class ExecutionRepository:
                 .mappings()
                 .all()
             )
-        has_more = len(rows) > limit
-        items = tuple(self._lease_from_row(row) for row in rows[:limit])
+            legacy_rows = (
+                connection.execute(
+                    text(
+                        self._legacy_expired_lease_discovery_sql(
+                            connection.dialect.name
+                        )
+                    ),
+                    parameters,
+                )
+                .mappings()
+                .all()
+            )
+        discovered = sorted(
+            (
+                self._lease_from_row(row)
+                for row in (*canonical_rows, *legacy_rows)
+            ),
+            key=lambda lease: (
+                lease.run_id,
+                lease.step_id,
+                lease.fence,
+            ),
+        )
+        has_more = len(discovered) > limit
+        items = tuple(discovered[:limit])
         next_cursor = (
             ExecutionLeaseRecoveryCursor(
-                expires_at=items[-1].expires_at,
                 run_id=items[-1].run_id,
                 step_id=items[-1].step_id,
                 fence=items[-1].fence,
@@ -1587,23 +1649,23 @@ class ExecutionRepository:
         workspace_id: UUID,
         run_id: UUID,
     ) -> tuple[ExecutionRun, ...]:
-        items: list[ExecutionRun] = []
-        cursor: ExecutionHistoryCursor | None = None
-        while True:
-            page = self.page_run_state_history(
-                workspace_id,
-                run_id,
-                after=cursor,
-                limit=_MAX_PAGE_LIMIT,
-            )
-            items.extend(page.items)
-            if not page.has_more:
-                return tuple(items)
-            if page.next_cursor is None:
-                raise ExecutionRepositoryError(
-                    "execution_history_cursor_missing"
+        with self._connection() as connection:
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM agent_run_state_versions "
+                        "WHERE workspace_id = :workspace_id AND run_id = :run_id "
+                        "ORDER BY version"
+                    ),
+                    {
+                        "workspace_id": str(workspace_id),
+                        "run_id": str(run_id),
+                    },
                 )
-            cursor = page.next_cursor
+                .mappings()
+                .all()
+            )
+        return tuple(self._run_from_row(row) for row in rows)
 
     def get_current_step_state(
         self,
@@ -1632,24 +1694,24 @@ class ExecutionRepository:
         run_id: UUID,
         step_id: UUID,
     ) -> tuple[ExecutionStep, ...]:
-        items: list[ExecutionStep] = []
-        cursor: ExecutionHistoryCursor | None = None
-        while True:
-            page = self.page_step_state_history(
-                workspace_id,
-                run_id,
-                step_id,
-                after=cursor,
-                limit=_MAX_PAGE_LIMIT,
-            )
-            items.extend(page.items)
-            if not page.has_more:
-                return tuple(items)
-            if page.next_cursor is None:
-                raise ExecutionRepositoryError(
-                    "execution_history_cursor_missing"
+        with self._connection() as connection:
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM run_step_versions "
+                        "WHERE workspace_id = :workspace_id AND run_id = :run_id "
+                        "AND step_id = :step_id ORDER BY version"
+                    ),
+                    {
+                        "workspace_id": str(workspace_id),
+                        "run_id": str(run_id),
+                        "step_id": str(step_id),
+                    },
                 )
-            cursor = page.next_cursor
+                .mappings()
+                .all()
+            )
+        return tuple(self._step_from_row(row) for row in rows)
 
     def get_active_step_lease(
         self,
@@ -1703,24 +1765,27 @@ class ExecutionRepository:
         run_id: UUID,
         step_id: UUID,
     ) -> tuple[ExecutionCheckpoint, ...]:
-        items: list[ExecutionCheckpoint] = []
-        cursor: ExecutionHistoryCursor | None = None
-        while True:
-            page = self.page_checkpoints(
-                workspace_id,
-                run_id,
-                step_id,
-                after=cursor,
-                limit=_MAX_PAGE_LIMIT,
-            )
-            items.extend(page.items)
-            if not page.has_more:
-                return tuple(items)
-            if page.next_cursor is None:
-                raise ExecutionRepositoryError(
-                    "execution_history_cursor_missing"
+        with self._connection() as connection:
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM run_checkpoints "
+                        "WHERE workspace_id = :workspace_id AND run_id = :run_id "
+                        "AND step_id = :step_id ORDER BY checkpoint_version"
+                    ),
+                    {
+                        "workspace_id": str(workspace_id),
+                        "run_id": str(run_id),
+                        "step_id": str(step_id),
+                    },
                 )
-            cursor = page.next_cursor
+                .mappings()
+                .all()
+            )
+            return tuple(
+                self._checkpoint_from_row(connection, row)
+                for row in rows
+            )
 
     def close(self) -> None:
         if self._owns_engine:
