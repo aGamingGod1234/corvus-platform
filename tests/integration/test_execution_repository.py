@@ -5,11 +5,12 @@ import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 
 from corvus.domain.agent_runtime import (
     AgentRunEvent,
@@ -649,7 +650,7 @@ def test_state_version_compare_and_swap_requires_exact_next_version(
         step_v1,
         state=ExecutionStepState.RUNNING,
         version=2,
-        fence=2,
+        fence=1,
     )
     assert repository.append_run_state(run_v2, expected_prior_version=1) == run_v2
     assert repository.append_step_state(step_v2, expected_prior_version=1) == step_v2
@@ -671,7 +672,7 @@ def test_state_version_compare_and_swap_requires_exact_next_version(
                 step_v2,
                 state=ExecutionStepState.PAUSED,
                 version=3,
-                fence=3,
+                fence=1,
             ),
             expected_prior_version=1,
         )
@@ -1135,4 +1136,453 @@ def test_run_and_step_creation_reject_cross_scope_or_invalid_initial_bindings_at
             "SELECT COUNT(*) FROM agent_run_state_versions"
         ).fetchone()[0]
     assert (orphan_count, run_state_count) == (0, 2)
+    repository.close()
+
+
+def test_step_state_progress_preserves_lease_fence_and_reacquires_without_wedge(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="same-fence")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step_v1 = _execution_step(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step_v1,
+        step_key="plan",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"input").hexdigest(),
+    )
+    lease_v1 = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step_v1.id,
+        worker_id="worker-a",
+        lease_token=_test_token("same-fence"),
+        acquired_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    step_v2 = _next_step_state(
+        step_v1,
+        state=ExecutionStepState.RUNNING,
+        version=2,
+        fence=lease_v1.fence,
+    )
+
+    assert (
+        repository.append_step_state(step_v2, expected_prior_version=1)
+        == step_v2
+    )
+    released = repository.release_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step_v1.id,
+        lease_fence=lease_v1.fence,
+        lease_token=_test_token("same-fence"),
+        released_at=NOW + timedelta(minutes=2),
+    )
+    lease_v2 = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step_v1.id,
+        worker_id="worker-b",
+        lease_token=_test_token("same-fence-reacquired"),
+        acquired_at=NOW + timedelta(minutes=3),
+        expires_at=NOW + timedelta(minutes=8),
+    )
+
+    assert released.released_at == NOW + timedelta(minutes=2)
+    assert lease_v2.fence == lease_v1.fence + 1
+    recovered = repository.list_step_states(
+        workspace.id,
+        agent_run.id,
+        step_v1.id,
+    )
+    assert tuple((state.version, state.fence) for state in recovered) == (
+        (1, 1),
+        (2, 1),
+        (3, 2),
+    )
+    repository.close()
+
+
+def test_checkpoint_locks_agent_run_before_event_head_and_postgres_uses_row_lock(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="checkpoint-lock")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step = _execution_step(workspace.id, agent_run.id)
+    request_context_id, authorization_snapshot_id = _seed_authorization_snapshot(
+        database,
+        workspace.id,
+    )
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step,
+        step_key="plan",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"input").hexdigest(),
+    )
+    lease = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step.id,
+        worker_id="worker-a",
+        lease_token=_test_token("checkpoint-lock"),
+        acquired_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(" ".join(statement.split()))
+
+    sqlalchemy_event.listen(
+        repository.engine,
+        "before_cursor_execute",
+        capture_statement,
+    )
+    try:
+        _record_bound_checkpoint(
+            repository,
+            _checkpoint(run, step),
+            _CheckpointBinding(
+                request_context_id=request_context_id,
+                authorization_snapshot_id=authorization_snapshot_id,
+                lease_fence=lease.fence,
+                lease_token=_test_token("checkpoint-lock"),
+            ),
+        )
+    finally:
+        sqlalchemy_event.remove(
+            repository.engine,
+            "before_cursor_execute",
+            capture_statement,
+        )
+
+    agent_run_lock_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("SELECT * FROM agent_runs ")
+    )
+    event_head_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("SELECT sequence, event_digest FROM agent_run_events ")
+    )
+    assert agent_run_lock_index < event_head_index
+    assert ExecutionRepository._agent_run_lock_statement("postgresql").endswith(
+        " FOR UPDATE"
+    )
+    assert "FOR UPDATE" not in ExecutionRepository._agent_run_lock_statement("sqlite")
+    repository.close()
+
+
+def test_restart_discovery_and_history_pages_are_bounded_scoped_and_gap_free(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="recovery-pages")
+    other_workspace, _ = _identity(database, suffix="recovery-pages-other")
+    first_agent_run = _seed_agent_run(database, workspace, principal)
+    second_agent_run = _seed_agent_run(database, workspace, principal)
+    first_run = _execution_run(workspace.id, first_agent_run.id)
+    second_run_v1 = _execution_run(workspace.id, second_agent_run.id)
+    first_step = _execution_step(workspace.id, first_agent_run.id)
+    second_step_v1 = _execution_step(workspace.id, second_agent_run.id)
+    request_context_id, authorization_snapshot_id = _seed_authorization_snapshot(
+        database,
+        workspace.id,
+    )
+    repository = ExecutionRepository(database)
+    repository.record_run_state(first_run)
+    repository.record_run_state(second_run_v1)
+    repository.create_step(
+        first_step,
+        step_key="first",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"first").hexdigest(),
+    )
+    repository.create_step(
+        second_step_v1,
+        step_key="second",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"second").hexdigest(),
+    )
+    lease = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=first_agent_run.id,
+        step_id=first_step.id,
+        worker_id="worker-a",
+        lease_token=_test_token("recovery-pages"),
+        acquired_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    checkpoint_v1 = _checkpoint(first_run, first_step)
+    binding = _CheckpointBinding(
+        request_context_id=request_context_id,
+        authorization_snapshot_id=authorization_snapshot_id,
+        lease_fence=lease.fence,
+        lease_token=_test_token("recovery-pages"),
+    )
+    _record_bound_checkpoint(repository, checkpoint_v1, binding)
+    checkpoint_v2 = _checkpoint_with(
+        checkpoint_v1,
+        id=uuid4(),
+        checkpoint_version=2,
+        created_at=NOW + timedelta(minutes=1),
+    )
+    _record_bound_checkpoint(repository, checkpoint_v2, binding)
+    checkpoint_v3 = _checkpoint_with(
+        checkpoint_v1,
+        id=uuid4(),
+        checkpoint_version=3,
+        created_at=NOW + timedelta(minutes=2),
+    )
+    _record_bound_checkpoint(repository, checkpoint_v3, binding)
+    second_run_v2 = _next_run_state(
+        second_run_v1,
+        state=ExecutionRunState.RUNNING,
+        version=2,
+    )
+    second_run_v3 = _next_run_state(
+        second_run_v2,
+        state=ExecutionRunState.PAUSED,
+        version=3,
+    )
+    repository.append_run_state(second_run_v2, expected_prior_version=1)
+    repository.append_run_state(second_run_v3, expected_prior_version=2)
+    second_step_v2 = _next_step_state(
+        second_step_v1,
+        state=ExecutionStepState.RUNNING,
+        version=2,
+        fence=1,
+    )
+    second_step_v3 = _next_step_state(
+        second_step_v2,
+        state=ExecutionStepState.PAUSED,
+        version=3,
+        fence=1,
+    )
+    repository.append_step_state(second_step_v2, expected_prior_version=1)
+    repository.append_step_state(second_step_v3, expected_prior_version=2)
+    repository.close()
+
+    reopened = ExecutionRepository(database)
+    run_page_1 = reopened.discover_recoverable_runs(workspace.id, limit=1)
+    assert run_page_1.items == (first_run,)
+    assert run_page_1.has_more is True
+    assert run_page_1.next_cursor is not None
+    run_page_2 = reopened.discover_recoverable_runs(
+        workspace.id,
+        after=run_page_1.next_cursor,
+        limit=1,
+    )
+    assert run_page_2.items == (second_run_v3,)
+    assert run_page_2.has_more is False
+    assert reopened.discover_recoverable_runs(other_workspace.id, limit=1).items == ()
+
+    step_page_1 = reopened.discover_recoverable_steps(workspace.id, limit=1)
+    assert step_page_1.items == (first_step,)
+    assert step_page_1.next_cursor is not None
+    step_page_2 = reopened.discover_recoverable_steps(
+        workspace.id,
+        after=step_page_1.next_cursor,
+        limit=1,
+    )
+    assert step_page_2.items == (second_step_v3,)
+    expired = reopened.discover_expired_leases(
+        workspace.id,
+        as_of=NOW + timedelta(minutes=6),
+        limit=1,
+    )
+    assert expired.items == (lease,)
+    assert reopened.discover_expired_leases(
+        other_workspace.id,
+        as_of=NOW + timedelta(minutes=6),
+        limit=1,
+    ).items == ()
+
+    run_history_1 = reopened.page_run_state_history(
+        workspace.id,
+        second_agent_run.id,
+        limit=2,
+    )
+    assert run_history_1.items == (second_run_v1, second_run_v2)
+    assert run_history_1.next_cursor is not None
+    run_history_2 = reopened.page_run_state_history(
+        workspace.id,
+        second_agent_run.id,
+        after=run_history_1.next_cursor,
+        limit=2,
+    )
+    assert run_history_2.items == (second_run_v3,)
+    step_history_1 = reopened.page_step_state_history(
+        workspace.id,
+        second_agent_run.id,
+        second_step_v1.id,
+        limit=2,
+    )
+    assert step_history_1.items == (second_step_v1, second_step_v2)
+    assert step_history_1.next_cursor is not None
+    step_history_2 = reopened.page_step_state_history(
+        workspace.id,
+        second_agent_run.id,
+        second_step_v1.id,
+        after=step_history_1.next_cursor,
+        limit=2,
+    )
+    assert step_history_2.items == (second_step_v3,)
+    checkpoint_page_1 = reopened.page_checkpoints(
+        workspace.id,
+        first_agent_run.id,
+        first_step.id,
+        limit=2,
+    )
+    assert checkpoint_page_1.items == (checkpoint_v1, checkpoint_v2)
+    assert checkpoint_page_1.next_cursor is not None
+    checkpoint_page_2 = reopened.page_checkpoints(
+        workspace.id,
+        first_agent_run.id,
+        first_step.id,
+        after=checkpoint_page_1.next_cursor,
+        limit=2,
+    )
+    assert checkpoint_page_2.items == (checkpoint_v3,)
+    assert checkpoint_page_2.has_more is False
+    assert reopened.page_checkpoints(
+        other_workspace.id,
+        first_agent_run.id,
+        first_step.id,
+        limit=2,
+    ).items == ()
+    reopened.close()
+
+
+def test_lease_datetimes_normalize_to_utc_for_storage_hydration_and_expiry(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="lease-timezone")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step = _execution_step(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step,
+        step_key="plan",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"input").hexdigest(),
+    )
+    singapore = timezone(timedelta(hours=8))
+    acquired_local = datetime(2026, 7, 26, 20, 0, tzinfo=singapore)
+    expires_local = datetime(2026, 7, 26, 20, 5, tzinfo=singapore)
+    lease = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step.id,
+        worker_id="worker-a",
+        lease_token=_test_token("timezone"),
+        acquired_at=acquired_local,
+        expires_at=expires_local,
+    )
+
+    assert lease.acquired_at == NOW
+    assert lease.acquired_at.utcoffset() == timedelta(0)
+    assert lease.expires_at == NOW + timedelta(minutes=5)
+    expired = repository.discover_expired_leases(
+        workspace.id,
+        as_of=NOW + timedelta(minutes=6),
+        limit=1,
+    )
+    assert expired.items == (lease,)
+    released = repository.release_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step.id,
+        lease_fence=lease.fence,
+        lease_token=_test_token("timezone"),
+        released_at=datetime(2026, 7, 26, 20, 7, tzinfo=singapore),
+    )
+    assert released.released_at is not None
+    assert released.released_at.utcoffset() == timedelta(0)
+    with sqlite3.connect(database) as connection:
+        stored = connection.execute(
+            "SELECT acquired_at, expires_at, released_at "
+            "FROM run_step_leases WHERE workspace_id = ? AND step_id = ?",
+            (str(workspace.id), str(step.id)),
+        ).fetchone()
+    assert stored == (
+        NOW.isoformat(),
+        (NOW + timedelta(minutes=5)).isoformat(),
+        (NOW + timedelta(minutes=7)).isoformat(),
+    )
+    repository.close()
+
+
+def test_release_before_acquisition_raises_stable_repository_error(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="release-chronology")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step = _execution_step(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step,
+        step_key="plan",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"input").hexdigest(),
+    )
+    lease = repository.acquire_step_lease(
+        workspace_id=workspace.id,
+        run_id=agent_run.id,
+        step_id=step.id,
+        worker_id="worker-a",
+        lease_token=_test_token("release-chronology"),
+        acquired_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+
+    with pytest.raises(
+        ExecutionRepositoryError,
+        match="execution_step_lease_release_before_acquisition",
+    ) as error:
+        repository.release_step_lease(
+            workspace_id=workspace.id,
+            run_id=agent_run.id,
+            step_id=step.id,
+            lease_fence=lease.fence,
+            lease_token=_test_token("release-chronology"),
+            released_at=NOW - timedelta(seconds=1),
+        )
+
+    assert error.value.reason_code == (
+        "execution_step_lease_release_before_acquisition"
+    )
+    assert (
+        repository.get_active_step_lease(workspace.id, agent_run.id, step.id)
+        == lease
+    )
     repository.close()
