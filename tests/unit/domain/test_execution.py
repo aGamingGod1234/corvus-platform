@@ -434,6 +434,40 @@ def test_checkpoint_rejects_state_transition_contradictions() -> None:
             )
 
 
+def test_checkpoint_allows_completed_step_while_multi_step_run_continues() -> None:
+    checkpoint = _contract_examples()[2][0]
+    payload = checkpoint.model_dump(mode="python", exclude={"canonical_digest"})
+    continuing_payload = {
+        **payload,
+        "run_state": execution.ExecutionRunState.RUNNING,
+        "step_state": execution.ExecutionStepState.COMPLETED,
+        "next_transition": execution.ExecutionNextTransition.WAIT,
+    }
+
+    continuing = execution.ExecutionCheckpoint(
+        **_signed(
+            continuing_payload,
+            execution.compute_execution_checkpoint_digest,
+        )  # type: ignore[arg-type]
+    )
+    assert continuing.step_state is execution.ExecutionStepState.COMPLETED
+
+    terminal_contradiction = {
+        **continuing_payload,
+        "run_state": execution.ExecutionRunState.COMPLETED,
+    }
+    with pytest.raises(
+        ValidationError,
+        match="execution_checkpoint_state_transition_invalid",
+    ):
+        execution.ExecutionCheckpoint(
+            **_signed(
+                terminal_contradiction,
+                execution.compute_execution_checkpoint_digest,
+            )  # type: ignore[arg-type]
+        )
+
+
 def test_mapping_digest_helpers_use_pydantic_datetime_normalization() -> None:
     digest_helpers = (
         execution.compute_execution_run_digest,
@@ -518,9 +552,7 @@ def test_security_sensitive_integer_fields_reject_booleans() -> None:
         for field in fields:
             boolean_payload = {**payload, field: True}
             with pytest.raises(ValidationError, match="int_type"):
-                contract.__class__(
-                    **_signed(boolean_payload, digest_helper)  # type: ignore[arg-type]
-                )
+                contract.__class__(**_signed(boolean_payload, digest_helper))
 
 
 def test_effect_permit_uses_autonomy_grant_references_only() -> None:

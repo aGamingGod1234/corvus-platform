@@ -146,6 +146,7 @@ _ALLOWED_CHECKPOINT_STATE_TRANSITIONS = {
             (ExecutionRunState.RUNNING, ExecutionStepState.READY),
             (ExecutionRunState.RUNNING, ExecutionStepState.RUNNING),
             (ExecutionRunState.RUNNING, ExecutionStepState.PAUSED),
+            (ExecutionRunState.RUNNING, ExecutionStepState.COMPLETED),
             (ExecutionRunState.PAUSED, ExecutionStepState.PENDING),
             (ExecutionRunState.PAUSED, ExecutionStepState.BLOCKED),
             (ExecutionRunState.PAUSED, ExecutionStepState.READY),
