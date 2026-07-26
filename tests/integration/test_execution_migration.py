@@ -7,6 +7,7 @@ import pytest
 from alembic import command
 
 from corvus.database import DatabaseState, classify_database
+from corvus.domain.identity import Principal, PrincipalKind, Workspace, WorkspaceMembership
 from corvus.infrastructure.db import (
     M2_CONVERSATIONS_REVISION,
     M2_DURABLE_EXECUTION_REVISION,
@@ -14,6 +15,7 @@ from corvus.infrastructure.db import (
     downgrade_database,
     upgrade_database,
 )
+from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
 from corvus.store import TraceStore
 
 _DURABLE_EXECUTION_REVISION = "m2_004_durable_execution"
@@ -225,6 +227,47 @@ def test_empty_execution_downgrade_and_reupgrade_are_deterministic(tmp_path: Pat
     assert upgrade_database(database) == M2_DURABLE_EXECUTION_REVISION
 
 
+def test_execution_downgrade_to_conversations_preserves_conversation_history(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    workspace = Workspace(name="Preserved conversations")
+    principal = Principal(
+        kind=PrincipalKind.USER,
+        external_provider="test",
+        external_subject="durable-downgrade",
+        display_name="Durable downgrade",
+    )
+    identities = IdentityScopeRepository(database)
+    identities.append_workspace(workspace)
+    identities.append_principal(principal)
+    identities.append_membership(
+        WorkspaceMembership(workspace_id=workspace.id, principal_id=principal.id, role="owner")
+    )
+    identities.close()
+    thread_id = "20000000-0000-4000-8000-000000000001"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO threads "
+            "(workspace_id, id, workspace_version, creator_principal_id, "
+            "creator_membership_version, created_at) VALUES (?, ?, 1, ?, 1, ?)",
+            (
+                str(workspace.id),
+                thread_id,
+                str(principal.id),
+                "2026-07-26T00:00:00+00:00",
+            ),
+        )
+
+    assert downgrade_database(database, M2_CONVERSATIONS_REVISION) == M2_CONVERSATIONS_REVISION
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT workspace_id, id FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone() == (str(workspace.id), thread_id)
+
+
 @pytest.mark.parametrize(
     "statement",
     [
@@ -259,6 +302,67 @@ def test_execution_classifier_rejects_wrong_active_lease_scope(tmp_path: Path) -
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
+def test_execution_classifier_rejects_wrong_recovery_index_definition(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX ix_run_step_leases_recovery")
+        connection.execute(
+            "CREATE INDEX ix_run_step_leases_recovery ON run_step_leases(step_id)"
+        )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_rejects_same_name_no_op_history_trigger(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER run_checkpoints_no_update")
+        connection.execute(
+            "CREATE TRIGGER run_checkpoints_no_update BEFORE UPDATE ON run_checkpoints "
+            "WHEN 0 BEGIN SELECT RAISE(ABORT, 'run checkpoints are immutable'); END"
+        )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_rejects_weakened_table_foreign_key_action(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_step_versions'"
+        ).fetchone()
+        assert table_sql is not None
+        weakened_sql = str(table_sql[0]).replace(
+            "ON DELETE RESTRICT",
+            "ON DELETE CASCADE",
+        )
+        assert weakened_sql != table_sql[0]
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'run_step_versions'",
+            (weakened_sql,),
+        )
+        connection.execute("PRAGMA writable_schema=OFF")
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_rejects_same_name_no_op_lease_guard(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER run_step_leases_guard_update")
+        connection.execute(
+            "CREATE TRIGGER run_step_leases_guard_update BEFORE UPDATE ON run_step_leases "
+            "BEGIN SELECT 1; END"
+        )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
 def test_execution_foreign_keys_are_workspace_composite(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
@@ -270,6 +374,93 @@ def test_execution_foreign_keys_are_workspace_composite(tmp_path: Path) -> None:
                 constraints.setdefault(int(row[0]), set()).add(str(row[3]))
             assert constraints
             assert all("workspace_id" in columns for columns in constraints.values())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["identity", "expiry_decrease", "reactivate", "after_release"],
+)
+def test_execution_lease_update_guard_rejects_history_rewrites(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO run_step_leases "
+            "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+            "acquired_at, heartbeat_at, expires_at, released_at) "
+            "VALUES (?, ?, ?, 1, 'worker-a', ?, ?, ?, ?, NULL)",
+            (
+                "10000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                "30000000-0000-4000-8000-000000000001",
+                "a" * 64,
+                timestamp,
+                timestamp,
+                "2026-07-26T00:05:00+00:00",
+            ),
+        )
+        if mutation in {"reactivate", "after_release"}:
+            connection.execute(
+                "UPDATE run_step_leases SET released_at = "
+                "'2026-07-26T00:01:00+00:00'"
+            )
+        statements = {
+            "identity": "UPDATE run_step_leases SET fence = 2, worker_id = 'worker-b'",
+            "expiry_decrease": (
+                "UPDATE run_step_leases SET expires_at = '2026-07-26T00:04:00+00:00'"
+            ),
+            "reactivate": "UPDATE run_step_leases SET released_at = NULL",
+            "after_release": (
+                "UPDATE run_step_leases SET heartbeat_at = '2026-07-26T00:02:00+00:00'"
+            ),
+        }
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(statements[mutation])
+
+
+def test_execution_lease_update_guard_allows_monotonic_expiry_and_one_release(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO run_step_leases "
+            "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+            "acquired_at, heartbeat_at, expires_at, released_at) "
+            "VALUES (?, ?, ?, 1, 'worker-a', ?, ?, ?, ?, NULL)",
+            (
+                "10000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                "30000000-0000-4000-8000-000000000001",
+                "a" * 64,
+                timestamp,
+                timestamp,
+                "2026-07-26T00:05:00+00:00",
+            ),
+        )
+        connection.execute(
+            "UPDATE run_step_leases SET heartbeat_at = ?, expires_at = ?",
+            ("2026-07-26T00:01:00+00:00", "2026-07-26T00:10:00+00:00"),
+        )
+        connection.execute(
+            "UPDATE run_step_leases SET released_at = ?",
+            ("2026-07-26T00:02:00+00:00",),
+        )
+        assert connection.execute(
+            "SELECT heartbeat_at, expires_at, released_at FROM run_step_leases"
+        ).fetchone() == (
+            "2026-07-26T00:01:00+00:00",
+            "2026-07-26T00:10:00+00:00",
+            "2026-07-26T00:02:00+00:00",
+        )
 
 
 def test_execution_migration_renders_portable_offline_postgres_ddl(
@@ -286,3 +477,6 @@ def test_execution_migration_renders_portable_offline_postgres_ddl(
     assert "where released_at is null" in rendered
     assert "create trigger run_checkpoints_no_update" in rendered
     assert "create trigger run_step_leases_no_delete" in rendered
+    assert "create function run_step_leases_guard_update_fn()" in rendered
+    assert "new.expires_at < old.expires_at" in rendered
+    assert "create trigger run_step_leases_guard_update" in rendered

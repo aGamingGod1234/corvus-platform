@@ -6,7 +6,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -371,6 +371,7 @@ M2_CONVERSATIONS_REQUIRED_INDEXES = frozenset(
 M2_DURABLE_EXECUTION_TRIGGERS = frozenset(
     {
         "run_step_leases_no_delete",
+        "run_step_leases_guard_update",
         *(
             f"{table_name}_{operation}"
             for table_name in M2_DURABLE_EXECUTION_REQUIRED_TABLES - {"run_step_leases"}
@@ -390,6 +391,137 @@ M2_DURABLE_EXECUTION_REQUIRED_INDEXES = frozenset(
         "uq_run_step_leases_active",
     }
 )
+M2_DURABLE_EXECUTION_INDEX_SQL = {
+    "ix_agent_run_state_versions_recovery": (
+        "create index ix_agent_run_state_versions_recovery "
+        "on agent_run_state_versions (workspace_id, state, updated_at, run_id, version)",
+    ),
+    "ix_run_checkpoint_artifacts_lookup": (
+        "create index ix_run_checkpoint_artifacts_lookup on run_checkpoint_artifacts "
+        "(workspace_id, run_id, artifact_id, checkpoint_id)",
+    ),
+    "ix_run_checkpoints_recovery": (
+        "create index ix_run_checkpoints_recovery on run_checkpoints "
+        "(workspace_id, run_id, step_id, checkpoint_version)",
+    ),
+    "ix_run_step_leases_recovery": (
+        "create index ix_run_step_leases_recovery on run_step_leases "
+        "(workspace_id, expires_at, run_id, step_id, fence)",
+        "where released_at is null",
+    ),
+    "ix_run_step_versions_recovery": (
+        "create index ix_run_step_versions_recovery on run_step_versions "
+        "(workspace_id, state, updated_at, run_id, step_id, version)",
+    ),
+    "ix_run_steps_recovery": (
+        "create index ix_run_steps_recovery on run_steps "
+        "(workspace_id, run_id, ordinal, id)",
+    ),
+    "uq_run_artifacts_workspace_run_id": (
+        "create unique index uq_run_artifacts_workspace_run_id "
+        "on run_artifacts (workspace_id, run_id, id)",
+    ),
+    "uq_run_step_leases_active": (
+        "create unique index uq_run_step_leases_active on run_step_leases "
+        "(workspace_id, run_id, step_id)",
+        "where released_at is null",
+    ),
+}
+M2_DURABLE_EXECUTION_TABLE_SQL = {
+    "agent_run_state_versions": (
+        "primary key (workspace_id, run_id, version)",
+        "foreign key(workspace_id, run_id) references agent_runs (workspace_id, id) "
+        "on delete restrict",
+        "check (version >= 1)",
+        "check (state in (",
+        "check (updated_at >= created_at)",
+        "check (length(canonical_digest) = 64)",
+    ),
+    "run_steps": (
+        "primary key (workspace_id, id)",
+        "unique (workspace_id, run_id, id)",
+        "unique (workspace_id, run_id, step_key)",
+        "unique (workspace_id, run_id, ordinal)",
+        "foreign key(workspace_id, run_id) references agent_runs (workspace_id, id) "
+        "on delete restrict",
+        "check (length(trim(step_key)) >= 1)",
+        "check (ordinal >= 1)",
+    ),
+    "run_step_versions": (
+        "primary key (workspace_id, step_id, version)",
+        "unique (workspace_id, run_id, step_id, version, fence)",
+        "unique (workspace_id, run_id, step_id, fence)",
+        "foreign key(workspace_id, run_id, step_id) "
+        "references run_steps (workspace_id, run_id, id) on delete restrict",
+        "check (version >= 1)",
+        "check (state in (",
+        "check (fence >= 1)",
+        "check (retry_count >= 0)",
+        "check (attempt_count >= 0)",
+        "check (retry_count <= attempt_count)",
+        "check (updated_at >= created_at)",
+        "check (length(canonical_digest) = 64)",
+    ),
+    "run_step_leases": (
+        "primary key (workspace_id, run_id, step_id, fence)",
+        "unique (workspace_id, lease_token_digest)",
+        "foreign key(workspace_id, run_id, step_id) "
+        "references run_steps (workspace_id, run_id, id) on delete restrict",
+        "foreign key(workspace_id, run_id, step_id, fence) "
+        "references run_step_versions (workspace_id, run_id, step_id, fence) "
+        "on delete restrict",
+        "check (fence >= 1)",
+        "check (length(trim(worker_id)) >= 1)",
+        "check (length(lease_token_digest) = 64)",
+        "check (heartbeat_at >= acquired_at and expires_at > acquired_at)",
+        "check (released_at is null or released_at >= acquired_at)",
+    ),
+    "run_checkpoints": (
+        "primary key (workspace_id, id)",
+        "unique (workspace_id, run_id, id)",
+        "unique (workspace_id, run_id, step_id, checkpoint_version)",
+        "foreign key(workspace_id, run_id, step_id) "
+        "references run_steps (workspace_id, run_id, id) on delete restrict",
+        "foreign key(workspace_id, run_id, step_id, step_version, step_fence) "
+        "references run_step_versions "
+        "(workspace_id, run_id, step_id, version, fence) on delete restrict",
+        "check (checkpoint_version >= 1)",
+        "check (run_state in (",
+        "check (step_state in (",
+        "check (step_fence >= 1)",
+        "check (step_version >= 1)",
+        "check (retry_count >= 0)",
+        "check (attempt_count >= 0)",
+        "check (retry_count <= attempt_count)",
+        "check (last_accepted_event_sequence >= 0)",
+        "check (length(last_accepted_event_digest) = 64)",
+        "check ((last_accepted_event_sequence = 0) = "
+        "(last_accepted_event_digest = '0000000000000000000000000000000000000000000000000000000000000000'))",
+        "check (next_transition in (",
+        "next_transition = 'dispatch' and run_state in ('pending','running') "
+        "and step_state = 'ready'",
+        "next_transition = 'resume' and run_state in ('running','paused') "
+        "and step_state = 'paused'",
+        "next_transition = 'retry' and run_state in ('running','paused') "
+        "and step_state = 'failed'",
+        "next_transition = 'wait'",
+        "next_transition = 'complete' and run_state = 'completed' "
+        "and step_state = 'completed'",
+        "next_transition = 'fail' and run_state = 'failed' and step_state = 'failed'",
+        "next_transition = 'cancel' and run_state = 'cancelled' "
+        "and step_state = 'cancelled'",
+        "check (length(canonical_digest) = 64)",
+    ),
+    "run_checkpoint_artifacts": (
+        "primary key (workspace_id, checkpoint_id, artifact_id)",
+        "unique (workspace_id, checkpoint_id, ordinal)",
+        "foreign key(workspace_id, run_id, checkpoint_id) "
+        "references run_checkpoints (workspace_id, run_id, id) on delete restrict",
+        "foreign key(workspace_id, run_id, artifact_id) "
+        "references run_artifacts (workspace_id, run_id, id) on delete restrict",
+        "check (ordinal >= 1)",
+    ),
+}
 V1_REQUIRED_COLUMNS = {
     "deliveries": frozenset(
         {
@@ -1615,6 +1747,40 @@ def _m2_conversation_controls_match(connection: sqlite3.Connection) -> bool:
     )
 
 
+def _normalized_schema_object_sql(
+    connection: sqlite3.Connection,
+    *,
+    object_type: str,
+    name: str,
+) -> str:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+        (object_type, name),
+    ).fetchone()
+    if row is None:
+        return ""
+    return " ".join(str(row[0] or "").casefold().split())
+
+
+def _schema_sql_matches(
+    connection: sqlite3.Connection,
+    *,
+    object_type: str,
+    expected: Mapping[str, tuple[str, ...]],
+) -> bool:
+    return all(
+        all(
+            fragment in _normalized_schema_object_sql(
+                connection,
+                object_type=object_type,
+                name=name,
+            )
+            for fragment in fragments
+        )
+        for name, fragments in expected.items()
+    )
+
+
 def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool:
     triggers = frozenset(
         row[0]
@@ -1628,25 +1794,46 @@ def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool
             "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
         )
     )
-    active_lease_index = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' "
-        "AND name = 'uq_run_step_leases_active'"
-    ).fetchone()
-    normalized_active_lease_index = (
-        ""
-        if active_lease_index is None
-        else " ".join(str(active_lease_index[0] or "").casefold().split())
+    trigger_sql: dict[str, tuple[str, ...]] = {
+        trigger_name: (
+            f"create trigger {trigger_name} before "
+            f"{trigger_name.rsplit('_no_', maxsplit=1)[1]} on "
+            f"{trigger_name.rsplit('_no_', maxsplit=1)[0]} begin select raise(abort",
+        )
+        for trigger_name in M2_DURABLE_EXECUTION_TRIGGERS
+        if "_no_" in trigger_name
+    }
+    trigger_sql["run_step_leases_guard_update"] = (
+        "create trigger run_step_leases_guard_update before update on "
+        "run_step_leases begin",
+        "old.released_at is not null",
+        "new.workspace_id <> old.workspace_id",
+        "new.run_id <> old.run_id",
+        "new.step_id <> old.step_id",
+        "new.fence <> old.fence",
+        "new.worker_id <> old.worker_id",
+        "new.lease_token_digest <> old.lease_token_digest",
+        "new.acquired_at <> old.acquired_at",
+        "new.expires_at < old.expires_at",
+        "raise(abort",
     )
     return (
         M2_DURABLE_EXECUTION_TRIGGERS.issubset(triggers)
         and M2_DURABLE_EXECUTION_REQUIRED_INDEXES.issubset(indexes)
-        and all(
-            fragment in normalized_active_lease_index
-            for fragment in (
-                "create unique index uq_run_step_leases_active",
-                "on run_step_leases (workspace_id, run_id, step_id)",
-                "where released_at is null",
-            )
+        and _schema_sql_matches(
+            connection,
+            object_type="trigger",
+            expected=trigger_sql,
+        )
+        and _schema_sql_matches(
+            connection,
+            object_type="index",
+            expected=M2_DURABLE_EXECUTION_INDEX_SQL,
+        )
+        and _schema_sql_matches(
+            connection,
+            object_type="table",
+            expected=M2_DURABLE_EXECUTION_TABLE_SQL,
         )
     )
 

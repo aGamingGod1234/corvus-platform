@@ -54,6 +54,7 @@ _STEP_STATES = (
 )
 _NEXT_TRANSITIONS = "'dispatch','resume','retry','wait','complete','fail','cancel'"
 _GENESIS_DIGEST = "0" * 64
+_LEASE_UPDATE_TRIGGER = "run_step_leases_guard_update"
 
 
 def _manifest_families(bind: sa.Connection) -> list[dict[str, object]]:
@@ -446,11 +447,70 @@ def _create_tables() -> None:
     )
 
 
+def _create_lease_update_trigger() -> None:
+    dialect_name = op.get_bind().dialect.name
+    if dialect_name == "sqlite":
+        op.execute(
+            f"CREATE TRIGGER {_LEASE_UPDATE_TRIGGER} BEFORE UPDATE ON run_step_leases "
+            "BEGIN "
+            "SELECT CASE WHEN OLD.released_at IS NOT NULL "
+            "THEN RAISE(ABORT, 'released run step lease is immutable') END; "
+            "SELECT CASE WHEN "
+            "NEW.workspace_id <> OLD.workspace_id OR NEW.run_id <> OLD.run_id OR "
+            "NEW.step_id <> OLD.step_id OR NEW.fence <> OLD.fence OR "
+            "NEW.worker_id <> OLD.worker_id OR "
+            "NEW.lease_token_digest <> OLD.lease_token_digest OR "
+            "NEW.acquired_at <> OLD.acquired_at "
+            "THEN RAISE(ABORT, 'run step lease identity is immutable') END; "
+            "SELECT CASE WHEN NEW.expires_at < OLD.expires_at "
+            "THEN RAISE(ABORT, 'run step lease expiry cannot decrease') END; "
+            "END"
+        )
+        return
+    if dialect_name == "postgresql":
+        op.execute(
+            f"CREATE FUNCTION {_LEASE_UPDATE_TRIGGER}_fn() RETURNS trigger "
+            "AS $corvus_trigger$ BEGIN "
+            "IF OLD.released_at IS NOT NULL THEN "
+            "RAISE EXCEPTION 'released run step lease is immutable'; END IF; "
+            "IF NEW.workspace_id IS DISTINCT FROM OLD.workspace_id OR "
+            "NEW.run_id IS DISTINCT FROM OLD.run_id OR "
+            "NEW.step_id IS DISTINCT FROM OLD.step_id OR "
+            "NEW.fence IS DISTINCT FROM OLD.fence OR "
+            "NEW.worker_id IS DISTINCT FROM OLD.worker_id OR "
+            "NEW.lease_token_digest IS DISTINCT FROM OLD.lease_token_digest OR "
+            "NEW.acquired_at IS DISTINCT FROM OLD.acquired_at THEN "
+            "RAISE EXCEPTION 'run step lease identity is immutable'; END IF; "
+            "IF NEW.expires_at < OLD.expires_at THEN "
+            "RAISE EXCEPTION 'run step lease expiry cannot decrease'; END IF; "
+            "RETURN NEW; END; $corvus_trigger$ LANGUAGE plpgsql"
+        )
+        op.execute(
+            f"CREATE TRIGGER {_LEASE_UPDATE_TRIGGER} BEFORE UPDATE ON run_step_leases "
+            f"FOR EACH ROW EXECUTE FUNCTION {_LEASE_UPDATE_TRIGGER}_fn()"
+        )
+        return
+    raise RuntimeError(f"unsupported_migration_dialect:{dialect_name}")
+
+
+def _drop_lease_update_trigger() -> None:
+    dialect_name = op.get_bind().dialect.name
+    if dialect_name == "sqlite":
+        op.execute(f"DROP TRIGGER {_LEASE_UPDATE_TRIGGER}")
+        return
+    if dialect_name == "postgresql":
+        op.execute(f"DROP TRIGGER {_LEASE_UPDATE_TRIGGER} ON run_step_leases")
+        op.execute(f"DROP FUNCTION {_LEASE_UPDATE_TRIGGER}_fn()")
+        return
+    raise RuntimeError(f"unsupported_migration_dialect:{dialect_name}")
+
+
 def upgrade() -> None:
     _create_tables()
     for table_name in sorted(_IMMUTABLE_FAMILIES):
         create_immutable_triggers(table_name, table_name.replace("_", " "))
     create_reject_trigger("run_step_leases", "DELETE", "run step leases cannot be deleted")
+    _create_lease_update_trigger()
     _insert_manifest(op.get_bind())
 
 
@@ -476,6 +536,7 @@ def downgrade() -> None:
     )
     for table_name in sorted(_IMMUTABLE_FAMILIES, reverse=True):
         drop_immutable_triggers(table_name)
+    _drop_lease_update_trigger()
     drop_reject_trigger("run_step_leases", "DELETE")
     op.drop_index("ix_run_checkpoint_artifacts_lookup", table_name="run_checkpoint_artifacts")
     op.drop_table("run_checkpoint_artifacts")

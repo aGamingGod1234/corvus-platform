@@ -107,15 +107,23 @@ def _preflight_downgrade_history(engine: Engine, revision: str) -> None:
             _DURABLE_EXECUTION_HISTORY_SQL
         ):
             raise RuntimeError("durable_execution_history_present")
-        if connection.scalar(_CONVERSATION_HISTORY_SQL):
-            raise RuntimeError("conversation_history_present")
-        if revision != M2_WORKSPACE_SYNC_REVISION and connection.scalar(_SYNC_HISTORY_SQL):
-            raise RuntimeError("workspace_sync_history_present")
-        if revision not in {M2_WORKSPACE_SYNC_REVISION, M2_OAUTH_SESSIONS_REVISION} and (
-            connection.scalar(_OAUTH_HISTORY_SQL)
+        if revision != M2_CONVERSATIONS_REVISION and connection.scalar(
+            _CONVERSATION_HISTORY_SQL
         ):
+            raise RuntimeError("conversation_history_present")
+        if revision not in {
+            M2_CONVERSATIONS_REVISION,
+            M2_WORKSPACE_SYNC_REVISION,
+        } and connection.scalar(_SYNC_HISTORY_SQL):
+            raise RuntimeError("workspace_sync_history_present")
+        if revision not in {
+            M2_CONVERSATIONS_REVISION,
+            M2_WORKSPACE_SYNC_REVISION,
+            M2_OAUTH_SESSIONS_REVISION,
+        } and (connection.scalar(_OAUTH_HISTORY_SQL)):
             raise RuntimeError("oauth_session_history_present")
         crosses_identity_revision = revision not in {
+            M2_CONVERSATIONS_REVISION,
             M2_WORKSPACE_SYNC_REVISION,
             M2_OAUTH_SESSIONS_REVISION,
             M2_IDENTITY_CONTINUITY_REVISION,
