@@ -17,6 +17,7 @@ from corvus.application.ports import (
     AgentRunAuthorizationDecision,
     AgentRunAuthorizationPort,
     AgentRunAuthorizationRequest,
+    AgentRunExecutionPersistencePort,
     AgentRunOperation,
     AgentRuntimePort,
     compute_agent_run_audit_event_digest,
@@ -138,11 +139,13 @@ class AgentRuntimeCoordinator:
         runtime: AgentRuntimePort,
         authorization: AgentRunAuthorizationPort,
         audit: AgentRunAuditPort,
+        execution: AgentRunExecutionPersistencePort,
         clock: Callable[[], datetime],
     ) -> None:
         self._runtime = runtime
         self._authorization = authorization
         self._audit = audit
+        self._execution = execution
         self._clock = clock
 
     async def start(
@@ -175,6 +178,23 @@ class AgentRuntimeCoordinator:
                     authorization,
                     reason_code=preflight_reason,
                 )
+        except Exception:
+            return self._post_authorization_failure(
+                authorization,
+                reason_code="agent_run_provider_unavailable",
+            )
+        try:
+            self._execution.ensure_start_intent(
+                context,
+                request,
+                observed_at=self._clock(),
+            )
+        except Exception:
+            return self._post_authorization_failure(
+                authorization,
+                reason_code="agent_run_persistence_unavailable",
+            )
+        try:
             start_result = _revalidate_start_result(await self._runtime.start(request))
         except Exception as exc:
             reason_code = (
@@ -197,6 +217,17 @@ class AgentRuntimeCoordinator:
                 reason_code=reason_code,
                 handle=handle,
             )
+        persistence_pending = False
+        try:
+            self._execution.record_handle_state(
+                context,
+                AgentRunOperation.START,
+                request,
+                handle,
+                observed_at=handle.created_at,
+            )
+        except Exception:
+            persistence_pending = True
         if not self._record_outcome(
             authorization,
             outcome="success",
@@ -206,6 +237,17 @@ class AgentRuntimeCoordinator:
             return self._audit_pending(
                 context,
                 AgentRunOperation.START,
+                handle=handle,
+                identical_start_replayed=start_result.replayed,
+                primary_reason_code="agent_run_started",
+                primary_outcome="success",
+            )
+        if persistence_pending:
+            return AgentRunOperationResult(
+                request_context_id=context.id,
+                operation=AgentRunOperation.START,
+                ok=False,
+                reason_code="agent_run_persistence_pending",
                 handle=handle,
                 identical_start_replayed=start_result.replayed,
                 primary_reason_code="agent_run_started",
@@ -277,6 +319,17 @@ class AgentRuntimeCoordinator:
                 reason_code=reason_code,
                 handle=resumed_handle,
             )
+        persistence_pending = False
+        try:
+            self._execution.record_handle_state(
+                context,
+                AgentRunOperation.RESUME,
+                request_with_fresh_proofs,
+                resumed_handle,
+                observed_at=self._clock(),
+            )
+        except Exception:
+            persistence_pending = True
         if not self._record_outcome(
             authorization,
             outcome="success",
@@ -286,6 +339,16 @@ class AgentRuntimeCoordinator:
             return self._audit_pending(
                 context,
                 AgentRunOperation.RESUME,
+                handle=resumed_handle,
+                primary_reason_code="agent_run_resumed",
+                primary_outcome="success",
+            )
+        if persistence_pending:
+            return AgentRunOperationResult(
+                request_context_id=context.id,
+                operation=AgentRunOperation.RESUME,
+                ok=False,
+                reason_code="agent_run_persistence_pending",
                 handle=resumed_handle,
                 primary_reason_code="agent_run_resumed",
                 primary_outcome="success",
@@ -383,6 +446,18 @@ class AgentRuntimeCoordinator:
                 reason_code="agent_run_cancellation_handle_mismatch",
                 handle=handle,
             )
+        persistence_pending = False
+        if cancellation_result.terminal:
+            try:
+                self._execution.record_handle_state(
+                    context,
+                    AgentRunOperation.CANCEL,
+                    request,
+                    result_handle,
+                    observed_at=cancellation_result.timestamp,
+                )
+            except Exception:
+                persistence_pending = True
         if not self._record_outcome(
             authorization,
             outcome="success",
@@ -392,6 +467,17 @@ class AgentRuntimeCoordinator:
             return self._audit_pending(
                 context,
                 AgentRunOperation.CANCEL,
+                handle=result_handle,
+                cancellation_result=cancellation_result,
+                primary_reason_code=cancellation_result.reason_code,
+                primary_outcome="success",
+            )
+        if persistence_pending:
+            return AgentRunOperationResult(
+                request_context_id=context.id,
+                operation=AgentRunOperation.CANCEL,
+                ok=False,
+                reason_code="agent_run_persistence_pending",
                 handle=result_handle,
                 cancellation_result=cancellation_result,
                 primary_reason_code=cancellation_result.reason_code,

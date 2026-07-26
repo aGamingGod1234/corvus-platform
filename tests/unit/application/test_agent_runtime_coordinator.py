@@ -16,6 +16,8 @@ from corvus.application.ports import (
     AgentRunAuthorizationDecision,
     AgentRunAuthorizationPort,
     AgentRunAuthorizationRequest,
+    AgentRunExecutionPersistenceError,
+    AgentRunExecutionPersistencePort,
     AgentRunOperation,
     AgentRuntimePort,
     compute_agent_run_audit_event_digest,
@@ -42,6 +44,11 @@ from corvus.domain.agent_runtime import (
     compute_provider_binding_digest,
 )
 from corvus.domain.client import ClientSurface
+from corvus.domain.execution import (
+    ExecutionRun,
+    ExecutionRunState,
+    compute_execution_run_digest,
+)
 from corvus.domain.request import RequestContext
 from corvus.infrastructure.agent_runtimes import AgentRuntimeError, SimulatedAgentRuntime
 
@@ -293,6 +300,98 @@ class _AuditSink:
         return receipt
 
 
+def _execution_run(
+    request: AgentRunRequest,
+    *,
+    state: ExecutionRunState,
+    version: int,
+    created_at: datetime,
+    updated_at: datetime,
+) -> ExecutionRun:
+    payload = {
+        "id": request.run_id,
+        "workspace_id": request.workspace_id,
+        "state": state,
+        "version": version,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+    return ExecutionRun(
+        id=request.run_id,
+        workspace_id=request.workspace_id,
+        state=state,
+        version=version,
+        created_at=created_at,
+        updated_at=updated_at,
+        canonical_digest=compute_execution_run_digest(payload),
+    )
+
+
+class _RecordingExecutionPersistence:
+    def __init__(
+        self,
+        order: list[str],
+        *,
+        fail_on_phase: str | None = None,
+    ) -> None:
+        self.order = order
+        self.fail_on_phase = fail_on_phase
+        self.runs: dict[UUID, ExecutionRun] = {}
+        self.operations: list[AgentRunOperation] = []
+
+    def ensure_start_intent(
+        self,
+        context: RequestContext,
+        request: AgentRunRequest,
+        *,
+        observed_at: datetime,
+    ) -> ExecutionRun:
+        self.order.append("persistence:ensure_start_intent")
+        if self.fail_on_phase == "ensure_start_intent":
+            raise AgentRunExecutionPersistenceError("agent_run_persistence_unavailable")
+        existing = self.runs.get(request.run_id)
+        if existing is not None:
+            return existing
+        run = _execution_run(
+            request,
+            state=ExecutionRunState.PENDING,
+            version=1,
+            created_at=observed_at,
+            updated_at=observed_at,
+        )
+        self.runs[request.run_id] = run
+        return run
+
+    def record_handle_state(
+        self,
+        context: RequestContext,
+        operation: AgentRunOperation,
+        request: AgentRunRequest,
+        handle: AgentRunHandle,
+        *,
+        observed_at: datetime,
+    ) -> ExecutionRun:
+        self.order.append("persistence:record_handle_state")
+        self.operations.append(operation)
+        if self.fail_on_phase == "record_handle_state":
+            raise AgentRunExecutionPersistenceError("agent_run_persistence_pending")
+        state = ExecutionRunState(handle.state.value)
+        existing = self.runs.get(request.run_id)
+        if existing is not None and existing.state is state:
+            return existing
+        run = _execution_run(
+            request,
+            state=state,
+            version=1 if existing is None else existing.version + 1,
+            created_at=(
+                min(handle.created_at, observed_at) if existing is None else existing.created_at
+            ),
+            updated_at=observed_at,
+        )
+        self.runs[request.run_id] = run
+        return run
+
+
 class _RecordingRuntime:
     def __init__(
         self,
@@ -425,6 +524,7 @@ def _coordinator(
     order: list[str],
     authorizer: _Authorizer | None = None,
     audit: _AuditSink | None = None,
+    execution: _RecordingExecutionPersistence | None = None,
 ) -> tuple[AgentRuntimeCoordinator, _Authorizer, _AuditSink]:
     selected_authorizer = authorizer or _Authorizer(order)
     selected_audit = audit or _AuditSink(order)
@@ -432,6 +532,7 @@ def _coordinator(
         runtime=runtime,
         authorization=selected_authorizer,
         audit=selected_audit,
+        execution=execution or _RecordingExecutionPersistence(order),
         clock=lambda: _NOW,
     )
     return coordinator, selected_authorizer, selected_audit
@@ -470,6 +571,7 @@ async def test_start_authorizes_audits_executes_and_audits_outcome(tmp_path: Pat
         runtime=runtime,
         authorization=_Authorizer(order),
         audit=audit,
+        execution=_RecordingExecutionPersistence(order),
         clock=lambda: _NOW,
     )
 
@@ -486,9 +588,84 @@ async def test_start_authorizes_audits_executes_and_audits_outcome(tmp_path: Pat
         "runtime:discover",
         "runtime:capabilities",
         "runtime:health",
+        "persistence:ensure_start_intent",
         "runtime:start",
+        "persistence:record_handle_state",
         "audit:outcome",
     ]
+    assert [event.outcome for event in audit.events] == ["allow", "success"]
+
+
+@pytest.mark.asyncio
+async def test_start_persistence_failure_prevents_runtime_and_records_failure(
+    tmp_path: Path,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    execution = _RecordingExecutionPersistence(
+        order,
+        fail_on_phase="ensure_start_intent",
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        execution=execution,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_persistence_unavailable"
+    assert result.primary_reason_code == "agent_run_persistence_unavailable"
+    assert result.primary_outcome == "failure"
+    assert order == [
+        "authorization",
+        "audit:authorization",
+        "runtime:discover",
+        "runtime:capabilities",
+        "runtime:health",
+        "persistence:ensure_start_intent",
+        "audit:outcome",
+    ]
+    assert [event.outcome for event in audit.events] == ["allow", "failure"]
+
+
+@pytest.mark.asyncio
+async def test_started_handle_with_pending_persistence_is_audited_and_returned(
+    tmp_path: Path,
+) -> None:
+    workspace_id = uuid4()
+    binding = _binding(tmp_path, workspace_id=workspace_id, project_id=uuid4())
+    request = _request(binding)
+    order: list[str] = []
+    runtime = _RecordingRuntime(
+        SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()}),
+        order,
+    )
+    execution = _RecordingExecutionPersistence(
+        order,
+        fail_on_phase="record_handle_state",
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        execution=execution,
+    )
+
+    result = await coordinator.start(_context(request), ClientSurface.CLI, request)
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_persistence_pending"
+    assert result.handle is not None
+    assert result.primary_reason_code == "agent_run_started"
+    assert result.primary_outcome == "success"
+    assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
     assert [event.outcome for event in audit.events] == ["allow", "success"]
 
 
@@ -738,6 +915,7 @@ async def test_authorization_clock_failure_never_calls_audit_or_runtime(tmp_path
         runtime=runtime,
         authorization=_Authorizer(order),
         audit=_AuditSink(order),
+        execution=_RecordingExecutionPersistence(order),
         clock=lambda: (_ for _ in ()).throw(RuntimeError("clock unavailable")),
     )
 
@@ -762,6 +940,7 @@ async def test_naive_authorization_clock_never_calls_audit_or_runtime(tmp_path: 
         runtime=runtime,
         authorization=_Authorizer(order),
         audit=_AuditSink(order),
+        execution=_RecordingExecutionPersistence(order),
         clock=lambda: datetime(2026, 7, 15),
     )
 
@@ -1542,10 +1721,58 @@ async def test_resume_requires_bound_receipt_for_matching_fresh_request(tmp_path
         "runtime:capabilities",
         "runtime:health",
         "runtime:resume",
+        "persistence:record_handle_state",
         "audit:outcome",
     ]
     assert all(event.handle_id == handle.id for event in audit.events)
     assert audit.events[-1].outcome == "success"
+
+
+@pytest.mark.asyncio
+async def test_resumed_handle_with_pending_persistence_is_audited_and_returned(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    fresh = request.model_copy(
+        update={
+            "authorization_proof_id": uuid4(),
+            "authorization_proof_digest": "6" * 64,
+            "autonomy_grant_digest": "7" * 64,
+            "credential_proof_digest": "8" * 64,
+            "budget_proof_digest": "9" * 64,
+            "kill_switch_proof_id": uuid4(),
+            "kill_switch_proof_digest": "a" * 64,
+            "resume_handle_id": handle.id,
+        }
+    )
+    order: list[str] = []
+    execution = _RecordingExecutionPersistence(
+        order,
+        fail_on_phase="record_handle_state",
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=_RecordingRuntime(simulator, order),
+        order=order,
+        execution=execution,
+    )
+
+    result = await coordinator.resume(
+        _context(fresh),
+        ClientSurface.CLI,
+        handle,
+        fresh,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_persistence_pending"
+    assert result.handle == handle
+    assert result.primary_reason_code == "agent_run_resumed"
+    assert result.primary_outcome == "success"
+    assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
+    assert [event.outcome for event in audit.events] == ["allow", "success"]
 
 
 @pytest.mark.asyncio
@@ -1559,7 +1786,12 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
     current_proof_digest = "f" * 64
     order: list[str] = []
     runtime = _RecordingRuntime(simulator, order)
-    coordinator, authorizer, audit = _coordinator(runtime=runtime, order=order)
+    execution = _RecordingExecutionPersistence(order)
+    coordinator, authorizer, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        execution=execution,
+    )
 
     first = await coordinator.cancel(
         _context(request),
@@ -1590,6 +1822,57 @@ async def test_cancel_uses_explicit_current_proof_and_is_idempotent(tmp_path: Pa
     assert all(event.kill_switch_proof_id == current_proof_id for event in audit.events)
     assert all(event.kill_switch_proof_digest == current_proof_digest for event in audit.events)
     assert all(event.handle_id == handle.id for event in audit.events)
+    assert execution.operations == [AgentRunOperation.CANCEL, AgentRunOperation.CANCEL]
+    assert order == [
+        "authorization",
+        "audit:authorization",
+        "runtime:cancel",
+        "persistence:record_handle_state",
+        "audit:outcome",
+        "authorization",
+        "audit:authorization",
+        "runtime:cancel",
+        "persistence:record_handle_state",
+        "audit:outcome",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_cancellation_with_pending_persistence_is_audited_and_returned(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    order: list[str] = []
+    execution = _RecordingExecutionPersistence(
+        order,
+        fail_on_phase="record_handle_state",
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=_RecordingRuntime(simulator, order),
+        order=order,
+        execution=execution,
+    )
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert not result.ok
+    assert result.reason_code == "agent_run_persistence_pending"
+    assert result.handle is not None
+    assert result.handle.state is AgentRunState.CANCELLED
+    assert result.primary_reason_code == "agent_run_cancelled"
+    assert result.primary_outcome == "success"
+    assert order[-2:] == ["persistence:record_handle_state", "audit:outcome"]
+    assert [event.outcome for event in audit.events] == ["allow", "success"]
 
 
 @pytest.mark.asyncio
@@ -1720,6 +2003,51 @@ async def test_cancel_rejected_nonterminal_result_records_failure(tmp_path: Path
     assert result.reason_code == "provider_cancel_rejected"
     assert result.handle == handle
     assert audit.events[-1].outcome == "failure"
+
+
+@pytest.mark.asyncio
+async def test_cancel_accepted_nonterminal_result_does_not_persist_state(
+    tmp_path: Path,
+) -> None:
+    binding = _binding(tmp_path, workspace_id=uuid4(), project_id=uuid4())
+    request = _request(binding)
+    simulator = SimulatedAgentRuntime(bindings=(binding,), event_templates={binding.id: ()})
+    handle = (await simulator.start(request)).handle
+    accepted = CancellationResult(
+        handle_id=handle.id,
+        accepted=True,
+        terminal=False,
+        reason_code="agent_run_cancellation_requested",
+        timestamp=_NOW,
+    )
+    order: list[str] = []
+    execution = _RecordingExecutionPersistence(order)
+    runtime = _RecordingRuntime(
+        simulator,
+        order,
+        cancellation_result_override=accepted,
+    )
+    coordinator, _, audit = _coordinator(
+        runtime=runtime,
+        order=order,
+        execution=execution,
+    )
+
+    result = await coordinator.cancel(
+        _context(request),
+        ClientSurface.CLI,
+        handle,
+        request,
+        uuid4(),
+        "f" * 64,
+    )
+
+    assert result.ok
+    assert result.handle == handle
+    assert result.cancellation_result == accepted
+    assert execution.operations == []
+    assert "persistence:record_handle_state" not in order
+    assert audit.events[-1].outcome == "success"
 
 
 @pytest.mark.asyncio
@@ -2253,6 +2581,7 @@ def test_agent_application_ports_remain_structurally_runtime_checkable() -> None
 
     assert isinstance(_Authorizer(order), AgentRunAuthorizationPort)
     assert isinstance(_AuditSink(order), AgentRunAuditPort)
+    assert isinstance(_RecordingExecutionPersistence(order), AgentRunExecutionPersistencePort)
     assert isinstance(
         _RecordingRuntime(
             SimulatedAgentRuntime(bindings=(), event_templates={}),
@@ -2260,6 +2589,13 @@ def test_agent_application_ports_remain_structurally_runtime_checkable() -> None
         ),
         AgentRuntimePort,
     )
+
+
+def test_agent_execution_persistence_error_exposes_stable_reason_code() -> None:
+    error = AgentRunExecutionPersistenceError("agent_run_persistence_unavailable")
+
+    assert error.reason_code == "agent_run_persistence_unavailable"
+    assert str(error) == "agent_run_persistence_unavailable"
 
 
 def test_authorization_decision_rejects_unstable_reason_and_naive_timestamp(

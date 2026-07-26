@@ -34,6 +34,7 @@ from corvus.domain.conversations import (
     RunEventRecord,
     Thread,
 )
+from corvus.domain.execution import ExecutionRun
 from corvus.domain.identity import Project
 from corvus.domain.request import IdempotencyEnvelope, RequestContext
 
@@ -458,6 +459,33 @@ class AgentRunAuthorizationPort(Protocol):
 @runtime_checkable
 class AgentRunAuditPort(Protocol):
     def record(self, event: AgentRunAuditEvent) -> AgentRunAuditReceipt: ...
+
+
+class AgentRunExecutionPersistenceError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+@runtime_checkable
+class AgentRunExecutionPersistencePort(Protocol):
+    def ensure_start_intent(
+        self,
+        context: RequestContext,
+        request: AgentRunRequest,
+        *,
+        observed_at: datetime,
+    ) -> ExecutionRun: ...
+
+    def record_handle_state(
+        self,
+        context: RequestContext,
+        operation: AgentRunOperation,
+        request: AgentRunRequest,
+        handle: AgentRunHandle,
+        *,
+        observed_at: datetime,
+    ) -> ExecutionRun: ...
 
 
 @runtime_checkable

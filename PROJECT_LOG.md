@@ -2802,3 +2802,29 @@
 
 ### Suggested Next Steps
 - Keep future post-hackathon feature work clearly separated from the frozen judging snapshot.
+
+## 2026-07-26 — Persist agent runtime lifecycle state
+
+### What Was Implemented
+- Added a required application persistence port with stable failure reason codes for agent-run execution state.
+- Persisted a bound `PENDING` intent before runtime START and recorded validated START, RESUME, and terminal CANCEL observations before outcome audit.
+- Added a repository adapter over the conversation and execution repositories with UTC normalization, immutable parent binding checks, refreshed-proof validation, idempotent replay, terminal-state protection, and optimistic-concurrency conflict mapping.
+- Added coordinator unit coverage and migrated-SQLite integration coverage for ordering, degraded outcomes, restart durability, proof substitution, replay, terminal conflicts, and concurrent writers.
+
+### Files Modified
+- `corvus/application/ports.py` — defines the required persistence contract and stable application error.
+- `corvus/application/agent_runtime.py` — integrates intent and observed-state persistence into lifecycle ordering.
+- `corvus/infrastructure/agent_run_execution.py` — implements repository-backed persistence and binding invariants.
+- `tests/unit/application/test_agent_runtime_coordinator.py` — verifies coordinator ordering and persistence-degraded outcomes.
+- `tests/integration/test_agent_run_execution_persistence.py` — verifies real SQLite durability, invariants, replay, terminal safety, and CAS behavior.
+- `PROJECT_LOG.md` — records this execution-persistence slice.
+
+### Assumptions Made (flag these for review)
+- A refreshed RESUME or CANCEL authorization proof replaces the original START proof for current-operation validation but does not replace immutable run, requester, workspace, provider, or idempotency bindings.
+- If both observed-state persistence and outcome auditing fail after the runtime succeeds, the existing audit-pending result remains authoritative while retaining the validated handle and primary runtime outcome metadata.
+
+### Known Issues / Deferred
+- Step, lease, event, checkpoint, effect, API, UI, and migration work remain outside this slice.
+
+### Suggested Next Steps
+- Compose this adapter in the application bootstrap when the next authorized wiring phase begins.
