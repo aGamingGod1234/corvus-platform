@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -391,137 +392,101 @@ M2_DURABLE_EXECUTION_REQUIRED_INDEXES = frozenset(
         "uq_run_step_leases_active",
     }
 )
-M2_DURABLE_EXECUTION_INDEX_SQL = {
-    "ix_agent_run_state_versions_recovery": (
-        "create index ix_agent_run_state_versions_recovery "
-        "on agent_run_state_versions (workspace_id, state, updated_at, run_id, version)",
-    ),
-    "ix_run_checkpoint_artifacts_lookup": (
-        "create index ix_run_checkpoint_artifacts_lookup on run_checkpoint_artifacts "
-        "(workspace_id, run_id, artifact_id, checkpoint_id)",
-    ),
-    "ix_run_checkpoints_recovery": (
-        "create index ix_run_checkpoints_recovery on run_checkpoints "
-        "(workspace_id, run_id, step_id, checkpoint_version)",
-    ),
-    "ix_run_step_leases_recovery": (
-        "create index ix_run_step_leases_recovery on run_step_leases "
-        "(workspace_id, expires_at, run_id, step_id, fence)",
-        "where released_at is null",
-    ),
-    "ix_run_step_versions_recovery": (
-        "create index ix_run_step_versions_recovery on run_step_versions "
-        "(workspace_id, state, updated_at, run_id, step_id, version)",
-    ),
-    "ix_run_steps_recovery": (
-        "create index ix_run_steps_recovery on run_steps "
-        "(workspace_id, run_id, ordinal, id)",
-    ),
-    "uq_run_artifacts_workspace_run_id": (
-        "create unique index uq_run_artifacts_workspace_run_id "
-        "on run_artifacts (workspace_id, run_id, id)",
-    ),
-    "uq_run_step_leases_active": (
-        "create unique index uq_run_step_leases_active on run_step_leases "
-        "(workspace_id, run_id, step_id)",
-        "where released_at is null",
-    ),
+# Complete canonical sqlite_master SQL signatures for m2_004. Any intentional DDL
+# change must update the corresponding signature and migration tests together.
+M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES = {
+    "table": {
+        "agent_run_state_versions": (
+            "cc4d1a967547d3c9825cc396712c8bdbb082cf76b01cad26031d5af405ec9c7a"
+        ),
+        "run_checkpoint_artifacts": (
+            "aeb4a57d223bc99c564abaafa9b7db91c4c707ec4e95fd915aa4f53acde96762"
+        ),
+        "run_checkpoints": (
+            "dc4f332878d702c1f1c5985c6f8016522489cf20f3082311fb72e86245064c3e"
+        ),
+        "run_step_leases": (
+            "334eff1c1e91ff59f091b05e4b18b879555f5ee91314350308fe620e52db1f43"
+        ),
+        "run_step_versions": (
+            "f6d9ecb637cb731fd26ba5120c716e7779a81669ee5293f1c1d3ded7bfe9086a"
+        ),
+        "run_steps": "be05d19dc3726bbdfe9955a1b67ffa621a30ab8dca51eb01a3321a48b4e8f1ce",
+    },
+    "index": {
+        "ix_agent_run_state_versions_recovery": (
+            "69794b5cec3f70e8970ffdc365998f3429d10254e5c6dbd01c345bcf90002ea5"
+        ),
+        "ix_run_checkpoint_artifacts_lookup": (
+            "6d753d476e23c04e32cdfb1ccc052af969b070aaebe1bee93e9a20000b7d89cb"
+        ),
+        "ix_run_checkpoints_recovery": (
+            "72f39128ccf430a85fe8585641940d07d055644afd5bc5cac99b5793cfa0bfe3"
+        ),
+        "ix_run_step_leases_recovery": (
+            "629bebda4d310aaa69b626492f91a2464b116e1b6868253f0c1969e2a13ad1cf"
+        ),
+        "ix_run_step_versions_recovery": (
+            "8dd001b4f14581f1ff40f333e2d5e102c6157bcc667c23976904524103c4eb16"
+        ),
+        "ix_run_steps_recovery": (
+            "528329dde81dff81d7a6102fc5bf85db60fcefd5843baf6a7985597455a5a197"
+        ),
+        "uq_run_artifacts_workspace_run_id": (
+            "3a1a94518a26624f1cd712c17d06209a91cc35884a318505c4ec42a586e09f07"
+        ),
+        "uq_run_step_leases_active": (
+            "67a70f47a571f807891a9ea8f9f755008224dd612e1d7e7aa7e42bf96a0d756b"
+        ),
+    },
+    "trigger": {
+        "agent_run_state_versions_no_delete": (
+            "1d78fcef293424ab4ae0bf3386dc698e6054ad74b55cfa88c575d83e90cef13f"
+        ),
+        "agent_run_state_versions_no_update": (
+            "7ea34d91f0470947e7d5badc52109235fd118b21c10548f46b82555fade603c3"
+        ),
+        "run_checkpoint_artifacts_no_delete": (
+            "c9816288e264cada4ee9fef934ff581b0796f05b9f3b73972d3d8e95a3b25887"
+        ),
+        "run_checkpoint_artifacts_no_update": (
+            "4472f52f0af9ad1818aa5cffef77cfca3224076b4f9e5763e4b2b86e56b8096d"
+        ),
+        "run_checkpoints_no_delete": (
+            "f270d81387f65ef25eee117eb86aaebf1aa6922d51f96928fc08b010c465f98f"
+        ),
+        "run_checkpoints_no_update": (
+            "21ecc41794409a7c0c4dc9a517698586eb670f7c35035eeef78094ed3dc1c46d"
+        ),
+        "run_step_leases_guard_update": (
+            "a38c491295c6a18ea933e582a0e94683c6d2506478bac674b9b5662afa038e03"
+        ),
+        "run_step_leases_no_delete": (
+            "4d737c6617d0a0993b45306a4a76be1dab17a3d112d1a2eca58d530cd8dc57db"
+        ),
+        "run_step_versions_no_delete": (
+            "21f6fcfb705f641c4d58045b5f469138fa43a6c0560c58ad7a4a0a3ada9d88c1"
+        ),
+        "run_step_versions_no_update": (
+            "3e2d86fa21005c1b09354d29183fcfc07535838dd8497e6c5bbd9836ff48cea4"
+        ),
+        "run_steps_no_delete": (
+            "1ae27570e4f136b3590a72f3ec76d9ab66ebace054c59ad0c4f0365499dd1ea6"
+        ),
+        "run_steps_no_update": (
+            "91f2726c7d6776948a3f3db53b3752194505dac51235c800a39f302531508ff6"
+        ),
+    },
 }
-M2_DURABLE_EXECUTION_TABLE_SQL = {
-    "agent_run_state_versions": (
-        "primary key (workspace_id, run_id, version)",
-        "foreign key(workspace_id, run_id) references agent_runs (workspace_id, id) "
-        "on delete restrict",
-        "check (version >= 1)",
-        "check (state in (",
-        "check (updated_at >= created_at)",
-        "check (length(canonical_digest) = 64)",
-    ),
-    "run_steps": (
-        "primary key (workspace_id, id)",
-        "unique (workspace_id, run_id, id)",
-        "unique (workspace_id, run_id, step_key)",
-        "unique (workspace_id, run_id, ordinal)",
-        "foreign key(workspace_id, run_id) references agent_runs (workspace_id, id) "
-        "on delete restrict",
-        "check (length(trim(step_key)) >= 1)",
-        "check (ordinal >= 1)",
-    ),
-    "run_step_versions": (
-        "primary key (workspace_id, step_id, version)",
-        "unique (workspace_id, run_id, step_id, version, fence)",
-        "unique (workspace_id, run_id, step_id, fence)",
-        "foreign key(workspace_id, run_id, step_id) "
-        "references run_steps (workspace_id, run_id, id) on delete restrict",
-        "check (version >= 1)",
-        "check (state in (",
-        "check (fence >= 1)",
-        "check (retry_count >= 0)",
-        "check (attempt_count >= 0)",
-        "check (retry_count <= attempt_count)",
-        "check (updated_at >= created_at)",
-        "check (length(canonical_digest) = 64)",
-    ),
-    "run_step_leases": (
-        "primary key (workspace_id, run_id, step_id, fence)",
-        "unique (workspace_id, lease_token_digest)",
-        "foreign key(workspace_id, run_id, step_id) "
-        "references run_steps (workspace_id, run_id, id) on delete restrict",
-        "foreign key(workspace_id, run_id, step_id, fence) "
-        "references run_step_versions (workspace_id, run_id, step_id, fence) "
-        "on delete restrict",
-        "check (fence >= 1)",
-        "check (length(trim(worker_id)) >= 1)",
-        "check (length(lease_token_digest) = 64)",
-        "check (heartbeat_at >= acquired_at and expires_at > acquired_at)",
-        "check (released_at is null or released_at >= acquired_at)",
-    ),
-    "run_checkpoints": (
-        "primary key (workspace_id, id)",
-        "unique (workspace_id, run_id, id)",
-        "unique (workspace_id, run_id, step_id, checkpoint_version)",
-        "foreign key(workspace_id, run_id, step_id) "
-        "references run_steps (workspace_id, run_id, id) on delete restrict",
-        "foreign key(workspace_id, run_id, step_id, step_version, step_fence) "
-        "references run_step_versions "
-        "(workspace_id, run_id, step_id, version, fence) on delete restrict",
-        "check (checkpoint_version >= 1)",
-        "check (run_state in (",
-        "check (step_state in (",
-        "check (step_fence >= 1)",
-        "check (step_version >= 1)",
-        "check (retry_count >= 0)",
-        "check (attempt_count >= 0)",
-        "check (retry_count <= attempt_count)",
-        "check (last_accepted_event_sequence >= 0)",
-        "check (length(last_accepted_event_digest) = 64)",
-        "check ((last_accepted_event_sequence = 0) = "
-        "(last_accepted_event_digest = '0000000000000000000000000000000000000000000000000000000000000000'))",
-        "check (next_transition in (",
-        "next_transition = 'dispatch' and run_state in ('pending','running') "
-        "and step_state = 'ready'",
-        "next_transition = 'resume' and run_state in ('running','paused') "
-        "and step_state = 'paused'",
-        "next_transition = 'retry' and run_state in ('running','paused') "
-        "and step_state = 'failed'",
-        "next_transition = 'wait'",
-        "next_transition = 'complete' and run_state = 'completed' "
-        "and step_state = 'completed'",
-        "next_transition = 'fail' and run_state = 'failed' and step_state = 'failed'",
-        "next_transition = 'cancel' and run_state = 'cancelled' "
-        "and step_state = 'cancelled'",
-        "check (length(canonical_digest) = 64)",
-    ),
-    "run_checkpoint_artifacts": (
-        "primary key (workspace_id, checkpoint_id, artifact_id)",
-        "unique (workspace_id, checkpoint_id, ordinal)",
-        "foreign key(workspace_id, run_id, checkpoint_id) "
-        "references run_checkpoints (workspace_id, run_id, id) on delete restrict",
-        "foreign key(workspace_id, run_id, artifact_id) "
-        "references run_artifacts (workspace_id, run_id, id) on delete restrict",
-        "check (ordinal >= 1)",
-    ),
-}
+if (
+    frozenset(M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES["table"])
+    != M2_DURABLE_EXECUTION_REQUIRED_TABLES
+    or frozenset(M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES["index"])
+    != M2_DURABLE_EXECUTION_REQUIRED_INDEXES
+    or frozenset(M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES["trigger"])
+    != M2_DURABLE_EXECUTION_TRIGGERS
+):
+    raise RuntimeError("durable execution schema signature coverage mismatch")
 V1_REQUIRED_COLUMNS = {
     "deliveries": frozenset(
         {
@@ -1747,38 +1712,67 @@ def _m2_conversation_controls_match(connection: sqlite3.Connection) -> bool:
     )
 
 
-def _normalized_schema_object_sql(
-    connection: sqlite3.Connection,
-    *,
-    object_type: str,
-    name: str,
-) -> str:
-    row = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
-        (object_type, name),
-    ).fetchone()
-    if row is None:
-        return ""
-    return " ".join(str(row[0] or "").casefold().split())
+_SCHEMA_SQL_TOKEN = re.compile(
+    r"""
+    '(?:''|[^'])*'
+    |"(?:""|[^"])*"
+    |`(?:``|[^`])*`
+    |\[(?:\]\]|[^\]])*\]
+    |<=|>=|<>|!=|==|\|\|
+    |[A-Za-z_][A-Za-z0-9_$]*
+    |\d+(?:\.\d+)?
+    |[(),.;=*+\-/<>]
+    """,
+    re.VERBOSE,
+)
 
 
-def _schema_sql_matches(
+def _canonical_schema_sql(sql: str) -> str:
+    tokens: list[str] = []
+    position = 0
+    for match in _SCHEMA_SQL_TOKEN.finditer(sql):
+        if sql[position : match.start()].strip():
+            raise ValueError("unsupported schema SQL token")
+        token = match.group(0)
+        if token.startswith('"'):
+            token = token[1:-1].replace('""', '"').casefold()
+        elif token.startswith("`"):
+            token = token[1:-1].replace("``", "`").casefold()
+        elif token.startswith("["):
+            token = token[1:-1].replace("]]", "]").casefold()
+        elif not token.startswith("'") and token[0].isalpha():
+            token = token.casefold()
+        tokens.append(token)
+        position = match.end()
+    if sql[position:].strip():
+        raise ValueError("unsupported schema SQL token")
+    return " ".join(tokens)
+
+
+def _canonical_schema_signature(sql: str) -> str:
+    return hashlib.sha256(_canonical_schema_sql(sql).encode("utf-8")).hexdigest()
+
+
+def _schema_signatures_match(
     connection: sqlite3.Connection,
     *,
-    object_type: str,
-    expected: Mapping[str, tuple[str, ...]],
+    expected: Mapping[str, Mapping[str, str]],
 ) -> bool:
-    return all(
-        all(
-            fragment in _normalized_schema_object_sql(
-                connection,
-                object_type=object_type,
-                name=name,
-            )
-            for fragment in fragments
-        )
-        for name, fragments in expected.items()
-    )
+    for object_type, signatures in expected.items():
+        for name, expected_signature in signatures.items():
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+                (object_type, name),
+            ).fetchone()
+            if row is None or row[0] is None:
+                return False
+            try:
+                actual_signature = _canonical_schema_signature(str(row[0]))
+            except ValueError:
+                return False
+            if actual_signature != expected_signature:
+                return False
+    return True
 
 
 def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool:
@@ -1794,46 +1788,12 @@ def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool
             "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
         )
     )
-    trigger_sql: dict[str, tuple[str, ...]] = {
-        trigger_name: (
-            f"create trigger {trigger_name} before "
-            f"{trigger_name.rsplit('_no_', maxsplit=1)[1]} on "
-            f"{trigger_name.rsplit('_no_', maxsplit=1)[0]} begin select raise(abort",
-        )
-        for trigger_name in M2_DURABLE_EXECUTION_TRIGGERS
-        if "_no_" in trigger_name
-    }
-    trigger_sql["run_step_leases_guard_update"] = (
-        "create trigger run_step_leases_guard_update before update on "
-        "run_step_leases begin",
-        "old.released_at is not null",
-        "new.workspace_id <> old.workspace_id",
-        "new.run_id <> old.run_id",
-        "new.step_id <> old.step_id",
-        "new.fence <> old.fence",
-        "new.worker_id <> old.worker_id",
-        "new.lease_token_digest <> old.lease_token_digest",
-        "new.acquired_at <> old.acquired_at",
-        "new.expires_at < old.expires_at",
-        "raise(abort",
-    )
     return (
         M2_DURABLE_EXECUTION_TRIGGERS.issubset(triggers)
         and M2_DURABLE_EXECUTION_REQUIRED_INDEXES.issubset(indexes)
-        and _schema_sql_matches(
+        and _schema_signatures_match(
             connection,
-            object_type="trigger",
-            expected=trigger_sql,
-        )
-        and _schema_sql_matches(
-            connection,
-            object_type="index",
-            expected=M2_DURABLE_EXECUTION_INDEX_SQL,
-        )
-        and _schema_sql_matches(
-            connection,
-            object_type="table",
-            expected=M2_DURABLE_EXECUTION_TABLE_SQL,
+            expected=M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES,
         )
     )
 

@@ -302,6 +302,57 @@ def test_execution_classifier_rejects_wrong_active_lease_scope(tmp_path: Path) -
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
+def test_execution_classifier_rejects_neutralized_active_lease_predicate(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX uq_run_step_leases_active")
+        connection.execute(
+            "CREATE UNIQUE INDEX uq_run_step_leases_active ON run_step_leases "
+            "(workspace_id, run_id, step_id) WHERE released_at IS NULL AND 0"
+        )
+        for fence, token in ((1, "a" * 64), (2, "b" * 64)):
+            connection.execute(
+                "INSERT INTO run_step_leases "
+                "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+                "acquired_at, heartbeat_at, expires_at, released_at) "
+                "VALUES (?, ?, ?, ?, 'worker-a', ?, ?, ?, ?, NULL)",
+                (
+                    "10000000-0000-4000-8000-000000000001",
+                    "20000000-0000-4000-8000-000000000001",
+                    "30000000-0000-4000-8000-000000000001",
+                    fence,
+                    token,
+                    timestamp,
+                    timestamp,
+                    "2026-07-26T00:05:00+00:00",
+                ),
+            )
+        assert connection.execute("SELECT COUNT(*) FROM run_step_leases").fetchone() == (2,)
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_normalizes_only_identifier_quoting_case_and_whitespace(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX uq_run_step_leases_active")
+        connection.execute(
+            'CrEaTe   UnIqUe InDeX "uq_run_step_leases_active" '
+            'ON "run_step_leases" '
+            '("workspace_id", "run_id", "step_id") '
+            'WhErE "released_at" Is NuLl'
+        )
+    assert classify_database(database).state is DatabaseState.CURRENT
+
+
 def test_execution_classifier_rejects_wrong_recovery_index_definition(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
@@ -327,6 +378,42 @@ def test_execution_classifier_rejects_same_name_no_op_history_trigger(tmp_path: 
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
+def test_execution_classifier_rejects_neutralized_immutable_trigger_body(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER agent_run_state_versions_no_update")
+        connection.execute(
+            "CREATE TRIGGER agent_run_state_versions_no_update BEFORE UPDATE "
+            "ON agent_run_state_versions BEGIN SELECT RAISE(ABORT, "
+            "'agent run state versions are immutable') WHERE 0; END"
+        )
+        connection.execute(
+            "INSERT INTO agent_run_state_versions "
+            "(workspace_id, run_id, version, state, created_at, updated_at, canonical_digest) "
+            "VALUES (?, ?, 1, 'pending', ?, ?, ?)",
+            (
+                "10000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                timestamp,
+                timestamp,
+                "a" * 64,
+            ),
+        )
+        connection.execute(
+            "UPDATE agent_run_state_versions SET state = 'running', canonical_digest = ?",
+            ("b" * 64,),
+        )
+        assert connection.execute(
+            "SELECT state FROM agent_run_state_versions"
+        ).fetchone() == ("running",)
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
 def test_execution_classifier_rejects_weakened_table_foreign_key_action(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
@@ -347,6 +434,45 @@ def test_execution_classifier_rejects_weakened_table_foreign_key_action(tmp_path
             (weakened_sql,),
         )
         connection.execute("PRAGMA writable_schema=OFF")
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_rejects_widened_run_state_check(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'agent_run_state_versions'"
+        ).fetchone()
+        assert table_sql is not None
+        weakened_sql = str(table_sql[0]).replace(
+            "'cancelled')",
+            "'cancelled','corrupt')",
+        )
+        assert weakened_sql != table_sql[0]
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? "
+            "WHERE type = 'table' AND name = 'agent_run_state_versions'",
+            (weakened_sql,),
+        )
+        connection.execute("PRAGMA writable_schema=OFF")
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_state_versions "
+            "(workspace_id, run_id, version, state, created_at, updated_at, canonical_digest) "
+            "VALUES (?, ?, 1, 'corrupt', ?, ?, ?)",
+            (
+                "10000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                timestamp,
+                timestamp,
+                "a" * 64,
+            ),
+        )
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
