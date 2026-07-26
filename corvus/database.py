@@ -1791,23 +1791,38 @@ def _schema_signatures_match(
     return True
 
 
-def _has_harmful_step_fence_unique_index(connection: sqlite3.Connection) -> bool:
-    fence_identity_columns = frozenset({"workspace_id", "run_id", "step_id", "fence"})
+_EXPECTED_RUN_STEP_VERSION_UNIQUE_INDEXES = (
+    (
+        "pk",
+        ("workspace_id", "step_id", "version"),
+        False,
+    ),
+    (
+        "u",
+        ("workspace_id", "run_id", "step_id", "version", "fence"),
+        False,
+    ),
+)
+
+
+def _run_step_version_unique_indexes_match(connection: sqlite3.Connection) -> bool:
+    actual_indexes: list[tuple[str, tuple[str, ...], bool]] = []
     for index_row in connection.execute("PRAGMA index_list('run_step_versions')"):
         if not bool(index_row[2]):
             continue
         index_name = str(index_row[1]).replace('"', '""')
-        columns = frozenset(
+        columns = tuple(
             str(column_row[2])
             for column_row in connection.execute(f'PRAGMA index_info("{index_name}")')
         )
-        if (
-            {"step_id", "fence"}.issubset(columns)
-            and "version" not in columns
-            and columns.issubset(fence_identity_columns)
-        ):
-            return True
-    return False
+        actual_indexes.append(
+            (
+                str(index_row[3]),
+                columns,
+                bool(index_row[4]),
+            )
+        )
+    return sorted(actual_indexes) == sorted(_EXPECTED_RUN_STEP_VERSION_UNIQUE_INDEXES)
 
 
 def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool:
@@ -1826,7 +1841,7 @@ def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool
     return (
         M2_DURABLE_EXECUTION_TRIGGERS.issubset(triggers)
         and M2_DURABLE_EXECUTION_REQUIRED_INDEXES.issubset(indexes)
-        and not _has_harmful_step_fence_unique_index(connection)
+        and _run_step_version_unique_indexes_match(connection)
         and _schema_signatures_match(
             connection,
             expected=M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES,

@@ -488,8 +488,57 @@ def test_execution_classifier_rejects_three_column_step_fence_uniqueness(
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
-def test_execution_classifier_allows_discriminated_and_nonunique_fence_indexes(
+@pytest.mark.parametrize(
+    "columns",
+    [
+        "workspace_id, run_id, step_id",
+        "workspace_id, step_id",
+    ],
+)
+def test_execution_classifier_rejects_unique_step_identity_without_version(
     tmp_path: Path,
+    columns: str,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    timestamp = "2026-07-26T00:00:00+00:00"
+    workspace_id = "10000000-0000-4000-8000-000000000001"
+    run_id = "20000000-0000-4000-8000-000000000001"
+    step_id = "30000000-0000-4000-8000-000000000001"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE UNIQUE INDEX accidentally_unique_step_identity "
+            f"ON run_step_versions({columns})"
+        )
+        connection.execute(
+            "INSERT INTO run_step_versions "
+            "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
+            "attempt_count, created_at, updated_at, canonical_digest) "
+            "VALUES (?, ?, ?, 1, 'ready', 1, 0, 0, ?, ?, ?)",
+            (workspace_id, run_id, step_id, timestamp, timestamp, "a" * 64),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO run_step_versions "
+                "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
+                "attempt_count, created_at, updated_at, canonical_digest) "
+                "VALUES (?, ?, ?, 2, 'running', 1, 0, 1, ?, ?, ?)",
+                (workspace_id, run_id, step_id, timestamp, timestamp, "b" * 64),
+            )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        "workspace_id, step_id, fence, version",
+        "workspace_id, run_id, step_id, version, fence",
+    ],
+)
+def test_execution_classifier_rejects_unexpected_version_discriminated_unique_index(
+    tmp_path: Path,
+    columns: str,
 ) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
@@ -497,8 +546,18 @@ def test_execution_classifier_allows_discriminated_and_nonunique_fence_indexes(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "CREATE UNIQUE INDEX version_discriminated_step_fence "
-            "ON run_step_versions(workspace_id, step_id, fence, version)"
+            f"ON run_step_versions({columns})"
         )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_allows_nonunique_step_fence_index(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
         connection.execute(
             "CREATE INDEX nonunique_step_fence "
             "ON run_step_versions(workspace_id, step_id, fence)"
