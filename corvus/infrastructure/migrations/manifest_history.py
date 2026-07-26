@@ -106,6 +106,14 @@ M2_004_FAMILY_NAMES = tuple(
         }
     )
 )
+M2_005_FAMILY_NAMES = tuple(
+    sorted(
+        {
+            *M2_004_FAMILY_NAMES,
+            "agent_run_execution_bindings",
+        }
+    )
+)
 
 
 def family_proof_metadata(family_name: str) -> tuple[str, str | None]:

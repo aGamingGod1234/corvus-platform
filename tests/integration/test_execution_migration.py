@@ -11,6 +11,7 @@ from corvus.domain.identity import Principal, PrincipalKind, Workspace, Workspac
 from corvus.infrastructure.db import (
     M2_CONVERSATIONS_REVISION,
     M2_DURABLE_EXECUTION_REVISION,
+    M2_EXECUTION_BINDING_REVISION,
     _alembic_config_url,
     downgrade_database,
     upgrade_database,
@@ -20,6 +21,9 @@ from corvus.store import TraceStore
 
 _DURABLE_EXECUTION_REVISION = "m2_004_durable_execution"
 _DURABLE_EXECUTION_MANIFEST_ID = "00000000-0000-4000-8000-000000000013"
+_EXECUTION_BINDING_REVISION = "m2_005_execution_binding"
+_EXECUTION_BINDING_MANIFEST_ID = "00000000-0000-4000-8000-000000000014"
+_EXECUTION_BINDING_TABLE = "agent_run_execution_bindings"
 _DURABLE_EXECUTION_TABLES = frozenset(
     {
         "agent_run_state_versions",
@@ -36,13 +40,182 @@ def _base_database(path: Path) -> None:
     TraceStore(path).engine.dispose()
 
 
+def test_execution_binding_upgrade_adds_authoritative_append_only_family(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+
+    assert upgrade_database(database) == _EXECUTION_BINDING_REVISION
+    assert classify_database(database).state is DatabaseState.CURRENT
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1]: (row[2], row[3], row[5])
+            for row in connection.execute(f"PRAGMA table_info({_EXECUTION_BINDING_TABLE})")
+        }
+        foreign_keys = connection.execute(
+            f"PRAGMA foreign_key_list({_EXECUTION_BINDING_TABLE})"
+        ).fetchall()
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+                (_EXECUTION_BINDING_TABLE,),
+            )
+        }
+        current_families = {
+            row[0]
+            for row in connection.execute(
+                "SELECT family_name FROM authority_state_root_leaf_families "
+                "WHERE manifest_version_id = ?",
+                (_EXECUTION_BINDING_MANIFEST_ID,),
+            )
+        }
+        historical_families = {
+            row[0]
+            for row in connection.execute(
+                "SELECT family_name FROM authority_state_root_leaf_families "
+                "WHERE manifest_version_id = ?",
+                (_DURABLE_EXECUTION_MANIFEST_ID,),
+            )
+        }
+
+    assert columns == {
+        "workspace_id": ("VARCHAR(36)", 1, 1),
+        "run_id": ("VARCHAR(36)", 1, 2),
+        "immutable_request_digest": ("VARCHAR(64)", 1, 0),
+        "created_at": ("VARCHAR(40)", 1, 0),
+        "canonical_digest": ("VARCHAR(64)", 1, 0),
+    }
+    assert {
+        (row[2], row[3], row[4], row[6])
+        for row in foreign_keys
+    } == {
+        ("agent_runs", "workspace_id", "workspace_id", "RESTRICT"),
+        ("agent_runs", "run_id", "id", "RESTRICT"),
+    }
+    assert triggers == {
+        "agent_run_execution_bindings_no_delete",
+        "agent_run_execution_bindings_no_update",
+    }
+    assert _EXECUTION_BINDING_TABLE in current_families
+    assert _EXECUTION_BINDING_TABLE not in historical_families
+
+
+def test_execution_binding_schema_rejects_invalid_digests_and_history_rewrites(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    binding = (
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        "a" * 64,
+        "2026-07-26T00:00:00+00:00",
+        "b" * 64,
+    )
+
+    with sqlite3.connect(database) as connection:
+        for digest_column in ("immutable_request_digest", "canonical_digest"):
+            invalid = list(binding)
+            invalid[2 if digest_column == "immutable_request_digest" else 4] = "short"
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO agent_run_execution_bindings "
+                    "(workspace_id, run_id, immutable_request_digest, created_at, "
+                    "canonical_digest) VALUES (?, ?, ?, ?, ?)",
+                    invalid,
+                )
+        connection.execute(
+            "INSERT INTO agent_run_execution_bindings "
+            "(workspace_id, run_id, immutable_request_digest, created_at, canonical_digest) "
+            "VALUES (?, ?, ?, ?, ?)",
+            binding,
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE agent_run_execution_bindings SET immutable_request_digest = ?",
+                ("c" * 64,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute("DELETE FROM agent_run_execution_bindings")
+
+
+def test_populated_execution_binding_downgrade_refuses_before_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_execution_bindings "
+            "(workspace_id, run_id, immutable_request_digest, created_at, canonical_digest) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "10000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                "a" * 64,
+                "2026-07-26T00:00:00+00:00",
+                "b" * 64,
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="execution_binding_history_present"):
+        downgrade_database(database, M2_DURABLE_EXECUTION_REVISION)
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            M2_EXECUTION_BINDING_REVISION,
+        )
+        assert connection.execute(
+            "SELECT immutable_request_digest FROM agent_run_execution_bindings"
+        ).fetchone() == ("a" * 64,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            (_EXECUTION_BINDING_MANIFEST_ID,),
+        ).fetchone() == (1,)
+
+
+def test_empty_execution_binding_downgrade_preserves_v10_and_reupgrades(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+
+    assert (
+        downgrade_database(database, M2_DURABLE_EXECUTION_REVISION)
+        == M2_DURABLE_EXECUTION_REVISION
+    )
+    assert classify_database(database).state is DatabaseState.CURRENT
+    with sqlite3.connect(database) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        assert _EXECUTION_BINDING_TABLE not in tables
+        assert connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            (_EXECUTION_BINDING_MANIFEST_ID,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM authority_state_root_manifests WHERE id = ?",
+            (_DURABLE_EXECUTION_MANIFEST_ID,),
+        ).fetchone() == (1,)
+
+    assert upgrade_database(database) == M2_EXECUTION_BINDING_REVISION
+    assert classify_database(database).state is DatabaseState.CURRENT
+
+
 def test_execution_upgrade_adds_manifest_families_and_refuses_populated_downgrade(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
 
-    assert upgrade_database(database) == _DURABLE_EXECUTION_REVISION
+    assert upgrade_database(database) == _EXECUTION_BINDING_REVISION
     with sqlite3.connect(database) as connection:
         tables = {
             row[0]
@@ -280,7 +453,7 @@ def test_execution_state_checkpoint_history_is_immutable_and_leases_cannot_be_de
 def test_empty_execution_downgrade_and_reupgrade_are_deterministic(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
-    assert upgrade_database(database) == M2_DURABLE_EXECUTION_REVISION
+    assert upgrade_database(database) == M2_EXECUTION_BINDING_REVISION
     assert downgrade_database(database, M2_CONVERSATIONS_REVISION) == M2_CONVERSATIONS_REVISION
     with sqlite3.connect(database) as connection:
         tables = {
@@ -292,7 +465,7 @@ def test_empty_execution_downgrade_and_reupgrade_are_deterministic(tmp_path: Pat
         ).fetchall()
     assert _DURABLE_EXECUTION_TABLES.isdisjoint(tables)
     assert manifests[-1] == (9,)
-    assert upgrade_database(database) == M2_DURABLE_EXECUTION_REVISION
+    assert upgrade_database(database) == M2_EXECUTION_BINDING_REVISION
 
 
 def test_execution_downgrade_to_conversations_preserves_conversation_history(
@@ -339,6 +512,7 @@ def test_execution_downgrade_to_conversations_preserves_conversation_history(
 @pytest.mark.parametrize(
     "statement",
     [
+        "DROP TRIGGER agent_run_execution_bindings_no_update",
         "DROP TRIGGER run_checkpoints_no_update",
         "DROP INDEX ix_run_step_leases_recovery",
         "DROP INDEX uq_run_step_leases_active",
@@ -354,6 +528,32 @@ def test_execution_classifier_requires_history_guards_and_recovery_indexes(
     assert classify_database(database).state is DatabaseState.CURRENT
     with sqlite3.connect(database) as connection:
         connection.execute(statement)
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_binding_classifier_rejects_weakened_digest_constraint(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (_EXECUTION_BINDING_TABLE,),
+        ).fetchone()
+        assert table_sql is not None
+        weakened_sql = str(table_sql[0]).replace(
+            "length(canonical_digest) = 64",
+            "length(canonical_digest) >= 64",
+        )
+        assert weakened_sql != table_sql[0]
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = ?",
+            (weakened_sql, _EXECUTION_BINDING_TABLE),
+        )
+        connection.execute("PRAGMA writable_schema=OFF")
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 
@@ -965,6 +1165,14 @@ def test_execution_migration_renders_portable_offline_postgres_ddl(
     config = _alembic_config_url("postgresql+psycopg://corvus:test@127.0.0.1/corvus_test")
     command.upgrade(config, "head", sql=True)
     rendered = capsys.readouterr().out.casefold()
+    assert "create table agent_run_execution_bindings" in rendered
+    assert "constraint pk_agent_run_execution_bindings" in rendered
+    assert "constraint fk_agent_run_execution_bindings_run" in rendered
+    assert "foreign key(workspace_id, run_id) references agent_runs" in rendered
+    assert "length(immutable_request_digest) = 64" in rendered
+    assert "length(canonical_digest) = 64" in rendered
+    assert "create trigger agent_run_execution_bindings_no_update" in rendered
+    assert "create trigger agent_run_execution_bindings_no_delete" in rendered
     assert "create table agent_run_state_versions" in rendered
     assert "create table run_checkpoints" in rendered
     assert "parent_step_id varchar(36)" in rendered

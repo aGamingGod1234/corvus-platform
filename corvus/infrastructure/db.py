@@ -20,6 +20,7 @@ from corvus.database import M1_REGISTRY_REVISION as _M1_REGISTRY_REVISION
 from corvus.database import M1_ROOT_MANIFEST_REVISION as _M1_ROOT_MANIFEST_REVISION
 from corvus.database import M2_CONVERSATIONS_REVISION as _M2_CONVERSATIONS_REVISION
 from corvus.database import M2_DURABLE_EXECUTION_REVISION as _M2_DURABLE_EXECUTION_REVISION
+from corvus.database import M2_EXECUTION_BINDING_REVISION as _M2_EXECUTION_BINDING_REVISION
 from corvus.database import M2_IDENTITY_CONTINUITY_REVISION as _M2_IDENTITY_CONTINUITY_REVISION
 from corvus.database import M2_OAUTH_SESSIONS_REVISION as _M2_OAUTH_SESSIONS_REVISION
 from corvus.database import M2_WORKSPACE_SYNC_REVISION as _M2_WORKSPACE_SYNC_REVISION
@@ -40,7 +41,8 @@ M2_OAUTH_SESSIONS_REVISION: Final = _M2_OAUTH_SESSIONS_REVISION
 M2_WORKSPACE_SYNC_REVISION: Final = _M2_WORKSPACE_SYNC_REVISION
 M2_CONVERSATIONS_REVISION: Final = _M2_CONVERSATIONS_REVISION
 M2_DURABLE_EXECUTION_REVISION: Final = _M2_DURABLE_EXECUTION_REVISION
-M1_CURRENT_REVISION: Final = M2_DURABLE_EXECUTION_REVISION
+M2_EXECUTION_BINDING_REVISION: Final = _M2_EXECUTION_BINDING_REVISION
+M1_CURRENT_REVISION: Final = M2_EXECUTION_BINDING_REVISION
 
 
 class InfrastructureDatabaseError(RuntimeError):
@@ -61,6 +63,9 @@ _DURABLE_EXECUTION_HISTORY_SQL = text(
     "(SELECT COUNT(*) FROM run_step_leases) + "
     "(SELECT COUNT(*) FROM run_step_versions) + "
     "(SELECT COUNT(*) FROM run_steps)"
+)
+_EXECUTION_BINDING_HISTORY_SQL = text(
+    "SELECT COUNT(*) FROM agent_run_execution_bindings"
 )
 _SYNC_HISTORY_SQL = text(
     "SELECT (SELECT COUNT(*) FROM workspace_sync_heads) + "
@@ -103,6 +108,10 @@ def _identity_workspace_metadata_is_compatible(engine: Engine) -> bool:
 
 def _preflight_downgrade_history(engine: Engine, revision: str) -> None:
     with engine.connect() as connection:
+        if revision != M2_EXECUTION_BINDING_REVISION and connection.scalar(
+            _EXECUTION_BINDING_HISTORY_SQL
+        ):
+            raise RuntimeError("execution_binding_history_present")
         if revision != M2_DURABLE_EXECUTION_REVISION and connection.scalar(
             _DURABLE_EXECUTION_HISTORY_SQL
         ):
@@ -174,6 +183,7 @@ def upgrade_database_url(database_url: str) -> str:
         M2_OAUTH_SESSIONS_REVISION,
         M2_WORKSPACE_SYNC_REVISION,
         M2_CONVERSATIONS_REVISION,
+        M2_DURABLE_EXECUTION_REVISION,
         M1_CURRENT_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
@@ -202,6 +212,7 @@ def downgrade_database_url(database_url: str, revision: str) -> str:
         M2_OAUTH_SESSIONS_REVISION,
         M2_WORKSPACE_SYNC_REVISION,
         M2_CONVERSATIONS_REVISION,
+        M2_DURABLE_EXECUTION_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
     preflight_engine = create_platform_engine(database_url)
@@ -249,6 +260,7 @@ def upgrade_database(database: Path) -> str:
         M2_OAUTH_SESSIONS_REVISION,
         M2_WORKSPACE_SYNC_REVISION,
         M2_CONVERSATIONS_REVISION,
+        M2_DURABLE_EXECUTION_REVISION,
         M1_CURRENT_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_database_revision:{revision}")
@@ -277,6 +289,7 @@ def downgrade_database(database: Path, revision: str) -> str:
         M2_OAUTH_SESSIONS_REVISION,
         M2_WORKSPACE_SYNC_REVISION,
         M2_CONVERSATIONS_REVISION,
+        M2_DURABLE_EXECUTION_REVISION,
     }:
         raise InfrastructureDatabaseError(f"unsupported_downgrade_revision:{revision}")
     preflight_engine = create_engine(f"sqlite:///{database}")

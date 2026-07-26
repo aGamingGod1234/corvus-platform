@@ -39,6 +39,7 @@ _FAMILY_SELECT_ALL = {
     "access_bundles": "SELECT * FROM access_bundles",
     "accounts": "SELECT * FROM accounts",
     "agent_run_events": "SELECT * FROM agent_run_events",
+    "agent_run_execution_bindings": "SELECT * FROM agent_run_execution_bindings",
     "agent_run_state_versions": "SELECT * FROM agent_run_state_versions",
     "agent_runs": "SELECT * FROM agent_runs",
     "agent_grants": "SELECT * FROM agent_grants",

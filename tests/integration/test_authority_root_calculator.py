@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -141,6 +142,42 @@ def test_calculator_is_deterministic_exhaustive_and_workspace_bound(tmp_path: Pa
         if item.family_name == "authority_registry_freshness_proofs"
     )
     assert freshness.external_proof_digest is not None
+
+
+def test_execution_binding_rows_change_the_authority_root(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    calculator = AuthorityRootCalculator(database)
+    workspace_id = uuid4()
+    before = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO agent_run_execution_bindings "
+            "(workspace_id, run_id, immutable_request_digest, created_at, canonical_digest) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                str(workspace_id),
+                str(uuid4()),
+                "a" * 64,
+                _NOW.isoformat(),
+                "b" * 64,
+            ),
+        )
+
+    after = calculator.calculate(
+        workspace_id=workspace_id,
+        authority_generation=1,
+        external_proof_digests=_EXTERNAL_PROOFS,
+    )
+
+    assert after.root_digest != before.root_digest
+    assert (
+        after.observed_leaf_digests["agent_run_execution_bindings"]
+        != before.observed_leaf_digests["agent_run_execution_bindings"]
+    )
 
 
 def test_calculator_requires_every_manifest_external_proof(tmp_path: Path) -> None:
