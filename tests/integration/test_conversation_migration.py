@@ -10,7 +10,6 @@ from corvus.database import M1_AUTHORITY_FAMILY_NAMES, DatabaseState, classify_d
 from corvus.domain.identity import Principal, PrincipalKind, Workspace, WorkspaceMembership
 from corvus.infrastructure.db import (
     M1_CURRENT_REVISION,
-    M2_CONVERSATIONS_REVISION,
     M2_WORKSPACE_SYNC_REVISION,
     _alembic_config_url,
     downgrade_database,
@@ -43,7 +42,7 @@ def test_fresh_conversation_schema_is_current_root_covered_and_immutable(
 ) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
-    assert upgrade_database(database) == M2_CONVERSATIONS_REVISION == M1_CURRENT_REVISION
+    assert upgrade_database(database) == M1_CURRENT_REVISION
     status = classify_database(database)
     assert status.state is DatabaseState.CURRENT
     assert _TABLES.issubset(status.tables)
@@ -151,7 +150,7 @@ def test_populated_conversation_downgrade_refuses_before_mutation(tmp_path: Path
 def test_empty_conversation_downgrade_upgrade_cycle_is_deterministic(tmp_path: Path) -> None:
     database = tmp_path / "corvus.db"
     _base_database(database)
-    assert upgrade_database(database) == M2_CONVERSATIONS_REVISION
+    assert upgrade_database(database) == M1_CURRENT_REVISION
     assert downgrade_database(database, M2_WORKSPACE_SYNC_REVISION) == M2_WORKSPACE_SYNC_REVISION
     with sqlite3.connect(database) as connection:
         tables = {
@@ -159,7 +158,7 @@ def test_empty_conversation_downgrade_upgrade_cycle_is_deterministic(tmp_path: P
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
     assert not _TABLES.intersection(tables)
-    assert upgrade_database(database) == M2_CONVERSATIONS_REVISION
+    assert upgrade_database(database) == M1_CURRENT_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
 
 

@@ -39,6 +39,7 @@ M2_IDENTITY_CONTINUITY_REVISION = "m2_001_identity_continuity"
 M2_OAUTH_SESSIONS_REVISION = "m2_001a_oauth_sessions"
 M2_WORKSPACE_SYNC_REVISION = "m2_002_workspace_sync"
 M2_CONVERSATIONS_REVISION = "m2_003_conversations"
+M2_DURABLE_EXECUTION_REVISION = "m2_004_durable_execution"
 SCHEMA_METADATA_TABLE = "corvus_schema"
 V1_REQUIRED_TABLES = frozenset(
     {
@@ -135,6 +136,16 @@ M2_CONVERSATIONS_REQUIRED_TABLES = frozenset(
         "threads",
     }
 )
+M2_DURABLE_EXECUTION_REQUIRED_TABLES = frozenset(
+    {
+        "agent_run_state_versions",
+        "run_checkpoint_artifacts",
+        "run_checkpoints",
+        "run_step_leases",
+        "run_step_versions",
+        "run_steps",
+    }
+)
 M1_REGISTRY_V1_AUTHORITY_FAMILY_NAMES = frozenset(
     {
         "audit_anchor_recovery_checkpoints",
@@ -215,8 +226,14 @@ M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES = frozenset(
         *M2_CONVERSATIONS_REQUIRED_TABLES,
     }
 )
+M2_DURABLE_EXECUTION_V10_AUTHORITY_FAMILY_NAMES = frozenset(
+    {
+        *M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES,
+        *M2_DURABLE_EXECUTION_REQUIRED_TABLES,
+    }
+)
 # Compatibility name retained for existing callers; this is always the active manifest family set.
-M1_AUTHORITY_FAMILY_NAMES = M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES
+M1_AUTHORITY_FAMILY_NAMES = M2_DURABLE_EXECUTION_V10_AUTHORITY_FAMILY_NAMES
 M005_001_APPEND_ONLY_TRIGGERS = frozenset(
     {
         "external_contents_no_delete",
@@ -349,6 +366,28 @@ M2_CONVERSATIONS_REQUIRED_INDEXES = frozenset(
         "uq_agent_identities_workspace_id_version",
         "uq_agent_run_provider_event",
         "uq_projects_workspace_id_id",
+    }
+)
+M2_DURABLE_EXECUTION_TRIGGERS = frozenset(
+    {
+        "run_step_leases_no_delete",
+        *(
+            f"{table_name}_{operation}"
+            for table_name in M2_DURABLE_EXECUTION_REQUIRED_TABLES - {"run_step_leases"}
+            for operation in ("no_delete", "no_update")
+        ),
+    }
+)
+M2_DURABLE_EXECUTION_REQUIRED_INDEXES = frozenset(
+    {
+        "ix_agent_run_state_versions_recovery",
+        "ix_run_checkpoint_artifacts_lookup",
+        "ix_run_checkpoints_recovery",
+        "ix_run_step_leases_recovery",
+        "ix_run_step_versions_recovery",
+        "ix_run_steps_recovery",
+        "uq_run_artifacts_workspace_run_id",
+        "uq_run_step_leases_active",
     }
 )
 V1_REQUIRED_COLUMNS = {
@@ -1129,6 +1168,76 @@ M2_CONVERSATIONS_REQUIRED_COLUMNS = {
         {"workspace_id", "artifact_id", "parent_artifact_id", "ordinal", "lineage_digest"}
     ),
 }
+M2_DURABLE_EXECUTION_REQUIRED_COLUMNS = {
+    "agent_run_state_versions": frozenset(
+        {
+            "workspace_id",
+            "run_id",
+            "version",
+            "state",
+            "created_at",
+            "updated_at",
+            "canonical_digest",
+        }
+    ),
+    "run_steps": frozenset(
+        {"workspace_id", "run_id", "id", "step_key", "ordinal", "created_at"}
+    ),
+    "run_step_versions": frozenset(
+        {
+            "workspace_id",
+            "run_id",
+            "step_id",
+            "version",
+            "state",
+            "fence",
+            "retry_count",
+            "attempt_count",
+            "created_at",
+            "updated_at",
+            "canonical_digest",
+        }
+    ),
+    "run_step_leases": frozenset(
+        {
+            "workspace_id",
+            "run_id",
+            "step_id",
+            "fence",
+            "worker_id",
+            "lease_token_digest",
+            "acquired_at",
+            "heartbeat_at",
+            "expires_at",
+            "released_at",
+        }
+    ),
+    "run_checkpoints": frozenset(
+        {
+            "workspace_id",
+            "run_id",
+            "step_id",
+            "id",
+            "checkpoint_version",
+            "run_state",
+            "step_state",
+            "step_fence",
+            "step_version",
+            "completed_dependency_step_ids_json",
+            "output_ref_ids_json",
+            "retry_count",
+            "attempt_count",
+            "last_accepted_event_sequence",
+            "last_accepted_event_digest",
+            "next_transition",
+            "created_at",
+            "canonical_digest",
+        }
+    ),
+    "run_checkpoint_artifacts": frozenset(
+        {"workspace_id", "run_id", "checkpoint_id", "artifact_id", "ordinal"}
+    ),
+}
 CURRENT_REQUIRED_COLUMNS = {**V1_REQUIRED_COLUMNS, **M005_001_REQUIRED_COLUMNS}
 M1_CURRENT_REQUIRED_COLUMNS = {**CURRENT_REQUIRED_COLUMNS, **M1_ADDITIVE_REQUIRED_COLUMNS}
 M1_AUDIT_CURRENT_REQUIRED_COLUMNS = {
@@ -1178,6 +1287,10 @@ M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS = {
 M2_CONVERSATIONS_CURRENT_REQUIRED_COLUMNS = {
     **M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS,
     **M2_CONVERSATIONS_REQUIRED_COLUMNS,
+}
+M2_DURABLE_EXECUTION_CURRENT_REQUIRED_COLUMNS = {
+    **M2_CONVERSATIONS_CURRENT_REQUIRED_COLUMNS,
+    **M2_DURABLE_EXECUTION_REQUIRED_COLUMNS,
 }
 
 
@@ -1331,6 +1444,7 @@ def _m1_registry_schema_controls_match(
         7: M2_IDENTITY_CONTINUITY_V7_AUTHORITY_FAMILY_NAMES,
         8: M2_WORKSPACE_SYNC_V8_AUTHORITY_FAMILY_NAMES,
         9: M2_CONVERSATIONS_V9_AUTHORITY_FAMILY_NAMES,
+        10: M2_DURABLE_EXECUTION_V10_AUTHORITY_FAMILY_NAMES,
     }
     for manifest_id, schema_version, canonicalization_version, manifest_digest in manifests:
         expected_families = family_sets.get(int(schema_version))
@@ -1501,6 +1615,42 @@ def _m2_conversation_controls_match(connection: sqlite3.Connection) -> bool:
     )
 
 
+def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool:
+    triggers = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        )
+    )
+    indexes = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+        )
+    )
+    active_lease_index = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' "
+        "AND name = 'uq_run_step_leases_active'"
+    ).fetchone()
+    normalized_active_lease_index = (
+        ""
+        if active_lease_index is None
+        else " ".join(str(active_lease_index[0] or "").casefold().split())
+    )
+    return (
+        M2_DURABLE_EXECUTION_TRIGGERS.issubset(triggers)
+        and M2_DURABLE_EXECUTION_REQUIRED_INDEXES.issubset(indexes)
+        and all(
+            fragment in normalized_active_lease_index
+            for fragment in (
+                "create unique index uq_run_step_leases_active",
+                "on run_step_leases (workspace_id, run_id, step_id)",
+                "where released_at is null",
+            )
+        )
+    )
+
+
 @contextmanager
 def _classification_path(path: Path) -> Iterator[Path]:
     """Avoid touching live WAL shared-memory bytes while classifying a database."""
@@ -1605,6 +1755,12 @@ def classify_database(path: Path) -> DatabaseStatus:
                     *M2_CONVERSATIONS_REQUIRED_TABLES,
                 }
             )
+            m2_durable_execution_current_tables = frozenset(
+                {
+                    *m2_conversations_current_tables,
+                    *M2_DURABLE_EXECUTION_REQUIRED_TABLES,
+                }
+            )
             supported_table_sets = {
                 stamped_v1_tables,
                 current_tables,
@@ -1619,6 +1775,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                 m2_oauth_sessions_current_tables,
                 m2_workspace_sync_current_tables,
                 m2_conversations_current_tables,
+                m2_durable_execution_current_tables,
             }
             if tables in supported_table_sets:
                 if tables == stamped_v1_tables:
@@ -1645,8 +1802,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                     expected_columns = M2_OAUTH_SESSIONS_CURRENT_REQUIRED_COLUMNS
                 elif tables == m2_workspace_sync_current_tables:
                     expected_columns = M2_WORKSPACE_SYNC_CURRENT_REQUIRED_COLUMNS
-                else:
+                elif tables == m2_conversations_current_tables:
                     expected_columns = M2_CONVERSATIONS_CURRENT_REQUIRED_COLUMNS
+                else:
+                    expected_columns = M2_DURABLE_EXECUTION_CURRENT_REQUIRED_COLUMNS
                 if not _columns_match(connection, expected_columns):
                     return DatabaseStatus(
                         DatabaseState.PARTIAL,
@@ -1678,7 +1837,10 @@ def classify_database(path: Path) -> DatabaseStatus:
                         else []
                     )
                     actual_revision = revision_rows[0][0] if len(revision_rows) == 1 else None
-                    if tables == m2_conversations_current_tables:
+                    if tables == m2_durable_execution_current_tables:
+                        expected_revision = M2_DURABLE_EXECUTION_REVISION
+                        latest_manifest_schema_version = 10
+                    elif tables == m2_conversations_current_tables:
                         expected_revision = M2_CONVERSATIONS_REVISION
                         latest_manifest_schema_version = 9
                     elif tables == m2_workspace_sync_current_tables:
@@ -1736,6 +1898,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_audit_triggers_match(connection)
                     authority_controls_match = tables not in {
                         m1_authority_current_tables,
@@ -1747,6 +1910,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_authority_schema_controls_match(connection)
                     registry_controls_match = tables not in {
                         m1_registry_current_tables,
@@ -1757,6 +1921,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_registry_schema_controls_match(
                         connection,
                         latest_schema_version=latest_manifest_schema_version,
@@ -1769,6 +1934,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_authorization_input_controls_match(connection)
                     handoff_controls_match = tables not in {
                         m1_handoff_current_tables,
@@ -1777,6 +1943,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_handoff_controls_match(connection)
                     identity_scope_controls_match = tables not in {
                         m1_identity_scope_current_tables,
@@ -1784,25 +1951,37 @@ def classify_database(path: Path) -> DatabaseStatus:
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m1_identity_scope_controls_match(connection)
                     identity_continuity_controls_match = tables not in {
                         m2_identity_continuity_current_tables,
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m2_identity_continuity_controls_match(connection)
                     oauth_sessions_controls_match = tables not in {
                         m2_oauth_sessions_current_tables,
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m2_oauth_sessions_controls_match(connection)
                     workspace_sync_controls_match = tables not in {
                         m2_workspace_sync_current_tables,
                         m2_conversations_current_tables,
+                        m2_durable_execution_current_tables,
                     } or _m2_workspace_sync_controls_match(connection)
                     conversation_controls_match = (
-                        tables != m2_conversations_current_tables
+                        tables
+                        not in {
+                            m2_conversations_current_tables,
+                            m2_durable_execution_current_tables,
+                        }
                         or _m2_conversation_controls_match(connection)
+                    )
+                    durable_execution_controls_match = (
+                        tables != m2_durable_execution_current_tables
+                        or _m2_durable_execution_controls_match(connection)
                     )
                     if (
                         tables
@@ -1819,6 +1998,7 @@ def classify_database(path: Path) -> DatabaseStatus:
                             m2_oauth_sessions_current_tables,
                             m2_workspace_sync_current_tables,
                             m2_conversations_current_tables,
+                            m2_durable_execution_current_tables,
                         }
                         and schema_version == CURRENT_SCHEMA_VERSION
                         and _m005_001_triggers_match(connection)
@@ -1833,8 +2013,11 @@ def classify_database(path: Path) -> DatabaseStatus:
                         and oauth_sessions_controls_match
                         and workspace_sync_controls_match
                         and conversation_controls_match
+                        and durable_execution_controls_match
                     ):
-                        if tables == m2_conversations_current_tables:
+                        if tables == m2_durable_execution_current_tables:
+                            detail = "database schema is current with M2 durable execution"
+                        elif tables == m2_conversations_current_tables:
                             detail = "database schema is current with M2 conversations"
                         elif tables == m2_workspace_sync_current_tables:
                             detail = "database schema is current with M2 workspace sync"
