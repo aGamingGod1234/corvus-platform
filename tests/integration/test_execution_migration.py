@@ -93,11 +93,32 @@ def test_execution_schema_enforces_states_versions_fences_and_one_active_lease(
                 "VALUES (?, ?, 1, 'unknown', ?, ?, ?)",
                 (workspace_id, run_id, timestamp, timestamp, "a" * 64),
             )
+        for kind, input_digest, parent_step_id in (
+            ("", "9" * 64, None),
+            ("x" * 101, "9" * 64, None),
+            ("model", "short", None),
+            ("model", "9" * 64, step_id),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO run_steps "
+                    "(workspace_id, run_id, id, step_key, ordinal, kind, input_digest, "
+                    "parent_step_id, created_at) VALUES (?, ?, ?, 'plan', 1, ?, ?, ?, ?)",
+                    (
+                        workspace_id,
+                        run_id,
+                        step_id,
+                        kind,
+                        input_digest,
+                        parent_step_id,
+                        timestamp,
+                    ),
+                )
         connection.execute(
             "INSERT INTO run_steps "
-            "(workspace_id, run_id, id, step_key, ordinal, created_at) "
-            "VALUES (?, ?, ?, 'plan', 1, ?)",
-            (workspace_id, run_id, step_id, timestamp),
+            "(workspace_id, run_id, id, step_key, ordinal, kind, input_digest, "
+            "parent_step_id, created_at) VALUES (?, ?, ?, 'plan', 1, 'model', ?, NULL, ?)",
+            (workspace_id, run_id, step_id, "9" * 64, timestamp),
         )
         connection.execute(
             "INSERT INTO run_step_versions "
@@ -168,16 +189,19 @@ def test_execution_state_checkpoint_history_is_immutable_and_leases_cannot_be_de
         connection.execute(
             "INSERT INTO run_checkpoints "
             "(workspace_id, run_id, step_id, id, checkpoint_version, run_state, step_state, "
-            "step_fence, step_version, completed_dependency_step_ids_json, output_ref_ids_json, "
-            "retry_count, attempt_count, last_accepted_event_sequence, "
+            "step_fence, step_version, request_context_id, authorization_snapshot_id, "
+            "completed_dependency_step_ids_json, output_ref_ids_json, retry_count, "
+            "attempt_count, last_accepted_event_sequence, "
             "last_accepted_event_digest, next_transition, created_at, canonical_digest) "
-            "VALUES (?, ?, ?, ?, 1, 'pending', 'ready', 1, 1, '[]', '[]', "
+            "VALUES (?, ?, ?, ?, 1, 'pending', 'ready', 1, 1, ?, ?, '[]', '[]', "
             "0, 0, 0, ?, 'dispatch', ?, ?)",
             (
                 workspace_id,
                 run_id,
                 step_id,
                 checkpoint_id,
+                "50000000-0000-4000-8000-000000000001",
+                "60000000-0000-4000-8000-000000000001",
                 "0" * 64,
                 timestamp,
                 "b" * 64,
@@ -502,6 +526,176 @@ def test_execution_foreign_keys_are_workspace_composite(tmp_path: Path) -> None:
             assert all("workspace_id" in columns for columns in constraints.values())
 
 
+def test_execution_schema_binds_step_lineage_and_checkpoint_authority_context(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        step_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(run_steps)")
+        }
+        checkpoint_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(run_checkpoints)")
+        }
+        step_foreign_keys: dict[int, set[str]] = {}
+        for row in connection.execute("PRAGMA foreign_key_list(run_steps)"):
+            step_foreign_keys.setdefault(int(row[0]), set()).add(str(row[3]))
+        checkpoint_foreign_keys: dict[int, set[str]] = {}
+        for row in connection.execute("PRAGMA foreign_key_list(run_checkpoints)"):
+            checkpoint_foreign_keys.setdefault(int(row[0]), set()).add(str(row[3]))
+    missing_columns = (
+        {"kind", "input_digest", "parent_step_id"} - step_columns
+    ) | (
+        {"request_context_id", "authorization_snapshot_id"} - checkpoint_columns
+    )
+    assert (
+        missing_columns,
+        {"workspace_id", "run_id", "parent_step_id"} in step_foreign_keys.values(),
+        {
+            "workspace_id",
+            "request_context_id",
+            "authorization_snapshot_id",
+        }
+        in checkpoint_foreign_keys.values(),
+    ) == (set(), True, True)
+
+    workspace_id = "10000000-0000-4000-8000-000000000001"
+    other_workspace_id = "10000000-0000-4000-8000-000000000002"
+    parent_run_id = "20000000-0000-4000-8000-000000000001"
+    child_run_id = "20000000-0000-4000-8000-000000000002"
+    parent_step_id = "30000000-0000-4000-8000-000000000001"
+    child_step_id = "30000000-0000-4000-8000-000000000002"
+    snapshot_id = "40000000-0000-4000-8000-000000000001"
+    request_context_id = "50000000-0000-4000-8000-000000000001"
+    timestamp = "2026-07-26T00:00:00+00:00"
+    with sqlite3.connect(database) as connection:
+        for run_id in (parent_run_id, child_run_id):
+            connection.execute(
+                "INSERT INTO agent_runs "
+                "(workspace_id, id, thread_id, message_sequence, requester_principal_id, "
+                "requester_membership_version, authorization_snapshot_id, "
+                "authorization_snapshot_digest, provider_binding_id, provider_binding_version, "
+                "provider_binding_digest, canonical_request_digest, idempotency_key, "
+                "request_digest, parent_run_id, root_run_id, created_at) "
+                "VALUES (?, ?, ?, 1, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, NULL, NULL, ?)",
+                (
+                    workspace_id,
+                    run_id,
+                    "60000000-0000-4000-8000-000000000001",
+                    "70000000-0000-4000-8000-000000000001",
+                    snapshot_id,
+                    "a" * 64,
+                    "80000000-0000-4000-8000-000000000001",
+                    "b" * 64,
+                    "c" * 64,
+                    f"run-{run_id}",
+                    "d" * 64,
+                    timestamp,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO run_steps "
+            "(workspace_id, run_id, id, step_key, ordinal, kind, input_digest, "
+            "parent_step_id, created_at) VALUES (?, ?, ?, 'parent', 1, 'model', ?, NULL, ?)",
+            (workspace_id, parent_run_id, parent_step_id, "e" * 64, timestamp),
+        )
+        connection.execute(
+            "INSERT INTO run_step_versions "
+            "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
+            "attempt_count, created_at, updated_at, canonical_digest) "
+            "VALUES (?, ?, ?, 1, 'ready', 1, 0, 0, ?, ?, ?)",
+            (workspace_id, child_run_id, child_step_id, timestamp, timestamp, "f" * 64),
+        )
+        connection.execute(
+            "INSERT INTO authorization_decision_snapshots "
+            "(id, workspace_id, request_context_id, signing_key_version_id, "
+            "canonical_digest, created_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, '{}')",
+            (
+                snapshot_id,
+                other_workspace_id,
+                request_context_id,
+                "90000000-0000-4000-8000-000000000001",
+                "1" * 64,
+                timestamp,
+            ),
+        )
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO run_steps "
+                "(workspace_id, run_id, id, step_key, ordinal, kind, input_digest, "
+                "parent_step_id, created_at) VALUES (?, ?, ?, 'child', 1, 'model', ?, ?, ?)",
+                (
+                    workspace_id,
+                    child_run_id,
+                    child_step_id,
+                    "2" * 64,
+                    parent_step_id,
+                    timestamp,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO run_steps "
+            "(workspace_id, run_id, id, step_key, ordinal, kind, input_digest, "
+            "parent_step_id, created_at) VALUES (?, ?, ?, 'child', 1, 'model', ?, NULL, ?)",
+            (workspace_id, child_run_id, child_step_id, "2" * 64, timestamp),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO run_checkpoints "
+                "(workspace_id, run_id, step_id, id, checkpoint_version, run_state, "
+                "step_state, step_fence, step_version, request_context_id, "
+                "authorization_snapshot_id, completed_dependency_step_ids_json, "
+                "output_ref_ids_json, retry_count, attempt_count, "
+                "last_accepted_event_sequence, last_accepted_event_digest, "
+                "next_transition, created_at, canonical_digest) "
+                "VALUES (?, ?, ?, ?, 1, 'pending', 'ready', 1, 1, ?, ?, '[]', '[]', "
+                "0, 0, 0, ?, 'dispatch', ?, ?)",
+                (
+                    workspace_id,
+                    child_run_id,
+                    child_step_id,
+                    "a0000000-0000-4000-8000-000000000001",
+                    request_context_id,
+                    snapshot_id,
+                    "0" * 64,
+                    timestamp,
+                    "3" * 64,
+                ),
+            )
+
+
+def test_execution_classifier_rejects_weakened_authority_context_fk(tmp_path: Path) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'run_checkpoints'"
+        ).fetchone()
+        assert table_sql is not None
+        original = (
+            "REFERENCES authorization_decision_snapshots "
+            "(workspace_id, request_context_id, id) ON DELETE RESTRICT"
+        )
+        weakened = (
+            "REFERENCES authorization_decision_snapshots "
+            "(workspace_id, request_context_id, id) ON DELETE CASCADE"
+        )
+        weakened_sql = str(table_sql[0]).replace(original, weakened)
+        assert weakened_sql != table_sql[0]
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'run_checkpoints'",
+            (weakened_sql,),
+        )
+        connection.execute("PRAGMA writable_schema=OFF")
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["identity", "expiry_decrease", "reactivate", "after_release"],
@@ -597,9 +791,16 @@ def test_execution_migration_renders_portable_offline_postgres_ddl(
     rendered = capsys.readouterr().out.casefold()
     assert "create table agent_run_state_versions" in rendered
     assert "create table run_checkpoints" in rendered
+    assert "parent_step_id varchar(36)" in rendered
+    assert "request_context_id varchar(36) not null" in rendered
+    assert "authorization_snapshot_id varchar(36) not null" in rendered
+    assert "foreign key(workspace_id, run_id, parent_step_id)" in rendered
+    assert "foreign key(workspace_id, request_context_id, authorization_snapshot_id)" in rendered
+    assert "references authorization_decision_snapshots" in rendered
     assert "foreign key(workspace_id, run_id, step_id, step_version, step_fence)" in rendered
     assert "references run_step_versions" in rendered
     assert "create unique index uq_run_step_leases_active" in rendered
+    assert "create unique index uq_authorization_snapshots_workspace_request_id" in rendered
     assert "where released_at is null" in rendered
     assert "create trigger run_checkpoints_no_update" in rendered
     assert "create trigger run_step_leases_no_delete" in rendered

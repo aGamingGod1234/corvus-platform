@@ -142,6 +142,12 @@ def _step_fk() -> sa.ForeignKeyConstraint:
 
 def _create_tables() -> None:
     op.create_index(
+        "uq_authorization_snapshots_workspace_request_id",
+        "authorization_decision_snapshots",
+        ["workspace_id", "request_context_id", "id"],
+        unique=True,
+    )
+    op.create_index(
         "uq_run_artifacts_workspace_run_id",
         "run_artifacts",
         ["workspace_id", "run_id", "id"],
@@ -183,10 +189,28 @@ def _create_tables() -> None:
         sa.Column("id", sa.String(36), nullable=False),
         sa.Column("step_key", sa.String(512), nullable=False),
         sa.Column("ordinal", sa.Integer(), nullable=False),
+        sa.Column("kind", sa.String(100), nullable=False),
+        sa.Column("input_digest", sa.String(64), nullable=False),
+        sa.Column("parent_step_id", sa.String(36), nullable=True),
         sa.Column("created_at", sa.String(40), nullable=False),
         sa.CheckConstraint("length(trim(step_key)) >= 1", name="ck_run_steps_key"),
         sa.CheckConstraint("ordinal >= 1", name="ck_run_steps_ordinal"),
+        sa.CheckConstraint(
+            "length(trim(kind)) BETWEEN 1 AND 100",
+            name="ck_run_steps_kind",
+        ),
+        sa.CheckConstraint("length(input_digest) = 64", name="ck_run_steps_input_digest"),
+        sa.CheckConstraint(
+            "parent_step_id IS NULL OR parent_step_id <> id",
+            name="ck_run_steps_parent_not_self",
+        ),
         _run_fk(),
+        sa.ForeignKeyConstraint(
+            ["workspace_id", "run_id", "parent_step_id"],
+            ["run_steps.workspace_id", "run_steps.run_id", "run_steps.id"],
+            name="fk_run_steps_parent",
+            ondelete="RESTRICT",
+        ),
         sa.PrimaryKeyConstraint("workspace_id", "id", name="pk_run_steps"),
         sa.UniqueConstraint(
             "workspace_id", "run_id", "id", name="uq_run_steps_workspace_run_id"
@@ -321,6 +345,8 @@ def _create_tables() -> None:
         sa.Column("step_state", sa.String(16), nullable=False),
         sa.Column("step_fence", sa.BigInteger(), nullable=False),
         sa.Column("step_version", sa.Integer(), nullable=False),
+        sa.Column("request_context_id", sa.String(36), nullable=False),
+        sa.Column("authorization_snapshot_id", sa.String(36), nullable=False),
         sa.Column("completed_dependency_step_ids_json", sa.Text(), nullable=False),
         sa.Column("output_ref_ids_json", sa.Text(), nullable=False),
         sa.Column("retry_count", sa.Integer(), nullable=False),
@@ -394,6 +420,16 @@ def _create_tables() -> None:
                 "run_step_versions.fence",
             ],
             name="fk_run_checkpoints_step_version",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["workspace_id", "request_context_id", "authorization_snapshot_id"],
+            [
+                "authorization_decision_snapshots.workspace_id",
+                "authorization_decision_snapshots.request_context_id",
+                "authorization_decision_snapshots.id",
+            ],
+            name="fk_run_checkpoints_authority_context",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("workspace_id", "id", name="pk_run_checkpoints"),
@@ -554,3 +590,7 @@ def downgrade() -> None:
     )
     op.drop_table("agent_run_state_versions")
     op.drop_index("uq_run_artifacts_workspace_run_id", table_name="run_artifacts")
+    op.drop_index(
+        "uq_authorization_snapshots_workspace_request_id",
+        table_name="authorization_decision_snapshots",
+    )

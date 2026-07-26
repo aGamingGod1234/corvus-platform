@@ -388,6 +388,7 @@ M2_DURABLE_EXECUTION_REQUIRED_INDEXES = frozenset(
         "ix_run_step_leases_recovery",
         "ix_run_step_versions_recovery",
         "ix_run_steps_recovery",
+        "uq_authorization_snapshots_workspace_request_id",
         "uq_run_artifacts_workspace_run_id",
         "uq_run_step_leases_active",
     }
@@ -403,7 +404,7 @@ M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES = {
             "aeb4a57d223bc99c564abaafa9b7db91c4c707ec4e95fd915aa4f53acde96762"
         ),
         "run_checkpoints": (
-            "dc4f332878d702c1f1c5985c6f8016522489cf20f3082311fb72e86245064c3e"
+            "140eab3e92d7cc947bbc77c2728553c2476dd0635717a4acad4d522afb51364f"
         ),
         "run_step_leases": (
             "334eff1c1e91ff59f091b05e4b18b879555f5ee91314350308fe620e52db1f43"
@@ -411,7 +412,7 @@ M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES = {
         "run_step_versions": (
             "f6d9ecb637cb731fd26ba5120c716e7779a81669ee5293f1c1d3ded7bfe9086a"
         ),
-        "run_steps": "be05d19dc3726bbdfe9955a1b67ffa621a30ab8dca51eb01a3321a48b4e8f1ce",
+        "run_steps": "ebf77bc286325ea5ed957221b3624e5b1fdacaefb0b6a6cb672dcb7cc83aebbe",
     },
     "index": {
         "ix_agent_run_state_versions_recovery": (
@@ -431,6 +432,9 @@ M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES = {
         ),
         "ix_run_steps_recovery": (
             "528329dde81dff81d7a6102fc5bf85db60fcefd5843baf6a7985597455a5a197"
+        ),
+        "uq_authorization_snapshots_workspace_request_id": (
+            "2c30c34bbb3d0b5535a20d1e06ec7ec5c6607943a3b1b01c3d268d649fea6a96"
         ),
         "uq_run_artifacts_workspace_run_id": (
             "3a1a94518a26624f1cd712c17d06209a91cc35884a318505c4ec42a586e09f07"
@@ -1278,7 +1282,17 @@ M2_DURABLE_EXECUTION_REQUIRED_COLUMNS = {
         }
     ),
     "run_steps": frozenset(
-        {"workspace_id", "run_id", "id", "step_key", "ordinal", "created_at"}
+        {
+            "workspace_id",
+            "run_id",
+            "id",
+            "step_key",
+            "ordinal",
+            "kind",
+            "input_digest",
+            "parent_step_id",
+            "created_at",
+        }
     ),
     "run_step_versions": frozenset(
         {
@@ -1320,6 +1334,8 @@ M2_DURABLE_EXECUTION_REQUIRED_COLUMNS = {
             "step_state",
             "step_fence",
             "step_version",
+            "request_context_id",
+            "authorization_snapshot_id",
             "completed_dependency_step_ids_json",
             "output_ref_ids_json",
             "retry_count",
