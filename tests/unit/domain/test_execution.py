@@ -12,7 +12,7 @@ from corvus.domain import execution
 
 NOW = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
 LATER = datetime(2026, 7, 26, 12, 5, tzinfo=UTC)
-TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
 RUN_ID = UUID("00000000-0000-0000-0000-000000000002")
 STEP_ID = UUID("00000000-0000-0000-0000-000000000003")
 
@@ -24,10 +24,10 @@ def _signed(
     return {**payload, "canonical_digest": digest(payload)}
 
 
-def test_execution_run_and_step_bind_tenant_run_and_fence() -> None:
+def test_execution_run_and_step_bind_workspace_run_and_fence() -> None:
     run_payload: dict[str, object] = {
         "id": RUN_ID,
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "state": execution.ExecutionRunState.RUNNING,
         "version": 4,
         "created_at": NOW,
@@ -38,7 +38,7 @@ def test_execution_run_and_step_bind_tenant_run_and_fence() -> None:
     )
     step_payload: dict[str, object] = {
         "id": STEP_ID,
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "run_id": run.id,
         "state": execution.ExecutionStepState.RUNNING,
         "fence": 7,
@@ -52,7 +52,11 @@ def test_execution_run_and_step_bind_tenant_run_and_fence() -> None:
         **_signed(step_payload, execution.compute_execution_step_digest)  # type: ignore[arg-type]
     )
 
-    assert (step.tenant_id, step.run_id, step.fence) == (run.tenant_id, run.id, 7)
+    assert (step.workspace_id, step.run_id, step.fence) == (
+        run.workspace_id,
+        run.id,
+        7,
+    )
 
     with pytest.raises(ValidationError, match="execution_step_digest_mismatch"):
         execution.ExecutionStep(
@@ -66,7 +70,7 @@ def test_execution_run_and_step_bind_tenant_run_and_fence() -> None:
 def test_checkpoint_is_provider_neutral_and_rejects_tampering() -> None:
     payload: dict[str, object] = {
         "id": UUID("00000000-0000-0000-0000-000000000004"),
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "run_id": RUN_ID,
         "step_id": STEP_ID,
         "run_state": execution.ExecutionRunState.RUNNING,
@@ -106,7 +110,7 @@ def test_permit_binds_intent_proofs_fence_version_and_expiry() -> None:
     intent_id = UUID("00000000-0000-0000-0000-000000000020")
     intent_payload: dict[str, object] = {
         "id": intent_id,
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "run_id": RUN_ID,
         "step_id": STEP_ID,
         "step_fence": 7,
@@ -123,7 +127,7 @@ def test_permit_binds_intent_proofs_fence_version_and_expiry() -> None:
     )
     permit_payload: dict[str, object] = {
         "id": UUID("00000000-0000-0000-0000-000000000022"),
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "run_id": RUN_ID,
         "step_id": STEP_ID,
         "intent_id": intent.id,
@@ -132,8 +136,8 @@ def test_permit_binds_intent_proofs_fence_version_and_expiry() -> None:
         "step_version": intent.step_version,
         "authorization_proof_id": UUID("00000000-0000-0000-0000-000000000023"),
         "authorization_proof_digest": "c" * 64,
-        "autonomy_proof_id": UUID("00000000-0000-0000-0000-000000000024"),
-        "autonomy_proof_digest": "d" * 64,
+        "autonomy_grant_id": UUID("00000000-0000-0000-0000-000000000024"),
+        "autonomy_grant_digest": "d" * 64,
         "credential_proof_id": UUID("00000000-0000-0000-0000-000000000025"),
         "credential_proof_digest": "e" * 64,
         "budget_proof_id": UUID("00000000-0000-0000-0000-000000000026"),
@@ -172,7 +176,7 @@ def test_permit_binds_intent_proofs_fence_version_and_expiry() -> None:
 def test_receipt_uses_explicit_outcomes_and_rejects_tampering() -> None:
     payload: dict[str, object] = {
         "id": UUID("00000000-0000-0000-0000-000000000030"),
-        "tenant_id": TENANT_ID,
+        "workspace_id": WORKSPACE_ID,
         "run_id": RUN_ID,
         "step_id": STEP_ID,
         "step_fence": 7,
@@ -230,7 +234,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": RUN_ID,
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "state": execution.ExecutionRunState.RUNNING,
                 "version": 1,
                 "created_at": NOW,
@@ -243,7 +247,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": STEP_ID,
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "run_id": RUN_ID,
                 "state": execution.ExecutionStepState.RUNNING,
                 "fence": 1,
@@ -260,7 +264,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": UUID("00000000-0000-0000-0000-000000000040"),
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "run_id": RUN_ID,
                 "step_id": STEP_ID,
                 "run_state": execution.ExecutionRunState.RUNNING,
@@ -285,7 +289,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": UUID("00000000-0000-0000-0000-000000000041"),
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "run_id": RUN_ID,
                 "step_id": STEP_ID,
                 "step_fence": 1,
@@ -304,7 +308,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": UUID("00000000-0000-0000-0000-000000000043"),
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "run_id": RUN_ID,
                 "step_id": STEP_ID,
                 "intent_id": intent.id,
@@ -313,8 +317,8 @@ def _contract_examples() -> list[tuple[Any, str]]:
                 "step_version": 1,
                 "authorization_proof_id": UUID("00000000-0000-0000-0000-000000000044"),
                 "authorization_proof_digest": "b" * 64,
-                "autonomy_proof_id": UUID("00000000-0000-0000-0000-000000000045"),
-                "autonomy_proof_digest": "c" * 64,
+                "autonomy_grant_id": UUID("00000000-0000-0000-0000-000000000045"),
+                "autonomy_grant_digest": "c" * 64,
                 "credential_proof_id": UUID("00000000-0000-0000-0000-000000000046"),
                 "credential_proof_digest": "d" * 64,
                 "budget_proof_id": UUID("00000000-0000-0000-0000-000000000047"),
@@ -332,7 +336,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
         **_signed(
             {
                 "id": UUID("00000000-0000-0000-0000-000000000049"),
-                "tenant_id": TENANT_ID,
+                "workspace_id": WORKSPACE_ID,
                 "run_id": RUN_ID,
                 "step_id": STEP_ID,
                 "step_fence": 1,
@@ -361,7 +365,7 @@ def _contract_examples() -> list[tuple[Any, str]]:
 def test_execution_contract_models_are_frozen_strict_and_timezone_aware() -> None:
     for contract, timestamp_field in _contract_examples():
         with pytest.raises(ValidationError, match="frozen_instance"):
-            contract.tenant_id = UUID("00000000-0000-0000-0000-000000000099")
+            contract.workspace_id = UUID("00000000-0000-0000-0000-000000000099")
 
         with pytest.raises(ValidationError, match="extra_forbidden"):
             contract.__class__.model_validate(
@@ -378,3 +382,183 @@ def test_execution_contract_models_are_frozen_strict_and_timezone_aware() -> Non
                     timestamp_field: datetime(2026, 7, 26, 12, 0),
                 }
             )
+
+
+def test_checkpoint_rejects_state_transition_contradictions() -> None:
+    checkpoint = _contract_examples()[2][0]
+    payload = checkpoint.model_dump(mode="python", exclude={"canonical_digest"})
+
+    completed_payload = {
+        **payload,
+        "run_state": execution.ExecutionRunState.COMPLETED,
+        "step_state": execution.ExecutionStepState.COMPLETED,
+        "next_transition": execution.ExecutionNextTransition.COMPLETE,
+    }
+    completed = execution.ExecutionCheckpoint(
+        **_signed(completed_payload, execution.compute_execution_checkpoint_digest)  # type: ignore[arg-type]
+    )
+    assert completed.next_transition is execution.ExecutionNextTransition.COMPLETE
+
+    for run_state, step_state, next_transition in (
+        (
+            execution.ExecutionRunState.COMPLETED,
+            execution.ExecutionStepState.PAUSED,
+            execution.ExecutionNextTransition.RESUME,
+        ),
+        (
+            execution.ExecutionRunState.FAILED,
+            execution.ExecutionStepState.FAILED,
+            execution.ExecutionNextTransition.RETRY,
+        ),
+        (
+            execution.ExecutionRunState.RUNNING,
+            execution.ExecutionStepState.RUNNING,
+            execution.ExecutionNextTransition.DISPATCH,
+        ),
+    ):
+        contradictory = {
+            **payload,
+            "run_state": run_state,
+            "step_state": step_state,
+            "next_transition": next_transition,
+        }
+        with pytest.raises(
+            ValidationError,
+            match="execution_checkpoint_state_transition_invalid",
+        ):
+            execution.ExecutionCheckpoint(
+                **_signed(
+                    contradictory,
+                    execution.compute_execution_checkpoint_digest,
+                )  # type: ignore[arg-type]
+            )
+
+
+def test_mapping_digest_helpers_use_pydantic_datetime_normalization() -> None:
+    digest_helpers = (
+        execution.compute_execution_run_digest,
+        execution.compute_execution_step_digest,
+        execution.compute_execution_checkpoint_digest,
+        execution.compute_effect_intent_digest,
+        execution.compute_effect_permit_digest,
+        execution.compute_effect_receipt_digest,
+    )
+
+    for (contract, _), digest_helper in zip(
+        _contract_examples(),
+        digest_helpers,
+        strict=True,
+    ):
+        mapping = contract.model_dump(mode="python", exclude={"canonical_digest"})
+        for field, value in tuple(mapping.items()):
+            if isinstance(value, datetime):
+                mapping[field] = value.isoformat().replace("+00:00", "Z")
+
+        digest = digest_helper(mapping)
+
+        assert digest == contract.canonical_digest
+        rebuilt = contract.__class__.model_validate({**mapping, "canonical_digest": digest})
+        assert rebuilt.canonical_digest == contract.canonical_digest
+
+
+def test_checkpoint_event_sequence_and_genesis_digest_are_biconditional() -> None:
+    checkpoint = _contract_examples()[2][0]
+    payload = checkpoint.model_dump(mode="python", exclude={"canonical_digest"})
+
+    for sequence, event_digest in ((0, "a" * 64), (1, "0" * 64)):
+        contradictory = {
+            **payload,
+            "last_accepted_event_sequence": sequence,
+            "last_accepted_event_digest": event_digest,
+        }
+        with pytest.raises(
+            ValidationError,
+            match="execution_checkpoint_event_sentinel_mismatch",
+        ):
+            execution.ExecutionCheckpoint(
+                **_signed(
+                    contradictory,
+                    execution.compute_execution_checkpoint_digest,
+                )  # type: ignore[arg-type]
+            )
+
+
+def test_security_sensitive_integer_fields_reject_booleans() -> None:
+    digest_helpers = (
+        execution.compute_execution_run_digest,
+        execution.compute_execution_step_digest,
+        execution.compute_execution_checkpoint_digest,
+        execution.compute_effect_intent_digest,
+        execution.compute_effect_permit_digest,
+        execution.compute_effect_receipt_digest,
+    )
+    integer_fields = (
+        ("version",),
+        ("fence", "version", "retry_count", "attempt_count"),
+        (
+            "step_fence",
+            "step_version",
+            "checkpoint_version",
+            "retry_count",
+            "attempt_count",
+            "last_accepted_event_sequence",
+        ),
+        ("step_fence", "step_version"),
+        ("step_fence", "step_version"),
+        ("step_fence",),
+    )
+
+    for (contract, _), digest_helper, fields in zip(
+        _contract_examples(),
+        digest_helpers,
+        integer_fields,
+        strict=True,
+    ):
+        payload = contract.model_dump(mode="python", exclude={"canonical_digest"})
+        for field in fields:
+            boolean_payload = {**payload, field: True}
+            with pytest.raises(ValidationError, match="int_type"):
+                contract.__class__(
+                    **_signed(boolean_payload, digest_helper)  # type: ignore[arg-type]
+                )
+
+
+def test_effect_permit_uses_autonomy_grant_references_only() -> None:
+    permit = _contract_examples()[4][0]
+    payload = permit.model_dump(mode="python", exclude={"canonical_digest"})
+    autonomy_grant_id = payload["autonomy_grant_id"]
+    autonomy_grant_digest = payload["autonomy_grant_digest"]
+
+    aligned = execution.EffectPermit(
+        **_signed(payload, execution.compute_effect_permit_digest)  # type: ignore[arg-type]
+    )
+    assert (aligned.autonomy_grant_id, aligned.autonomy_grant_digest) == (
+        autonomy_grant_id,
+        autonomy_grant_digest,
+    )
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        execution.EffectPermit(
+            **{
+                **aligned.model_dump(mode="python"),
+                "autonomy_proof_id": autonomy_grant_id,
+            }
+        )
+
+
+def test_execution_contracts_use_workspace_id_and_reject_legacy_tenant_id() -> None:
+    payload: dict[str, object] = {
+        "id": RUN_ID,
+        "workspace_id": WORKSPACE_ID,
+        "state": execution.ExecutionRunState.RUNNING,
+        "version": 1,
+        "created_at": NOW,
+        "updated_at": LATER,
+    }
+    run = execution.ExecutionRun(
+        **_signed(payload, execution.compute_execution_run_digest)  # type: ignore[arg-type]
+    )
+    assert run.workspace_id == WORKSPACE_ID
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        execution.ExecutionRun(**{**run.model_dump(mode="python"), "tenant_id": WORKSPACE_ID})

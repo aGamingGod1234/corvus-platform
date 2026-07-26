@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cache
+from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    create_model,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from corvus.security import canonical_json_bytes
@@ -36,15 +46,33 @@ def _require_aware(value: datetime) -> datetime:
 def _compute_contract_digest(
     contract_name: str,
     value: BaseModel | Mapping[str, object],
+    model_type: type[BaseModel],
 ) -> str:
     if isinstance(value, BaseModel):
         payload = value.model_dump(mode="python", exclude={"canonical_digest"})
     else:
-        payload = dict(value)
-        payload.pop("canonical_digest", None)
+        unvalidated = dict(value)
+        unvalidated.pop("canonical_digest", None)
+        payload = (
+            _digest_payload_model(model_type).model_validate(unvalidated).model_dump(mode="python")
+        )
     return hashlib.sha256(
         canonical_json_bytes({"contract": contract_name, "payload": payload})
     ).hexdigest()
+
+
+@cache
+def _digest_payload_model(model_type: type[BaseModel]) -> type[BaseModel]:
+    field_definitions: dict[str, Any] = {
+        name: (field.annotation, deepcopy(field))
+        for name, field in model_type.model_fields.items()
+        if name != "canonical_digest"
+    }
+    return create_model(
+        f"_{model_type.__name__}DigestPayload",
+        __config__=ConfigDict(extra="forbid", use_enum_values=False),
+        **field_definitions,
+    )
 
 
 class ExecutionKind(StrEnum):
@@ -87,6 +115,53 @@ class ExecutionNextTransition(StrEnum):
     COMPLETE = "complete"
     FAIL = "fail"
     CANCEL = "cancel"
+
+
+_ALLOWED_CHECKPOINT_STATE_TRANSITIONS = {
+    ExecutionNextTransition.DISPATCH: frozenset(
+        {
+            (ExecutionRunState.PENDING, ExecutionStepState.READY),
+            (ExecutionRunState.RUNNING, ExecutionStepState.READY),
+        }
+    ),
+    ExecutionNextTransition.RESUME: frozenset(
+        {
+            (ExecutionRunState.RUNNING, ExecutionStepState.PAUSED),
+            (ExecutionRunState.PAUSED, ExecutionStepState.PAUSED),
+        }
+    ),
+    ExecutionNextTransition.RETRY: frozenset(
+        {
+            (ExecutionRunState.RUNNING, ExecutionStepState.FAILED),
+            (ExecutionRunState.PAUSED, ExecutionStepState.FAILED),
+        }
+    ),
+    ExecutionNextTransition.WAIT: frozenset(
+        {
+            (ExecutionRunState.PENDING, ExecutionStepState.PENDING),
+            (ExecutionRunState.PENDING, ExecutionStepState.BLOCKED),
+            (ExecutionRunState.PENDING, ExecutionStepState.READY),
+            (ExecutionRunState.RUNNING, ExecutionStepState.PENDING),
+            (ExecutionRunState.RUNNING, ExecutionStepState.BLOCKED),
+            (ExecutionRunState.RUNNING, ExecutionStepState.READY),
+            (ExecutionRunState.RUNNING, ExecutionStepState.RUNNING),
+            (ExecutionRunState.RUNNING, ExecutionStepState.PAUSED),
+            (ExecutionRunState.PAUSED, ExecutionStepState.PENDING),
+            (ExecutionRunState.PAUSED, ExecutionStepState.BLOCKED),
+            (ExecutionRunState.PAUSED, ExecutionStepState.READY),
+            (ExecutionRunState.PAUSED, ExecutionStepState.PAUSED),
+        }
+    ),
+    ExecutionNextTransition.COMPLETE: frozenset(
+        {(ExecutionRunState.COMPLETED, ExecutionStepState.COMPLETED)}
+    ),
+    ExecutionNextTransition.FAIL: frozenset(
+        {(ExecutionRunState.FAILED, ExecutionStepState.FAILED)}
+    ),
+    ExecutionNextTransition.CANCEL: frozenset(
+        {(ExecutionRunState.CANCELLED, ExecutionStepState.CANCELLED)}
+    ),
+}
 
 
 class EffectIntentKind(StrEnum):
@@ -155,9 +230,9 @@ class _ExecutionContractModel(BaseModel):
 
 class ExecutionRun(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     state: ExecutionRunState
-    version: int = Field(ge=1)
+    version: int = Field(ge=1, strict=True)
     created_at: datetime
     updated_at: datetime
     canonical_digest: str = Field(pattern=_SHA256_PATTERN)
@@ -177,18 +252,18 @@ class ExecutionRun(_ExecutionContractModel):
 
 
 def compute_execution_run_digest(value: ExecutionRun | Mapping[str, object]) -> str:
-    return _compute_contract_digest("execution_run", value)
+    return _compute_contract_digest("execution_run", value, ExecutionRun)
 
 
 class ExecutionStep(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_id: UUID
     state: ExecutionStepState
-    fence: int = Field(ge=1)
-    version: int = Field(ge=1)
-    retry_count: int = Field(ge=0)
-    attempt_count: int = Field(ge=0)
+    fence: int = Field(ge=1, strict=True)
+    version: int = Field(ge=1, strict=True)
+    retry_count: int = Field(ge=0, strict=True)
+    attempt_count: int = Field(ge=0, strict=True)
     created_at: datetime
     updated_at: datetime
     canonical_digest: str = Field(pattern=_SHA256_PATTERN)
@@ -210,25 +285,25 @@ class ExecutionStep(_ExecutionContractModel):
 
 
 def compute_execution_step_digest(value: ExecutionStep | Mapping[str, object]) -> str:
-    return _compute_contract_digest("execution_step", value)
+    return _compute_contract_digest("execution_step", value, ExecutionStep)
 
 
 class ExecutionCheckpoint(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_id: UUID
     step_id: UUID
     run_state: ExecutionRunState
     step_state: ExecutionStepState
-    step_fence: int = Field(ge=1)
-    step_version: int = Field(ge=1)
-    checkpoint_version: int = Field(ge=1)
+    step_fence: int = Field(ge=1, strict=True)
+    step_version: int = Field(ge=1, strict=True)
+    checkpoint_version: int = Field(ge=1, strict=True)
     completed_dependency_step_ids: tuple[UUID, ...] = ()
     output_ref_ids: tuple[UUID, ...] = ()
     artifact_ref_ids: tuple[UUID, ...] = ()
-    retry_count: int = Field(ge=0)
-    attempt_count: int = Field(ge=0)
-    last_accepted_event_sequence: int = Field(ge=0)
+    retry_count: int = Field(ge=0, strict=True)
+    attempt_count: int = Field(ge=0, strict=True)
+    last_accepted_event_sequence: int = Field(ge=0, strict=True)
     last_accepted_event_digest: str = Field(pattern=_SHA256_PATTERN)
     next_transition: ExecutionNextTransition
     created_at: datetime
@@ -252,11 +327,13 @@ class ExecutionCheckpoint(_ExecutionContractModel):
             _execution_error("execution_checkpoint_self_dependency")
         if self.retry_count > self.attempt_count:
             _execution_error("execution_checkpoint_retry_count_exceeds_attempt_count")
-        if (
-            self.last_accepted_event_sequence == 0
-            and self.last_accepted_event_digest != _GENESIS_EVENT_DIGEST
+        if (self.last_accepted_event_sequence == 0) != (
+            self.last_accepted_event_digest == _GENESIS_EVENT_DIGEST
         ):
-            _execution_error("execution_checkpoint_genesis_event_digest_mismatch")
+            _execution_error("execution_checkpoint_event_sentinel_mismatch")
+        state_pair = (self.run_state, self.step_state)
+        if state_pair not in _ALLOWED_CHECKPOINT_STATE_TRANSITIONS[self.next_transition]:
+            _execution_error("execution_checkpoint_state_transition_invalid")
         if self.canonical_digest != compute_execution_checkpoint_digest(self):
             _execution_error("execution_checkpoint_digest_mismatch")
         return self
@@ -265,16 +342,16 @@ class ExecutionCheckpoint(_ExecutionContractModel):
 def compute_execution_checkpoint_digest(
     value: ExecutionCheckpoint | Mapping[str, object],
 ) -> str:
-    return _compute_contract_digest("execution_checkpoint", value)
+    return _compute_contract_digest("execution_checkpoint", value, ExecutionCheckpoint)
 
 
 class EffectIntent(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_id: UUID
     step_id: UUID
-    step_fence: int = Field(ge=1)
-    step_version: int = Field(ge=1)
+    step_fence: int = Field(ge=1, strict=True)
+    step_version: int = Field(ge=1, strict=True)
     kind: EffectIntentKind
     target_ref_id: UUID
     request_digest: str = Field(pattern=_SHA256_PATTERN)
@@ -303,22 +380,22 @@ class EffectIntent(_ExecutionContractModel):
 
 
 def compute_effect_intent_digest(value: EffectIntent | Mapping[str, object]) -> str:
-    return _compute_contract_digest("effect_intent", value)
+    return _compute_contract_digest("effect_intent", value, EffectIntent)
 
 
 class EffectPermit(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_id: UUID
     step_id: UUID
     intent_id: UUID
     intent_digest: str = Field(pattern=_SHA256_PATTERN)
-    step_fence: int = Field(ge=1)
-    step_version: int = Field(ge=1)
+    step_fence: int = Field(ge=1, strict=True)
+    step_version: int = Field(ge=1, strict=True)
     authorization_proof_id: UUID
     authorization_proof_digest: str = Field(pattern=_SHA256_PATTERN)
-    autonomy_proof_id: UUID
-    autonomy_proof_digest: str = Field(pattern=_SHA256_PATTERN)
+    autonomy_grant_id: UUID
+    autonomy_grant_digest: str = Field(pattern=_SHA256_PATTERN)
     credential_proof_id: UUID
     credential_proof_digest: str = Field(pattern=_SHA256_PATTERN)
     budget_proof_id: UUID
@@ -345,15 +422,15 @@ class EffectPermit(_ExecutionContractModel):
 
 
 def compute_effect_permit_digest(value: EffectPermit | Mapping[str, object]) -> str:
-    return _compute_contract_digest("effect_permit", value)
+    return _compute_contract_digest("effect_permit", value, EffectPermit)
 
 
 class EffectReceipt(_ExecutionContractModel):
     id: UUID
-    tenant_id: UUID
+    workspace_id: UUID
     run_id: UUID
     step_id: UUID
-    step_fence: int = Field(ge=1)
+    step_fence: int = Field(ge=1, strict=True)
     intent_id: UUID
     intent_digest: str = Field(pattern=_SHA256_PATTERN)
     permit_id: UUID
@@ -384,4 +461,4 @@ class EffectReceipt(_ExecutionContractModel):
 
 
 def compute_effect_receipt_digest(value: EffectReceipt | Mapping[str, object]) -> str:
-    return _compute_contract_digest("effect_receipt", value)
+    return _compute_contract_digest("effect_receipt", value, EffectReceipt)
