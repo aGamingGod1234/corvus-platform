@@ -407,10 +407,10 @@ M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES = {
             "140eab3e92d7cc947bbc77c2728553c2476dd0635717a4acad4d522afb51364f"
         ),
         "run_step_leases": (
-            "334eff1c1e91ff59f091b05e4b18b879555f5ee91314350308fe620e52db1f43"
+            "ea0772637285b225bcce74e3c76310c12427992e8ba194fa753caba02aad43ac"
         ),
         "run_step_versions": (
-            "f6d9ecb637cb731fd26ba5120c716e7779a81669ee5293f1c1d3ded7bfe9086a"
+            "30ad99e4e3b70bacfe537f39b86c5dd8675537636b52e6c9e42c1a9beb3fd112"
         ),
         "run_steps": "ebf77bc286325ea5ed957221b3624e5b1fdacaefb0b6a6cb672dcb7cc83aebbe",
     },
@@ -1791,6 +1791,21 @@ def _schema_signatures_match(
     return True
 
 
+def _has_unique_step_version_fence_index(connection: sqlite3.Connection) -> bool:
+    forbidden_columns = frozenset({"workspace_id", "run_id", "step_id", "fence"})
+    for index_row in connection.execute("PRAGMA index_list('run_step_versions')"):
+        if not bool(index_row[2]):
+            continue
+        index_name = str(index_row[1]).replace('"', '""')
+        columns = frozenset(
+            str(column_row[2])
+            for column_row in connection.execute(f'PRAGMA index_info("{index_name}")')
+        )
+        if columns == forbidden_columns:
+            return True
+    return False
+
+
 def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool:
     triggers = frozenset(
         row[0]
@@ -1807,6 +1822,7 @@ def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool
     return (
         M2_DURABLE_EXECUTION_TRIGGERS.issubset(triggers)
         and M2_DURABLE_EXECUTION_REQUIRED_INDEXES.issubset(indexes)
+        and not _has_unique_step_version_fence_index(connection)
         and _schema_signatures_match(
             connection,
             expected=M2_DURABLE_EXECUTION_SCHEMA_SIGNATURES,

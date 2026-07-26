@@ -127,14 +127,18 @@ def test_execution_schema_enforces_states_versions_fences_and_one_active_lease(
             "VALUES (?, ?, ?, 1, 'ready', 1, 0, 0, ?, ?, ?)",
             (workspace_id, run_id, step_id, timestamp, timestamp, "b" * 64),
         )
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "INSERT INTO run_step_versions "
-                "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
-                "attempt_count, created_at, updated_at, canonical_digest) "
-                "VALUES (?, ?, ?, 2, 'running', 1, 0, 1, ?, ?, ?)",
-                (workspace_id, run_id, step_id, timestamp, timestamp, "c" * 64),
-            )
+        connection.execute(
+            "INSERT INTO run_step_versions "
+            "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
+            "attempt_count, created_at, updated_at, canonical_digest) "
+            "VALUES (?, ?, ?, 2, 'running', 1, 0, 1, ?, ?, ?)",
+            (workspace_id, run_id, step_id, timestamp, timestamp, "c" * 64),
+        )
+        assert connection.execute(
+            "SELECT version, fence FROM run_step_versions "
+            "WHERE workspace_id = ? AND step_id = ? ORDER BY version",
+            (workspace_id, step_id),
+        ).fetchall() == [(1, 1), (2, 1)]
         connection.execute(
             "INSERT INTO run_step_leases "
             "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
@@ -166,6 +170,46 @@ def test_execution_schema_enforces_states_versions_fences_and_one_active_lease(
                     "2026-07-26T00:05:00+00:00",
                 ),
             )
+        connection.execute(
+            "UPDATE run_step_leases SET released_at = ? "
+            "WHERE workspace_id = ? AND run_id = ? AND step_id = ? AND fence = 1",
+            (timestamp, workspace_id, run_id, step_id),
+        )
+        connection.execute(
+            "INSERT INTO run_step_leases "
+            "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+            "acquired_at, heartbeat_at, expires_at, released_at) "
+            "VALUES (?, ?, ?, 2, 'worker-b', ?, ?, ?, ?, NULL)",
+            (
+                workspace_id,
+                run_id,
+                step_id,
+                "e" * 64,
+                timestamp,
+                timestamp,
+                "2026-07-26T00:05:00+00:00",
+            ),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO run_step_leases "
+                "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+                "acquired_at, heartbeat_at, expires_at, released_at) "
+                "VALUES (?, ?, ?, 1, 'worker-c', ?, ?, ?, ?, ?)",
+                (
+                    workspace_id,
+                    run_id,
+                    step_id,
+                    "f" * 64,
+                    timestamp,
+                    timestamp,
+                    "2026-07-26T00:05:00+00:00",
+                    timestamp,
+                ),
+            )
+        assert connection.execute(
+            "SELECT fence, released_at FROM run_step_leases ORDER BY fence"
+        ).fetchall() == [(1, timestamp), (2, None)]
 
 
 def test_execution_state_checkpoint_history_is_immutable_and_leases_cannot_be_deleted(
@@ -385,6 +429,20 @@ def test_execution_classifier_rejects_wrong_recovery_index_definition(tmp_path: 
         connection.execute("DROP INDEX ix_run_step_leases_recovery")
         connection.execute(
             "CREATE INDEX ix_run_step_leases_recovery ON run_step_leases(step_id)"
+        )
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+def test_execution_classifier_rejects_unique_step_version_fence_index(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE UNIQUE INDEX accidentally_unique_step_version_fence "
+            "ON run_step_versions(workspace_id, run_id, step_id, fence)"
         )
     assert classify_database(database).state is DatabaseState.PARTIAL
 
@@ -799,6 +857,9 @@ def test_execution_migration_renders_portable_offline_postgres_ddl(
     assert "references authorization_decision_snapshots" in rendered
     assert "foreign key(workspace_id, run_id, step_id, step_version, step_fence)" in rendered
     assert "references run_step_versions" in rendered
+    assert "constraint fk_run_checkpoints_step_version" in rendered
+    assert "uq_run_step_versions_fence" not in rendered
+    assert "fk_run_step_leases_fence" not in rendered
     assert "create unique index uq_run_step_leases_active" in rendered
     assert "create unique index uq_authorization_snapshots_workspace_request_id" in rendered
     assert "where released_at is null" in rendered

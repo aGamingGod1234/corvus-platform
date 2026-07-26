@@ -266,9 +266,6 @@ def _create_tables() -> None:
             "fence",
             name="uq_run_step_versions_checkpoint_ref",
         ),
-        sa.UniqueConstraint(
-            "workspace_id", "run_id", "step_id", "fence", name="uq_run_step_versions_fence"
-        ),
     )
     op.create_index(
         "ix_run_step_versions_recovery",
@@ -301,17 +298,6 @@ def _create_tables() -> None:
             name="ck_run_step_leases_release",
         ),
         _step_fk(),
-        sa.ForeignKeyConstraint(
-            ["workspace_id", "run_id", "step_id", "fence"],
-            [
-                "run_step_versions.workspace_id",
-                "run_step_versions.run_id",
-                "run_step_versions.step_id",
-                "run_step_versions.fence",
-            ],
-            name="fk_run_step_leases_fence",
-            ondelete="RESTRICT",
-        ),
         sa.PrimaryKeyConstraint(
             "workspace_id", "run_id", "step_id", "fence", name="pk_run_step_leases"
         ),
