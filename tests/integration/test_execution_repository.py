@@ -273,6 +273,26 @@ def _next_step_state(
     )
 
 
+def _run_with(run: ExecutionRun, **updates: object) -> ExecutionRun:
+    payload = {
+        **run.model_dump(mode="python", exclude={"canonical_digest"}),
+        **updates,
+    }
+    return ExecutionRun(
+        **{**payload, "canonical_digest": compute_execution_run_digest(payload)}
+    )
+
+
+def _step_with(step: ExecutionStep, **updates: object) -> ExecutionStep:
+    payload = {
+        **step.model_dump(mode="python", exclude={"canonical_digest"}),
+        **updates,
+    }
+    return ExecutionStep(
+        **{**payload, "canonical_digest": compute_execution_step_digest(payload)}
+    )
+
+
 def _started_event(run: AgentRunRecord) -> RunEventRecord:
     payload = {"event": "started"}
     digest = compute_agent_run_event_digest(
@@ -1385,8 +1405,11 @@ def test_restart_discovery_and_history_pages_are_bounded_scoped_and_gap_free(
     repository.close()
 
     reopened = ExecutionRepository(database)
+    expected_runs = tuple(
+        sorted((first_run, second_run_v3), key=lambda candidate: candidate.id)
+    )
     run_page_1 = reopened.discover_recoverable_runs(workspace.id, limit=1)
-    assert run_page_1.items == (first_run,)
+    assert run_page_1.items == expected_runs[:1]
     assert run_page_1.has_more is True
     assert run_page_1.next_cursor is not None
     run_page_2 = reopened.discover_recoverable_runs(
@@ -1394,19 +1417,25 @@ def test_restart_discovery_and_history_pages_are_bounded_scoped_and_gap_free(
         after=run_page_1.next_cursor,
         limit=1,
     )
-    assert run_page_2.items == (second_run_v3,)
+    assert run_page_2.items == expected_runs[1:]
     assert run_page_2.has_more is False
     assert reopened.discover_recoverable_runs(other_workspace.id, limit=1).items == ()
 
+    expected_steps = tuple(
+        sorted(
+            (first_step, second_step_v3),
+            key=lambda candidate: (candidate.run_id, candidate.id),
+        )
+    )
     step_page_1 = reopened.discover_recoverable_steps(workspace.id, limit=1)
-    assert step_page_1.items == (first_step,)
+    assert step_page_1.items == expected_steps[:1]
     assert step_page_1.next_cursor is not None
     step_page_2 = reopened.discover_recoverable_steps(
         workspace.id,
         after=step_page_1.next_cursor,
         limit=1,
     )
-    assert step_page_2.items == (second_step_v3,)
+    assert step_page_2.items == expected_steps[1:]
     expired = reopened.discover_expired_leases(
         workspace.id,
         as_of=NOW + timedelta(minutes=6),
@@ -1473,6 +1502,296 @@ def test_restart_discovery_and_history_pages_are_bounded_scoped_and_gap_free(
         limit=2,
     ).items == ()
     reopened.close()
+
+
+def test_recovery_pages_do_not_skip_unseen_latest_state_after_timestamp_regression(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="stable-recovery-order")
+    agent_runs = sorted(
+        (
+            _seed_agent_run(database, workspace, principal),
+            _seed_agent_run(database, workspace, principal),
+        ),
+        key=lambda candidate: candidate.id,
+    )
+    created_at = NOW - timedelta(days=1)
+    first_run = _run_with(
+        _execution_run(workspace.id, agent_runs[0].id),
+        created_at=created_at,
+        updated_at=NOW,
+    )
+    unseen_run = _run_with(
+        _execution_run(workspace.id, agent_runs[1].id),
+        created_at=created_at,
+        updated_at=NOW + timedelta(minutes=2),
+    )
+    repository = ExecutionRepository(database)
+    repository.record_run_state(first_run)
+    repository.record_run_state(unseen_run)
+    run_page = repository.discover_recoverable_runs(workspace.id, limit=1)
+    assert run_page.items == (first_run,)
+    assert run_page.next_cursor is not None
+    regressed_run = _run_with(
+        unseen_run,
+        state=ExecutionRunState.RUNNING,
+        version=2,
+        updated_at=NOW - timedelta(minutes=1),
+    )
+    repository.append_run_state(regressed_run, expected_prior_version=1)
+    assert repository.discover_recoverable_runs(
+        workspace.id,
+        after=run_page.next_cursor,
+        limit=1,
+    ).items == (regressed_run,)
+
+    steps = sorted(
+        (
+            _step_with(
+                _execution_step(workspace.id, agent_runs[0].id),
+                created_at=created_at,
+                updated_at=NOW,
+            ),
+            _step_with(
+                _execution_step(workspace.id, agent_runs[0].id),
+                created_at=created_at,
+                updated_at=NOW + timedelta(minutes=2),
+            ),
+        ),
+        key=lambda candidate: candidate.id,
+    )
+    for ordinal, step in enumerate(steps, start=1):
+        repository.create_step(
+            step,
+            step_key=f"step-{ordinal}",
+            step_ordinal=ordinal,
+            kind="model",
+            input_digest=hashlib.sha256(f"step-{ordinal}".encode()).hexdigest(),
+        )
+    step_page = repository.discover_recoverable_steps(workspace.id, limit=1)
+    assert step_page.items == (steps[0],)
+    assert step_page.next_cursor is not None
+    regressed_step = _step_with(
+        steps[1],
+        state=ExecutionStepState.RUNNING,
+        version=2,
+        updated_at=NOW - timedelta(minutes=1),
+    )
+    repository.append_step_state(regressed_step, expected_prior_version=1)
+    assert repository.discover_recoverable_steps(
+        workspace.id,
+        after=step_page.next_cursor,
+        limit=1,
+    ).items == (regressed_step,)
+    repository.close()
+
+
+def test_expired_lease_discovery_compares_legacy_offset_timestamps_as_instants(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="legacy-offset-lease")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step = _execution_step(workspace.id, agent_run.id)
+    second_step = _execution_step(workspace.id, agent_run.id)
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step,
+        step_key="legacy-offset",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"legacy-offset").hexdigest(),
+    )
+    repository.create_step(
+        second_step,
+        step_key="legacy-offset-second",
+        step_ordinal=2,
+        kind="model",
+        input_digest=hashlib.sha256(b"legacy-offset-second").hexdigest(),
+    )
+    token_digest = hashlib.sha256(_test_token("legacy-offset").encode()).hexdigest()
+    second_token_digest = hashlib.sha256(
+        _test_token("legacy-offset-second").encode()
+    ).hexdigest()
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.executemany(
+            "INSERT INTO run_step_leases "
+            "(workspace_id, run_id, step_id, fence, worker_id, lease_token_digest, "
+            "acquired_at, heartbeat_at, expires_at, released_at) "
+            "VALUES (?, ?, ?, 1, 'legacy-worker', ?, ?, ?, ?, NULL)",
+            (
+                (
+                    str(workspace.id),
+                    str(agent_run.id),
+                    str(step.id),
+                    token_digest,
+                    "2026-07-26T20:00:00+08:00",
+                    "2026-07-26T20:00:00+08:00",
+                    "2026-07-26T20:05:00+08:00",
+                ),
+                (
+                    str(workspace.id),
+                    str(agent_run.id),
+                    str(second_step.id),
+                    second_token_digest,
+                    "2026-07-26T08:00:00-04:00",
+                    "2026-07-26T08:00:00-04:00",
+                    "2026-07-26T08:10:00-04:00",
+                ),
+            ),
+        )
+    page = repository.discover_expired_leases(
+        workspace.id,
+        as_of=NOW + timedelta(minutes=11),
+        limit=1,
+    )
+    assert len(page.items) == 1
+    assert page.items[0].expires_at == NOW + timedelta(minutes=5)
+    assert page.has_more is True
+    assert page.next_cursor is not None
+    second_page = repository.discover_expired_leases(
+        workspace.id,
+        as_of=NOW + timedelta(minutes=11),
+        after=page.next_cursor,
+        limit=1,
+    )
+    assert len(second_page.items) == 1
+    assert second_page.items[0].expires_at == NOW + timedelta(minutes=10)
+    assert second_page.has_more is False
+    repository.close()
+
+
+def test_expired_lease_query_uses_instant_aware_sql_for_supported_dialects() -> None:
+    sqlite_sql = ExecutionRepository._expired_lease_discovery_sql("sqlite")
+    postgres_sql = ExecutionRepository._expired_lease_discovery_sql("postgresql")
+    assert "corvus_utc_iso(expires_at)" in sqlite_sql
+    assert "CAST(expires_at AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
+    assert "CAST(:as_of AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
+    assert "CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE)" in postgres_sql
+
+
+def test_complete_history_lists_return_more_than_default_page_limit(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    workspace, principal = _identity(database, suffix="complete-history")
+    agent_run = _seed_agent_run(database, workspace, principal)
+    run = _execution_run(workspace.id, agent_run.id)
+    step = _execution_step(workspace.id, agent_run.id)
+    request_context_id, authorization_snapshot_id = _seed_authorization_snapshot(
+        database,
+        workspace.id,
+    )
+    repository = ExecutionRepository(database)
+    repository.record_run_state(run)
+    repository.create_step(
+        step,
+        step_key="complete-history",
+        step_ordinal=1,
+        kind="model",
+        input_digest=hashlib.sha256(b"complete-history").hexdigest(),
+    )
+    checkpoint = _checkpoint(run, step)
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        for version in range(2, 102):
+            updated_at = NOW + timedelta(seconds=version)
+            run_version = _run_with(
+                run,
+                state=ExecutionRunState.RUNNING,
+                version=version,
+                updated_at=updated_at,
+            )
+            step_version = _step_with(
+                step,
+                state=ExecutionStepState.RUNNING,
+                version=version,
+                updated_at=updated_at,
+                attempt_count=1,
+            )
+            connection.execute(
+                "INSERT INTO agent_run_state_versions "
+                "(workspace_id, run_id, version, state, created_at, updated_at, "
+                "canonical_digest) VALUES (?, ?, ?, 'running', ?, ?, ?)",
+                (
+                    str(workspace.id),
+                    str(agent_run.id),
+                    version,
+                    NOW.isoformat(),
+                    updated_at.isoformat(),
+                    run_version.canonical_digest,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO run_step_versions "
+                "(workspace_id, run_id, step_id, version, state, fence, retry_count, "
+                "attempt_count, created_at, updated_at, canonical_digest) "
+                "VALUES (?, ?, ?, ?, 'running', 1, 0, 1, ?, ?, ?)",
+                (
+                    str(workspace.id),
+                    str(agent_run.id),
+                    str(step.id),
+                    version,
+                    NOW.isoformat(),
+                    updated_at.isoformat(),
+                    step_version.canonical_digest,
+                ),
+            )
+        for checkpoint_version in range(1, 102):
+            stored_checkpoint = _checkpoint_with(
+                checkpoint,
+                id=uuid4(),
+                checkpoint_version=checkpoint_version,
+                created_at=NOW + timedelta(seconds=checkpoint_version),
+            )
+            connection.execute(
+                "INSERT INTO run_checkpoints "
+                "(workspace_id, run_id, step_id, id, checkpoint_version, run_state, "
+                "step_state, step_fence, step_version, request_context_id, "
+                "authorization_snapshot_id, completed_dependency_step_ids_json, "
+                "output_ref_ids_json, retry_count, attempt_count, "
+                "last_accepted_event_sequence, last_accepted_event_digest, "
+                "next_transition, created_at, canonical_digest) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', 'ready', 1, 1, ?, ?, '[]', '[]', "
+                "0, 0, 0, ?, 'dispatch', ?, ?)",
+                (
+                    str(workspace.id),
+                    str(agent_run.id),
+                    str(step.id),
+                    str(stored_checkpoint.id),
+                    checkpoint_version,
+                    str(request_context_id),
+                    str(authorization_snapshot_id),
+                    ZERO,
+                    stored_checkpoint.created_at.isoformat(),
+                    stored_checkpoint.canonical_digest,
+                ),
+            )
+    assert tuple(
+        state.version
+        for state in repository.list_run_states(workspace.id, agent_run.id)
+    ) == tuple(range(1, 102))
+    assert tuple(
+        state.version
+        for state in repository.list_step_states(
+            workspace.id,
+            agent_run.id,
+            step.id,
+        )
+    ) == tuple(range(1, 102))
+    assert tuple(
+        checkpoint.checkpoint_version
+        for checkpoint in repository.list_checkpoints(
+            workspace.id,
+            agent_run.id,
+            step.id,
+        )
+    ) == tuple(range(1, 102))
+    repository.close()
 
 
 def test_lease_datetimes_normalize_to_utc_for_storage_hydration_and_expiry(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -52,6 +53,41 @@ _CHECKPOINT_SQL = (
 )
 _DEFAULT_PAGE_LIMIT = 100
 _MAX_PAGE_LIMIT = 100
+_SQLITE_UTC_ISO_FUNCTION = "corvus_utc_iso"
+_SQLITE_EXPIRED_LEASE_DISCOVERY_SQL = (
+    "SELECT * FROM run_step_leases "
+    "WHERE workspace_id = :workspace_id "
+    "AND released_at IS NULL AND corvus_utc_iso(expires_at) <= :as_of "
+    "AND (:after_expires_at IS NULL "
+    "OR corvus_utc_iso(expires_at) > :after_expires_at "
+    "OR (corvus_utc_iso(expires_at) = :after_expires_at "
+    "AND (run_id > :after_run_id "
+    "OR (run_id = :after_run_id "
+    "AND (step_id > :after_step_id "
+    "OR (step_id = :after_step_id "
+    "AND fence > :after_fence)))))) "
+    "ORDER BY corvus_utc_iso(expires_at), run_id, step_id, fence "
+    "LIMIT :fetch_limit"
+)
+_POSTGRES_EXPIRED_LEASE_DISCOVERY_SQL = (
+    "SELECT * FROM run_step_leases "
+    "WHERE workspace_id = :workspace_id "
+    "AND released_at IS NULL "
+    "AND CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "<= CAST(:as_of AS TIMESTAMP WITH TIME ZONE) "
+    "AND (:after_expires_at IS NULL "
+    "OR CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "> CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "OR (CAST(expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "= CAST(:after_expires_at AS TIMESTAMP WITH TIME ZONE) "
+    "AND (run_id > :after_run_id "
+    "OR (run_id = :after_run_id "
+    "AND (step_id > :after_step_id "
+    "OR (step_id = :after_step_id "
+    "AND fence > :after_fence)))))) "
+    "ORDER BY CAST(expires_at AS TIMESTAMP WITH TIME ZONE), "
+    "run_id, step_id, fence LIMIT :fetch_limit"
+)
 
 
 @dataclass(frozen=True)
@@ -185,6 +221,17 @@ class ExecutionRepository:
     def _enable_sqlite_foreign_keys(connection: Connection) -> None:
         if connection.dialect.name == "sqlite":
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            driver_connection = connection.connection.driver_connection
+            if not isinstance(driver_connection, sqlite3.Connection):
+                raise ExecutionRepositoryError(
+                    "sqlite_driver_connection_unavailable"
+                )
+            driver_connection.create_function(
+                _SQLITE_UTC_ISO_FUNCTION,
+                1,
+                _utc_iso,
+                deterministic=True,
+            )
 
     @contextmanager
     def _transaction(self) -> Iterator[Connection]:
@@ -224,6 +271,14 @@ class ExecutionRepository:
             _AGENT_RUN_LOCKED_SQL
             if dialect_name == "postgresql"
             else _AGENT_RUN_SQL
+        )
+
+    @staticmethod
+    def _expired_lease_discovery_sql(dialect_name: str) -> str:
+        return (
+            _SQLITE_EXPIRED_LEASE_DISCOVERY_SQL
+            if dialect_name == "sqlite"
+            else _POSTGRES_EXPIRED_LEASE_DISCOVERY_SQL
         )
 
     @classmethod
@@ -1231,9 +1286,6 @@ class ExecutionRepository:
         parameters: dict[str, object] = {
             "workspace_id": str(workspace_id),
             "fetch_limit": limit + 1,
-            "after_updated_at": (
-                _utc_iso(after.updated_at) if after is not None else None
-            ),
             "after_run_id": str(after.run_id) if after is not None else None,
         }
         with self._connection() as connection:
@@ -1247,11 +1299,9 @@ class ExecutionRepository:
                         "WHERE v2.workspace_id = v.workspace_id "
                         "AND v2.run_id = v.run_id) "
                         "AND v.state IN ('pending','running','paused') "
-                        "AND (:after_updated_at IS NULL "
-                        "OR v.updated_at > :after_updated_at "
-                        "OR (v.updated_at = :after_updated_at "
-                        "AND v.run_id > :after_run_id)) "
-                        "ORDER BY v.updated_at, v.run_id LIMIT :fetch_limit"
+                        "AND (:after_run_id IS NULL "
+                        "OR v.run_id > :after_run_id) "
+                        "ORDER BY v.run_id LIMIT :fetch_limit"
                     ),
                     parameters,
                 )
@@ -1285,9 +1335,6 @@ class ExecutionRepository:
         parameters: dict[str, object] = {
             "workspace_id": str(workspace_id),
             "fetch_limit": limit + 1,
-            "after_updated_at": (
-                _utc_iso(after.updated_at) if after is not None else None
-            ),
             "after_run_id": str(after.run_id) if after is not None else None,
             "after_step_id": str(after.step_id) if after is not None else None,
         }
@@ -1303,13 +1350,11 @@ class ExecutionRepository:
                         "AND v2.run_id = v.run_id AND v2.step_id = v.step_id) "
                         "AND v.state IN "
                         "('pending','blocked','ready','running','paused','failed') "
-                        "AND (:after_updated_at IS NULL "
-                        "OR v.updated_at > :after_updated_at "
-                        "OR (v.updated_at = :after_updated_at "
-                        "AND (v.run_id > :after_run_id "
+                        "AND (:after_run_id IS NULL "
+                        "OR v.run_id > :after_run_id "
                         "OR (v.run_id = :after_run_id "
-                        "AND v.step_id > :after_step_id)))) "
-                        "ORDER BY v.updated_at, v.run_id, v.step_id "
+                        "AND v.step_id > :after_step_id)) "
+                        "ORDER BY v.run_id, v.step_id "
                         "LIMIT :fetch_limit"
                     ),
                     parameters,
@@ -1358,19 +1403,9 @@ class ExecutionRepository:
             rows = (
                 connection.execute(
                     text(
-                        "SELECT * FROM run_step_leases "
-                        "WHERE workspace_id = :workspace_id "
-                        "AND released_at IS NULL AND expires_at <= :as_of "
-                        "AND (:after_expires_at IS NULL "
-                        "OR expires_at > :after_expires_at "
-                        "OR (expires_at = :after_expires_at "
-                        "AND (run_id > :after_run_id "
-                        "OR (run_id = :after_run_id "
-                        "AND (step_id > :after_step_id "
-                        "OR (step_id = :after_step_id "
-                        "AND fence > :after_fence)))))) "
-                        "ORDER BY expires_at, run_id, step_id, fence "
-                        "LIMIT :fetch_limit"
+                        self._expired_lease_discovery_sql(
+                            connection.dialect.name
+                        )
                     ),
                     parameters,
                 )
@@ -1552,11 +1587,23 @@ class ExecutionRepository:
         workspace_id: UUID,
         run_id: UUID,
     ) -> tuple[ExecutionRun, ...]:
-        return self.page_run_state_history(
-            workspace_id,
-            run_id,
-            limit=_MAX_PAGE_LIMIT,
-        ).items
+        items: list[ExecutionRun] = []
+        cursor: ExecutionHistoryCursor | None = None
+        while True:
+            page = self.page_run_state_history(
+                workspace_id,
+                run_id,
+                after=cursor,
+                limit=_MAX_PAGE_LIMIT,
+            )
+            items.extend(page.items)
+            if not page.has_more:
+                return tuple(items)
+            if page.next_cursor is None:
+                raise ExecutionRepositoryError(
+                    "execution_history_cursor_missing"
+                )
+            cursor = page.next_cursor
 
     def get_current_step_state(
         self,
@@ -1585,12 +1632,24 @@ class ExecutionRepository:
         run_id: UUID,
         step_id: UUID,
     ) -> tuple[ExecutionStep, ...]:
-        return self.page_step_state_history(
-            workspace_id,
-            run_id,
-            step_id,
-            limit=_MAX_PAGE_LIMIT,
-        ).items
+        items: list[ExecutionStep] = []
+        cursor: ExecutionHistoryCursor | None = None
+        while True:
+            page = self.page_step_state_history(
+                workspace_id,
+                run_id,
+                step_id,
+                after=cursor,
+                limit=_MAX_PAGE_LIMIT,
+            )
+            items.extend(page.items)
+            if not page.has_more:
+                return tuple(items)
+            if page.next_cursor is None:
+                raise ExecutionRepositoryError(
+                    "execution_history_cursor_missing"
+                )
+            cursor = page.next_cursor
 
     def get_active_step_lease(
         self,
@@ -1644,12 +1703,24 @@ class ExecutionRepository:
         run_id: UUID,
         step_id: UUID,
     ) -> tuple[ExecutionCheckpoint, ...]:
-        return self.page_checkpoints(
-            workspace_id,
-            run_id,
-            step_id,
-            limit=_MAX_PAGE_LIMIT,
-        ).items
+        items: list[ExecutionCheckpoint] = []
+        cursor: ExecutionHistoryCursor | None = None
+        while True:
+            page = self.page_checkpoints(
+                workspace_id,
+                run_id,
+                step_id,
+                after=cursor,
+                limit=_MAX_PAGE_LIMIT,
+            )
+            items.extend(page.items)
+            if not page.has_more:
+                return tuple(items)
+            if page.next_cursor is None:
+                raise ExecutionRepositoryError(
+                    "execution_history_cursor_missing"
+                )
+            cursor = page.next_cursor
 
     def close(self) -> None:
         if self._owns_engine:
