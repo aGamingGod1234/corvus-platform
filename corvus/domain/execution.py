@@ -289,6 +289,39 @@ def compute_execution_step_digest(value: ExecutionStep | Mapping[str, object]) -
     return _compute_contract_digest("execution_step", value, ExecutionStep)
 
 
+class ExecutionStepLease(_ExecutionContractModel):
+    workspace_id: UUID
+    run_id: UUID
+    step_id: UUID
+    fence: int = Field(ge=1, strict=True)
+    worker_id: str = Field(min_length=1, max_length=255)
+    lease_token_digest: str = Field(pattern=_SHA256_PATTERN)
+    acquired_at: datetime
+    heartbeat_at: datetime
+    expires_at: datetime
+    released_at: datetime | None = None
+
+    @field_validator("acquired_at", "heartbeat_at", "expires_at", "released_at")
+    @classmethod
+    def validate_timestamps(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _require_aware(value)
+
+    @field_validator("worker_id")
+    @classmethod
+    def validate_worker_id(cls, value: str) -> str:
+        if not value.strip():
+            _execution_error("execution_step_lease_worker_blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> ExecutionStepLease:
+        if self.heartbeat_at < self.acquired_at or self.expires_at <= self.acquired_at:
+            _execution_error("execution_step_lease_window_invalid")
+        if self.released_at is not None and self.released_at < self.acquired_at:
+            _execution_error("execution_step_lease_release_invalid")
+        return self
+
+
 class ExecutionCheckpoint(_ExecutionContractModel):
     id: UUID
     workspace_id: UUID
