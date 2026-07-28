@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic import command
@@ -16,6 +17,7 @@ from corvus.infrastructure.db import (
     downgrade_database,
     upgrade_database,
 )
+from corvus.infrastructure.migrations.versions import m2_005_execution_binding
 from corvus.infrastructure.repositories.identity_scope import IdentityScopeRepository
 from corvus.store import TraceStore
 
@@ -207,6 +209,62 @@ def test_empty_execution_binding_downgrade_preserves_v10_and_reupgrades(
 
     assert upgrade_database(database) == M2_EXECUTION_BINDING_REVISION
     assert classify_database(database).state is DatabaseState.CURRENT
+
+
+def test_postgres_execution_binding_downgrade_locks_before_history_check_and_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operations: list[tuple[str, str]] = []
+
+    class _Result:
+        @staticmethod
+        def scalar_one() -> int:
+            return 0
+
+    class _Bind:
+        dialect = SimpleNamespace(name="postgresql")
+
+        @staticmethod
+        def execute(statement: object, parameters: object = None) -> _Result:
+            del parameters
+            operations.append(("sql", " ".join(str(statement).split())))
+            return _Result()
+
+    monkeypatch.setattr(
+        m2_005_execution_binding.op,
+        "get_context",
+        lambda: SimpleNamespace(as_sql=False),
+    )
+    monkeypatch.setattr(m2_005_execution_binding.op, "get_bind", _Bind)
+    monkeypatch.setattr(
+        m2_005_execution_binding.op,
+        "drop_table",
+        lambda table_name: operations.append(("drop_table", table_name)),
+    )
+    monkeypatch.setattr(
+        m2_005_execution_binding,
+        "drop_immutable_triggers",
+        lambda table_name: operations.append(("drop_triggers", table_name)),
+    )
+    monkeypatch.setattr(
+        m2_005_execution_binding,
+        "create_immutable_triggers",
+        lambda table_name, label: operations.append(
+            ("create_triggers", f"{table_name}:{label}")
+        ),
+    )
+
+    m2_005_execution_binding.downgrade()
+
+    assert operations[0] == (
+        "sql",
+        "LOCK TABLE agent_run_execution_bindings IN ACCESS EXCLUSIVE MODE",
+    )
+    assert operations[1] == (
+        "sql",
+        "SELECT COUNT(*) FROM agent_run_execution_bindings",
+    )
+    assert operations.index(("drop_table", "agent_run_execution_bindings")) > 1
 
 
 def test_execution_upgrade_adds_manifest_families_and_refuses_populated_downgrade(
@@ -554,6 +612,33 @@ def test_execution_binding_classifier_rejects_weakened_digest_constraint(
             (weakened_sql, _EXECUTION_BINDING_TABLE),
         )
         connection.execute("PRAGMA writable_schema=OFF")
+    assert classify_database(database).state is DatabaseState.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        (
+            "CREATE TRIGGER agent_run_execution_bindings_block_insert "
+            "BEFORE INSERT ON agent_run_execution_bindings "
+            "BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+        ),
+        (
+            "CREATE UNIQUE INDEX uq_agent_run_execution_bindings_digest "
+            "ON agent_run_execution_bindings(immutable_request_digest)"
+        ),
+    ],
+)
+def test_execution_binding_classifier_rejects_unexpected_table_owned_controls(
+    tmp_path: Path,
+    statement: str,
+) -> None:
+    database = tmp_path / "corvus.db"
+    _base_database(database)
+    upgrade_database(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(statement)
+
     assert classify_database(database).state is DatabaseState.PARTIAL
 
 

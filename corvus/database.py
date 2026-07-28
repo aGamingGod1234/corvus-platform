@@ -1906,21 +1906,24 @@ def _m2_durable_execution_controls_match(connection: sqlite3.Connection) -> bool
 
 
 def _m2_execution_binding_controls_match(connection: sqlite3.Connection) -> bool:
-    triggers = frozenset(
+    table_triggers = frozenset(
         row[0]
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'trigger' AND tbl_name = 'agent_run_execution_bindings' "
+            "ORDER BY name"
         )
     )
-    indexes = frozenset(
-        row[0]
+    table_unique_indexes = frozenset(
+        str(row[1])
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+            'PRAGMA index_list("agent_run_execution_bindings")'
         )
+        if bool(row[2]) and str(row[3]) != "pk"
     )
     return (
-        M2_EXECUTION_BINDING_TRIGGERS.issubset(triggers)
-        and M2_EXECUTION_BINDING_REQUIRED_INDEXES.issubset(indexes)
+        table_triggers == M2_EXECUTION_BINDING_TRIGGERS
+        and table_unique_indexes == M2_EXECUTION_BINDING_REQUIRED_INDEXES
         and _schema_signatures_match(
             connection,
             expected=M2_EXECUTION_BINDING_SCHEMA_SIGNATURES,

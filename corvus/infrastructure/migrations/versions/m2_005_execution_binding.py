@@ -141,6 +141,13 @@ def downgrade() -> None:
     if op.get_context().as_sql:
         raise RuntimeError("execution_binding_downgrade_requires_online_history_check")
     bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        bind.execute(
+            sa.text(
+                "LOCK TABLE agent_run_execution_bindings "
+                "IN ACCESS EXCLUSIVE MODE"
+            )
+        )
     if bind.execute(_HISTORY_COUNT_SQL).scalar_one():
         raise RuntimeError("execution_binding_history_present")
     drop_immutable_triggers("authority_state_root_leaf_families")

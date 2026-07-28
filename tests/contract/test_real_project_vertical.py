@@ -76,8 +76,8 @@ from corvus.infrastructure.repositories.projects import ProjectRepository
 from corvus.infrastructure.repositories.registry import RegistryManifestRepository
 from corvus.store import TraceStore
 
-_NOW = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
-_ACTIVE_MANIFEST_ID = UUID("00000000-0000-4000-8000-000000000012")
+_NOW = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+_ACTIVE_MANIFEST_ID = UUID("00000000-0000-4000-8000-000000000014")
 
 
 class MemorySecretStore:
@@ -581,7 +581,7 @@ def test_inprocess_client_uses_real_authority_snapshot_recovery_and_persistence(
     created = client.create_project(command)
     replayed = client.create_project(command)
 
-    assert created.ok is True
+    assert created.ok is True, created
     assert replayed == created
     assert projects.get(workspace_id=workspace_id, project_id=project.id) == project
     assert len(audits.list_receipts(workspace_id)) == 1
